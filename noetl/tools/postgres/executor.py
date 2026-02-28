@@ -10,8 +10,10 @@ Main entry point for executing PostgreSQL tasks with:
 """
 
 import asyncio
-import uuid
 import datetime
+import hashlib
+import os
+import uuid
 from typing import Dict
 from jinja2 import Environment
 from noetl.core.logger import setup_logger
@@ -24,6 +26,48 @@ from .response import process_results, format_success_response, format_error_res
 from .models import validate_pool_config
 
 logger = setup_logger(__name__, include_location=True)
+
+
+def _env_bool(name: str, default: bool) -> bool:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _env_int(name: str, default: int) -> int:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    try:
+        return int(raw)
+    except Exception:
+        return default
+
+
+def _env_float(name: str, default: float) -> float:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    try:
+        return float(raw)
+    except Exception:
+        return default
+
+
+def _default_pool_name(pg_host: str, pg_port: str, pg_db: str, pg_user: str) -> str:
+    base = f"{pg_user}@{pg_host}:{pg_port}/{pg_db}"
+    digest = hashlib.sha1(base.encode("utf-8")).hexdigest()[:10]
+    return f"pg_{pg_db}_{digest}"
+
+
+def _connection_meta(task_with: Dict, use_pool: bool, pool_name: str, pool_params: Dict) -> Dict:
+    return {
+        "with_param_keys": sorted(task_with.keys()) if isinstance(task_with, dict) else [],
+        "connection_mode": "pool" if use_pool else "direct",
+        "pool_name": pool_name if use_pool else None,
+        "pool_params": pool_params if use_pool else {},
+    }
 
 
 def execute_postgres_task(task_config: Dict, context: Dict, jinja_env: Environment, task_with: Dict, log_event_callback=None) -> Dict:
@@ -82,7 +126,20 @@ def execute_postgres_task(task_config: Dict, context: Dict, jinja_env: Environme
         'success'
     """
     # Execute directly (async) - use asyncio.run() to bridge sync/async boundary
+    # WARNING: This creates a new event loop per call, so plugin pools keyed by loop_id
+    # are never reused. Prefer execute_postgres_task_async() when already in an async context.
     return asyncio.run(_execute_postgres_task_async(task_config, context, jinja_env, task_with, log_event_callback))
+
+
+# Public async entry point - avoids asyncio.run() pool-leak when called from async worker
+async def execute_postgres_task_async(
+    task_config: Dict, context: Dict, jinja_env: Environment,
+    task_with: Dict, log_event_callback=None
+) -> Dict:
+    """Async version of execute_postgres_task (no new event loop, pools are reused)."""
+    return await _execute_postgres_task_async(
+        task_config, context, jinja_env, task_with, log_event_callback
+    )
 
 
 async def _execute_postgres_task_async(
@@ -150,6 +207,10 @@ async def _execute_postgres_task_async(
     task_id = str(uuid.uuid4())
     task_name = task_config.get('task', 'postgres_task')
     start_time = datetime.datetime.now()
+    connection_meta = {
+        "with_param_keys": sorted(task_with.keys()) if isinstance(task_with, dict) else [],
+        "connection_mode": "unknown",
+    }
 
     try:
         # Step 0: Populate keychain context FIRST before any template rendering
@@ -183,37 +244,63 @@ async def _execute_postgres_task_async(
         # Step 5: Render and split commands into individual statements
         commands = render_and_split_commands(commands_str, jinja_env, context, processed_task_with)
 
-        # Step 6: Log task start event
+        # Step 6: Resolve connection mode and pool configuration.
+        # Default mode is pooled for stable DB pressure in distributed runs.
+        pool_config = task_config.get('pool')
+        use_pool = _env_bool("NOETL_POSTGRES_USE_POOL_DEFAULT", True)
+        pool_params = {}
+        pool_name = None
+
+        if isinstance(pool_config, bool):
+            use_pool = pool_config
+        elif pool_config is None:
+            use_pool = _env_bool("NOETL_POSTGRES_USE_POOL_DEFAULT", True)
+        elif isinstance(pool_config, dict):
+            use_pool = True
+            try:
+                validated = validate_pool_config(pool_config)
+                pool_name = validated.pop("name", None)
+                pool_params = validated
+            except ValueError as e:
+                logger.error(f"Invalid pool configuration: {e}")
+                raise ValueError(f"Pool configuration validation failed: {e}")
+        else:
+            logger.warning(
+                "Unsupported postgres.pool type=%s; using default mode",
+                type(pool_config).__name__,
+            )
+
+        if use_pool:
+            if not pool_name:
+                pool_name = _default_pool_name(pg_host, pg_port, pg_db, pg_user)
+            pool_params.setdefault("min_size", _env_int("NOETL_POSTGRES_POOL_MIN_SIZE", 1))
+            pool_params.setdefault("max_size", _env_int("NOETL_POSTGRES_POOL_MAX_SIZE", 12))
+            pool_params.setdefault("max_waiting", _env_int("NOETL_POSTGRES_POOL_MAX_WAITING", 100))
+            pool_params.setdefault("timeout", _env_float("NOETL_POSTGRES_POOL_TIMEOUT_SECONDS", 60.0))
+            logger.info(
+                "POSTGRES: pooled mode pool=%s min=%s max=%s waiting=%s timeout=%ss commands=%s",
+                pool_name,
+                pool_params.get("min_size"),
+                pool_params.get("max_size"),
+                pool_params.get("max_waiting"),
+                pool_params.get("timeout"),
+                len(commands),
+            )
+        else:
+            logger.info("POSTGRES: direct mode commands=%s", len(commands))
+
+        connection_meta = _connection_meta(task_with, use_pool, pool_name, pool_params)
+
+        # Step 7: Log task start event
         event_id = None
         if log_event_callback:
             event_id = log_event_callback(
                 'task_start', task_id, task_name, 'postgres',
                 'in_progress', 0, context, None,
-                {'with_params': task_with}, None
+                connection_meta, None
             )
 
-        # Step 7: Execute SQL statements using async connection
-        # Check if pool is explicitly requested (pool: {} or pool: {timeout: X, ...})
-        pool_config = task_config.get('pool')  # None = no pool (direct connection), {} or {params} = use pool
-        use_pool = pool_config is not None  # Only use pool if explicitly defined
-        pool_params = {}
-        pool_name = None
-        
-        if use_pool and isinstance(pool_config, dict):
-            # Validate pool configuration using Pydantic model
-            try:
-                validated = validate_pool_config(pool_config)
-                # Extract pool name (if specified, or default to execution_id)
-                pool_name = validated.pop('name', None)
-                if pool_name is None:
-                    execution_id = context.get('execution_id')
-                    pool_name = f"exec_{execution_id}" if execution_id else "default"
-                pool_params = validated
-                logger.debug(f"Pool name: {pool_name}, params: {pool_params}")
-            except ValueError as e:
-                logger.error(f"Invalid pool configuration: {e}")
-                raise ValueError(f"Pool configuration validation failed: {e}")
-        
+        # Step 8: Execute SQL statements using async connection
         results = {}
         if commands:
             results = await execute_sql_with_connection(
@@ -224,22 +311,22 @@ async def _execute_postgres_task_async(
             )
         # Connection automatically closed via context manager
 
-        # Step 8: Process results
+        # Step 9: Process results
         end_time = datetime.datetime.now()
         duration = (end_time - start_time).total_seconds()
         has_error, error_message = process_results(results)
         task_status = 'error' if has_error else 'success'
 
-        # Step 9: Log completion event
+        # Step 10: Log completion event
         if log_event_callback:
             log_event_callback(
                 'task_complete' if not has_error else 'task_error',
                 task_id, task_name, 'postgres',
                 task_status, duration, context, results,
-                {'with_params': task_with}, event_id
+                connection_meta, event_id
             )
 
-        # Step 10: Return error response if any (error logged via event system)
+        # Step 11: Return error response if any (error logged via event system)
         if has_error:
             return format_error_response(task_id, error_message, results)
         else:
@@ -253,10 +340,12 @@ async def _execute_postgres_task_async(
 
         # Log error event
         if log_event_callback:
+            error_meta = dict(connection_meta)
+            error_meta["error"] = str(e)
             log_event_callback(
                 'task_error', task_id, task_name, 'postgres',
                 'error', duration, context, None,
-                {'error': str(e), 'with_params': task_with}, None
+                error_meta, None
             )
 
         return format_exception_response(task_id, e)

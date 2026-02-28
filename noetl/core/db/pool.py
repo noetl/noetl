@@ -9,8 +9,9 @@ This module provides:
 from psycopg import AsyncConnection
 from psycopg_pool import AsyncConnectionPool
 from psycopg.rows import dict_row, DictRow
-import asyncio
 import hashlib
+import os
+import threading
 from typing import Optional, Dict
 from contextlib import asynccontextmanager
 from noetl.core.logger import setup_logger
@@ -19,7 +20,35 @@ logger = setup_logger(__name__, include_location=True)
 
 # Global pool for NoETL's internal database
 _pool: Optional[AsyncConnectionPool[AsyncConnection[DictRow]]] = None
-_lock = asyncio.Lock()
+_pool_lock = threading.Lock()
+
+
+def _env_int(name: str, default: int) -> int:
+    raw = os.getenv(name)
+    if raw is None or raw.strip() == "":
+        return default
+    try:
+        return int(raw)
+    except (TypeError, ValueError):
+        return default
+
+
+def _env_float(name: str, default: float) -> float:
+    raw = os.getenv(name)
+    if raw is None or raw.strip() == "":
+        return default
+    try:
+        return float(raw)
+    except (TypeError, ValueError):
+        return default
+
+
+_DEFAULT_POOL_MIN_SIZE = max(1, _env_int("NOETL_POSTGRES_POOL_MIN_SIZE", 4))
+_DEFAULT_POOL_MAX_SIZE = max(_DEFAULT_POOL_MIN_SIZE, _env_int("NOETL_POSTGRES_POOL_MAX_SIZE", 48))
+_DEFAULT_POOL_TIMEOUT = max(1.0, _env_float("NOETL_POSTGRES_POOL_TIMEOUT_SECONDS", 90.0))
+_DEFAULT_POOL_MAX_WAITING = max(1, _env_int("NOETL_POSTGRES_POOL_MAX_WAITING", 2000))
+_DEFAULT_POOL_MAX_LIFETIME = max(60.0, _env_float("NOETL_POSTGRES_POOL_MAX_LIFETIME_SECONDS", 1800.0))
+_DEFAULT_POOL_MAX_IDLE = max(30.0, _env_float("NOETL_POSTGRES_POOL_MAX_IDLE_SECONDS", 300.0))
 
 
 async def init_pool(conninfo: str):
@@ -27,26 +56,37 @@ async def init_pool(conninfo: str):
     Initialize the global AsyncConnectionPool with dict_row as default.
     Safe to call multiple times.
 
-    Pool sizing for concurrent execution support:
-    - min_size=2: Keep warm connections ready
-    - max_size=20: Handle burst of concurrent playbook executions
-    - timeout=30: Allow time during high load (regression tests run 50+ playbooks)
+    Pool sizing is controlled by NOETL_POSTGRES_POOL_* env vars with safe defaults.
     """
     global _pool
-    async with _lock:
+    pool_to_open: Optional[AsyncConnectionPool[AsyncConnection[DictRow]]] = None
+
+    # Use a thread lock instead of asyncio.Lock to avoid cross-event-loop binding.
+    with _pool_lock:
         if _pool is None:
+            logger.info(
+                "DB.POOL: init min=%d max=%d waiting=%d timeout=%.1fs",
+                _DEFAULT_POOL_MIN_SIZE,
+                _DEFAULT_POOL_MAX_SIZE,
+                _DEFAULT_POOL_MAX_WAITING,
+                _DEFAULT_POOL_TIMEOUT,
+            )
             _pool = AsyncConnectionPool(
                 conninfo,
-                min_size=2,
-                max_size=20,
-                timeout=30,
-                max_lifetime=1800.0,
-                max_idle=300.0,
+                min_size=_DEFAULT_POOL_MIN_SIZE,
+                max_size=_DEFAULT_POOL_MAX_SIZE,
+                max_waiting=_DEFAULT_POOL_MAX_WAITING,
+                timeout=_DEFAULT_POOL_TIMEOUT,
+                max_lifetime=_DEFAULT_POOL_MAX_LIFETIME,
+                max_idle=_DEFAULT_POOL_MAX_IDLE,
                 kwargs={"row_factory": dict_row},
-                name="noetl_server",
-                open=False
+                name=os.getenv("NOETL_POSTGRES_POOL_NAME", "noetl_server"),
+                open=False,
             )
-            await _pool.open(wait=True)
+            pool_to_open = _pool
+
+    if pool_to_open is not None:
+        await pool_to_open.open(wait=True)
 
 
 def get_pool() -> AsyncConnectionPool[AsyncConnection[DictRow]]:
@@ -57,10 +97,15 @@ def get_pool() -> AsyncConnectionPool[AsyncConnection[DictRow]]:
     return _pool
 
 @asynccontextmanager
-async def get_pool_connection():
+async def get_pool_connection(timeout: float | None = None):
     """Get a connection from the global pool as an async context manager."""
-    async with get_pool().connection() as conn:
-        yield conn
+    pool = get_pool()
+    if timeout is None:
+        async with pool.connection() as conn:
+            yield conn
+    else:
+        async with pool.connection(timeout=timeout) as conn:
+            yield conn
 
 
 async def get_snowflake_id() -> int:
@@ -82,11 +127,49 @@ async def get_snowflake_id() -> int:
             raise RuntimeError("Failed to generate snowflake ID from database")
 
 
+def get_server_pool_stats() -> dict:
+    """
+    Return real-time stats for the server's global connection pool.
+
+    Uses psycopg_pool's get_stats() which returns:
+      pool_min, pool_max, pool_size, pool_available,
+      requests_waiting, requests_made, usage_ms, ...
+
+    Returns an empty dict if the pool has not been initialized yet.
+    """
+    global _pool
+    if _pool is None:
+        return {}
+    try:
+        raw = _pool.get_stats()
+        pool_max = int(raw.get("pool_max") or _DEFAULT_POOL_MAX_SIZE)
+        pool_available = int(raw.get("pool_available") or 0)
+        pool_size = int(raw.get("pool_size") or 0)
+        requests_waiting = int(raw.get("requests_waiting") or 0)
+        utilization = round(
+            (pool_size - pool_available) / pool_max if pool_max > 0 else 0.0, 4
+        )
+        return {
+            "pool_min": int(raw.get("pool_min") or _DEFAULT_POOL_MIN_SIZE),
+            "pool_max": pool_max,
+            "pool_size": pool_size,
+            "pool_available": pool_available,
+            "requests_waiting": requests_waiting,
+            "utilization": utilization,
+            # Derived: how many more connections can be handed out right now
+            "slots_available": max(0, pool_available),
+        }
+    except Exception:
+        return {}
+
+
 async def close_pool():
     """Close and reset the global connection pool."""
     global _pool
-    async with _lock:
+    pool_to_close = None
+    with _pool_lock:
         if _pool is not None:
-            await _pool.close()
+            pool_to_close = _pool
             _pool = None
-
+    if pool_to_close is not None:
+        await pool_to_close.close()

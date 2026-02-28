@@ -14,21 +14,32 @@ import asyncio
 import logging
 import httpx
 import os
+import random
+import time
 from collections import OrderedDict
-from typing import Optional, Any
+from typing import Optional, Any, Literal
 from datetime import datetime, timezone
 
 
 from noetl.core.messaging import NATSCommandSubscriber
+from noetl.worker.adaptive_concurrency import AdaptiveConcurrencyController
 from noetl.core.logging_context import LoggingContext
 from noetl.core.logger import setup_logger
 logger = setup_logger(__name__, include_location=True)
+
+
+def _safe_keys(value: Any, max_items: int = 10) -> list[str]:
+    if isinstance(value, dict):
+        return list(value.keys())[:max_items]
+    if isinstance(value, (list, tuple)):
+        return [str(v) for v in list(value)[:max_items]]
+    return []
 
 # Pre-import tool executors at module level to avoid 5s cold-start delay
 # These were previously imported inside _execute_tool() causing slow first execution
 from noetl.tools import http, postgres, duckdb, python
 from noetl.tools.http import execute_http_task
-from noetl.tools.postgres import execute_postgres_task
+from noetl.tools.postgres import execute_postgres_task, execute_postgres_task_async
 from noetl.tools.duckdb import execute_duckdb_task
 from noetl.tools.snowflake import execute_snowflake_task
 from noetl.tools.gcs import execute_gcs_task
@@ -105,6 +116,15 @@ class _WorkerTemplateCache:
 _template_cache = _WorkerTemplateCache(max_size=500)
 
 
+class ClaimTerminalError(RuntimeError):
+    """Terminal claim error after retries are exhausted or command is invalid."""
+
+    def __init__(self, status_code: int, message: str, retryable: bool):
+        super().__init__(message)
+        self.status_code = status_code
+        self.retryable = retryable
+
+
 class V2Worker:
     """
     V2 Worker that receives command notifications from NATS and executes them.
@@ -134,6 +154,70 @@ class V2Worker:
         self._nats_subscriber: Optional[NATSCommandSubscriber] = None
         self._heartbeat_task: Optional[asyncio.Task] = None
         self._registered = False
+        self._max_inflight_commands = max(1, int(worker_settings.max_inflight_commands))
+        self._max_inflight_db_commands = max(1, int(worker_settings.max_inflight_db_commands))
+        self._throttle_poll_interval = float(worker_settings.throttle_poll_interval)
+        self._postgres_pool_waiting_threshold = max(0, int(worker_settings.postgres_pool_waiting_threshold))
+        self._db_command_semaphore = asyncio.Semaphore(self._max_inflight_db_commands)
+        self._last_db_throttle_log_at = 0.0
+        # Adaptive AIMD concurrency controller: limits simultaneous claim/event
+        # requests from this worker process, backing off when the server pool
+        # is saturated (503) and recovering as it clears.
+        self._concurrency = AdaptiveConcurrencyController(
+            initial_limit=max(1.0, self._max_inflight_commands / 2.0),
+            min_limit=1.0,
+            max_limit=float(self._max_inflight_commands),
+        )
+
+    @staticmethod
+    def _is_db_heavy_tool(tool_kind: Optional[str]) -> bool:
+        return str(tool_kind or "").strip().lower() in {
+            "postgres",
+            "transfer",
+            "snowflake",
+            "snowflake_transfer",
+        }
+
+    def _is_postgres_pool_saturated(self) -> bool:
+        """
+        Check plugin pool pressure.
+
+        Returns True when any pool shows active queueing beyond threshold.
+        """
+        try:
+            from noetl.tools.postgres.pool import get_plugin_pool_stats
+
+            pool_stats = get_plugin_pool_stats()
+        except Exception:
+            return False
+
+        if not pool_stats:
+            return False
+
+        for stats in pool_stats.values():
+            if not isinstance(stats, dict) or "error" in stats:
+                continue
+            waiting = int(stats.get("waiting", 0) or 0)
+            available = int(stats.get("available", 0) or 0)
+            if waiting > self._postgres_pool_waiting_threshold:
+                return True
+            if waiting > 0 and available <= 0:
+                return True
+
+        return False
+
+    async def _wait_for_postgres_capacity(self, step: str, command_id: str) -> None:
+        """Pause db-heavy command execution while plugin pools are saturated."""
+        while self._running and self._is_postgres_pool_saturated():
+            now = time.monotonic()
+            if now - self._last_db_throttle_log_at >= 5.0:
+                logger.info(
+                    "[THROTTLE] Delaying db-heavy command %s (%s): postgres pools saturated",
+                    command_id,
+                    step,
+                )
+                self._last_db_throttle_log_at = now
+            await asyncio.sleep(self._throttle_poll_interval)
     
     async def _register_worker(self, server_url: str) -> bool:
         """Register this worker in the runtime table via API."""
@@ -195,23 +279,32 @@ class V2Worker:
     async def _heartbeat_loop(self, server_url: str):
         """Background task to send heartbeat updates to runtime table."""
         logger.info(f"Worker {self.worker_id} heartbeat loop started (interval: 15s)")
-        
+        _cycles = 0
         while self._running:
             try:
                 await asyncio.sleep(15)  # Heartbeat every 15 seconds
-                
+
                 if not self._running:
                     break
-                
+
+                _cycles += 1
+                # Log a liveness ping every 4 cycles (~60s) to detect silent workers
+                if _cycles % 4 == 0:
+                    logger.info(
+                        "[WORKER] Alive: %s | concurrency=%s",
+                        self.worker_id,
+                        self._concurrency.get_status(),
+                    )
+
                 # Re-register acts as heartbeat (upsert updates heartbeat timestamp)
                 await self._register_worker(server_url)
-                
+
             except asyncio.CancelledError:
                 break
             except Exception as e:
                 logger.warning(f"Heartbeat error: {e}")
                 await asyncio.sleep(5)  # Back off on error
-        
+
         logger.info(f"Worker {self.worker_id} heartbeat loop stopped")
     
     async def start(self):
@@ -224,10 +317,21 @@ class V2Worker:
             nats_url=self.nats_url,
             subject=worker_settings.nats_subject,
             consumer_name=worker_settings.nats_consumer,
-            stream_name=worker_settings.nats_stream
+            stream_name=worker_settings.nats_stream,
+            max_inflight=self._max_inflight_commands,
+            max_ack_pending=worker_settings.nats_max_ack_pending,
+            fetch_timeout=worker_settings.nats_fetch_timeout_seconds,
+            fetch_heartbeat=worker_settings.nats_fetch_heartbeat_seconds,
         )
-        
-        logger.info(f"Worker {self.worker_id} starting (NATS: {self.nats_url})")
+
+        logger.info(
+            "Worker %s starting (NATS: %s, inflight=%s, db_inflight=%s, max_ack_pending=%s)",
+            self.worker_id,
+            self.nats_url,
+            self._max_inflight_commands,
+            self._max_inflight_db_commands,
+            worker_settings.nats_max_ack_pending,
+        )
         
         # Connect to NATS
         await self._nats_subscriber.connect()
@@ -241,14 +345,21 @@ class V2Worker:
             self._heartbeat_task = asyncio.create_task(self._heartbeat_loop(server_url))
         else:
             logger.warning("No server_url configured - worker registration skipped")
-        
+
+        # Start concurrency controller probe (monitors server DB pool proactively)
+        if server_url and self._http_client:
+            await self._concurrency.start(self._http_client, server_url)
+
         # Subscribe to command notifications (this should never return)
         await self._nats_subscriber.subscribe(self._handle_command_notification)
     
     async def cleanup(self):
         """Cleanup resources."""
         self._running = False
-        
+
+        # Stop adaptive concurrency controller probe
+        await self._concurrency.stop()
+
         # Cancel heartbeat task
         if self._heartbeat_task:
             self._heartbeat_task.cancel()
@@ -374,7 +485,7 @@ class V2Worker:
             logger.warning(f"[CANCEL] Could not check cancellation status for {execution_id}: {e}")
             return False
     
-    async def _handle_command_notification(self, notification: dict):
+    async def _handle_command_notification(self, notification: dict) -> Literal["ack", "nak", "term"]:
         """
         Handle command notification from NATS (Event-Driven).
 
@@ -385,8 +496,8 @@ class V2Worker:
         2. If claim succeeds, execute command
         3. If claim fails (409), another worker got it - silently skip
         """
-        import time
         t_total_start = time.perf_counter()
+        db_slot_acquired = False
 
         with LoggingContext(logger, notification=notification, execution_id=notification.get("execution_id")):
             try:
@@ -400,15 +511,29 @@ class V2Worker:
 
                 # Single atomic call: claim + cancel check + fetch command details
                 t_claim_start = time.perf_counter()
-                command = await self._claim_and_fetch_command(server_url, event_id)
+                command, claim_decision = await self._claim_and_fetch_command(server_url, event_id)
                 t_claim_end = time.perf_counter()
                 logger.info(f"[PERF] claim_and_fetch took {(t_claim_end - t_claim_start)*1000:.1f}ms")
 
+                if claim_decision == "retry_later":
+                    logger.info(
+                        "[CLAIM] Deferring command %s (event_id=%s) back to queue for later retry",
+                        command_id,
+                        event_id,
+                    )
+                    return "nak"
+
                 if command is None:
-                    # Already claimed by another worker or cancelled - skip silently
-                    return
+                    # Terminally skipped (already completed/cancelled)
+                    return "ack"
 
                 logger.info(f"[EVENT] Worker {self.worker_id} claimed command {command_id}")
+
+                command_tool = command.get("action")
+                if self._is_db_heavy_tool(command_tool):
+                    await self._db_command_semaphore.acquire()
+                    db_slot_acquired = True
+                    await self._wait_for_postgres_capacity(step=step, command_id=command_id)
 
                 # Execute the command
                 t_command_start = time.perf_counter()
@@ -419,11 +544,37 @@ class V2Worker:
                 # Total time
                 t_total_end = time.perf_counter()
                 logger.info(f"[PERF] TOTAL command handling for {step} took {(t_total_end - t_total_start)*1000:.1f}ms")
+                return "ack"
 
+            except ClaimTerminalError as e:
+                logger.error(
+                    "[CLAIM] Terminal failure for event_id=%s command=%s step=%s status=%s retryable=%s: %s",
+                    notification.get("event_id"),
+                    notification.get("command_id"),
+                    notification.get("step"),
+                    e.status_code,
+                    e.retryable,
+                    e,
+                )
+                # Do not silently drop failed claims - mark command as failed for diagnostics.
+                await self._emit_command_failed(
+                    notification["server_url"],
+                    int(notification["execution_id"]),
+                    notification["command_id"],
+                    notification["step"],
+                    f"claim_failed status={e.status_code} retryable={str(e.retryable).lower()} message={e}",
+                )
+                return "ack"
             except Exception as e:
                 logger.exception(f"Error handling command notification: {e}")
+                return "nak"
+            finally:
+                if db_slot_acquired:
+                    self._db_command_semaphore.release()
     
-    async def _claim_and_fetch_command(self, server_url: str, event_id: int) -> Optional[dict]:
+    async def _claim_and_fetch_command(
+        self, server_url: str, event_id: int
+    ) -> tuple[Optional[dict], Literal["claimed", "skip_ack", "retry_later"]]:
         """
         Atomically claim a command and fetch its details in a single call.
 
@@ -434,39 +585,186 @@ class V2Worker:
         4. Inserts command.claimed event
         5. Returns command details
 
-        Returns command dict if claim successful, None if already claimed/cancelled.
+        Returns:
+            - (command, "claimed") on successful claim
+            - (None, "skip_ack") for terminal no-op outcomes (already completed/cancelled)
+            - (None, "retry_later") for transient overload/claim contention
         """
-        try:
-            response = await self._http_client.post(
-                f"{server_url.rstrip('/')}/api/commands/{event_id}/claim",
-                json={"worker_id": self.worker_id}
-            )
+        max_attempts = 5
+        delay_seconds = 0.25
+        max_delay_seconds = 2.0
+        retryable_statuses = {408, 425, 429, 500, 502, 503, 504}
 
-            if response.status_code == 200:
-                data = response.json()
-                logger.info(f"[CLAIM] Successfully claimed command for event_id={event_id}")
-                return {
-                    "execution_id": data["execution_id"],
-                    "node_id": data["node_id"],
-                    "node_name": data["node_name"],
-                    "action": data["action"],
-                    "context": data["context"],
-                    "meta": data["meta"]
-                }
-            elif response.status_code == 409:
-                # Already claimed or cancelled - expected in multi-worker setup
-                logger.info(f"[CLAIM] Command for event_id={event_id} already claimed or cancelled, skipping")
-                return None
-            elif response.status_code == 404:
-                logger.error(f"[CLAIM] Command not found for event_id={event_id}")
-                return None
-            else:
-                logger.warning(f"[CLAIM] Failed to claim command event_id={event_id}: {response.status_code} - {response.text}")
-                return None
+        def _claim_detail(response: httpx.Response) -> tuple[str, str]:
+            try:
+                payload = response.json()
+            except Exception:
+                return "", response.text.strip().lower()
+            detail = payload.get("detail")
+            if isinstance(detail, dict):
+                code = detail.get("code")
+                message = detail.get("message")
+                return (
+                    str(code).strip().lower() if code else "",
+                    str(message).strip().lower() if message else "",
+                )
+            if isinstance(detail, str):
+                return "", detail.strip().lower()
+            return "", ""
 
-        except Exception as e:
-            logger.error(f"[CLAIM] Error claiming command event_id={event_id}: {e}")
-            return None
+        for attempt in range(1, max_attempts + 1):
+            # Wait for a concurrency slot; respects any global backoff set by
+            # previous 503 responses across all claim calls in this process.
+            await self._concurrency.acquire()
+            _released = False
+            try:
+                response = await self._http_client.post(
+                    f"{server_url.rstrip('/')}/api/commands/{event_id}/claim",
+                    json={"worker_id": self.worker_id},
+                )
+
+                if response.status_code == 200:
+                    await self._concurrency.release_success()
+                    _released = True
+                    data = response.json()
+                    logger.info(f"[CLAIM] Successfully claimed command for event_id={event_id}")
+                    return ({
+                        "execution_id": data["execution_id"],
+                        "node_id": data["node_id"],
+                        "node_name": data["node_name"],
+                        "action": data["action"],
+                        "context": data["context"],
+                        "meta": data["meta"]
+                    }, "claimed")
+                if response.status_code == 409:
+                    # 409 is not a pool overload — release as success (doesn't penalise limit)
+                    await self._concurrency.release_success()
+                    _released = True
+                    code, message = _claim_detail(response)
+                    if code == "active_claim" or "being claimed" in message or "another worker" in message:
+                        retry_after = response.headers.get("Retry-After", "1")
+                        logger.info(
+                            "[CLAIM] Command for event_id=%s is actively claimed; deferring (retry-after=%s, code=%s)",
+                            event_id,
+                            retry_after,
+                            code or "unknown",
+                        )
+                        return None, "retry_later"
+                    if code in {"already_terminal", "execution_cancelled"}:
+                        logger.info(
+                            "[CLAIM] Command for event_id=%s is terminal/cancelled (code=%s), skipping",
+                            event_id,
+                            code,
+                        )
+                        return None, "skip_ack"
+                    # Safety: unknown 409 conflicts are treated as transient to prevent
+                    # ACK-dropping commands that never reached terminal lifecycle.
+                    logger.warning(
+                        "[CLAIM] Ambiguous 409 for event_id=%s (code=%s, message=%s); treating as retry_later",
+                        event_id,
+                        code or "unknown",
+                        message[:160] if message else "",
+                    )
+                    return None, "retry_later"
+                if response.status_code == 404:
+                    await self._concurrency.release_error()
+                    _released = True
+                    raise ClaimTerminalError(
+                        status_code=404,
+                        message=f"Command not found for event_id={event_id}",
+                        retryable=False,
+                    )
+                if response.status_code in retryable_statuses and attempt < max_attempts:
+                    retry_after_header = response.headers.get("Retry-After")
+                    retry_after_seconds = 1.0
+                    if retry_after_header:
+                        try:
+                            retry_after_seconds = max(0.0, float(retry_after_header))
+                        except (TypeError, ValueError):
+                            retry_after_seconds = 1.0
+                    # Notify controller: server pool saturated.
+                    # This applies a global backoff and reduces concurrency limit.
+                    # The next acquire() in the next iteration will wait it out.
+                    await self._concurrency.release_overload(retry_after_seconds)
+                    _released = True
+                    jitter_multiplier = 1.0 + random.uniform(-0.2, 0.2)
+                    computed_delay = min(delay_seconds * jitter_multiplier, max_delay_seconds)
+                    sleep_seconds = min(max(computed_delay, retry_after_seconds), max_delay_seconds)
+                    logger.warning(
+                        "[CLAIM] Transient claim failure for event_id=%s status=%s attempt=%s/%s; retrying in %.2fs %s",
+                        event_id,
+                        response.status_code,
+                        attempt,
+                        max_attempts,
+                        sleep_seconds,
+                        self._concurrency.get_status(),
+                    )
+                    await asyncio.sleep(sleep_seconds)
+                    delay_seconds = min(delay_seconds * 2, max_delay_seconds)
+                    continue
+                if response.status_code in retryable_statuses:
+                    await self._concurrency.release_overload(1.0)
+                    _released = True
+                    logger.warning(
+                        "[CLAIM] Retryable claim status persisted for event_id=%s (status=%s attempts=%s); deferring to queue redelivery",
+                        event_id,
+                        response.status_code,
+                        attempt,
+                    )
+                    return None, "retry_later"
+
+                await self._concurrency.release_error()
+                _released = True
+                logger.warning(
+                    "[CLAIM] Failed to claim command event_id=%s status=%s attempt=%s/%s body=%s",
+                    event_id,
+                    response.status_code,
+                    attempt,
+                    max_attempts,
+                    response.text[:500],
+                )
+                raise ClaimTerminalError(
+                    status_code=response.status_code,
+                    message=f"claim endpoint failed with status={response.status_code}",
+                    retryable=response.status_code in retryable_statuses,
+                )
+
+            except ClaimTerminalError:
+                if not _released:
+                    await self._concurrency.release_error()
+                raise
+            except asyncio.CancelledError:
+                # Task cancelled — release slot before propagating
+                if not _released:
+                    await self._concurrency.release_error()
+                raise
+            except Exception as e:
+                if not _released:
+                    await self._concurrency.release_error()
+                    _released = True
+                if attempt < max_attempts:
+                    jitter_multiplier = 1.0 + random.uniform(-0.2, 0.2)
+                    sleep_seconds = min(delay_seconds * jitter_multiplier, max_delay_seconds)
+                    logger.warning(
+                        "[CLAIM] Error claiming command event_id=%s attempt=%s/%s: %s; retrying in %.2fs",
+                        event_id,
+                        attempt,
+                        max_attempts,
+                        e,
+                        sleep_seconds,
+                    )
+                    await asyncio.sleep(sleep_seconds)
+                    delay_seconds = min(delay_seconds * 2, max_delay_seconds)
+                    continue
+                logger.warning(
+                    "[CLAIM] Network/transport failures persisted for event_id=%s after %s attempts; deferring to queue redelivery: %s",
+                    event_id,
+                    attempt,
+                    e,
+                )
+                return None, "retry_later"
+
+        return None, "retry_later"
 
     async def _claim_command(self, server_url: str, execution_id: int, command_id: str) -> bool:
         """
@@ -770,7 +1068,10 @@ class V2Worker:
                                 else:
                                     retry_config[key] = value
                             
-                            logger.info(f"[CASE-EVAL] Rendered retry config: {retry_config}")
+                            logger.debug(
+                                "[CASE-EVAL] Rendered retry config keys=%s",
+                                _safe_keys(retry_config),
+                            )
                         if 'next' in action:
                             has_next = True
                             next_steps = action['next']
@@ -819,7 +1120,11 @@ class V2Worker:
                         server_vars = await self._fetch_execution_variables(server_url, execution_id)
                         
                         if server_vars:
-                            logger.info(f"[CASE-EVAL] Fetched {len(server_vars)} variables from server: {list(server_vars.keys())}")
+                            logger.debug(
+                                "[CASE-EVAL] Fetched %s variables from server (keys=%s)",
+                                len(server_vars),
+                                _safe_keys(server_vars),
+                            )
                             # Merge into eval_context under 'vars' namespace
                             eval_context['vars'] = server_vars
                             variables_fetched = True
@@ -871,175 +1176,6 @@ class V2Worker:
             error=response.get('error') if isinstance(response, dict) else None
         )
     
-    async def _fetch_execution_variables(
-        self,
-        server_url: str,
-        execution_id: int
-    ) -> dict:
-        """
-        Fetch all execution variables from server API.
-        
-        Returns dict with variable names as keys and their values.
-        Used for case condition evaluation when variables are referenced.
-        """
-        import httpx
-        
-        try:
-            async with httpx.AsyncClient(timeout=10.0) as client:
-                response = await client.get(
-                    f"{server_url}/api/vars/{execution_id}",
-                    headers={"Content-Type": "application/json"}
-                )
-                
-                if response.status_code == 200:
-                    data = response.json()
-                    # Extract just the values from metadata structure
-                    # API returns: {variables: {name: {value, type, source_step, ...}}}
-                    variables = data.get('variables', {})
-                    return {name: meta.get('value') for name, meta in variables.items()}
-                else:
-                    logger.warning(f"[VARS] Failed to fetch variables: {response.status_code}")
-                    return {}
-        except Exception as e:
-            logger.error(f"[VARS] Error fetching variables: {e}")
-            return {}
-    
-    async def _evaluate_case_blocks(
-        self,
-        case_blocks: list,
-        response: dict,
-        render_context: dict,
-        server_url: str,
-        execution_id: int,
-        step: str
-    ) -> dict | None:
-        """
-        Hybrid case evaluation: Worker-side evaluation with both event and data context.
-
-        Evaluates case conditions against:
-        - Event context (event.name, event.type, etc.)
-        - Data context (response.status_code, result.field, error, etc.)
-
-        Returns action to take: {type: 'next'|'retry', details: {...}}
-        If no case matches, returns None.
-        """
-        from jinja2 import Environment
-        
-        if not case_blocks or not isinstance(case_blocks, list):
-            return None
-        
-        logger.info(f"[CASE-EVAL] Evaluating {len(case_blocks)} case blocks with hybrid context")
-        
-        # Create Jinja environment for condition evaluation
-        jinja_env = Environment()
-        
-        # Build hybrid evaluation context with both event and data
-        # Support both event-source (event.name) and data-source (response.status_code) evaluation
-        eval_context = {
-            **render_context,
-            'response': response,
-            'result': response,
-            'this': response,
-            'event': {
-                'name': 'call.done',  # Event name for post-call evaluation
-                'type': 'tool.completed',
-                'step': step
-            },
-            'error': response.get('error') if isinstance(response, dict) else None
-        }
-        
-        # Track if we need to fetch variables from server
-        variables_fetched = False
-        
-        # Check each case block
-        for idx, case in enumerate(case_blocks):
-            if not isinstance(case, dict):
-                continue
-            
-            when_condition = case.get('when')
-            then_block = case.get('then')
-            
-            if not when_condition or not then_block:
-                continue
-            
-            # Evaluate condition with hybrid context (with retry on missing variables)
-            max_retries = 2  # Allow one retry with server variable lookup
-            for attempt in range(max_retries):
-                try:
-                    # Use cached template for performance
-                    template = _template_cache.get_or_compile(when_condition)
-                    condition_result = template.render(eval_context)
-                    
-                    # Parse boolean result (Jinja2 returns string)
-                    # Jinja2's `and` operator returns the actual value, not "True/False"
-                    # e.g., {{ cond1 and some_string }} returns the string if truthy
-                    # So we evaluate truthiness: non-empty strings that aren't falsy values
-                    result_stripped = condition_result.strip()
-                    result_lower = result_stripped.lower()
-                    matches = bool(result_stripped) and result_lower not in ['false', '0', 'no', 'none', '']
-                    
-                    logger.info(f"[CASE-EVAL] Case {idx} condition: {when_condition[:100]}... = {matches}")
-                    
-                    if not matches:
-                        # Condition not met - break retry loop and try next case
-                        break
-                    
-                    # Case matched - extract action
-                    logger.info(f"[CASE-EVAL] Case {idx} matched! Extracting action from then block")
-                    
-                    # Normalize then_block to dict format
-                    then_actions = then_block if isinstance(then_block, dict) else {}
-                    
-                    # Check for routing actions (next, retry)
-                    if 'next' in then_actions:
-                        next_steps = then_actions['next']
-                        if isinstance(next_steps, list) and len(next_steps) > 0:
-                            return {
-                                'type': 'next',
-                                'steps': next_steps,
-                                'case_index': idx
-                            }
-                    
-                    if 'retry' in then_actions:
-                        retry_config = then_actions['retry']
-                        return {
-                            'type': 'retry',
-                            'config': retry_config,
-                            'case_index': idx
-                        }
-                    
-                    # Successfully evaluated - break retry loop
-                    break
-                    
-                except Exception as e:
-                    # Check if error is due to missing variable reference
-                    error_msg = str(e)
-                    if ('undefined' in error_msg.lower() or 'not defined' in error_msg.lower()) and attempt == 0 and not variables_fetched:
-                        # First attempt failed due to missing variable - fetch from server
-                        logger.warning(f"[CASE-EVAL] Missing variable in condition, fetching from server: {error_msg}")
-                        
-                        # Fetch variables from server API
-                        server_vars = await self._fetch_execution_variables(server_url, execution_id)
-                        
-                        if server_vars:
-                            logger.info(f"[CASE-EVAL] Fetched {len(server_vars)} variables from server: {list(server_vars.keys())}")
-                            # Merge into eval_context under 'vars' namespace
-                            eval_context['vars'] = server_vars
-                            variables_fetched = True
-                            # Continue to retry with enriched context
-                            continue
-                        else:
-                            logger.error(f"[CASE-EVAL] Failed to fetch variables from server")
-                            break
-                    else:
-                        # Other error or retry exhausted
-                        logger.error(f"[CASE-EVAL] Error evaluating case {idx} (attempt {attempt + 1}): {e}")
-                        break
-        
-        # No matching case with routing action
-        logger.info(f"[CASE-EVAL] No matching case with routing action found")
-        return None
-    
     async def _execute_command(self, command: dict, server_url: str, command_id: str = None):
         """Execute a command and emit events."""
         execution_id = command["execution_id"]
@@ -1062,7 +1198,7 @@ class V2Worker:
         if spec:
             case_mode = spec.get("case_mode", "exclusive")
             eval_mode = spec.get("eval_mode", "on_entry")
-            logger.info(f"[SPEC] Step '{step}' has spec: case_mode={case_mode}, eval_mode={eval_mode}")
+            logger.debug(f"[SPEC] Step '{step}' spec: case_mode={case_mode}, eval_mode={eval_mode}")
         
         # CRITICAL: Merge tool_config.args with top-level args
         # In V2 DSL, step args are often defined within the tool block
@@ -1072,47 +1208,56 @@ class V2Worker:
             # Merge with top-level args taking precedence
             merged_args = {**tool_config["args"], **args}
             args = merged_args
-            logger.debug(f"Args config: merged_from_tool_config | result={args}")
+            logger.debug("Args config: merged_from_tool_config | keys=%s", _safe_keys(args))
         else:
-            logger.debug(f"Args config: using_top_level | args={args}")
+            logger.debug("Args config: using_top_level | keys=%s", _safe_keys(args))
         
         logger.info(f"[EVENT] Executing {step} (tool={tool_kind}) for execution {execution_id}" + (f" command={command_id}" if command_id else ""))
 
         # Extract catalog_id from meta (where server stores it)
         meta = command.get("meta", {})
         catalog_id = meta.get("catalog_id")
+        loop_event_id = meta.get("loop_event_id")
 
         # Ensure execution_id and catalog_id are in render_context for keychain resolution
         if "execution_id" not in render_context:
             render_context["execution_id"] = execution_id
         if catalog_id and "catalog_id" not in render_context:
             render_context["catalog_id"] = catalog_id
-            logger.info(f"[KEYCHAIN] Added catalog_id={catalog_id} to render_context for step {step}")
+            logger.debug(f"[KEYCHAIN] Added catalog_id to render_context for step {step}")
         
         try:
             import time
 
-            # Emit command.started event (for event-driven tracking)
+            # Batch-emit command.started + step.enter in a single HTTP call.
             t_events_start = time.perf_counter()
+            initial_event_timeout = 5.0
+            initial_events = []
             if command_id:
-                await self._emit_event(
-                    server_url,
-                    execution_id,
-                    step,
-                    "command.started",
-                    {"command_id": command_id, "worker_id": self.worker_id}
-                )
-
-            # Emit step.enter event
-            await self._emit_event(
+                initial_events.append({
+                    "step": step,
+                    "name": "command.started",
+                    "payload": {"command_id": command_id, "worker_id": self.worker_id},
+                    "actionable": False,
+                    "informative": True,
+                })
+            initial_events.append({
+                "step": step,
+                "name": "step.enter",
+                "payload": {"status": "started"},
+                "actionable": False,
+                "informative": True,
+            })
+            await self._emit_batch_events(
                 server_url,
                 execution_id,
-                step,
-                "step.enter",
-                {"status": "started"}
+                initial_events,
+                timeout_seconds=initial_event_timeout,
+                max_retries=2,
+                raise_on_failure=False,
             )
             t_events_end = time.perf_counter()
-            logger.info(f"[PERF] emit_initial_events (command.started + step.enter) took {(t_events_end - t_events_start)*1000:.1f}ms")
+            logger.info(f"[PERF] emit_initial_events (batch) took {(t_events_end - t_events_start)*1000:.1f}ms")
 
             # Execute tool
             t_tool_start = time.perf_counter()
@@ -1158,19 +1303,20 @@ class V2Worker:
 
             # Note: _internal_data will be cleaned up before emitting final events
             
-            # CRITICAL: Log case blocks at INFO level for debugging
-            logger.info(f"[CASE-CHECK] After tool execution for step: {step} | case_blocks present: {case_blocks is not None} | type: {type(case_blocks)}")
-            if case_blocks:
-                logger.info(f"[CASE-CHECK] case_blocks length: {len(case_blocks)} | value: {case_blocks}")
-            
+            logger.debug(
+                "[CASE-CHECK] step=%s case_blocks_present=%s case_blocks_type=%s case_blocks_count=%s",
+                step,
+                case_blocks is not None,
+                type(case_blocks).__name__,
+                len(case_blocks) if isinstance(case_blocks, list) else 0,
+            )
             logger.debug(f"[DEBUG] After tool execution for step: {step}")
-            logger.debug(f"[DEBUG] case_blocks type: {type(case_blocks)}, value: {case_blocks}")
             logger.debug(f"[DEBUG] case_blocks is None: {case_blocks is None}")
             logger.debug(f"[DEBUG] case_blocks bool: {bool(case_blocks)}")
             if case_blocks:
                 logger.debug(f"[DEBUG] case_blocks length: {len(case_blocks)}")
                 for idx, cb in enumerate(case_blocks):
-                    logger.debug(f"[DEBUG] case_block[{idx}]: {cb}")
+                    logger.debug("[DEBUG] case_block[%s] keys=%s", idx, _safe_keys(cb))
 
             logger.debug(f"[DEBUG] context has_case={'case' in context} | case_blocks={case_blocks is not None} | case_count={len(case_blocks) if case_blocks else 0}")
             
@@ -1268,6 +1414,9 @@ class V2Worker:
                     )
                     
                     # Emit appropriate event based on success or error
+                    # IMPORTANT: Use response_for_events for errors too so large failed
+                    # payloads are externalized and do not bloat event storage.
+                    error_event_response = response_for_events if tool_error else error_response
                     if tool_error:
                         await self._emit_event(
                             server_url,
@@ -1276,8 +1425,10 @@ class V2Worker:
                             "call.error",
                             {
                                 "error": tool_error,
-                                "response": error_response,
-                                "case_handled": True
+                                "response": error_event_response,
+                                "case_handled": True,
+                                "command_id": command_id,
+                                "loop_event_id": loop_event_id,
                             },
                             actionable=True,  # Case evaluated - server may route/retry
                             informative=True
@@ -1288,7 +1439,12 @@ class V2Worker:
                             execution_id,
                             step,
                             "call.done",
-                            response,
+                            {
+                                "response": response_for_events,
+                                "case_handled": True,
+                                "command_id": command_id,
+                                "loop_event_id": loop_event_id,
+                            },
                             actionable=True,
                             informative=True
                         )
@@ -1301,7 +1457,8 @@ class V2Worker:
                         {
                             "status": "COMPLETED" if not tool_error else "CASE_HANDLED",
                             "result": eval_response,
-                            "case_action": case_action
+                            "case_action": case_action,
+                            "command_id": command_id,
                         },
                         actionable=True,  # Server should handle routing
                         informative=True
@@ -1331,6 +1488,9 @@ class V2Worker:
             if tool_error:
                 # Tool returned error - treat as failure (no case handled it)
                 logger.error(f"Tool execution failed for {step}: {tool_error}")
+                # Use processed response (externalized when large) to avoid persisting
+                # raw oversized payloads in failure events.
+                error_event_response = response_for_events if error_response is not None else error_response
                 
                 # Emit call.error with error payload - ACTIONABLE for server to handle
                 await self._emit_event(
@@ -1338,7 +1498,7 @@ class V2Worker:
                     execution_id,
                     step,
                     "call.error",
-                    {"error": tool_error, "response": error_response},
+                    {"error": tool_error, "response": error_event_response},
                     actionable=True,  # Server should evaluate case blocks or fail
                     informative=True
                 )
@@ -1352,7 +1512,8 @@ class V2Worker:
                     {
                         "status": "FAILED",  # Uppercase to match database status values
                         "error": tool_error,
-                        "result": error_response
+                        "result": error_event_response,
+                        "command_id": command_id,
                     },
                     actionable=True,  # Server may want to handle failure
                     informative=True
@@ -1369,7 +1530,7 @@ class V2Worker:
                             "command_id": command_id,
                             "worker_id": self.worker_id,
                             "error": tool_error,
-                            "result": error_response
+                            "result": error_event_response
                         },
                         actionable=False,  # Informational
                         informative=True
@@ -1404,38 +1565,48 @@ class V2Worker:
                     execution_id,
                     step,
                     "call.done",
-                    {"response": response_for_events},
+                    {
+                        "response": response_for_events,
+                        "command_id": command_id,
+                        "loop_event_id": loop_event_id,
+                    },
                     actionable=True,  # Server should evaluate next/case routing
                     informative=True
                 )
 
-                # Emit step.exit event with processed result
-                # If result was externalized, this contains _ref + output_select fields
-                await self._emit_event(
-                    server_url,
-                    execution_id,
-                    step,
-                    "step.exit",
-                    {"result": response_for_events, "status": "completed"},
-                    actionable=True,  # Server evaluates routing
-                    informative=True
-                )
-
-                # Emit command.completed event (for event-driven tracking)
+                # Batch step.exit + command.completed in a single HTTP call
+                # (both are informational - call.done already handled routing)
+                terminal_events = [
+                    {
+                        "step": step,
+                        "name": "step.exit",
+                        "payload": {
+                            "result": response_for_events,
+                            "status": "completed",
+                            "command_id": command_id,
+                        },
+                        "actionable": False,
+                        "informative": True,
+                    },
+                ]
                 if command_id:
-                    await self._emit_event(
-                        server_url,
-                        execution_id,
-                        step,
-                        "command.completed",
-                        {
+                    terminal_events.append({
+                        "step": step,
+                        "name": "command.completed",
+                        "payload": {
                             "command_id": command_id,
                             "worker_id": self.worker_id,
-                            "result": response_for_events
+                            "result": response_for_events,
                         },
-                        actionable=False,  # Informational only
-                        informative=True
-                    )
+                        "actionable": False,
+                        "informative": True,
+                    })
+                await self._emit_batch_events(
+                    server_url,
+                    execution_id,
+                    terminal_events,
+                    raise_on_failure=False,
+                )
                 
                 logger.info(f"[EVENT] Completed {step} for execution {execution_id}" + (f" command={command_id}" if command_id else ""))
                 
@@ -1482,7 +1653,8 @@ class V2Worker:
                 {
                     "status": "failed",
                     "error": str(e),
-                    "error_type": type(e).__name__
+                    "error_type": type(e).__name__,
+                    "command_id": command_id,
                 }
             )
             
@@ -1537,7 +1709,12 @@ class V2Worker:
         # This allows plugins to render Jinja2 templates with full state
         context = render_context if render_context else {"args": args, "step": step}
         
-        logger.info(f"WORKER: Initial context keys={list(context.keys())} | execution_id={context.get('execution_id')} | catalog_id={context.get('catalog_id')}")
+        logger.debug(
+            "WORKER: initial context keys=%s execution_id=%s has_catalog_id=%s",
+            _safe_keys(context),
+            context.get("execution_id"),
+            bool(context.get("catalog_id")),
+        )
         
         # Note: catalog_id should come from server in render_context
         # Worker does NOT query noetl database - only executes tool steps
@@ -1553,7 +1730,13 @@ class V2Worker:
         # This scans the config for {{ keychain.* }} references and populates context['keychain']
         catalog_id = context.get('catalog_id')
         execution_id = context.get('execution_id')
-        logger.info(f"[KEYCHAIN-DEBUG] Step {step}: catalog_id={catalog_id}, execution_id={execution_id}, tool_kind={tool_kind}")
+        logger.debug(
+            "[KEYCHAIN] Step=%s has_catalog_id=%s execution_id=%s tool_kind=%s",
+            step,
+            bool(catalog_id),
+            execution_id,
+            tool_kind,
+        )
         if catalog_id:
             # Combine config and args into single dict for scanning
             task_config_combined = {**config, **args}
@@ -1575,7 +1758,7 @@ class V2Worker:
                 refresh_threshold_seconds=refresh_threshold
             )
             k_end = time.perf_counter()
-            logger.info(f"[PERF] populate_keychain_context took {k_end - k_start:.4f}s")
+            logger.debug(f"[PERF] populate_keychain_context took {k_end - k_start:.4f}s")
         
         import time
         t_jinja_start = time.perf_counter()
@@ -1587,7 +1770,7 @@ class V2Worker:
         jinja_env = add_b64encode_filter(jinja_env)  # Add custom filters including tojson
         register_token_functions(jinja_env, context)
         t_jinja_end = time.perf_counter()
-        logger.info(f"[PERF] Jinja2 setup took {t_jinja_end - t_jinja_start:.4f}s")
+        logger.debug(f"[PERF] Jinja2 setup took {t_jinja_end - t_jinja_start:.4f}s")
         
         # Map V2 config format to plugin task_config format
         # Plugins use different field names than V2 DSL
@@ -1692,14 +1875,12 @@ class V2Worker:
                 return result
             
         elif tool_kind == "postgres":
-            # Use plugin's execute_postgres_task (sync function - run in executor)
-            # Pass full tool config as task_with to ensure auth is available
+            # Call async postgres executor directly on the worker's event loop.
+            # This lets the plugin pool reuse connections (same loop_id → same pool key).
+            # The old pattern (run_in_executor + asyncio.run) created a new event loop
+            # per call, causing a fresh pool each time and leaking connections.
             task_with = {**config, **args}  # Merge config (has auth) with args
-            loop = asyncio.get_running_loop()
-            result = await loop.run_in_executor(
-                None, 
-                lambda: execute_postgres_task(task_config, context, jinja_env, task_with)
-            )
+            result = await execute_postgres_task_async(task_config, context, jinja_env, task_with)
             # Check if plugin returned error status
             if isinstance(result, dict) and result.get('status') == 'error':
                 # Keep error response intact (worker needs status field to detect error)
@@ -2002,8 +2183,14 @@ class V2Worker:
         if not url:
             raise ValueError("HTTP tool requires 'url' or 'endpoint' in config")
         
-        # Debug logging
-        logger.info(f"HTTP {method} request to URL: {url} | headers={headers} | params={params}")
+        logger.debug(
+            "HTTP %s request url=%s headers_keys=%s params_keys=%s has_json_body=%s",
+            method,
+            url,
+            _safe_keys(headers),
+            _safe_keys(params),
+            json_body is not None,
+        )
         
         # Make request
         response = await self._http_client.request(
@@ -2243,6 +2430,151 @@ class V2Worker:
             "Example: tool: {kind: python, script: {uri: 'gs://bucket/script.py', source: {type: gcs, auth: credential}}}"
         )
     
+    async def _emit_batch_events(
+        self,
+        server_url: str,
+        execution_id: int,
+        events: list[dict],
+        timeout_seconds: Optional[float] = None,
+        max_retries: Optional[int] = None,
+        raise_on_failure: bool = True,
+    ):
+        """
+        Emit multiple events in a single HTTP call via /api/events/batch.
+
+        Falls back to individual _emit_event calls if the batch endpoint is
+        unavailable (404) or if events list has only one item.
+        """
+        if not events:
+            return True
+
+        # Single event: just use the regular endpoint
+        if len(events) == 1:
+            evt = events[0]
+            return await self._emit_event(
+                server_url,
+                execution_id,
+                evt["step"],
+                evt["name"],
+                evt.get("payload", {}),
+                actionable=evt.get("actionable", False),
+                informative=evt.get("informative", True),
+                timeout_seconds=timeout_seconds,
+                max_retries=max_retries,
+                raise_on_failure=raise_on_failure,
+            )
+
+        if not self._http_client:
+            raise RuntimeError("HTTP client not initialized")
+
+        batch_url = f"{server_url.rstrip('/')}/api/events/batch"
+        batch_data = {
+            "execution_id": str(execution_id),
+            "worker_id": self.worker_id,
+            "events": events,
+        }
+
+        import time
+        from noetl.core.config import get_worker_settings
+        worker_settings = get_worker_settings()
+
+        retry_count = max_retries if max_retries is not None else 3
+        request_timeout = (
+            float(timeout_seconds)
+            if timeout_seconds is not None
+            else float(worker_settings.http_event_timeout)
+        )
+        base_delay = 0.05
+
+        for attempt in range(retry_count):
+            await self._concurrency.acquire()
+            _released = False
+            try:
+                response = await self._http_client.post(
+                    batch_url,
+                    json=batch_data,
+                    timeout=request_timeout,
+                )
+                if response.status_code == 404:
+                    # Batch endpoint not available - fall back to individual calls
+                    await self._concurrency.release_success()
+                    _released = True
+                    logger.debug("[BATCH] /api/events/batch not found, falling back to individual calls")
+                    for evt in events:
+                        await self._emit_event(
+                            server_url,
+                            execution_id,
+                            evt["step"],
+                            evt["name"],
+                            evt.get("payload", {}),
+                            actionable=evt.get("actionable", False),
+                            informative=evt.get("informative", True),
+                            timeout_seconds=timeout_seconds,
+                            max_retries=1,
+                            raise_on_failure=raise_on_failure,
+                        )
+                    return True
+
+                if response.status_code == 503:
+                    retry_after = 1.0
+                    try:
+                        retry_after = max(0.0, float(response.headers.get("Retry-After", "1")))
+                    except (TypeError, ValueError):
+                        pass
+                    await self._concurrency.release_overload(retry_after)
+                    _released = True
+                    if attempt == retry_count - 1:
+                        logger.error(
+                            "[BATCH] 503 pool saturated after %s attempts for execution %s %s",
+                            retry_count, execution_id, self._concurrency.get_status(),
+                        )
+                        if raise_on_failure:
+                            raise RuntimeError("Batch event emission failed: server pool saturated")
+                        return False
+                    logger.warning(
+                        "[BATCH] 503 pool saturated attempt %s/%s; backoff applied %s",
+                        attempt + 1, retry_count, self._concurrency.get_status(),
+                    )
+                    continue  # next acquire() waits out the controller backoff
+
+                response.raise_for_status()
+                await self._concurrency.release_success()
+                _released = True
+                logger.debug(
+                    "[BATCH] Emitted %s events for execution %s in single call",
+                    len(events),
+                    execution_id,
+                )
+                return True
+
+            except asyncio.CancelledError:
+                if not _released:
+                    await self._concurrency.release_error()
+                raise
+            except Exception as e:
+                if not _released:
+                    await self._concurrency.release_error()
+                    _released = True
+                is_last_attempt = attempt == retry_count - 1
+                if is_last_attempt:
+                    logger.error(
+                        "[BATCH] Failed to emit batch events after %s attempts: %s",
+                        retry_count,
+                        e,
+                    )
+                    if raise_on_failure:
+                        raise RuntimeError(f"Batch event emission failed: {e}") from e
+                    return False
+                delay = base_delay * (2 ** attempt)
+                logger.warning(
+                    "[BATCH] Batch event emission failed (attempt %s/%s): %s. Retrying in %sms",
+                    attempt + 1,
+                    retry_count,
+                    e,
+                    delay * 1000,
+                )
+                await asyncio.sleep(delay)
+
     async def _emit_event(
         self,
         server_url: str,
@@ -2253,7 +2585,10 @@ class V2Worker:
         actionable: bool = False,
         informative: bool = True,
         correlation: dict = None,
-        inputs: dict = None
+        inputs: dict = None,
+        timeout_seconds: Optional[float] = None,
+        max_retries: Optional[int] = None,
+        raise_on_failure: bool = True,
     ):
         """
         Emit an event to the server using the v2 API schema with retry logic.
@@ -2301,35 +2636,93 @@ class V2Worker:
         from noetl.core.config import get_worker_settings
         worker_settings = get_worker_settings()
 
-        max_retries = 3
+        retry_count = max_retries if max_retries is not None else 3
+        request_timeout = (
+            float(timeout_seconds)
+            if timeout_seconds is not None
+            else float(worker_settings.http_event_timeout)
+        )
         base_delay = 0.05  # Fast retry: 50ms instead of 500ms
 
-        for attempt in range(max_retries):
+        for attempt in range(retry_count):
+            await self._concurrency.acquire()
+            _released = False
             try:
                 t_http_start = time.perf_counter()
-                logger.info(f"[HTTP] POST {event_url} - Event: {name} for {step} (execution {execution_id}) - Attempt {attempt + 1}/{max_retries}")
+                logger.debug(
+                    "[HTTP] POST %s event=%s step=%s execution=%s attempt=%s/%s",
+                    event_url,
+                    name,
+                    step,
+                    execution_id,
+                    attempt + 1,
+                    retry_count,
+                )
 
                 response = await self._http_client.post(
                     event_url,
                     json=event_data,
-                    timeout=worker_settings.http_event_timeout
+                    timeout=request_timeout,
                 )
+
+                if response.status_code == 503:
+                    retry_after = 1.0
+                    try:
+                        retry_after = max(0.0, float(response.headers.get("Retry-After", "1")))
+                    except (TypeError, ValueError):
+                        pass
+                    await self._concurrency.release_overload(retry_after)
+                    _released = True
+                    if attempt == retry_count - 1:
+                        logger.error(
+                            "[HTTP] Event %s: 503 pool saturated after %s attempts %s",
+                            name, retry_count, self._concurrency.get_status(),
+                        )
+                        if raise_on_failure:
+                            raise RuntimeError(
+                                f"Event emission failed: server pool saturated after {retry_count} retries"
+                            )
+                        return False
+                    logger.warning(
+                        "[HTTP] Event %s: 503 attempt %s/%s; backoff applied %s",
+                        name, attempt + 1, retry_count, self._concurrency.get_status(),
+                    )
+                    continue  # next acquire() waits out the controller backoff
+
                 response.raise_for_status()
+                await self._concurrency.release_success()
+                _released = True
 
                 t_http_end = time.perf_counter()
-                logger.info(f"[PERF] emit_event({name}) HTTP took {(t_http_end - t_http_start)*1000:.1f}ms - Status: {response.status_code}")
-                return  # Success - exit retry loop
+                logger.debug(f"[PERF] emit_event({name}) HTTP took {(t_http_end - t_http_start)*1000:.1f}ms - status={response.status_code}")
+                return True  # Success - exit retry loop
 
+            except asyncio.CancelledError:
+                if not _released:
+                    await self._concurrency.release_error()
+                raise
             except Exception as e:
-                is_last_attempt = (attempt == max_retries - 1)
+                if not _released:
+                    await self._concurrency.release_error()
+                    _released = True
+                is_last_attempt = (attempt == retry_count - 1)
 
                 if is_last_attempt:
                     t_emit_end = time.perf_counter()
-                    logger.error(f"[HTTP] Failed to emit event {name} after {max_retries} attempts ({(t_emit_end - t_emit_start)*1000:.1f}ms total): {e}", exc_info=True)
-                    raise RuntimeError(f"Event emission failed after {max_retries} retries: {e}") from e
+                    logger.error(
+                        f"[HTTP] Failed to emit event {name} after {retry_count} attempts "
+                        f"({(t_emit_end - t_emit_start)*1000:.1f}ms total): {e}",
+                        exc_info=True,
+                    )
+                    if raise_on_failure:
+                        raise RuntimeError(f"Event emission failed after {retry_count} retries: {e}") from e
+                    return False
                 else:
                     delay = base_delay * (2 ** attempt)  # Fast exponential backoff: 50ms, 100ms, 200ms
-                    logger.warning(f"[HTTP] Event {name} emission failed (attempt {attempt + 1}/{max_retries}): {e}. Retrying in {delay*1000:.0f}ms...")
+                    logger.warning(
+                        f"[HTTP] Event {name} emission failed "
+                        f"(attempt {attempt + 1}/{retry_count}): {e}. Retrying in {delay*1000:.0f}ms..."
+                    )
                     await asyncio.sleep(delay)
 
 

@@ -1,22 +1,182 @@
 """
-PostgreSQL SQL execution with direct connections and transaction handling.
+PostgreSQL SQL execution with resilient pooling and bounded direct concurrency.
 
-This module provides the core execution logic for PostgreSQL operations with:
-- Direct connection per execution (no pooling on worker side)
-- Async execution model using psycopg AsyncConnection
-- Transaction management with automatic rollback on error
-- CALL statement special handling (autocommit mode)
-- Result data extraction and formatting
-- Proper connection cleanup
+This module keeps database pressure predictable in distributed runs by:
+- Preferring pooled connections when requested by caller
+- Bounding direct connection concurrency with a process-local semaphore
+- Retrying transient connection saturation failures with backoff
+- Logging SQL metadata (operation/length) instead of raw SQL/payload content
 """
 
-from typing import Dict, List, Optional
+import asyncio
+import os
+import random
+import time as time_module
 from decimal import Decimal
-from datetime import datetime, date, time
+from datetime import date, datetime, time
+from typing import Dict, List
+
 from psycopg import AsyncConnection
+from psycopg.rows import dict_row
+
 from noetl.core.logger import setup_logger
 
 logger = setup_logger(__name__, include_location=True)
+
+
+def _env_int(name: str, default: int) -> int:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    try:
+        return int(raw)
+    except Exception:
+        return default
+
+
+def _env_float(name: str, default: float) -> float:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    try:
+        return float(raw)
+    except Exception:
+        return default
+
+
+def _sql_summary(command: str) -> str:
+    trimmed = (command or "").strip()
+    if not trimmed:
+        return "UNKNOWN len=0"
+    operation = trimmed.split(None, 1)[0].upper()
+    return f"{operation} len={len(trimmed)}"
+
+
+def _is_retryable_connection_error(exc: Exception) -> bool:
+    msg = str(exc).lower()
+    retry_markers = (
+        "remaining connection slots are reserved",
+        "too many clients",
+        "server login has been failing",
+        "connection is lost",
+        "connection refused",
+        "timeout expired",
+        "could not connect",
+    )
+    return any(marker in msg for marker in retry_markers)
+
+
+_DIRECT_CONN_LIMIT = max(1, _env_int("NOETL_POSTGRES_MAX_DIRECT_CONNECTIONS", 4))
+_CONNECT_ATTEMPTS = max(1, _env_int("NOETL_POSTGRES_CONNECT_ATTEMPTS", 3))
+_RETRY_BASE_DELAY_SECONDS = max(
+    0.05, _env_float("NOETL_POSTGRES_CONNECT_RETRY_BASE_SECONDS", 0.2)
+)
+_direct_conn_semaphore = asyncio.Semaphore(_DIRECT_CONN_LIMIT)
+
+
+async def _execute_with_pooled_connection(
+    connection_string: str,
+    commands: List[str],
+    conn_id: str,
+    host: str,
+    port: str,
+    database: str,
+    pool_name: str,
+    pool_params: dict,
+) -> Dict[str, Dict]:
+    from .pool import get_plugin_connection
+
+    for attempt in range(1, _CONNECT_ATTEMPTS + 1):
+        try:
+            async with get_plugin_connection(
+                connection_string, pool_name=pool_name, **pool_params
+            ) as conn:
+                conn_pid = conn.info.backend_pid if conn and conn.info else "unknown"
+                logger.debug("[CONN-%s] Using pooled connection pid=%s", conn_id, conn_pid)
+                return await execute_sql_statements_async(conn, commands)
+        except Exception as exc:
+            should_retry = (
+                attempt < _CONNECT_ATTEMPTS and _is_retryable_connection_error(exc)
+            )
+            if should_retry:
+                delay = _RETRY_BASE_DELAY_SECONDS * attempt + random.uniform(0, 0.15)
+                logger.warning(
+                    "[CONN-%s] Pooled attempt %s/%s failed for %s:%s/%s; retrying in %.2fs (%s)",
+                    conn_id,
+                    attempt,
+                    _CONNECT_ATTEMPTS,
+                    host,
+                    port,
+                    database,
+                    delay,
+                    exc,
+                )
+                await asyncio.sleep(delay)
+                continue
+            logger.exception(
+                "[CONN-%s] Failed pooled SQL execution on %s:%s/%s: %s",
+                conn_id,
+                host,
+                port,
+                database,
+                exc,
+            )
+            raise
+
+    raise RuntimeError("unreachable")
+
+
+async def _execute_with_direct_connection(
+    connection_string: str,
+    commands: List[str],
+    conn_id: str,
+    host: str,
+    port: str,
+    database: str,
+) -> Dict[str, Dict]:
+    for attempt in range(1, _CONNECT_ATTEMPTS + 1):
+        conn = None
+        try:
+            conn = await AsyncConnection.connect(connection_string, row_factory=dict_row)
+            conn_pid = conn.info.backend_pid if conn and conn.info else "unknown"
+            logger.debug("[CONN-%s] Using direct connection pid=%s", conn_id, conn_pid)
+            return await execute_sql_statements_async(conn, commands)
+        except Exception as exc:
+            should_retry = (
+                attempt < _CONNECT_ATTEMPTS and _is_retryable_connection_error(exc)
+            )
+            if should_retry:
+                delay = _RETRY_BASE_DELAY_SECONDS * attempt + random.uniform(0, 0.15)
+                logger.warning(
+                    "[CONN-%s] Direct attempt %s/%s failed for %s:%s/%s; retrying in %.2fs (%s)",
+                    conn_id,
+                    attempt,
+                    _CONNECT_ATTEMPTS,
+                    host,
+                    port,
+                    database,
+                    delay,
+                    exc,
+                )
+                await asyncio.sleep(delay)
+                continue
+            logger.exception(
+                "[CONN-%s] Failed direct SQL execution on %s:%s/%s: %s",
+                conn_id,
+                host,
+                port,
+                database,
+                exc,
+            )
+            raise
+        finally:
+            if conn is not None:
+                try:
+                    await conn.close()
+                except Exception:
+                    pass
+
+    raise RuntimeError("unreachable")
 
 
 async def execute_sql_with_connection(
@@ -27,118 +187,83 @@ async def execute_sql_with_connection(
     database: str = "unknown",
     pool: bool = False,
     pool_name: str = None,
-    pool_params: dict = None
+    pool_params: dict = None,
 ) -> Dict[str, Dict]:
     """
-    Execute SQL statements using connection pool OR direct connection.
-    
-    Args:
-        connection_string: PostgreSQL connection string
-        commands: List of SQL statement strings to execute
-        host: Database host (for logging)
-        port: Database port (for logging)
-        database: Database name (for logging)
-        pool: If true, use connection pooling; if false, use direct connection (default: false - direct connection)
-        pool_name: Name for the pool (for sharing or scoping). If None, derived from database name
-        pool_params: Dict of pool configuration parameters (timeout, min_size, max_size, max_waiting, max_lifetime, max_idle)
-        
-    Returns:
-        Dictionary mapping command indices to result dictionaries
-        
-    Raises:
-        Exception: If connection or execution fails
+    Execute SQL statements using pooled or direct connections.
     """
-    from .pool import get_plugin_connection
-    from psycopg import AsyncConnection
-    import time
-    
-    conn_id = f"{host}:{port}/{database}-{int(time.time() * 1000)}"
+    conn_id = f"{host}:{port}/{database}-{int(time_module.time() * 1000)}"
     pool_params = pool_params or {}
-    
+
     if pool:
-        # Use connection pool (explicitly requested)
-        pool_timeout = pool_params.get('timeout')
         effective_pool_name = pool_name or f"pg_{database}"
-        logger.debug(f"[CONN-{conn_id}] Getting pooled connection '{effective_pool_name}' (timeout={pool_timeout}s) to {host}:{port}/{database}, executing {len(commands)} SQL commands")
-        
-        try:
-            async with get_plugin_connection(connection_string, pool_name=effective_pool_name, **pool_params) as conn:
-                conn_pid = conn.info.backend_pid if conn and conn.info else 'unknown'
-                logger.debug(f"[CONN-{conn_id}] Using pooled connection PID: {conn_pid}")
-                
-                results = await execute_sql_statements_async(conn, commands)
-                logger.debug(f"[CONN-{conn_id}] SQL execution completed, returning connection to pool")
-                return results
-        except Exception as e:
-            logger.exception(f"[CONN-{conn_id}] Failed to execute SQL on {database}: {e}")
-            raise
-    else:
-        # Use direct connection (for very long-running queries)
-        logger.info(f"[CONN-{conn_id}] Opening direct connection (no pool) to {host}:{port}/{database}, executing {len(commands)} SQL commands")
-        
-        try:
-            from psycopg.rows import dict_row
-            conn = await AsyncConnection.connect(connection_string, row_factory=dict_row)
-            conn_pid = conn.info.backend_pid if conn and conn.info else 'unknown'
-            logger.debug(f"[CONN-{conn_id}] Using direct connection PID: {conn_pid}")
-            
-            try:
-                results = await execute_sql_statements_async(conn, commands)
-                logger.info(f"[CONN-{conn_id}] SQL execution completed, closing direct connection")
-                return results
-            finally:
-                await conn.close()
-                logger.debug(f"[CONN-{conn_id}] Direct connection closed")
-        except Exception as e:
-            logger.exception(f"[CONN-{conn_id}] Failed to execute SQL on {database}: {e}")
-            raise
+        logger.info(
+            "[CONN-%s] pooled mode pool=%s target=%s:%s/%s commands=%s",
+            conn_id,
+            effective_pool_name,
+            host,
+            port,
+            database,
+            len(commands),
+        )
+        return await _execute_with_pooled_connection(
+            connection_string=connection_string,
+            commands=commands,
+            conn_id=conn_id,
+            host=host,
+            port=port,
+            database=database,
+            pool_name=effective_pool_name,
+            pool_params=pool_params,
+        )
+
+    logger.info(
+        "[CONN-%s] direct mode target=%s:%s/%s commands=%s concurrency_limit=%s",
+        conn_id,
+        host,
+        port,
+        database,
+        len(commands),
+        _DIRECT_CONN_LIMIT,
+    )
+    async with _direct_conn_semaphore:
+        return await _execute_with_direct_connection(
+            connection_string=connection_string,
+            commands=commands,
+            conn_id=conn_id,
+            host=host,
+            port=port,
+            database=database,
+        )
 
 
 async def execute_sql_statements_async(
     conn: AsyncConnection,
-    commands: List[str]
+    commands: List[str],
 ) -> Dict[str, Dict]:
     """
     Execute multiple SQL statements asynchronously and collect results.
-    
-    This function handles:
-    - SELECT statements and statements with RETURNING clause
-    - CALL statements (using autocommit mode)
-    - DML statements (INSERT, UPDATE, DELETE)
-    - DDL statements (CREATE, ALTER, DROP)
-    
-    Args:
-        conn: Async PostgreSQL connection object
-        commands: List of SQL statement strings to execute
-        
-    Returns:
-        Dictionary mapping command indices to result dictionaries containing:
-        - status: 'success' or 'error'
-        - rows: List of row dictionaries (for SELECT/RETURNING)
-        - row_count: Number of rows affected
-        - columns: List of column names
-        - message: Status message
     """
-    conn_pid = conn.info.backend_pid if conn and conn.info else 'unknown'
-    logger.debug(f"[PID-{conn_pid}] Executing {len(commands)} statements on connection")
+    conn_pid = conn.info.backend_pid if conn and conn.info else "unknown"
+    logger.debug("[PID-%s] Executing %s SQL statements", conn_pid, len(commands))
     results = {}
-    
+
     for i, cmd in enumerate(commands):
-        logger.info(f"[PID-{conn_pid}] Executing Postgres command {i+1}/{len(commands)}: {cmd[:100]}{'...' if len(cmd) > 100 else ''}")
+        cmd_summary = _sql_summary(cmd)
+        logger.debug(
+            "[PID-%s] SQL command %s/%s %s", conn_pid, i + 1, len(commands), cmd_summary
+        )
         normalized = cmd.strip().upper()
-        is_select = normalized.startswith("SELECT")
         is_call = normalized.startswith("CALL")
         is_autocommit_ddl = (
             normalized.startswith("CREATE DATABASE")
             or normalized.startswith("DROP DATABASE")
             or normalized.startswith("ALTER DATABASE")
         )
-        returns_data = is_select or "RETURNING" in cmd.upper()
         original_autocommit = conn.autocommit
-        
+
         try:
             if is_call or is_autocommit_ddl:
-                # CALL and database-level DDL require autocommit mode
                 await conn.set_autocommit(True)
                 async with conn.cursor() as cursor:
                     await cursor.execute(cmd)
@@ -147,20 +272,18 @@ async def execute_sql_statements_async(
                     if has_results:
                         result_data = await _fetch_result_rows_async(cursor)
                         column_names = [desc[0] for desc in cursor.description]
-                        
                         results[f"command_{i}"] = {
                             "status": "success",
                             "rows": result_data,
                             "row_count": len(result_data),
-                            "columns": column_names
+                            "columns": column_names,
                         }
                     else:
                         results[f"command_{i}"] = {
                             "status": "success",
-                            "message": "Procedure executed successfully."
+                            "message": "Procedure executed successfully.",
                         }
             else:
-                # Regular statements use transaction
                 async with conn.transaction():
                     async with conn.cursor() as cursor:
                         await cursor.execute(cmd)
@@ -169,29 +292,41 @@ async def execute_sql_statements_async(
                         if has_results:
                             result_data = await _fetch_result_rows_async(cursor)
                             column_names = [desc[0] for desc in cursor.description]
-                            
                             results[f"command_{i}"] = {
                                 "status": "success",
                                 "rows": result_data,
                                 "row_count": len(result_data),
-                                "columns": column_names
+                                "columns": column_names,
                             }
                         else:
                             results[f"command_{i}"] = {
                                 "status": "success",
                                 "row_count": cursor.rowcount,
-                                "message": f"Command executed. {cursor.rowcount} rows affected."
+                                "message": f"Command executed. {cursor.rowcount} rows affected.",
                             }
-
         except Exception as cmd_error:
-            logger.error(f"Error executing Postgres command {i}: {cmd_error}")
+            logger.error(
+                "[PID-%s] SQL command %s failed (%s): %s",
+                conn_pid,
+                i,
+                cmd_summary,
+                cmd_error,
+            )
             results[f"command_{i}"] = {
                 "status": "error",
-                "message": str(cmd_error)
+                "message": str(cmd_error),
             }
-            # Continue to next command - don't break
         finally:
-            await conn.set_autocommit(original_autocommit)
+            try:
+                if conn.autocommit != original_autocommit:
+                    await conn.set_autocommit(original_autocommit)
+            except Exception as restore_error:
+                logger.debug(
+                    "[PID-%s] Failed to restore autocommit for command %s: %s",
+                    conn_pid,
+                    i,
+                    restore_error,
+                )
 
     return results
 
@@ -199,86 +334,25 @@ async def execute_sql_statements_async(
 async def _fetch_result_rows_async(cursor) -> List[Dict]:
     """
     Fetch and format result rows from async cursor.
-    
-    Handles special data types:
-    - Decimal -> float
-    - datetime/date/time -> ISO format string
-    - JSON strings -> preserve as-is
-    - Other types -> preserve as-is
-    
-    Args:
-        cursor: Async PostgreSQL cursor object with executed query
-        
-    Returns:
-        List of row dictionaries with column name keys
     """
     rows = await cursor.fetchall()
-    logger.debug(f"Fetched {len(rows)} rows")
+    logger.debug("Fetched %s rows from cursor", len(rows))
     result_data = []
-    
-    # Rows are already dicts due to row_factory=dict_row in connection config
+
     for row in rows:
-        logger.debug(f"Processing row type: {type(row)}, row: {row}")
         row_dict = {}
         for col_name, value in row.items():
-            # Handle JSON/dict types
-            if isinstance(value, dict) or (isinstance(value, str) and (
-                    value.startswith('{') or value.startswith('['))):
+            if isinstance(value, dict) or (
+                isinstance(value, str) and (value.startswith("{") or value.startswith("["))
+            ):
                 row_dict[col_name] = value
-            # Convert Decimal to float for JSON serialization
             elif isinstance(value, Decimal):
                 row_dict[col_name] = float(value)
-            # Convert datetime objects to ISO format strings for JSON serialization
             elif isinstance(value, (datetime, date, time)):
                 row_dict[col_name] = value.isoformat()
             else:
                 row_dict[col_name] = value
-        
+
         result_data.append(row_dict)
-    
-    return result_data
 
-
-async def _fetch_result_rows_async(cursor) -> List[Dict]:
-    """
-    Fetch and format result rows from async cursor.
-    
-    Handles special data types:
-    - Decimal -> float
-    - datetime/date/time -> ISO format string
-    - JSON strings -> preserve as-is
-    - Other types -> preserve as-is
-    
-    Args:
-        cursor: Async PostgreSQL cursor object with executed query
-        
-    Returns:
-        List of row dictionaries with column name keys
-    """
-
-    
-    rows = await cursor.fetchall()
-    logger.debug(f"Fetched {len(rows)} rows")
-    result_data = []
-    
-    # Rows are already dicts due to row_factory=dict_row in pool config
-    for row in rows:
-        logger.debug(f"Processing row type: {type(row)}, row: {row}")
-        row_dict = {}
-        for col_name, value in row.items():
-            # Handle JSON/dict types
-            if isinstance(value, dict) or (isinstance(value, str) and (
-                    value.startswith('{') or value.startswith('['))):
-                row_dict[col_name] = value
-            # Convert Decimal to float for JSON serialization
-            elif isinstance(value, Decimal):
-                row_dict[col_name] = float(value)
-            # Convert datetime objects to ISO format strings for JSON serialization
-            elif isinstance(value, (datetime, date, time)):
-                row_dict[col_name] = value.isoformat()
-            else:
-                row_dict[col_name] = value
-        
-        result_data.append(row_dict)
-    
     return result_data

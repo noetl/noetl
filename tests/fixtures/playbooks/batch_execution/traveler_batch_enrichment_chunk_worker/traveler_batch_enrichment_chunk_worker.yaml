@@ -135,7 +135,10 @@ workflow:
             traveler_name = str(traveler_name_raw or "").strip()
             normalized_name = traveler_name.upper()
 
-            status_code = int(entry.get("status_code", entry.get("status", 0)) or 0)
+            try:
+                status_code = int(entry.get("status_code", entry.get("status", 0)) or 0)
+            except (TypeError, ValueError):
+                status_code = 0
             echoed_id = str(args.get("traveler_id", ""))
 
             validation_error = ""
@@ -188,7 +191,7 @@ workflow:
       query: |
         WITH normalized AS (
           SELECT *
-          FROM jsonb_to_recordset('{{ transform_http_results.transformed_rows | tojson | replace("'", "''") }}'::jsonb)
+          FROM jsonb_to_recordset($${{ transform_http_results.transformed_rows | tojson }}$$::jsonb)
             AS item(
               traveler_id INTEGER,
               traveler_name TEXT,

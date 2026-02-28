@@ -105,6 +105,8 @@ pub struct AuthPlaybooksConfig {
     pub login: String,
     /// Session validation playbook path (default: "api_integration/auth0/auth0_validate_session")
     pub validate_session: String,
+    /// Database credential for direct session lookup fallback (default: "pg_auth")
+    pub session_db_credential: String,
     /// Access check playbook path (default: "api_integration/auth0/check_playbook_access")
     pub check_access: String,
     /// Playbook execution timeout in seconds (default: 60)
@@ -190,6 +192,7 @@ impl Default for AuthPlaybooksConfig {
         Self {
             login: "api_integration/auth0/auth0_login".to_string(),
             validate_session: "api_integration/auth0/auth0_validate_session".to_string(),
+            session_db_credential: "pg_auth".to_string(),
             check_access: "api_integration/auth0/check_playbook_access".to_string(),
             timeout_secs: 60,
         }
@@ -331,6 +334,9 @@ impl GatewayConfig {
         if let Ok(val) = std::env::var("AUTH_PLAYBOOK_VALIDATE_SESSION") {
             self.auth_playbooks.validate_session = val;
         }
+        if let Ok(val) = std::env::var("AUTH_SESSION_DB_CREDENTIAL") {
+            self.auth_playbooks.session_db_credential = val;
+        }
         if let Ok(val) = std::env::var("AUTH_PLAYBOOK_CHECK_ACCESS") {
             self.auth_playbooks.check_access = val;
         }
@@ -377,6 +383,9 @@ login = "custom/login"
         assert_eq!(config.noetl.base_url, "http://noetl:8082");
         assert_eq!(config.auth_playbooks.login, "custom/login");
         // Defaults should still be applied for missing fields
-        assert_eq!(config.auth_playbooks.validate_session, "api_integration/auth0/auth0_validate_session");
+        assert_eq!(
+            config.auth_playbooks.validate_session,
+            "api_integration/auth0/auth0_validate_session"
+        );
     }
 }

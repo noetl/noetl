@@ -8,710 +8,555 @@ executor:
   profile: local
   version: noetl-runtime/1
 workload:
-  registry: "local"
-  image_name: "noetl"
+  registry: local
+  image_name: noetl
   build_rust_cli: false
   deploy_gateway: true
-  kind_config: "ci/kind/config.yaml"
+  kind_config: ci/kind/config.yaml
 workflow:
-  - step: start
-    desc: Begin bootstrap process
-    tool:
-      kind: shell
-      cmds:
-        - echo "Starting NoETL environment bootstrap..."
-    next:
-      spec:
-        mode: exclusive
-      arcs:
-        - step: validate_prerequisites
-
+- step: start
+  desc: Begin bootstrap process
+  tool:
+    kind: shell
+    cmds:
+    - echo "Starting NoETL environment bootstrap..."
+  next:
   - step: validate_prerequisites
-    desc: Validate required tools are installed
-    tool:
-      kind: shell
-      cmds:
-        - |
-          echo "Validating prerequisites..."
-          echo ""
-
-          MISSING=""
-
-          # Check noetl binary (required)
-          if ! command -v noetl &> /dev/null; then
-            echo "FAIL noetl binary not found"
-            MISSING="$MISSING noetl"
-          else
-            echo "OK noetl binary: $(which noetl)"
-          fi
-
-          # Check Docker (required)
-          if ! command -v docker &> /dev/null; then
-            echo "FAIL docker not found"
-            MISSING="$MISSING docker"
-          else
-            echo "OK docker: $(docker --version)"
-          fi
-
-          # Check kind (required)
-          if ! command -v kind &> /dev/null; then
-            echo "FAIL kind not found"
-            MISSING="$MISSING kind"
-          else
-            echo "OK kind: $(kind version)"
-          fi
-
-          # Check kubectl (required)
-          if ! command -v kubectl &> /dev/null; then
-            echo "FAIL kubectl not found"
-            MISSING="$MISSING kubectl"
-          else
-            echo "OK kubectl: $(kubectl version --client --short 2>/dev/null || echo 'installed')"
-          fi
-
-          # Check helm (optional but recommended for some deployments)
-          if ! command -v helm &> /dev/null; then
-            echo "WARN helm not found (optional)"
-          else
-            echo "OK helm: $(helm version --short)"
-          fi
-
-          # Check Python (optional but recommended)
-          if ! command -v python3 &> /dev/null; then
-            echo "WARN python3 not found (optional)"
-          else
-            echo "OK python3: $(python3 --version)"
-          fi
-
-          # Check uv (optional for fast Python package management)
-          if ! command -v uv &> /dev/null; then
-            echo "WARN uv not found (optional, provides faster Python package management)"
-          else
-            echo "OK uv: $(uv --version)"
-          fi
-
-          echo ""
-          if [ -n "$MISSING" ]; then
-            echo "FAIL Missing required tools:$MISSING"
-            echo ""
-            echo "Install missing tools using NoETL tooling playbooks:"
-            echo ""
-            echo "  # Auto-detect OS and install all dev tools:"
-            echo "  noetl run automation/development/setup_tooling.yaml --set action=install-devtools"
-            echo ""
-            echo "  # Or use platform-specific playbooks:"
-            echo "  # macOS:"
-            echo "  noetl run automation/development/tooling_macos.yaml --set action=install-devtools"
-            echo ""
-            echo "  # Linux/WSL2:"
-            echo "  noetl run automation/development/tooling_linux.yaml --set action=install-devtools"
-            echo ""
-            echo "  # Manual installation:"
-            echo "  macOS: brew install docker kind kubectl helm"
-            echo "  Linux: See https://noetl.dev/docs/installation"
-            exit 1
-          else
-            echo "OK All required prerequisites installed"
-          fi
-    next:
-      spec:
-        mode: exclusive
-      arcs:
-        - step: check_docker_running
-
+- step: validate_prerequisites
+  desc: Validate required tools are installed
+  tool:
+    kind: shell
+    cmds:
+    - "echo \"Validating prerequisites...\"\necho \"\"\n\nMISSING=\"\"\n\n# Check\
+      \ noetl binary (required)\nif ! command -v noetl &> /dev/null; then\n  echo\
+      \ \"FAIL noetl binary not found\"\n  MISSING=\"$MISSING noetl\"\nelse\n  echo\
+      \ \"OK noetl binary: $(which noetl)\"\nfi\n\n# Check Docker (required)\nif !\
+      \ command -v docker &> /dev/null; then\n  echo \"FAIL docker not found\"\n \
+      \ MISSING=\"$MISSING docker\"\nelse\n  echo \"OK docker: $(docker --version)\"\
+      \nfi\n\n# Check kind (required)\nif ! command -v kind &> /dev/null; then\n \
+      \ echo \"FAIL kind not found\"\n  MISSING=\"$MISSING kind\"\nelse\n  echo \"\
+      OK kind: $(kind version)\"\nfi\n\n# Check kubectl (required)\nif ! command -v\
+      \ kubectl &> /dev/null; then\n  echo \"FAIL kubectl not found\"\n  MISSING=\"\
+      $MISSING kubectl\"\nelse\n  echo \"OK kubectl: $(kubectl version --client --short\
+      \ 2>/dev/null || echo 'installed')\"\nfi\n\n# Check helm (optional but recommended\
+      \ for some deployments)\nif ! command -v helm &> /dev/null; then\n  echo \"\
+      WARN helm not found (optional)\"\nelse\n  echo \"OK helm: $(helm version --short)\"\
+      \nfi\n\n# Check Python (optional but recommended)\nif ! command -v python3 &>\
+      \ /dev/null; then\n  echo \"WARN python3 not found (optional)\"\nelse\n  echo\
+      \ \"OK python3: $(python3 --version)\"\nfi\n\n# Check uv (optional for fast\
+      \ Python package management)\nif ! command -v uv &> /dev/null; then\n  echo\
+      \ \"WARN uv not found (optional, provides faster Python package management)\"\
+      \nelse\n  echo \"OK uv: $(uv --version)\"\nfi\n\necho \"\"\nif [ -n \"$MISSING\"\
+      \ ]; then\n  echo \"FAIL Missing required tools:$MISSING\"\n  echo \"\"\n  echo\
+      \ \"Install missing tools using NoETL tooling playbooks:\"\n  echo \"\"\n  echo\
+      \ \"  # Auto-detect OS and install all dev tools:\"\n  echo \"  noetl run automation/development/setup_tooling.yaml\
+      \ --set action=install-devtools\"\n  echo \"\"\n  echo \"  # Or use platform-specific\
+      \ playbooks:\"\n  echo \"  # macOS:\"\n  echo \"  noetl run automation/development/tooling_macos.yaml\
+      \ --set action=install-devtools\"\n  echo \"\"\n  echo \"  # Linux/WSL2:\"\n\
+      \  echo \"  noetl run automation/development/tooling_linux.yaml --set action=install-devtools\"\
+      \n  echo \"\"\n  echo \"  # Manual installation:\"\n  echo \"  macOS: brew install\
+      \ docker kind kubectl helm\"\n  echo \"  Linux: See https://noetl.dev/docs/installation\"\
+      \n  exit 1\nelse\n  echo \"OK All required prerequisites installed\"\nfi\n"
+  next:
   - step: check_docker_running
-    desc: Verify Docker daemon is running
-    tool:
-      kind: shell
-      cmds:
-        - |
-          echo ""
-          echo "Checking Docker daemon..."
-          if ! docker info &> /dev/null; then
-            echo "FAIL Docker daemon is not running"
-            echo "   Start Docker Desktop or run: sudo systemctl start docker"
-            exit 1
-          else
-            echo "OK Docker daemon is running"
-          fi
-    next:
-      spec:
-        mode: exclusive
-      arcs:
-        - step: check_existing_cluster
-
+- step: check_docker_running
+  desc: Verify Docker daemon is running
+  tool:
+    kind: shell
+    cmds:
+    - "echo \"\"\necho \"Checking Docker daemon...\"\nif ! docker info &> /dev/null;\
+      \ then\n  echo \"FAIL Docker daemon is not running\"\n  echo \"   Start Docker\
+      \ Desktop or run: sudo systemctl start docker\"\n  exit 1\nelse\n  echo \"OK\
+      \ Docker daemon is running\"\nfi\n"
+  next:
   - step: check_existing_cluster
-    desc: Check if kind cluster already exists
-    tool:
-      kind: shell
-      cmds:
-        - |
-          echo ""
-          echo "Checking for existing kind cluster..."
-          if kind get clusters 2>/dev/null | grep -q "^noetl$"; then
-            echo "OK Kind cluster 'noetl' already exists"
-            echo "   To rebuild: noetl run automation/destroy.yaml"
-            echo "   # or: noetl run automation/main.yaml --set target=destroy"
-          else
-            echo "INFO No existing cluster found, will create new one"
-          fi
-    next:
-      spec:
-        mode: exclusive
-      arcs:
-        - step: maybe_build_rust_cli
-
+- step: check_existing_cluster
+  desc: Check if kind cluster already exists
+  tool:
+    kind: shell
+    cmds:
+    - "echo \"\"\necho \"Checking for existing kind cluster...\"\nif kind get clusters\
+      \ 2>/dev/null | grep -q \"^noetl$\"; then\n  echo \"OK Kind cluster 'noetl'\
+      \ already exists\"\n  echo \"   To rebuild: noetl run automation/destroy.yaml\"\
+      \n  echo \"   # or: noetl run automation/main.yaml --set target=destroy\"\n\
+      else\n  echo \"INFO No existing cluster found, will create new one\"\nfi\n"
+  next:
   - step: maybe_build_rust_cli
-    desc: Build Rust CLI if binary not found or force flag set
-    tool:
-      kind: shell
-      cmds:
-        - |
-          echo ""
-          echo "Checking for Rust CLI binary..."
-          FORCE_BUILD="{{ workload.build_rust_cli }}"
-
-          # Note: This checks for existing binary to skip long compilation times.
-          # Version mismatch is possible if source changed but binary wasn't rebuilt.
-          # For guaranteed consistency, use: --set build_rust_cli=true
-
-          if [ "$FORCE_BUILD" = "true" ]; then
-            echo "INFO Force build requested via build_rust_cli=true"
-            echo "Building Rust CLI (this may take a while)..."
-            cargo build --release --manifest-path crates/noetlctl/Cargo.toml
-            if [ -f "target/release/noetl" ]; then
-              echo "OK noetl CLI built successfully"
-              ls -la target/release/noetl
-            else
-              echo "ERROR noetl CLI build failed"
-              exit 1
-            fi
-          elif [ -f "target/release/noetl" ]; then
-            echo "OK noetl binary found at target/release/noetl"
-            echo "   To force rebuild: noetl run boot --set build_rust_cli=true"
-            ls -la target/release/noetl
-          else
-            echo "INFO noetl binary not found at target/release/noetl"
-            echo "Building Rust CLI (this may take a while)..."
-            cargo build --release --manifest-path crates/noetlctl/Cargo.toml
-            if [ -f "target/release/noetl" ]; then
-              echo "OK noetl CLI built successfully"
-              ls -la target/release/noetl
-            else
-              echo "ERROR noetl CLI build failed"
-              exit 1
-            fi
-          fi
-    next:
-      spec:
-        mode: exclusive
-      arcs:
-        - step: build_docker_images
-
+- step: maybe_build_rust_cli
+  desc: Build Rust CLI if binary not found or force flag set
+  tool:
+    kind: shell
+    cmds:
+    - "echo \"\"\necho \"Checking for Rust CLI binary...\"\nFORCE_BUILD=\"{{ workload.build_rust_cli\
+      \ }}\"\n\n# Note: This checks for existing binary to skip long compilation times.\n\
+      # Version mismatch is possible if source changed but binary wasn't rebuilt.\n\
+      # For guaranteed consistency, use: --set build_rust_cli=true\n\nif [ \"$FORCE_BUILD\"\
+      \ = \"true\" ]; then\n  echo \"INFO Force build requested via build_rust_cli=true\"\
+      \n  echo \"Building Rust CLI (this may take a while)...\"\n  cargo build --release\
+      \ --manifest-path crates/noetlctl/Cargo.toml\n  if [ -f \"target/release/noetl\"\
+      \ ]; then\n    echo \"OK noetl CLI built successfully\"\n    ls -la target/release/noetl\n\
+      \  else\n    echo \"ERROR noetl CLI build failed\"\n    exit 1\n  fi\nelif [\
+      \ -f \"target/release/noetl\" ]; then\n  echo \"OK noetl binary found at target/release/noetl\"\
+      \n  echo \"   To force rebuild: noetl run boot --set build_rust_cli=true\"\n\
+      \  ls -la target/release/noetl\nelse\n  echo \"INFO noetl binary not found at\
+      \ target/release/noetl\"\n  echo \"Building Rust CLI (this may take a while)...\"\
+      \n  cargo build --release --manifest-path crates/noetlctl/Cargo.toml\n  if [\
+      \ -f \"target/release/noetl\" ]; then\n    echo \"OK noetl CLI built successfully\"\
+      \n    ls -la target/release/noetl\n  else\n    echo \"ERROR noetl CLI build\
+      \ failed\"\n    exit 1\n  fi\nfi\n"
+  next:
   - step: build_docker_images
-    desc: Build NoETL Docker images
-    tool:
-      kind: shell
-      cmds:
-        - |
-          echo ""
-          echo "Building Docker images..."
-          
-          # Detect platform architecture
-          ARCH=$(uname -m)
-          if [ "$ARCH" = "arm64" ] || [ "$ARCH" = "aarch64" ]; then
-            PLATFORM="linux/arm64"
-            echo "Detected ARM64 architecture, building for: $PLATFORM"
-          else
-            PLATFORM="linux/amd64"
-            echo "Detected AMD64 architecture, building for: $PLATFORM"
-          fi
-          
-          # Generate timestamp tag like task does
-          IMAGE_TAG=$(date +%Y-%m-%d-%H-%M)
-          echo "$IMAGE_TAG" > .noetl_last_build_tag.txt
-          echo "Building with tag: $IMAGE_TAG"
-          
-          docker buildx build --load --platform $PLATFORM \
-            -t {{ workload.registry }}/{{ workload.image_name }}:$IMAGE_TAG \
-            -f docker/noetl/dev/Dockerfile .
-    next:
-      spec:
-        mode: exclusive
-      arcs:
-        - step: check_port_conflicts
-
+- step: build_docker_images
+  desc: Build NoETL Docker images
+  tool:
+    kind: shell
+    cmds:
+    - "echo \"\"\necho \"Building Docker images...\"\n\n# Detect platform architecture\n\
+      ARCH=$(uname -m)\nif [ \"$ARCH\" = \"arm64\" ] || [ \"$ARCH\" = \"aarch64\"\
+      \ ]; then\n  PLATFORM=\"linux/arm64\"\n  echo \"Detected ARM64 architecture,\
+      \ building for: $PLATFORM\"\nelse\n  PLATFORM=\"linux/amd64\"\n  echo \"Detected\
+      \ AMD64 architecture, building for: $PLATFORM\"\nfi\n\n# Generate timestamp\
+      \ tag like task does\nIMAGE_TAG=$(date +%Y-%m-%d-%H-%M)\necho \"$IMAGE_TAG\"\
+      \ > .noetl_last_build_tag.txt\necho \"Building with tag: $IMAGE_TAG\"\n\ndocker\
+      \ buildx build --load --platform $PLATFORM \\\n  -t {{ workload.registry }}/{{\
+      \ workload.image_name }}:$IMAGE_TAG \\\n  -f docker/noetl/dev/Dockerfile .\n"
+  next:
   - step: check_port_conflicts
-    desc: Check for kind port conflicts
-    tool:
-      kind: shell
-      cmds:
-        - |
-          echo ""
-          echo "Checking for kind cluster..."
-
-          # Ports are managed by kind cluster configuration (ci/kind/config.yaml)
-          # Docker may hold ports from previous sessions, but kind will handle remapping
-          if kind get clusters 2>/dev/null | grep -q "^noetl$"; then
-            echo "OK Kind cluster 'noetl' already exists"
-          else
-            echo "INFO Kind cluster will be created with port mappings from {{ workload.kind_config }}"
-          fi
-    next:
-      spec:
-        mode: exclusive
-      arcs:
-        - step: create_kind_cluster
-
+- step: check_port_conflicts
+  desc: Check for kind port conflicts
+  tool:
+    kind: shell
+    cmds:
+    - "echo \"\"\necho \"Checking for kind cluster...\"\n\n# Ports are managed by\
+      \ kind cluster configuration (ci/kind/config.yaml)\n# Docker may hold ports\
+      \ from previous sessions, but kind will handle remapping\nif kind get clusters\
+      \ 2>/dev/null | grep -q \"^noetl$\"; then\n  echo \"OK Kind cluster 'noetl'\
+      \ already exists\"\nelse\n  echo \"INFO Kind cluster will be created with port\
+      \ mappings from {{ workload.kind_config }}\"\nfi\n"
+  next:
   - step: create_kind_cluster
-    desc: Create kind cluster if it doesn't exist
-    tool:
-      kind: shell
-      cmds:
-        - |
-          echo ""
-          echo "Setting up Kubernetes cluster..."
-          if kind get clusters 2>/dev/null | grep -q "^noetl$"; then
-            echo "OK Cluster already exists, skipping creation"
-          else
-            echo "Creating kind cluster..."
-            kind create cluster --config={{ workload.kind_config }}
-          fi
-    next:
-      spec:
-        mode: exclusive
-      arcs:
-        - step: load_image_to_kind
-
+- step: create_kind_cluster
+  desc: Create kind cluster if it doesn't exist
+  tool:
+    kind: shell
+    cmds:
+    - "echo \"\"\necho \"Setting up Kubernetes cluster...\"\nif kind get clusters\
+      \ 2>/dev/null | grep -q \"^noetl$\"; then\n  echo \"OK Cluster already exists,\
+      \ skipping creation\"\nelse\n  echo \"Creating kind cluster...\"\n  kind create\
+      \ cluster --config={{ workload.kind_config }}\nfi\n"
+  next:
   - step: load_image_to_kind
-    desc: Load NoETL Docker image into kind cluster
-    tool:
-      kind: shell
-      cmds:
-        - |
-          echo ""
-          echo "Loading NoETL image into kind cluster..."
-          # Read the tag from the file created during build
-          if [ ! -f .noetl_last_build_tag.txt ]; then
-            echo "ERROR: .noetl_last_build_tag.txt not found. Build must have failed."
-            exit 1
-          fi
-          IMAGE_TAG=$(cat .noetl_last_build_tag.txt)
-          IMAGE="{{ workload.registry }}/{{ workload.image_name }}:$IMAGE_TAG"
-          echo "Loading image: $IMAGE"
-          kind load docker-image "$IMAGE" --name noetl
-    next:
-      spec:
-        mode: exclusive
-      arcs:
-        - step: deploy_postgres
-
+- step: load_image_to_kind
+  desc: Load NoETL Docker image into kind cluster
+  tool:
+    kind: shell
+    cmds:
+    - "echo \"\"\necho \"Loading NoETL image into kind cluster...\"\n# Read the tag\
+      \ from the file created during build\nif [ ! -f .noetl_last_build_tag.txt ];\
+      \ then\n  echo \"ERROR: .noetl_last_build_tag.txt not found. Build must have\
+      \ failed.\"\n  exit 1\nfi\nIMAGE_TAG=$(cat .noetl_last_build_tag.txt)\nIMAGE=\"\
+      {{ workload.registry }}/{{ workload.image_name }}:$IMAGE_TAG\"\necho \"Loading\
+      \ image: $IMAGE\"\nkind load docker-image \"$IMAGE\" --name noetl\n"
+  next:
   - step: deploy_postgres
-    desc: Deploy PostgreSQL to cluster
-    tool:
-      kind: playbook
-      path: ../infrastructure/postgres.yaml
-      args:
-        action: deploy
-    next:
-      spec:
-        mode: exclusive
-      arcs:
-        - step: deploy_nats
-
+- step: deploy_postgres
+  desc: Deploy PostgreSQL to cluster
+  tool:
+    kind: playbook
+    path: ../infrastructure/postgres.yaml
+    args:
+      action: deploy
+  next:
   - step: deploy_nats
-    desc: Deploy NATS JetStream (required dependency)
-    tool:
-      kind: playbook
-      path: ../infrastructure/nats.yaml
-      args:
-        action: deploy
-    next:
-      spec:
-        mode: exclusive
-      arcs:
-        - step: deploy_qdrant
-
+- step: deploy_nats
+  desc: Deploy NATS JetStream (required dependency)
+  tool:
+    kind: playbook
+    path: ../infrastructure/nats.yaml
+    args:
+      action: deploy
+  next:
   - step: deploy_qdrant
-    desc: Deploy Qdrant vector database
-    tool:
-      kind: playbook
-      path: ../infrastructure/qdrant.yaml
-      args:
-        action: deploy
-    next:
-      spec:
-        mode: exclusive
-      arcs:
-        - step: deploy_clickhouse
-
+- step: deploy_qdrant
+  desc: Deploy Qdrant vector database
+  tool:
+    kind: playbook
+    path: ../infrastructure/qdrant.yaml
+    args:
+      action: deploy
+  next:
   - step: deploy_clickhouse
-    desc: Deploy ClickHouse observability stack
-    tool:
-      kind: playbook
-      path: ../infrastructure/clickhouse.yaml
-      args:
-        action: deploy
-    next:
-      spec:
-        mode: exclusive
-      arcs:
-        - step: deploy_monitoring
-
+- step: deploy_clickhouse
+  desc: Deploy ClickHouse observability stack
+  tool:
+    kind: playbook
+    path: ../infrastructure/clickhouse.yaml
+    args:
+      action: deploy
+  next:
   - step: deploy_monitoring
-    desc: Deploy monitoring stack (VictoriaMetrics, Grafana)
-    tool:
-      kind: playbook
-      path: ../infrastructure/monitoring.yaml
-      args:
-        action: deploy
-    next:
-      spec:
-        mode: exclusive
-      arcs:
-        - step: wait_for_dependencies
-
+- step: deploy_monitoring
+  desc: Deploy monitoring stack (VictoriaMetrics, Grafana)
+  tool:
+    kind: playbook
+    path: ../infrastructure/monitoring.yaml
+    args:
+      action: deploy
+  next:
   - step: wait_for_dependencies
-    desc: Wait for dependencies to be ready before deploying NoETL
-    tool:
-      kind: shell
-      cmds:
-        - |
-          echo ""
-          echo "Waiting for dependencies to be ready..."
-          sleep 10
+- step: wait_for_dependencies
+  desc: Wait for dependencies to be ready before deploying NoETL
+  tool:
+    kind: shell
+    cmds:
+    - 'echo ""
 
-          echo "Waiting for PostgreSQL..."
-          kubectl wait --for=condition=ready pod -l app=postgres -n postgres --timeout=90s
+      echo "Waiting for dependencies to be ready..."
 
-          echo "Waiting for NATS (mandatory)..."
-          kubectl wait --for=condition=ready pod -l app=nats -n nats --timeout=120s || echo "ERROR: NATS failed to start - NoETL requires NATS"
+      sleep 10
 
-          echo "Waiting for Qdrant..."
-          kubectl wait --for=condition=ready pod -l app=qdrant -n qdrant --timeout=90s || true
 
-          echo "Dependencies ready. Proceeding..."
-    next:
-      spec:
-        mode: exclusive
-      arcs:
-        - step: provision_auth_schema
+      echo "Waiting for PostgreSQL..."
 
+      kubectl wait --for=condition=ready pod -l app=postgres -n postgres --timeout=90s
+
+
+      echo "Waiting for NATS (mandatory)..."
+
+      kubectl wait --for=condition=ready pod -l app=nats -n nats --timeout=120s ||
+      echo "ERROR: NATS failed to start - NoETL requires NATS"
+
+
+      echo "Waiting for Qdrant..."
+
+      kubectl wait --for=condition=ready pod -l app=qdrant -n qdrant --timeout=90s
+      || true
+
+
+      echo "Dependencies ready. Proceeding..."
+
+      '
+  next:
   - step: provision_auth_schema
-    desc: Provision Gateway auth schema (users, roles, permissions)
-    tool:
-      kind: playbook
-      path: ./provision_auth.yaml
-      args:
-        action: provision
-    next:
-      spec:
-        mode: exclusive
-      arcs:
-        - step: deploy_test_server
-
+- step: provision_auth_schema
+  desc: Provision Gateway auth schema (users, roles, permissions)
+  tool:
+    kind: playbook
+    path: ./provision_auth.yaml
+    args:
+      action: provision
+  next:
   - step: deploy_test_server
-    desc: Deploy pagination test server for integration tests
-    tool:
-      kind: playbook
-      path: ../test/pagination-server.yaml
-      args:
-        action: full
-    next:
-      spec:
-        mode: exclusive
-      arcs:
-        - step: maybe_deploy_gateway
-
+- step: deploy_test_server
+  desc: Deploy pagination test server for integration tests
+  tool:
+    kind: playbook
+    path: ../test/pagination-server.yaml
+    args:
+      action: full
+  next:
   - step: maybe_deploy_gateway
-    desc: Deploy Gateway only when requested
-    tool:
-      kind: shell
-      cmds:
-        - |
-          echo "Deploy Gateway flag: {{ workload.deploy_gateway }}"
-    next:
-      spec:
-        mode: exclusive
-      arcs:
-        - step: build_gateway_image
-          when: "{{ workload.deploy_gateway == true }}"
-        - step: reload_noetl_image
+- step: maybe_deploy_gateway
+  desc: Deploy Gateway only when requested
+  tool:
+    kind: shell
+    cmds:
+    - 'echo "Deploy Gateway flag: {{ workload.deploy_gateway }}"
 
+      '
+  next:
   - step: build_gateway_image
-    desc: Build Gateway Docker image
-    tool:
-      kind: shell
-      cmds:
-        - |
-          echo ""
-          echo "Building Gateway Docker image..."
-          
-          # Detect platform architecture
-          ARCH=$(uname -m)
-          if [ "$ARCH" = "arm64" ] || [ "$ARCH" = "aarch64" ]; then
-            PLATFORM="linux/arm64"
-            echo "Detected ARM64 architecture, building for: $PLATFORM"
-          else
-            PLATFORM="linux/amd64"
-            echo "Detected AMD64 architecture, building for: $PLATFORM"
-          fi
-          
-          docker buildx build --load --platform $PLATFORM \
-            -t noetl-gateway:latest \
-            -f crates/gateway/Dockerfile crates/gateway
-          echo "Gateway image built successfully"
-    next:
-      spec:
-        mode: exclusive
-      arcs:
-        - step: reload_noetl_image
-
+    when: '{{ workload.deploy_gateway == true }}'
   - step: reload_noetl_image
-    desc: Reload NoETL and Gateway images into kind cluster
-    tool:
-      kind: shell
-      cmds:
-        - |
-          echo ""
-          echo "Loading images into kind cluster..."
-          
-          # Read the tag from the file created during build
-          if [ ! -f .noetl_last_build_tag.txt ]; then
-            echo "ERROR: .noetl_last_build_tag.txt not found. Build must have failed."
-            exit 1
-          fi
-          IMAGE_TAG=$(cat .noetl_last_build_tag.txt)
-          NOETL_IMAGE="{{ workload.registry }}/{{ workload.image_name }}:$IMAGE_TAG"
-          
-          echo "Loading NoETL image: $NOETL_IMAGE"
-          kind load docker-image "$NOETL_IMAGE" --name noetl
-          
-          # Load gateway image if it exists
-          if docker image inspect noetl-gateway:latest >/dev/null 2>&1; then
-            echo "Loading Gateway image: noetl-gateway:latest"
-            kind load docker-image noetl-gateway:latest --name noetl
-          else
-            echo "INFO: Gateway image not found, skipping"
-          fi
-          
-          echo "Images loaded into kind cluster"
-    next:
-      spec:
-        mode: exclusive
-      arcs:
-        - step: deploy_gateway
-          when: "{{ workload.deploy_gateway == true }}"
-        - step: create_noetl_secrets
-
+- step: build_gateway_image
+  desc: Build Gateway Docker image
+  tool:
+    kind: shell
+    cmds:
+    - "echo \"\"\necho \"Building Gateway Docker image...\"\n\n# Detect platform architecture\n\
+      ARCH=$(uname -m)\nif [ \"$ARCH\" = \"arm64\" ] || [ \"$ARCH\" = \"aarch64\"\
+      \ ]; then\n  PLATFORM=\"linux/arm64\"\n  echo \"Detected ARM64 architecture,\
+      \ building for: $PLATFORM\"\nelse\n  PLATFORM=\"linux/amd64\"\n  echo \"Detected\
+      \ AMD64 architecture, building for: $PLATFORM\"\nfi\n\ndocker buildx build --load\
+      \ --platform $PLATFORM \\\n  -t noetl-gateway:latest \\\n  -f crates/gateway/Dockerfile\
+      \ crates/gateway\necho \"Gateway image built successfully\"\n"
+  next:
+  - step: reload_noetl_image
+- step: reload_noetl_image
+  desc: Reload NoETL and Gateway images into kind cluster
+  tool:
+    kind: shell
+    cmds:
+    - "echo \"\"\necho \"Loading images into kind cluster...\"\n\n# Read the tag from\
+      \ the file created during build\nif [ ! -f .noetl_last_build_tag.txt ]; then\n\
+      \  echo \"ERROR: .noetl_last_build_tag.txt not found. Build must have failed.\"\
+      \n  exit 1\nfi\nIMAGE_TAG=$(cat .noetl_last_build_tag.txt)\nNOETL_IMAGE=\"{{\
+      \ workload.registry }}/{{ workload.image_name }}:$IMAGE_TAG\"\n\necho \"Loading\
+      \ NoETL image: $NOETL_IMAGE\"\nkind load docker-image \"$NOETL_IMAGE\" --name\
+      \ noetl\n\n# Load gateway image if it exists\nif docker image inspect noetl-gateway:latest\
+      \ >/dev/null 2>&1; then\n  echo \"Loading Gateway image: noetl-gateway:latest\"\
+      \n  kind load docker-image noetl-gateway:latest --name noetl\nelse\n  echo \"\
+      INFO: Gateway image not found, skipping\"\nfi\n\necho \"Images loaded into kind\
+      \ cluster\"\n"
+  next:
   - step: deploy_gateway
-    desc: Deploy NoETL Gateway API and UI
-    tool:
-      kind: shell
-      cmds:
-        - |
-          echo ""
-          echo "Deploying Gateway API and UI to Kubernetes..."
-          kubectl apply -f ci/manifests/gateway/namespace.yaml
-          kubectl apply -f ci/manifests/gateway/deployment.yaml
-          kubectl apply -f ci/manifests/gateway/service.yaml
-          echo "Gateway API deployed at http://localhost:8090"
-          kubectl apply -f ci/manifests/gateway/configmap-ui.yaml
-          kubectl apply -f ci/manifests/gateway/configmap-ui-files.yaml
-          kubectl apply -f ci/manifests/gateway/deployment-ui.yaml
-          kubectl apply -f ci/manifests/gateway/service-ui.yaml
-          echo "Gateway UI deployed at http://localhost:8080"
-    next:
-      spec:
-        mode: exclusive
-      arcs:
-        - step: create_noetl_secrets
-
+    when: '{{ workload.deploy_gateway == true }}'
   - step: create_noetl_secrets
-    desc: Create NoETL namespace and required secrets
-    tool:
-      kind: shell
-      cmds:
-        - |
-          echo ""
-          echo "Creating NoETL namespace and secrets..."
-          # Create namespace first
-          kubectl apply -f ci/manifests/noetl/namespace/
+- step: deploy_gateway
+  desc: Deploy NoETL Gateway API and UI
+  tool:
+    kind: shell
+    cmds:
+    - 'echo ""
 
-          # Create gcs-credentials secret (empty for local development)
-          # This secret is mounted by workers for GCS access but not used in local env
-          if ! kubectl get secret gcs-credentials -n noetl &>/dev/null; then
-            echo "Creating gcs-credentials secret for local development..."
-            kubectl create secret generic gcs-credentials -n noetl \
-              --from-literal=gcs-key.json='{}'
-            echo "OK gcs-credentials secret created"
-          else
-            echo "OK gcs-credentials secret already exists"
-          fi
-    next:
-      spec:
-        mode: exclusive
-      arcs:
-        - step: deploy_noetl
+      echo "Deploying Gateway API and UI to Kubernetes..."
 
+      kubectl apply -f ci/manifests/gateway/namespace.yaml
+
+      kubectl apply -f ci/manifests/gateway/deployment.yaml
+
+      kubectl apply -f ci/manifests/gateway/service.yaml
+
+      echo "Gateway API deployed at http://localhost:8090"
+
+      kubectl apply -f ci/manifests/gateway/configmap-ui.yaml
+
+      kubectl apply -f ci/manifests/gateway/configmap-ui-files.yaml
+
+      kubectl apply -f ci/manifests/gateway/deployment-ui.yaml
+
+      kubectl apply -f ci/manifests/gateway/service-ui.yaml
+
+      echo "Gateway UI deployed at http://localhost:8080"
+
+      '
+  next:
+  - step: create_noetl_secrets
+- step: create_noetl_secrets
+  desc: Create NoETL namespace and required secrets
+  tool:
+    kind: shell
+    cmds:
+    - "echo \"\"\necho \"Creating NoETL namespace and secrets...\"\n# Create namespace\
+      \ first\nkubectl apply -f ci/manifests/noetl/namespace/\n\n# Create gcs-credentials\
+      \ secret (empty for local development)\n# This secret is mounted by workers\
+      \ for GCS access but not used in local env\nif ! kubectl get secret gcs-credentials\
+      \ -n noetl &>/dev/null; then\n  echo \"Creating gcs-credentials secret for local\
+      \ development...\"\n  kubectl create secret generic gcs-credentials -n noetl\
+      \ \\\n    --from-literal=gcs-key.json='{}'\n  echo \"OK gcs-credentials secret\
+      \ created\"\nelse\n  echo \"OK gcs-credentials secret already exists\"\nfi\n"
+  next:
   - step: deploy_noetl
-    desc: Deploy NoETL server and workers
-    tool:
-      kind: shell
-      cmds:
-        - |
-          echo ""
-          echo "Deploying NoETL..."
-
-          # Read the tag from the file created during build
-          if [ ! -f .noetl_last_build_tag.txt ]; then
-            echo "ERROR: .noetl_last_build_tag.txt not found. Build must have failed."
-            exit 1
-          fi
-          IMAGE_TAG=$(cat .noetl_last_build_tag.txt)
-          IMAGE="{{ workload.registry }}/{{ workload.image_name }}:$IMAGE_TAG"
-          echo "Using image: $IMAGE"
-
-          # Apply namespace and non-deployment manifests first
-          kubectl apply -f ci/manifests/noetl/namespace/
-          kubectl apply -f ci/manifests/noetl/secret.yaml
-          kubectl apply -f ci/manifests/noetl/configmap-server.yaml
-          kubectl apply -f ci/manifests/noetl/configmap-worker.yaml
-          kubectl apply -f ci/manifests/noetl/service.yaml
-          kubectl apply -f ci/manifests/noetl/service-external.yaml
-          kubectl apply -f ci/manifests/noetl/rbac.yaml
-          kubectl apply -f ci/manifests/noetl/persistent-volume.yaml
-          kubectl apply -f ci/manifests/noetl/pvc-noetl-data.yaml
-
-          # Apply deployments with image substitution
-          sed "s|image_name:image_tag|$IMAGE|g" ci/manifests/noetl/server-deployment.yaml | kubectl apply -f -
-          sed "s|image_name:image_tag|$IMAGE|g" ci/manifests/noetl/worker-deployment.yaml | kubectl apply -f -
-          
-          echo "NoETL deployed with image: $IMAGE"
-    next:
-      spec:
-        mode: exclusive
-      arcs:
-        - step: wait_for_services
-
+- step: deploy_noetl
+  desc: Deploy NoETL server and workers
+  tool:
+    kind: shell
+    cmds:
+    - "echo \"\"\necho \"Deploying NoETL...\"\n\n# Read the tag from the file created\
+      \ during build\nif [ ! -f .noetl_last_build_tag.txt ]; then\n  echo \"ERROR:\
+      \ .noetl_last_build_tag.txt not found. Build must have failed.\"\n  exit 1\n\
+      fi\nIMAGE_TAG=$(cat .noetl_last_build_tag.txt)\nIMAGE=\"{{ workload.registry\
+      \ }}/{{ workload.image_name }}:$IMAGE_TAG\"\necho \"Using image: $IMAGE\"\n\n\
+      # Apply namespace and non-deployment manifests first\nkubectl apply -f ci/manifests/noetl/namespace/\n\
+      kubectl apply -f ci/manifests/noetl/secret.yaml\nkubectl apply -f ci/manifests/noetl/configmap-server.yaml\n\
+      kubectl apply -f ci/manifests/noetl/configmap-worker.yaml\nkubectl apply -f\
+      \ ci/manifests/noetl/service.yaml\nkubectl apply -f ci/manifests/noetl/service-external.yaml\n\
+      kubectl apply -f ci/manifests/noetl/rbac.yaml\nkubectl apply -f ci/manifests/noetl/persistent-volume.yaml\n\
+      kubectl apply -f ci/manifests/noetl/pvc-noetl-data.yaml\n\n# Apply deployments\
+      \ with image substitution\nsed \"s|image_name:image_tag|$IMAGE|g\" ci/manifests/noetl/server-deployment.yaml\
+      \ | kubectl apply -f -\nsed \"s|image_name:image_tag|$IMAGE|g\" ci/manifests/noetl/worker-deployment.yaml\
+      \ | kubectl apply -f -\n\necho \"NoETL deployed with image: $IMAGE\"\n"
+  next:
   - step: wait_for_services
-    desc: Wait for NoETL and optional services
-    tool:
-      kind: shell
-      cmds:
-        - |
-          echo ""
-          echo "Waiting for NoETL services to be ready..."
-          sleep 10
+- step: wait_for_services
+  desc: Wait for NoETL and optional services
+  tool:
+    kind: shell
+    cmds:
+    - 'echo ""
 
-          echo "Waiting for NoETL server..."
-          kubectl wait --for=condition=ready pod -l app=noetl-server -n noetl --timeout=90s || echo "Warning: NoETL server not ready"
+      echo "Waiting for NoETL services to be ready..."
 
-          echo "Waiting for NoETL workers..."
-          kubectl wait --for=condition=ready pod -l app=noetl-worker -n noetl --timeout=90s || echo "Warning: NoETL workers not ready"
+      sleep 10
 
-          echo "Waiting for ClickHouse (optional)..."
-          kubectl wait --for=condition=ready pod -l app.kubernetes.io/name=chi-clickhouse-clickhouse -n clickhouse --timeout=120s || echo "Warning: ClickHouse not ready"
 
-          echo "Waiting for VictoriaMetrics operator..."
-          kubectl wait --for=condition=ready pod -l app.kubernetes.io/name=victoria-metrics-operator -n vmoperator --timeout=60s || true
+      echo "Waiting for NoETL server..."
 
-          echo "Waiting for VictoriaMetrics cluster..."
-          kubectl wait --for=condition=ready pod -l app.kubernetes.io/name=vmsingle -n vmstack --timeout=90s || echo "Warning: VictoriaMetrics not ready"
-    next:
-      spec:
-        mode: exclusive
-      arcs:
-        - step: test_cluster_health
+      kubectl wait --for=condition=ready pod -l app=noetl-server -n noetl --timeout=90s
+      || echo "Warning: NoETL server not ready"
 
+
+      echo "Waiting for NoETL workers..."
+
+      kubectl wait --for=condition=ready pod -l app=noetl-worker -n noetl --timeout=90s
+      || echo "Warning: NoETL workers not ready"
+
+
+      echo "Waiting for ClickHouse (optional)..."
+
+      kubectl wait --for=condition=ready pod -l app.kubernetes.io/name=chi-clickhouse-clickhouse
+      -n clickhouse --timeout=120s || echo "Warning: ClickHouse not ready"
+
+
+      echo "Waiting for VictoriaMetrics operator..."
+
+      kubectl wait --for=condition=ready pod -l app.kubernetes.io/name=victoria-metrics-operator
+      -n vmoperator --timeout=60s || true
+
+
+      echo "Waiting for VictoriaMetrics cluster..."
+
+      kubectl wait --for=condition=ready pod -l app.kubernetes.io/name=vmsingle -n
+      vmstack --timeout=90s || echo "Warning: VictoriaMetrics not ready"
+
+      '
+  next:
   - step: test_cluster_health
-    desc: Verify cluster health and connectivity
-    tool:
-      kind: shell
-      cmds:
-        - |
-          echo ""
-          echo "Testing cluster health..."
-          kubectl config use-context kind-noetl
-          echo "=== Checking NoETL server health ==="
-          curl -f http://localhost:8082/api/health || echo "NoETL server not ready"
-          echo "\n=== Checking PostgreSQL connection ==="
-          kubectl exec deployment/postgres -n postgres -- pg_isready -h localhost -p 5432 -U demo
-          echo "\n=== Checking services ==="
-          kubectl get svc -A | grep -E "noetl|postgres"
-    next:
-      spec:
-        mode: exclusive
-      arcs:
-        - step: summary
+- step: test_cluster_health
+  desc: Verify cluster health and connectivity
+  tool:
+    kind: shell
+    cmds:
+    - 'echo ""
 
+      echo "Testing cluster health..."
+
+      kubectl config use-context kind-noetl
+
+      echo "=== Checking NoETL server health ==="
+
+      curl -f http://localhost:8082/api/health || echo "NoETL server not ready"
+
+      echo "\n=== Checking PostgreSQL connection ==="
+
+      kubectl exec deployment/postgres -n postgres -- pg_isready -h localhost -p 5432
+      -U demo
+
+      echo "\n=== Checking services ==="
+
+      kubectl get svc -A | grep -E "noetl|postgres"
+
+      '
+  next:
   - step: summary
-    desc: Show bootstrap summary
-    tool:
-      kind: shell
-      cmds:
-        - |
-          echo ""
-          echo "=========================================="
-          echo "Bootstrap Complete!"
-          echo "=========================================="
-          echo ""
-          echo "Environment Status:"
-          echo "  Kind cluster: noetl"
-          echo "  PostgreSQL: deployed"
-          echo "  Auth Schema: provisioned (users, roles, permissions)"
-          echo "  NoETL server: deployed"
-          echo "  NoETL workers: deployed"
-          echo "  Gateway: deployed (Rust API)"
-          echo "  Observability: deployed (ClickHouse, Qdrant, NATS)"
-          echo "  Monitoring: deployed (VictoriaMetrics, Grafana)"
-          echo "  Test Server: deployed (Pagination API)"
-          echo ""
-          echo "Endpoints:"
-          echo "  NoETL API: http://localhost:8082"
-          echo "  Gateway API: http://localhost:8080"
-          echo "  PostgreSQL: localhost:54321"
-          echo "  Grafana: http://localhost:3000"
-          echo "  VictoriaLogs: http://localhost:9428"
-          echo "  ClickHouse HTTP: http://localhost:30123"
-          echo "  ClickHouse Native: localhost:30900"
-          echo "  Qdrant HTTP: http://localhost:30633"
-          echo "  Qdrant gRPC: localhost:30634"
-          echo "  NATS Client: localhost:30422"
-          echo "  NATS Monitoring: http://localhost:30822"
-          echo "  Test Server: http://localhost:30555"
-          echo ""
-          echo "Next Steps:"
-          echo "  1. Register credentials:"
-          echo "     noetl register credential --directory tests/fixtures/credentials"
-          echo ""
-          echo "  2. Register playbooks:"
-          echo "     noetl register playbook --directory tests/fixtures/playbooks"
-          echo ""
-          echo "  3. Test execution:"
-          echo "     noetl execute catalog/test/hello_world"
-          echo ""
-          echo "  4. First user login (via Auth0 at http://localhost:8080):"
-          echo "     - User will be created in auth.users table"
-          echo "     - Grant admin role to first user:"
-          echo "       kubectl exec -n postgres deploy/postgres -- psql -U demo -d demo_noetl -c \\"
-          echo "         \"INSERT INTO auth.user_roles (user_id, role_id) \\"
-          echo "          SELECT 1, role_id FROM auth.roles WHERE role_name = 'admin';\""
-          echo ""
-          echo "  5. Check status:"
-          echo "     kubectl get pods -n noetl"
-          echo "     noetl run automation/setup/provision_auth.yaml --set action=status"
-          echo ""
-          echo "To destroy:"
-          echo "  noetl run automation/main.yaml destroy"
-          echo ""
-    next:
-      spec:
-        mode: exclusive
-      arcs:
-        - step: end
+- step: summary
+  desc: Show bootstrap summary
+  tool:
+    kind: shell
+    cmds:
+    - 'echo ""
 
+      echo "=========================================="
+
+      echo "Bootstrap Complete!"
+
+      echo "=========================================="
+
+      echo ""
+
+      echo "Environment Status:"
+
+      echo "  Kind cluster: noetl"
+
+      echo "  PostgreSQL: deployed"
+
+      echo "  Auth Schema: provisioned (users, roles, permissions)"
+
+      echo "  NoETL server: deployed"
+
+      echo "  NoETL workers: deployed"
+
+      echo "  Gateway: deployed (Rust API)"
+
+      echo "  Observability: deployed (ClickHouse, Qdrant, NATS)"
+
+      echo "  Monitoring: deployed (VictoriaMetrics, Grafana)"
+
+      echo "  Test Server: deployed (Pagination API)"
+
+      echo ""
+
+      echo "Endpoints:"
+
+      echo "  NoETL API: http://localhost:8082"
+
+      echo "  Gateway API: http://localhost:8080"
+
+      echo "  PostgreSQL: localhost:54321"
+
+      echo "  Grafana: http://localhost:3000"
+
+      echo "  VictoriaLogs: http://localhost:39428"
+
+      echo "  ClickHouse HTTP: http://localhost:30123"
+
+      echo "  ClickHouse Native: localhost:30900"
+
+      echo "  Qdrant HTTP: http://localhost:30633"
+
+      echo "  Qdrant gRPC: localhost:30634"
+
+      echo "  NATS Client: localhost:30422"
+
+      echo "  NATS Monitoring: http://localhost:30822"
+
+      echo "  Test Server: http://localhost:30555"
+
+      echo ""
+
+      echo "Next Steps:"
+
+      echo "  1. Register credentials:"
+
+      echo "     noetl register credential --directory tests/fixtures/credentials"
+
+      echo ""
+
+      echo "  2. Register playbooks:"
+
+      echo "     noetl register playbook --directory tests/fixtures/playbooks"
+
+      echo ""
+
+      echo "  3. Test execution:"
+
+      echo "     noetl execute catalog/test/hello_world"
+
+      echo ""
+
+      echo "  4. First user login (via Auth0 at http://localhost:8080):"
+
+      echo "     - User will be created in auth.users table"
+
+      echo "     - Grant admin role to first user:"
+
+      echo "       kubectl exec -n postgres deploy/postgres -- psql -U demo -d demo_noetl
+      -c \\"
+
+      echo "         \"INSERT INTO auth.user_roles (user_id, role_id) \\"
+
+      echo "          SELECT 1, role_id FROM auth.roles WHERE role_name = ''admin'';\""
+
+      echo ""
+
+      echo "  5. Check status:"
+
+      echo "     kubectl get pods -n noetl"
+
+      echo "     noetl run automation/setup/provision_auth.yaml --set action=status"
+
+      echo ""
+
+      echo "To destroy:"
+
+      echo "  noetl run automation/main.yaml destroy"
+
+      echo ""
+
+      '
+  next:
   - step: end
-    desc: End bootstrap workflow
-    tool:
-      kind: noop
+- step: end
+  desc: End bootstrap workflow
+  tool:
+    kind: noop

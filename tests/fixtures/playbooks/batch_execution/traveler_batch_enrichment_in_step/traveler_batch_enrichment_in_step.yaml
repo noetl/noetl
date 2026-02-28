@@ -7,9 +7,9 @@ metadata:
 
 workload:
   pg_auth: pg_k8s
-  seed_rows: 2000
-  batch_size: 100
-  max_batches: 20
+  seed_rows: 120
+  batch_size: 30
+  max_batches: 4
   profile_api_url: https://httpbin.org/anything/traveler-profile
   batch_worker_path: tests/fixtures/playbooks/batch_execution/traveler_batch_enrichment_chunk_worker
 
@@ -76,15 +76,15 @@ workflow:
         - step: build_batch_plan
 
   - step: build_batch_plan
-    desc: Build exactly 20 batch windows of 100 rows each (configurable)
+    desc: Build configurable batch windows for traveler processing
     tool:
       kind: python
       args:
         batch_size: '{{ batch_size }}'
         max_batches: '{{ max_batches }}'
       code: |
-        size = int(batch_size or 100)
-        total = int(max_batches or 20)
+        size = int(batch_size or 30)
+        total = int(max_batches or 4)
 
         batches = []
         for idx in range(total):
@@ -195,8 +195,8 @@ workflow:
         result = {
             "status": "completed",
             "configured": {
-                "batch_size": int(batch_size or 100),
-                "max_batches": int(max_batches or 20),
+                "batch_size": int(batch_size or 30),
+                "max_batches": int(max_batches or 4),
             },
             "execution": {
                 "batch_worker_iterations": int(loop_stats.get("total", 0) or 0),

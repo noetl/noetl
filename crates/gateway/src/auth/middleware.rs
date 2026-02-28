@@ -5,7 +5,6 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use std::sync::Arc;
-use tokio::time::{timeout, Duration};
 
 use super::types::UserContext;
 use super::AuthState;
@@ -28,11 +27,7 @@ pub async fn auth_middleware(
 
     if session_token.is_none() {
         tracing::warn!("No session token provided");
-        return Err((
-            StatusCode::UNAUTHORIZED,
-            "Missing authentication token",
-        )
-            .into_response());
+        return Err((StatusCode::UNAUTHORIZED, "Missing authentication token").into_response());
     }
 
     let token = session_token.unwrap();
@@ -50,118 +45,26 @@ pub async fn auth_middleware(
         return Ok(next.run(request).await);
     }
 
-    // Check session cache first for fast validation
-    if let Some(cached) = state.session_cache.get(token).await {
-        tracing::debug!("Middleware: session cache HIT for user={}", cached.email);
-        let user_context = UserContext {
-            user_id: cached.user_id,
-            email: cached.email,
-            display_name: cached.display_name,
-            session_token: token.to_string(),
-        };
-        request.extensions_mut().insert(user_context);
-        return Ok(next.run(request).await);
-    }
-
-    // Cache miss - validate via playbook
-    tracing::debug!("Middleware: session cache MISS, calling playbook");
-
-    // Register callback to receive result
-    let (request_id, callback_subject, rx) = state.callbacks.register().await;
-
-    // Validate session via NoETL playbook with callback info
-    // The gateway tool abstracts NATS - playbooks just see callback_subject
-    let variables = serde_json::json!({
-        "session_token": token,
-        "callback_subject": callback_subject,
-        "request_id": request_id.clone(),
-    });
-
-    let result = state.noetl
-        .execute_playbook("api_integration/auth0/auth0_validate_session", variables)
+    let session = super::resolve_session_cache_or_db(state.as_ref(), token)
         .await
         .map_err(|e| {
-            let callbacks = state.callbacks.clone();
-            let req_id = request_id.clone();
-            tokio::spawn(async move { callbacks.cancel(&req_id).await });
-            tracing::error!("Session validation failed: {}", e);
-            (StatusCode::INTERNAL_SERVER_ERROR, "Session validation failed").into_response()
+            tracing::error!("Session validation failed: {:?}", e);
+            e.into_response()
         })?;
 
-    tracing::debug!("Middleware validation execution_id: {}, request_id: {}", result.execution_id, request_id);
-
-    // Wait for callback with 30 second timeout
-    let callback_result = timeout(Duration::from_secs(30), rx)
-        .await
-        .map_err(|_| {
-            let callbacks = state.callbacks.clone();
-            let req_id = request_id.clone();
-            tokio::spawn(async move { callbacks.cancel(&req_id).await });
-            tracing::error!("Validation playbook timed out");
-            (StatusCode::INTERNAL_SERVER_ERROR, "Session validation timed out").into_response()
-        })?
-        .map_err(|_| {
-            tracing::error!("Callback channel closed");
-            (StatusCode::INTERNAL_SERVER_ERROR, "Callback channel closed").into_response()
-        })?;
-
-    let output = callback_result.data;
-
-    let valid = output.get("valid").and_then(|v| v.as_bool()).unwrap_or(false);
-
-    if !valid {
+    let cached = if let Some(cached) = session {
+        cached
+    } else {
         tracing::warn!("Invalid or expired session token");
-        // Invalidate any stale cache entry
-        let _ = state.session_cache.invalidate(token).await;
         return Err((StatusCode::UNAUTHORIZED, "Invalid or expired session").into_response());
-    }
-
-    // Extract user context
-    let user_obj = output.get("user").ok_or_else(|| {
-        tracing::error!("No user data in validation response");
-        (StatusCode::INTERNAL_SERVER_ERROR, "Invalid user data").into_response()
-    })?;
+    };
 
     let user_context = UserContext {
-        user_id: user_obj
-            .get("user_id")
-            .and_then(|v| v.as_i64())
-            .ok_or_else(|| {
-                (StatusCode::INTERNAL_SERVER_ERROR, "Invalid user_id").into_response()
-            })? as i32,
-        email: user_obj
-            .get("email")
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| (StatusCode::INTERNAL_SERVER_ERROR, "Invalid email").into_response())?
-            .to_string(),
-        display_name: user_obj
-            .get("display_name")
-            .and_then(|v| v.as_str())
-            .unwrap_or("Unknown User")
-            .to_string(),
+        user_id: cached.user_id,
+        email: cached.email,
+        display_name: cached.display_name,
         session_token: token.to_string(),
     };
-    let roles = super::parse_roles(user_obj.get("roles"));
-
-    // Cache the validated session for future requests
-    let expires_at = output
-        .get("expires_at")
-        .and_then(|v| v.as_str())
-        .unwrap_or("")
-        .to_string();
-
-    let cached_session = crate::session_cache::CachedSession {
-        session_token: token.to_string(),
-        user_id: user_context.user_id,
-        email: user_context.email.clone(),
-        display_name: user_context.display_name.clone(),
-        expires_at,
-        is_active: true,
-        roles,
-    };
-    if let Err(e) = state.session_cache.put(&cached_session).await {
-        tracing::warn!("Failed to cache session: {}", e);
-    }
 
     tracing::info!("Authenticated user: {} ({})", user_context.email, user_context.user_id);
 

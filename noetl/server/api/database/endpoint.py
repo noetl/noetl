@@ -12,7 +12,9 @@ from noetl.core.logger import setup_logger
 from .schema import (
     PostgresExecuteRequest,
     PostgresExecuteResponse,
-    WeatherAlertSummaryResponse
+    WeatherAlertSummaryResponse,
+    AuthSessionValidateRequest,
+    AuthSessionValidateResponse,
 )
 from .service import DatabaseService
 
@@ -107,6 +109,24 @@ async def execute_postgres(request: PostgresExecuteRequest) -> PostgresExecuteRe
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.post("/auth/session/validate", response_model=AuthSessionValidateResponse)
+async def validate_auth_session(request: AuthSessionValidateRequest) -> AuthSessionValidateResponse:
+    """
+    Validate auth session token using auth schema tables.
+
+    This endpoint is intended for gateway auth checks:
+    - Gateway reads NATS K/V first.
+    - On cache miss, gateway calls this endpoint (not /postgres/execute).
+    """
+    try:
+        return await DatabaseService.validate_auth_session(request)
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception(f"Error in validate_auth_session endpoint: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @router.get(
     "/postgres/weather_alert_summary/{execution_id}/last",
     response_model=WeatherAlertSummaryResponse
@@ -151,5 +171,4 @@ async def get_last_weather_alert_summary(
     except Exception as e:
         logger.exception(f"Error in weather alert summary endpoint: {e}")
         raise HTTPException(status_code=500, detail=str(e))
-
 

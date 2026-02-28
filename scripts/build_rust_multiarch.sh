@@ -41,6 +41,10 @@ if [[ "$OSTYPE" == "darwin"* ]]; then
     mkdir -p "$PROJECT_ROOT/bin"
     cp target/release/noetl "$PROJECT_ROOT/bin/noetl"
     echo "✓ Copied local binary to bin/noetl"
+    # Ad-hoc sign on macOS to prevent Gatekeeper SIGKILL on freshly built binaries
+    if [[ "$(uname)" == "Darwin" ]]; then
+        codesign --sign - "$PROJECT_ROOT/bin/noetl" 2>/dev/null && echo "✓ Codesigned bin/noetl" || true
+    fi
 fi
 
 echo ""

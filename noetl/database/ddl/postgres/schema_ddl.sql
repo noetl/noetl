@@ -45,53 +45,96 @@ COMMENT ON COLUMN noetl.transient.source_step IS 'Step name that produced this v
 COMMENT ON COLUMN noetl.transient.access_count IS 'Number of times this variable has been accessed';
 COMMENT ON COLUMN noetl.transient.accessed_at IS 'Last time this variable was read';
 
--- Event
+-- Event (range-partitioned by execution_id for instant per-execution cleanup)
+--
+-- Partition key: execution_id (snowflake bigint, epoch = 2024-01-01 UTC)
+--   id = (elapsed_ms << 22) | (node_id << 12) | seq
+--   IDs per quarter ≈ 33 trillion; quarterly boundaries below.
+--
+-- Cleanup: DROP TABLE noetl.event_<quarter> — instant, no VACUUM needed.
+-- Add new partitions before each quarter starts:
+--   CREATE TABLE noetl.event_2028_q1 PARTITION OF noetl.event
+--     FOR VALUES FROM (595000000000000000) TO (628000000000000000);
+--
+-- Boundary reference (id_for_date, epoch=2024-01-01):
+--   2026-01-01:  264_905_529_753_600_000
+--   2026-04-01:  297_520_437_657_600_000
+--   2026-07-01:  330_497_733_427_200_000
+--   2026-10-01:  363_837_417_062_400_000
+--   2027-01-01:  397_177_100_697_600_000
+--   2027-07-01:  462_769_304_371_200_000
+--   2028-01-01:  529_448_671_641_600_000
 CREATE TABLE IF NOT EXISTS noetl.event (
-    execution_id BIGINT,
-    catalog_id BIGINT NOT NULL REFERENCES noetl.catalog(catalog_id),
-    event_id BIGINT,
-    parent_event_id BIGINT,
+    execution_id        BIGINT,
+    catalog_id          BIGINT NOT NULL REFERENCES noetl.catalog(catalog_id),
+    event_id            BIGINT,
+    parent_event_id     BIGINT,
     parent_execution_id BIGINT,
-    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    event_type VARCHAR,
-    node_id VARCHAR,
-    node_name VARCHAR,
-    node_type VARCHAR,
-    status VARCHAR,
-    duration DOUBLE PRECISION,
-    context JSONB,
-    result JSONB,
-    meta   JSONB,
-    error TEXT,
-    current_index INTEGER,
-    current_item TEXT,
-    worker_id VARCHAR,
-    distributed_state VARCHAR,
-    context_key VARCHAR,
-    context_value TEXT,
-    trace_component JSONB,
-    stack_trace TEXT,
+    created_at          TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    event_type          VARCHAR,
+    node_id             VARCHAR,
+    node_name           VARCHAR,
+    node_type           VARCHAR,
+    status              VARCHAR,
+    duration            DOUBLE PRECISION,
+    context             JSONB,
+    result              JSONB,
+    meta                JSONB,
+    error               TEXT,
+    current_index       INTEGER,
+    current_item        TEXT,
+    worker_id           VARCHAR,
+    distributed_state   VARCHAR,
+    context_key         VARCHAR,
+    context_value       TEXT,
+    trace_component     JSONB,
+    stack_trace         TEXT,
     PRIMARY KEY (execution_id, event_id)
-);
-DO $$ BEGIN
-    ALTER TABLE noetl.event ALTER COLUMN created_at SET DEFAULT CURRENT_TIMESTAMP;
-EXCEPTION WHEN others THEN NULL; END $$;
+) PARTITION BY RANGE (execution_id);
 
--- Add indexes for common event queries
-CREATE INDEX IF NOT EXISTS idx_event_execution_id ON noetl.event (execution_id);
-CREATE INDEX IF NOT EXISTS idx_event_catalog_id ON noetl.event (catalog_id);
-CREATE INDEX IF NOT EXISTS idx_event_type ON noetl.event (event_type);
-CREATE INDEX IF NOT EXISTS idx_event_status ON noetl.event (status);
-CREATE INDEX IF NOT EXISTS idx_event_created_at ON noetl.event (created_at);
-CREATE INDEX IF NOT EXISTS idx_event_node_name ON noetl.event (node_name);
-CREATE INDEX IF NOT EXISTS idx_event_parent_event_id ON noetl.event (parent_event_id);
-CREATE INDEX IF NOT EXISTS idx_event_parent_execution_id ON noetl.event (parent_execution_id);
+-- Partitions — idempotent (IF NOT EXISTS supported on partition tables in PG15)
+CREATE TABLE IF NOT EXISTS noetl.event_pre_2026
+    PARTITION OF noetl.event FOR VALUES FROM (MINVALUE) TO (264905529753600000);
+CREATE TABLE IF NOT EXISTS noetl.event_2026_q1
+    PARTITION OF noetl.event FOR VALUES FROM (264905529753600000) TO (297520437657600000);
+CREATE TABLE IF NOT EXISTS noetl.event_2026_q2
+    PARTITION OF noetl.event FOR VALUES FROM (297520437657600000) TO (330497733427200000);
+CREATE TABLE IF NOT EXISTS noetl.event_2026_q3
+    PARTITION OF noetl.event FOR VALUES FROM (330497733427200000) TO (363837417062400000);
+CREATE TABLE IF NOT EXISTS noetl.event_2026_q4
+    PARTITION OF noetl.event FOR VALUES FROM (363837417062400000) TO (397177100697600000);
+CREATE TABLE IF NOT EXISTS noetl.event_2027_h1
+    PARTITION OF noetl.event FOR VALUES FROM (397177100697600000) TO (462769304371200000);
+CREATE TABLE IF NOT EXISTS noetl.event_2027_h2
+    PARTITION OF noetl.event FOR VALUES FROM (462769304371200000) TO (529448671641600000);
+-- GKE deployment uses a non-standard snowflake epoch producing IDs in the 569T–600T range
+CREATE TABLE IF NOT EXISTS noetl.event_2026_gke
+    PARTITION OF noetl.event FOR VALUES FROM (569000000000000000) TO (600000000000000000);
+-- Default catches any IDs not covered by named partitions above
+CREATE TABLE IF NOT EXISTS noetl.event_default
+    PARTITION OF noetl.event DEFAULT;
+
+-- Indexes on parent table — automatically inherited by all partitions
+CREATE INDEX IF NOT EXISTS idx_event_execution_id          ON noetl.event (execution_id);
+CREATE INDEX IF NOT EXISTS idx_event_catalog_id            ON noetl.event (catalog_id);
+CREATE INDEX IF NOT EXISTS idx_event_type                  ON noetl.event (event_type);
+CREATE INDEX IF NOT EXISTS idx_event_status                ON noetl.event (status);
+CREATE INDEX IF NOT EXISTS idx_event_created_at            ON noetl.event (created_at);
+CREATE INDEX IF NOT EXISTS idx_event_node_name             ON noetl.event (node_name);
+CREATE INDEX IF NOT EXISTS idx_event_parent_event_id       ON noetl.event (parent_event_id);
+CREATE INDEX IF NOT EXISTS idx_event_parent_execution_id   ON noetl.event (parent_execution_id);
 
 -- Composite index for paginated event queries (sorted by event_id DESC for most recent first)
 CREATE INDEX IF NOT EXISTS idx_event_exec_id_event_id_desc ON noetl.event (execution_id, event_id DESC);
 
 -- Composite index for filtering by event_type within execution
 CREATE INDEX IF NOT EXISTS idx_event_exec_type ON noetl.event (execution_id, event_type, event_id DESC);
+
+-- Fast seed for /api/executions polling (latest started executions)
+CREATE INDEX IF NOT EXISTS idx_event_playbook_init_event_id_desc
+    ON noetl.event (event_id DESC)
+    INCLUDE (execution_id, catalog_id, parent_execution_id, created_at)
+    WHERE event_type = 'playbook.initialized';
 
 -- Legacy compatibility view for event_log
 CREATE OR REPLACE VIEW noetl.event_log AS SELECT * FROM noetl.event;

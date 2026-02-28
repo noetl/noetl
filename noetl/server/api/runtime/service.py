@@ -418,17 +418,23 @@ class RuntimeService:
                     await cursor.execute(query, params)
                     rows = await cursor.fetchall()
                     
+                    def _to_iso(v):
+                        if v is None:
+                            return None
+                        if isinstance(v, str):
+                            return v
+                        return v.isoformat()
+
                     for row in rows:
-                        name, runtime_data, status_val, capacity, labels, heartbeat, created_at, updated_at = row
                         items.append(RuntimeComponentInfo(
-                            name=name,
-                            runtime=runtime_data,
-                            status=status_val,
-                            capacity=capacity,
-                            labels=labels,
-                            heartbeat=heartbeat.isoformat() if heartbeat else None,
-                            created_at=created_at.isoformat() if created_at else None,
-                            updated_at=updated_at.isoformat() if updated_at else None
+                            name=row["name"],
+                            runtime=row["runtime"],
+                            status=row["status"],
+                            capacity=row["capacity"],
+                            labels=row["labels"],
+                            heartbeat=_to_iso(row["heartbeat"]),
+                            created_at=_to_iso(row["created_at"]),
+                            updated_at=_to_iso(row["updated_at"]),
                         ))
         except Exception as e:
             logger.exception(f"Error listing components: {e}")

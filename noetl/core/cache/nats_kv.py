@@ -15,6 +15,7 @@ event table and retrieved via the aggregate service when needed.
 
 import json
 import asyncio
+import random
 from typing import Any, Optional
 from datetime import datetime, timezone
 import nats
@@ -123,6 +124,7 @@ class NATSKVCache:
         IMPORTANT: state should contain only metadata and counts, NOT result values:
         - collection_size: int - number of items in the loop collection
         - completed_count: int - number of completed iterations
+        - scheduled_count: int - number of claimed/issued iterations
         - iterator: str - iterator variable name
         - mode: str - sequential or parallel
         - event_id: str - event ID that initiated this loop
@@ -142,6 +144,12 @@ class NATSKVCache:
         if "results" in state:
             logger.warning(f"[NATS-KV] Stripping 'results' array from loop state for {step_name} - use completed_count instead")
             state = {k: v for k, v in state.items() if k != "results"}
+
+        # Backward compatibility for older state payloads.
+        if "completed_count" not in state:
+            state["completed_count"] = 0
+        if "scheduled_count" not in state:
+            state["scheduled_count"] = state.get("completed_count", 0)
 
         key_suffix = f"loop:{step_name}:{event_id}" if event_id else f"loop:{step_name}"
         key = self._make_key(execution_id, key_suffix)
@@ -175,8 +183,10 @@ class NATSKVCache:
         key_suffix = f"loop:{step_name}:{event_id}" if event_id else f"loop:{step_name}"
         key = self._make_key(execution_id, key_suffix)
 
-        # Read-modify-write with retry logic (optimistic locking)
-        max_retries = 5
+        # Read-modify-write with retry logic (optimistic locking).
+        # High-concurrency parallel loops can generate dozens of concurrent increments;
+        # keep retry budget high to avoid dropping completion signals.
+        max_retries = 50
         for attempt in range(max_retries):
             try:
                 # Get current state
@@ -190,6 +200,10 @@ class NATSKVCache:
                 # Increment completed count
                 current_count = state.get("completed_count", 0)
                 state["completed_count"] = current_count + 1
+                scheduled_count = int(state.get("scheduled_count", state["completed_count"]) or state["completed_count"])
+                if scheduled_count < state["completed_count"]:
+                    scheduled_count = state["completed_count"]
+                state["scheduled_count"] = scheduled_count
 
                 # Update with revision check (optimistic locking)
                 value = json.dumps(state).encode('utf-8')
@@ -199,15 +213,97 @@ class NATSKVCache:
                 return state["completed_count"]
 
             except Exception as e:
-                if "wrong last sequence" in str(e).lower() and attempt < max_retries - 1:
-                    # Concurrent update, retry
-                    await asyncio.sleep(0.01 * (attempt + 1))  # Exponential backoff
+                err = str(e).lower()
+                if "wrong last sequence" in err and attempt < max_retries - 1:
+                    # Concurrent update, retry with jittered exponential backoff.
+                    base = min(0.002 * (2 ** min(attempt, 7)), 0.2)
+                    sleep_seconds = base * (0.5 + random.random())
+                    await asyncio.sleep(sleep_seconds)
                     continue
+                if "wrong last sequence" in err:
+                    logger.warning(
+                        "Failed to increment loop completed count after %s optimistic retries "
+                        "(execution=%s step=%s event_id=%s)",
+                        max_retries,
+                        execution_id,
+                        step_name,
+                        event_id,
+                    )
                 else:
                     logger.error(f"Failed to increment loop completed count: {e}")
-                    return -1
+                return -1
 
         return -1
+
+    async def claim_next_loop_index(
+        self,
+        execution_id: str,
+        step_name: str,
+        collection_size: int,
+        max_in_flight: int,
+        event_id: Optional[str] = None,
+    ) -> Optional[int]:
+        """Atomically claim the next loop iteration index with backpressure control.
+
+        Returns:
+            Claimed zero-based index, or None when no slot is currently available.
+        """
+        if not self._kv:
+            await self.connect()
+
+        key_suffix = f"loop:{step_name}:{event_id}" if event_id else f"loop:{step_name}"
+        key = self._make_key(execution_id, key_suffix)
+
+        safe_collection_size = max(0, int(collection_size or 0))
+        safe_max_in_flight = max(1, int(max_in_flight or 1))
+
+        max_retries = 5
+        for attempt in range(max_retries):
+            try:
+                entry = await self._kv.get(key)
+                if not entry:
+                    return None
+
+                state = json.loads(entry.value.decode("utf-8"))
+
+                completed_count = int(state.get("completed_count", 0) or 0)
+                scheduled_count = int(state.get("scheduled_count", completed_count) or completed_count)
+
+                # Ensure state is coherent even if old payloads omitted fields.
+                if scheduled_count < completed_count:
+                    scheduled_count = completed_count
+                state["completed_count"] = completed_count
+                state["scheduled_count"] = scheduled_count
+
+                if safe_collection_size <= 0:
+                    state["collection_size"] = safe_collection_size
+                    value = json.dumps(state).encode("utf-8")
+                    await self._kv.update(key, value, last=entry.revision)
+                    return None
+
+                if scheduled_count >= safe_collection_size:
+                    return None
+
+                in_flight = max(0, scheduled_count - completed_count)
+                if in_flight >= safe_max_in_flight:
+                    return None
+
+                claimed_index = scheduled_count
+                state["collection_size"] = safe_collection_size
+                state["scheduled_count"] = scheduled_count + 1
+
+                value = json.dumps(state).encode("utf-8")
+                await self._kv.update(key, value, last=entry.revision)
+                return claimed_index
+
+            except Exception as e:
+                if "wrong last sequence" in str(e).lower() and attempt < max_retries - 1:
+                    await asyncio.sleep(0.01 * (attempt + 1))
+                    continue
+                logger.error(f"Failed to claim next loop index: {e}")
+                return None
+
+        return None
 
     async def get_loop_completed_count(self, execution_id: str, step_name: str, event_id: Optional[str] = None) -> int:
         """Get the completed iteration count for a loop.

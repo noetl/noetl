@@ -180,7 +180,7 @@ def transfer_postgres_to_postgres(
             # Prepare insert statement
             if target_query:
                 insert_sql = target_query
-                logger.debug(f"Using custom target query: {insert_sql}")
+                logger.debug("Using custom target query (length=%s chars)", len(insert_sql))
 
                 placeholder_count = insert_sql.count('%s')
                 if placeholder_count != len(columns):
@@ -216,7 +216,7 @@ def transfer_postgres_to_postgres(
                         f"VALUES ({placeholders})"
                     )
 
-                logger.debug(f"Auto-generated SQL: {insert_sql}")
+                logger.debug("Auto-generated SQL for transfer (length=%s chars)", len(insert_sql))
 
             while True:
                 chunk = source_cursor.fetchmany(chunk_size)
@@ -596,7 +596,12 @@ def execute_transfer_action(
         if target_conn:
             _close_connection(target_type, target_conn)
         
-        logger.info(f"Transfer completed: {result}")
+        logger.info(
+            "Transfer completed: status=%s rows_transferred=%s chunks_processed=%s",
+            result.get("status"),
+            result.get("rows_transferred"),
+            result.get("chunks_processed"),
+        )
         
         return {
             'status': 'success',

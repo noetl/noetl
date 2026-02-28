@@ -31,6 +31,7 @@ pub struct AuthState {
 #[derive(Debug)]
 pub enum AuthError {
     InvalidCredentials,
+    InvalidCredentialsWithReason(String),
     InvalidSession,
     Unauthorized,
     NoetlError(String),
@@ -41,6 +42,7 @@ impl IntoResponse for AuthError {
     fn into_response(self) -> Response {
         let (status, message) = match self {
             AuthError::InvalidCredentials => (StatusCode::UNAUTHORIZED, "Invalid credentials".to_string()),
+            AuthError::InvalidCredentialsWithReason(msg) => (StatusCode::UNAUTHORIZED, msg),
             AuthError::InvalidSession => (StatusCode::UNAUTHORIZED, "Invalid or expired session".to_string()),
             AuthError::Unauthorized => (StatusCode::FORBIDDEN, "Unauthorized access".to_string()),
             AuthError::NoetlError(msg) => (StatusCode::BAD_GATEWAY, msg),
@@ -76,10 +78,9 @@ fn default_session_duration() -> i32 {
 
 fn parse_roles(value: Option<&serde_json::Value>) -> Vec<String> {
     match value {
-        Some(serde_json::Value::Array(items)) => items
-            .iter()
-            .filter_map(|v| v.as_str().map(|s| s.to_string()))
-            .collect(),
+        Some(serde_json::Value::Array(items)) => {
+            items.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect()
+        }
         Some(serde_json::Value::String(s)) => parse_roles_from_string(s),
         _ => Vec::new(),
     }
@@ -105,6 +106,79 @@ fn parse_roles_from_string(value: &str) -> Vec<String> {
             .collect();
     }
     vec![trimmed.to_string()]
+}
+
+fn callback_data_keys(value: &serde_json::Value) -> String {
+    match value {
+        serde_json::Value::Object(map) => {
+            let mut keys: Vec<&str> = map.keys().map(std::string::String::as_str).collect();
+            keys.sort_unstable();
+            let preview: Vec<&str> = keys.into_iter().take(8).collect();
+            if preview.is_empty() {
+                "[]".to_string()
+            } else {
+                format!("[{}]", preview.join(","))
+            }
+        }
+        _ => "[]".to_string(),
+    }
+}
+
+fn extract_callback_error(value: &serde_json::Value) -> Option<String> {
+    let message = value.get("message").and_then(|v| v.as_str()).unwrap_or("").trim();
+    let error = value.get("error").and_then(|v| v.as_str()).unwrap_or("").trim();
+
+    match (message.is_empty(), error.is_empty()) {
+        (true, true) => None,
+        (false, true) => Some(message.to_string()),
+        (true, false) => Some(error.to_string()),
+        (false, false) => Some(format!("{}: {}", message, error)),
+    }
+}
+
+pub async fn resolve_session_cache_or_db(
+    state: &AuthState,
+    session_token: &str,
+) -> Result<Option<crate::session_cache::CachedSession>, AuthError> {
+    if let Some(cached) = state.session_cache.get(session_token).await {
+        return Ok(Some(cached));
+    }
+
+    let db_credential = &state.playbook_config.session_db_credential;
+    tracing::debug!(
+        "Session cache miss, validating via auth API (credential={})",
+        db_credential
+    );
+
+    let validated = state
+        .noetl
+        .validate_session_via_api(session_token, db_credential)
+        .await
+        .map_err(|e| AuthError::NoetlError(format!("Session validation API failed: {}", e)))?;
+
+    match validated {
+        Some(found) => {
+            let cached = crate::session_cache::CachedSession {
+                session_token: session_token.to_string(),
+                user_id: found.user_id,
+                email: found.email,
+                display_name: found.display_name,
+                expires_at: found.expires_at,
+                is_active: true,
+                roles: found.roles,
+            };
+
+            if let Err(e) = state.session_cache.put(&cached).await {
+                tracing::warn!("Failed to cache API-validated session: {}", e);
+            }
+
+            Ok(Some(cached))
+        }
+        None => {
+            let _ = state.session_cache.invalidate(session_token).await;
+            Ok(None)
+        }
+    }
 }
 
 /// Login response
@@ -166,12 +240,18 @@ pub async fn login(
     Json(req): Json<LoginRequest>,
 ) -> Result<Json<LoginResponse>, AuthError> {
     // Use provided domain or fall back to default
-    let auth0_domain = req.auth0_domain.unwrap_or_else(|| "mestumre-development.us.auth0.com".to_string());
+    let auth0_domain = req
+        .auth0_domain
+        .unwrap_or_else(|| "mestumre-development.us.auth0.com".to_string());
     tracing::info!("Auth login request for domain: {}", auth0_domain);
 
     // Register callback to receive result via NATS
     let (request_id, nats_subject, rx) = state.callbacks.register().await;
-    tracing::debug!("Registered callback request_id={}, subject={}", request_id, nats_subject);
+    tracing::debug!(
+        "Registered callback request_id={}, subject={}",
+        request_id,
+        nats_subject
+    );
 
     // Call NoETL auth0_login playbook with callback info
     // The gateway tool abstracts NATS - playbooks just see callback_subject
@@ -189,7 +269,8 @@ pub async fn login(
     let playbook_path = &state.playbook_config.login;
     tracing::debug!("Using login playbook: {}", playbook_path);
 
-    let result = state.noetl
+    let result = state
+        .noetl
         .execute_playbook(playbook_path, variables)
         .await
         .map_err(|e| {
@@ -200,7 +281,11 @@ pub async fn login(
             AuthError::NoetlError(format!("Login playbook failed: {}", e))
         })?;
 
-    tracing::info!("Auth login execution_id: {}, request_id: {}", result.execution_id, request_id);
+    tracing::info!(
+        "Auth login execution_id: {}, request_id: {}",
+        result.execution_id,
+        request_id
+    );
 
     // Wait for callback with configurable timeout
     let timeout_secs = state.playbook_config.timeout_secs;
@@ -214,18 +299,42 @@ pub async fn login(
         })?
         .map_err(|_| AuthError::InternalError("Callback channel closed".to_string()))?;
 
-    tracing::info!("Received callback for request_id={}, status={}, data={:?}", request_id, callback_result.status, callback_result.data);
+    tracing::info!(
+        "Received callback for request_id={}, status={}, data_keys={}",
+        request_id,
+        callback_result.status,
+        callback_data_keys(&callback_result.data)
+    );
 
     // Extract output from callback data
     let output = callback_result.data;
 
+    if callback_result.status != "success" {
+        let reason = extract_callback_error(&output).unwrap_or_else(|| "Invalid credentials".to_string());
+        tracing::warn!(
+            "Auth login failed for request_id={} status={} reason={}",
+            request_id,
+            callback_result.status,
+            reason
+        );
+        return Err(AuthError::InvalidCredentialsWithReason(reason));
+    }
+
     let status_str = output
         .get("status")
         .and_then(|v| v.as_str())
-        .ok_or_else(|| AuthError::InvalidCredentials)?;
+        .ok_or_else(|| AuthError::InternalError("Login callback missing status field".to_string()))?;
 
     if status_str != "authenticated" {
-        return Err(AuthError::InvalidCredentials);
+        let reason =
+            extract_callback_error(&output).unwrap_or_else(|| format!("Authentication status: {}", status_str));
+        tracing::warn!(
+            "Auth login rejected for request_id={} status={} reason={}",
+            request_id,
+            status_str,
+            reason
+        );
+        return Err(AuthError::InvalidCredentialsWithReason(reason));
     }
 
     let session_token = output
@@ -248,9 +357,7 @@ pub async fn login(
     // user_id can be either a number or string (from Jinja2 templates)
     let user_id = user_obj
         .get("user_id")
-        .and_then(|v| {
-            v.as_i64().or_else(|| v.as_str().and_then(|s| s.parse::<i64>().ok()))
-        })
+        .and_then(|v| v.as_i64().or_else(|| v.as_str().and_then(|s| s.parse::<i64>().ok())))
         .ok_or_else(|| AuthError::InternalError("Invalid user_id".to_string()))? as i32;
 
     let user = UserInfo {
@@ -296,17 +403,16 @@ pub async fn login(
     }))
 }
 
-/// Validate session endpoint - checks if session token is valid
-/// Uses cache-first strategy: checks NATS K/V cache before triggering playbook
+/// Validate session endpoint - checks if session token is valid.
+/// Uses cache-first strategy: checks NATS K/V first, then NoETL Postgres API.
 pub async fn validate_session(
     State(state): State<Arc<AuthState>>,
     Json(req): Json<ValidateSessionRequest>,
 ) -> Result<Json<ValidateSessionResponse>, AuthError> {
     tracing::info!("Auth validate_session request");
+    let session = resolve_session_cache_or_db(state.as_ref(), &req.session_token).await?;
 
-    // Check session cache first
-    if let Some(cached) = state.session_cache.get(&req.session_token).await {
-        tracing::info!("Session validated from cache: user={}", cached.email);
+    if let Some(cached) = session {
         return Ok(Json(ValidateSessionResponse {
             valid: true,
             user: Some(UserInfo {
@@ -316,120 +422,15 @@ pub async fn validate_session(
                 roles: cached.roles,
             }),
             expires_at: Some(cached.expires_at),
-            message: "Session is valid (cached)".to_string(),
+            message: "Session is valid".to_string(),
         }));
     }
-
-    // Cache miss - validate via playbook
-    tracing::info!("Session cache miss, calling validate_session playbook");
-
-    // Register callback to receive result via NATS
-    let (request_id, nats_subject, rx) = state.callbacks.register().await;
-
-    // Call NoETL auth0_validate_session playbook with callback info
-    // The gateway tool abstracts NATS - playbooks just see callback_subject
-    let variables = serde_json::json!({
-        "session_token": req.session_token,
-        "callback_subject": nats_subject,
-        "request_id": request_id.clone(),
-    });
-
-    let playbook_path = &state.playbook_config.validate_session;
-    tracing::debug!("Using validate_session playbook: {}", playbook_path);
-
-    let result = state.noetl
-        .execute_playbook(playbook_path, variables)
-        .await
-        .map_err(|e| {
-            let callbacks = state.callbacks.clone();
-            let req_id = request_id.clone();
-            tokio::spawn(async move { callbacks.cancel(&req_id).await });
-            AuthError::NoetlError(format!("Validate session playbook failed: {}", e))
-        })?;
-
-    tracing::info!("Auth validate_session execution_id: {}, request_id: {}", result.execution_id, request_id);
-
-    // Wait for callback with configurable timeout
-    let timeout_secs = state.playbook_config.timeout_secs;
-    let callback_result = timeout(Duration::from_secs(timeout_secs), rx)
-        .await
-        .map_err(|_| {
-            let callbacks = state.callbacks.clone();
-            let req_id = request_id.clone();
-            tokio::spawn(async move { callbacks.cancel(&req_id).await });
-            AuthError::InternalError("Validate session playbook timed out".to_string())
-        })?
-        .map_err(|_| AuthError::InternalError("Callback channel closed".to_string()))?;
-
-    let output = callback_result.data;
-    tracing::info!("validate_session callback output: {:?}", output);
-
-    let valid = output.get("valid").and_then(|v| v.as_bool()).unwrap_or(false);
-    tracing::info!("validate_session valid={}, valid_field={:?}", valid, output.get("valid"));
-
-    if !valid {
-        // Invalidate any stale cache entry
-        let _ = state.session_cache.invalidate(&req.session_token).await;
-        return Ok(Json(ValidateSessionResponse {
-            valid: false,
-            user: None,
-            expires_at: None,
-            message: "Session is invalid or expired".to_string(),
-        }));
-    }
-
-    let user_obj = output.get("user");
-    let user = if let Some(u) = user_obj {
-        Some(UserInfo {
-            user_id: u.get("user_id").and_then(|v| v.as_i64()).unwrap_or(0) as i32,
-            email: u
-                .get("email")
-                .and_then(|v| v.as_str())
-                .unwrap_or("unknown")
-                .to_string(),
-            display_name: u
-                .get("display_name")
-                .and_then(|v| v.as_str())
-                .unwrap_or("Unknown User")
-                .to_string(),
-            roles: parse_roles(u.get("roles")),
-        })
-    } else {
-        None
-    };
-
-    let expires_at = output
-        .get("expires_at")
-        .and_then(|v| v.as_str())
-        .map(|s| s.to_string());
-
-    // Cache the validated session
-    if let Some(ref user_info) = user {
-        let cached_session = crate::session_cache::CachedSession {
-            session_token: req.session_token.clone(),
-            user_id: user_info.user_id,
-            email: user_info.email.clone(),
-            display_name: user_info.display_name.clone(),
-            expires_at: expires_at.clone().unwrap_or_default(),
-            is_active: true,
-            roles: user_info.roles.clone(),
-        };
-        if let Err(e) = state.session_cache.put(&cached_session).await {
-            tracing::warn!("Failed to cache session: {}", e);
-        }
-    }
-
-    tracing::info!("Auth validate_session valid: {}", valid);
 
     Ok(Json(ValidateSessionResponse {
-        valid,
-        user,
-        expires_at,
-        message: if valid {
-            "Session is valid".to_string()
-        } else {
-            "Session is invalid".to_string()
-        },
+        valid: false,
+        user: None,
+        expires_at: None,
+        message: "Session is invalid or expired".to_string(),
     }))
 }
 
@@ -461,7 +462,8 @@ pub async fn check_access(
     let playbook_path = &state.playbook_config.check_access;
     tracing::debug!("Using check_access playbook: {}", playbook_path);
 
-    let result = state.noetl
+    let result = state
+        .noetl
         .execute_playbook(playbook_path, variables)
         .await
         .map_err(|e| {
@@ -471,7 +473,11 @@ pub async fn check_access(
             AuthError::NoetlError(format!("Check access playbook failed: {}", e))
         })?;
 
-    tracing::info!("Auth check_access execution_id: {}, request_id: {}", result.execution_id, request_id);
+    tracing::info!(
+        "Auth check_access execution_id: {}, request_id: {}",
+        result.execution_id,
+        request_id
+    );
 
     // Wait for callback with configurable timeout
     let timeout_secs = state.playbook_config.timeout_secs;
@@ -493,11 +499,7 @@ pub async fn check_access(
     let user = if let Some(u) = user_obj {
         Some(UserInfo {
             user_id: u.get("user_id").and_then(|v| v.as_i64()).unwrap_or(0) as i32,
-            email: u
-                .get("email")
-                .and_then(|v| v.as_str())
-                .unwrap_or("unknown")
-                .to_string(),
+            email: u.get("email").and_then(|v| v.as_str()).unwrap_or("unknown").to_string(),
             display_name: u
                 .get("display_name")
                 .and_then(|v| v.as_str())
@@ -577,11 +579,11 @@ pub async fn internal_callback(
     Json(req): Json<InternalCallbackRequest>,
 ) -> Json<InternalCallbackResponse> {
     tracing::info!(
-        "Internal callback received: request_id={}, status={}, step={:?}, data={:?}",
+        "Internal callback received: request_id={}, status={}, step={:?}, data_keys={}",
         req.request_id,
         req.status,
         req.step,
-        req.data
+        callback_data_keys(&req.data)
     );
 
     // Convert to CallbackResult and deliver

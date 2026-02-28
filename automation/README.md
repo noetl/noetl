@@ -97,7 +97,7 @@ noetl run automation/setup/bootstrap.yaml
 
 Steps performed:
 1. Verify dependencies (Docker, kubectl, kind)
-2. Check ports availability (54321, 3000, 9428, 8082)
+2. Check ports availability (54321, 3000, 39428, 8082)
 3. Build noetlctl Rust CLI
 4. Build NoETL Docker image
 5. Create kind Kubernetes cluster

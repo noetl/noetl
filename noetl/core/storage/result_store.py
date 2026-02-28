@@ -37,6 +37,7 @@ from noetl.core.storage.models import (
     TempRefMeta,
 )
 from noetl.core.storage.router import StorageRouter, default_router
+from noetl.core.storage.extractor import create_preview
 from noetl.core.logger import setup_logger
 
 logger = setup_logger(__name__, include_location=True)
@@ -644,13 +645,8 @@ class TempStore:
             return results
 
     def _create_preview(self, data: Any) -> Dict[str, Any]:
-        """Create truncated preview for UI."""
-        if isinstance(data, dict):
-            return {k: self._truncate_value(v) for k, v in list(data.items())[:5]}
-        elif isinstance(data, list):
-            return {"_items": len(data), "_sample": data[:3] if len(data) > 3 else data}
-        else:
-            return {"_value": str(data)[:100]}
+        """Create a byte-capped preview for UI and event payloads."""
+        return create_preview(data, max_bytes=self.preview_max_bytes)
 
     def _truncate_value(self, value: Any, max_len: int = 100) -> Any:
         """Truncate a value for preview."""

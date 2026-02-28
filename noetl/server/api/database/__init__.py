@@ -11,7 +11,10 @@ from .endpoint import router
 from .schema import (
     PostgresExecuteRequest,
     PostgresExecuteResponse,
-    WeatherAlertSummaryResponse
+    WeatherAlertSummaryResponse,
+    AuthSessionValidateRequest,
+    AuthSessionValidateResponse,
+    AuthSessionUser,
 )
 from .service import DatabaseService
 
@@ -20,5 +23,8 @@ __all__ = [
     "PostgresExecuteRequest",
     "PostgresExecuteResponse",
     "WeatherAlertSummaryResponse",
+    "AuthSessionValidateRequest",
+    "AuthSessionValidateResponse",
+    "AuthSessionUser",
     "DatabaseService",
 ]

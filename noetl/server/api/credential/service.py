@@ -199,6 +199,7 @@ class CredentialService:
     async def get_credential(
         identifier: str,
         include_data: bool = False,
+        catalog_id: Optional[int] = None,
         execution_id: Optional[int] = None,
         parent_execution_id: Optional[int] = None
     ) -> CredentialResponse:
@@ -217,7 +218,13 @@ class CredentialService:
         Raises:
             HTTPException: If credential not found or operation fails
         """
-        logger.warning(f"[DEBUG] get_credential START: identifier={identifier}, include_data={include_data}")
+        logger.debug(
+            "get_credential start include_data=%s has_catalog_id=%s has_execution_id=%s has_parent_execution_id=%s",
+            include_data,
+            catalog_id is not None,
+            execution_id is not None,
+            parent_execution_id is not None,
+        )
         try:
             by_id = identifier.isdigit()
             
@@ -263,55 +270,97 @@ class CredentialService:
                     
                     if include_data:
                         cred_name = row["name"]
-                        logger.warning(f"[DEBUG] include_data=True, will decrypt and cache credential '{cred_name}'")
+                        logger.debug("include_data=true; decrypting credential '%s'", cred_name)
                         try:
                             from noetl.core.secret import decrypt_json, encrypt_json
                             response.data = decrypt_json(row["data_encrypted"])
-                            logger.info(f"Successfully decrypted credential '{cred_name}'")                            
-                            # Cache to keychain for worker access using pool connection
-                            try:
-                                encrypted_data = encrypt_json(response.data)
-                                expires_at = datetime.now(timezone.utc) + timedelta(hours=1)
-                                logger.info(f"About to cache credential '{cred_name}' to keychain")
-                                
-                                # Use pool connection for cache INSERT
-                                async with get_pool_connection() as cache_conn:
-                                    async with cache_conn.cursor(row_factory=dict_row) as cache_cursor:
-                                        await cache_cursor.execute(
+                            logger.debug("Decrypted credential '%s'", cred_name)
+
+                            resolved_catalog_id = catalog_id
+                            if resolved_catalog_id is None:
+                                exec_scope_id = execution_id or parent_execution_id
+                                if exec_scope_id:
+                                    try:
+                                        await cursor.execute(
                                             """
-                                            INSERT INTO noetl.keychain (
-                                                cache_key, keychain_name, credential_type, 
-                                                cache_type, scope_type, execution_id, parent_execution_id,
-                                                data_encrypted, expires_at, created_at, accessed_at, access_count
-                                            )
-                                            VALUES (
-                                                %(cache_key)s, %(keychain_name)s, %(credential_type)s,
-                                                %(cache_type)s, %(scope_type)s, %(execution_id)s, %(parent_execution_id)s,
-                                                %(data_encrypted)s, %(expires_at)s, NOW(), NOW(), 0
-                                            )
-                                            ON CONFLICT (cache_key) DO UPDATE
-                                            SET data_encrypted = EXCLUDED.data_encrypted, 
-                                                accessed_at = NOW(), 
-                                                access_count = noetl.keychain.access_count + 1,
-                                                expires_at = EXCLUDED.expires_at,
-                                                execution_id = EXCLUDED.execution_id,
-                                                parent_execution_id = EXCLUDED.parent_execution_id
+                                            SELECT catalog_id
+                                            FROM noetl.execution
+                                            WHERE execution_id = %(execution_id)s
                                             """,
-                                            {
-                                                "cache_key": row["name"],
-                                                "keychain_name": row["name"],
-                                                "credential_type": row["type"],
-                                                "cache_type": "secret",  # Must be 'secret' or 'token' per check constraint
-                                                "scope_type": "execution" if execution_id else "global",
-                                                "execution_id": execution_id,
-                                                "parent_execution_id": parent_execution_id,
-                                                "data_encrypted": encrypted_data,
-                                                "expires_at": expires_at
-                                            }
+                                            {"execution_id": exec_scope_id},
                                         )
-                                logger.info(f"Cached credential '{cred_name}' to keychain (expires: {expires_at})")
-                            except Exception as cache_err:
-                                logger.warning(f"Failed to cache credential to keychain: {cache_err}")
+                                        exec_row = await cursor.fetchone()
+                                        if exec_row:
+                                            resolved_catalog_id = exec_row["catalog_id"]
+                                    except Exception as resolve_err:
+                                        logger.debug(
+                                            "Unable to resolve catalog_id from execution %s: %s",
+                                            exec_scope_id,
+                                            resolve_err,
+                                        )
+
+                            # Cache to keychain for worker access using pool connection
+                            if resolved_catalog_id is None:
+                                logger.debug(
+                                    "Skipping keychain cache for credential '%s': catalog_id unavailable",
+                                    cred_name,
+                                )
+                            else:
+                                try:
+                                    encrypted_data = encrypt_json(response.data)
+                                    expires_at = datetime.now(timezone.utc) + timedelta(hours=1)
+                                    scope_type = "local" if execution_id else "global"
+                                    cache_scope = execution_id if execution_id else "global"
+                                    cache_key = f"{cred_name}:{resolved_catalog_id}:{cache_scope}"
+
+                                    # Use pool connection for cache INSERT
+                                    async with get_pool_connection() as cache_conn:
+                                        async with cache_conn.cursor(row_factory=dict_row) as cache_cursor:
+                                            await cache_cursor.execute(
+                                                """
+                                                INSERT INTO noetl.keychain (
+                                                    cache_key, keychain_name, catalog_id, credential_type,
+                                                    cache_type, scope_type, execution_id, parent_execution_id,
+                                                    data_encrypted, expires_at, created_at, accessed_at, access_count
+                                                )
+                                                VALUES (
+                                                    %(cache_key)s, %(keychain_name)s, %(catalog_id)s, %(credential_type)s,
+                                                    %(cache_type)s, %(scope_type)s, %(execution_id)s, %(parent_execution_id)s,
+                                                    %(data_encrypted)s, %(expires_at)s, NOW(), NOW(), 0
+                                                )
+                                                ON CONFLICT (cache_key) DO UPDATE
+                                                SET data_encrypted = EXCLUDED.data_encrypted,
+                                                    accessed_at = NOW(),
+                                                    access_count = noetl.keychain.access_count + 1,
+                                                    expires_at = EXCLUDED.expires_at,
+                                                    execution_id = EXCLUDED.execution_id,
+                                                    parent_execution_id = EXCLUDED.parent_execution_id
+                                                """,
+                                                {
+                                                    "cache_key": cache_key,
+                                                    "keychain_name": cred_name,
+                                                    "catalog_id": resolved_catalog_id,
+                                                    "credential_type": row["type"],
+                                                    "cache_type": "secret",
+                                                    "scope_type": scope_type,
+                                                    "execution_id": execution_id,
+                                                    "parent_execution_id": parent_execution_id,
+                                                    "data_encrypted": encrypted_data,
+                                                    "expires_at": expires_at,
+                                                },
+                                            )
+                                    logger.debug(
+                                        "Cached credential '%s' in keychain (catalog_id=%s, scope=%s)",
+                                        cred_name,
+                                        resolved_catalog_id,
+                                        scope_type,
+                                    )
+                                except Exception as cache_err:
+                                    logger.debug(
+                                        "Credential keychain cache skipped for '%s': %s",
+                                        cred_name,
+                                        cache_err,
+                                    )
                                 
                         except Exception as dec_err:
                             logger.error(f"Failed to decrypt credential: {dec_err}")

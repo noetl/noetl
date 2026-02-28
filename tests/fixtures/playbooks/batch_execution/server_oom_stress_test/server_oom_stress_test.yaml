@@ -1,0 +1,500 @@
+apiVersion: noetl.io/v2
+kind: Playbook
+
+metadata:
+  name: server_oom_stress_test
+  path: tests/fixtures/playbooks/batch_execution/server_oom_stress_test
+  description: |
+    Stress test for server/worker communication under large-context batch processing.
+    Validates that server-worker communication handles big data without degradation:
+      - 21 context steps (~3-8KB each) to simulate fat execution context (42 vars in prod)
+      - 3000 items dispatched across parallel chunk workers (2 batches concurrent)
+      - Each item produces a ~250KB compute result (matching MDS assessment JSON payloads)
+        which triggers _ref externalization (> 64KB NOETL_INLINE_MAX_BYTES threshold)
+      - Per-item distributed parallel processing exercises: NATS dispatch, claim protocol,
+        adaptive concurrency controller, event pipeline, and DB pool under controlled contention
+      - No sensitive data, no external HTTP calls
+    What this test validates:
+      - Concurrent worker claims at scale (up to 6 simultaneous NATS commands)
+      - Adaptive concurrency controller ramp-up and stabilization under load
+      - Server DB pool handling parallel event ingestion from multiple workers
+      - Postgres pool pressure remains within deployed max_size (4 per worker)
+      - No data loss: all 3000 items processed correctly under concurrent load
+
+workload:
+  pg_auth: pg_k8s
+  total_items: 3000
+  batch_size: 100
+  drop_tables: false
+  concurrent_batches: 2
+  items_max_in_flight: 2
+  chunk_worker_path: tests/fixtures/playbooks/batch_execution/server_oom_stress_chunk_worker
+
+workflow:
+
+  # ── Phase 1: Simulate the "wide" context from production (40+ variables) ─────
+  # Each step returns ~3-5KB of synthetic data, matching production step result sizes.
+  # In production these are: load_next_facility, fetch_athena_dataview,
+  # fetch_and_extract_patient_ids, load_patients_for_*, parse_*, etc.
+
+  - step: start
+    desc: Initialize stress test
+    tool:
+      kind: python
+      args:
+        total_items: '{{ total_items }}'
+        batch_size: '{{ batch_size }}'
+      code: |
+        result = {
+            "status": "started",
+            "total_items": int(total_items or 3000),
+            "batch_size": int(batch_size or 100),
+        }
+    next:
+      spec: { mode: exclusive }
+      arcs:
+        - step: ctx_step_01
+
+  - step: ctx_step_01
+    desc: Simulate load_next_facility result (~3KB)
+    tool:
+      kind: python
+      code: |
+        result = {
+            "facility_id": 414,
+            "facility_name": "Test Facility Alpha",
+            "facility_org_uuid": "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+            "facility_mapping_id": 414,
+            "customer_code": "test_customer",
+            "base_url": "https://test.example.com",
+            "rows": [{"facility_id": 414, "name": "Test Facility Alpha", "active": True, "region": "west", "tier": "enterprise", "data": "x" * 1024}],
+        }
+    next:
+      spec: { mode: exclusive }
+      arcs:
+        - step: ctx_step_02
+
+  - step: ctx_step_02
+    desc: Simulate fetch_athena_dataview result (~5KB list)
+    tool:
+      kind: python
+      code: |
+        result = {
+            "status": "ok",
+            "rows": [{"patient_id": i, "mrn": f"MRN{i:06d}", "dob": "1950-01-01", "gender": "M", "payer": "Medicare", "data": "y" * 50} for i in range(1, 51)],
+            "row_count": 50,
+        }
+    next:
+      spec: { mode: exclusive }
+      arcs:
+        - step: ctx_step_03
+
+  - step: ctx_step_03
+    desc: Simulate fetch_and_extract_patient_ids result (~4KB)
+    tool:
+      kind: python
+      code: |
+        result = {
+            "patient_ids": list(range(10001, 10201)),
+            "count": 200,
+            "facility_mapping_id": 414,
+            "extracted_at": "2026-01-01T00:00:00Z",
+            "meta": {"source": "athena", "version": "v2", "data": "z" * 512},
+        }
+    next:
+      spec: { mode: exclusive }
+      arcs:
+        - step: ctx_step_04
+
+  - step: ctx_step_04
+    desc: Simulate load_patient_ids_context result
+    tool:
+      kind: python
+      code: |
+        result = {"rows": [{"patient_id": i, "pcc_patient_id": i + 50000} for i in range(10001, 10201)], "row_count": 200}
+    next:
+      spec: { mode: exclusive }
+      arcs:
+        - step: ctx_step_05
+
+  - step: ctx_step_05
+    desc: Simulate load_patients_for_demographics result (~4KB)
+    tool:
+      kind: python
+      code: |
+        result = {"rows": [{"patient_id": i, "first_name": f"First{i}", "last_name": f"Last{i}", "address": "123 Test St", "city": "Testville", "state": "CA", "zip": "90210"} for i in range(10001, 10051)], "row_count": 50}
+    next:
+      spec: { mode: exclusive }
+      arcs:
+        - step: ctx_step_06
+
+  - step: ctx_step_06
+    desc: Simulate parse_demographics result
+    tool:
+      kind: python
+      code: |
+        result = {"parsed": 50, "skipped": 0, "status": "ok", "records": [{"patient_id": i, "parsed": True, "canonical": {"name": f"Last{i}, First{i}", "dob": "1950-01-01"}} for i in range(10001, 10051)]}
+    next:
+      spec: { mode: exclusive }
+      arcs:
+        - step: ctx_step_07
+
+  - step: ctx_step_07
+    desc: Simulate load_patients_for_assessments result
+    tool:
+      kind: python
+      code: |
+        result = {"rows": [{"patient_id": i, "pcc_patient_id": i + 50000, "last_assessment_date": "2025-12-01"} for i in range(10001, 10101)], "row_count": 100}
+    next:
+      spec: { mode: exclusive }
+      arcs:
+        - step: ctx_step_08
+
+  - step: ctx_step_08
+    desc: Simulate parse_assessments result
+    tool:
+      kind: python
+      code: |
+        result = {"parsed": 100, "status": "ok", "assessment_ids": list(range(20001, 20101))}
+    next:
+      spec: { mode: exclusive }
+      arcs:
+        - step: ctx_step_09
+
+  - step: ctx_step_09
+    desc: Simulate load_patients_for_medications result
+    tool:
+      kind: python
+      code: |
+        result = {"rows": [{"patient_id": i, "medication_count": 5} for i in range(10001, 10101)], "row_count": 100}
+    next:
+      spec: { mode: exclusive }
+      arcs:
+        - step: ctx_step_10
+
+  - step: ctx_step_10
+    desc: Simulate parse_medications result (~6KB)
+    tool:
+      kind: python
+      code: |
+        result = {"parsed": 100, "medications": [{"patient_id": i, "drug": f"Drug_{i}", "dose": "10mg", "route": "oral", "frequency": "daily", "ndc": f"{i:011d}", "data": "m" * 30} for i in range(10001, 10101)]}
+    next:
+      spec: { mode: exclusive }
+      arcs:
+        - step: ctx_step_11
+
+  - step: ctx_step_11
+    desc: Simulate load_patients_for_conditions result
+    tool:
+      kind: python
+      code: |
+        result = {"rows": [{"patient_id": i, "condition_count": 3} for i in range(10001, 10101)], "row_count": 100}
+    next:
+      spec: { mode: exclusive }
+      arcs:
+        - step: ctx_step_12
+
+  - step: ctx_step_12
+    desc: Simulate parse_conditions result
+    tool:
+      kind: python
+      code: |
+        result = {"parsed": 100, "conditions": [{"patient_id": i, "icd10": f"Z{i % 99:02d}.{i % 9}", "description": f"Condition {i}", "onset": "2020-01-01"} for i in range(10001, 10101)]}
+    next:
+      spec: { mode: exclusive }
+      arcs:
+        - step: ctx_step_13
+
+  - step: ctx_step_13
+    desc: Simulate load_patients_for_adt result
+    tool:
+      kind: python
+      code: |
+        result = {"rows": [{"patient_id": i, "admit_date": "2025-11-01", "discharge_date": "2025-11-10"} for i in range(10001, 10051)], "row_count": 50}
+    next:
+      spec: { mode: exclusive }
+      arcs:
+        - step: ctx_step_14
+
+  - step: ctx_step_14
+    desc: Simulate parse_adt_records result
+    tool:
+      kind: python
+      code: |
+        result = {"parsed": 50, "admissions": [{"patient_id": i, "los": 9, "drg": f"DRG{i % 999:03d}", "payer": "Medicare"} for i in range(10001, 10051)]}
+    next:
+      spec: { mode: exclusive }
+      arcs:
+        - step: ctx_step_15
+
+  - step: ctx_step_15
+    desc: Simulate parse_athena_dataview result (~8KB)
+    tool:
+      kind: python
+      code: |
+        result = {"parsed": 200, "status": "ok", "dataview": [{"patient_id": i, "athena_id": f"ATH{i}", "insurance": "Medicare Part A", "provider": f"Dr. Test {i % 10}", "data": "a" * 64} for i in range(10001, 10201)]}
+    next:
+      spec: { mode: exclusive }
+      arcs:
+        - step: ctx_step_16
+
+  - step: ctx_step_16
+    desc: Simulate extract_mds_assessment_ids result
+    tool:
+      kind: python
+      code: |
+        result = {"assessment_ids": list(range(30001, 33001)), "count": 3000, "facility_mapping_id": 414}
+    next:
+      spec: { mode: exclusive }
+      arcs:
+        - step: ctx_step_17
+
+  - step: ctx_step_17
+    desc: Simulate patients_needing_assessments result
+    tool:
+      kind: python
+      code: |
+        result = {"patient_ids": list(range(10001, 10101)), "count": 100, "reason": "no_recent_assessment"}
+    next:
+      spec: { mode: exclusive }
+      arcs:
+        - step: ctx_step_18
+
+  - step: ctx_step_18
+    desc: Simulate patients_needing_medications result
+    tool:
+      kind: python
+      code: |
+        result = {"patient_ids": list(range(10001, 10101)), "count": 100, "reason": "medication_refresh"}
+    next:
+      spec: { mode: exclusive }
+      arcs:
+        - step: ctx_step_19
+
+  - step: ctx_step_19
+    desc: Simulate patients_needing_demographics result
+    tool:
+      kind: python
+      code: |
+        result = {"patient_ids": list(range(10001, 10101)), "count": 100, "reason": "demographics_refresh"}
+    next:
+      spec: { mode: exclusive }
+      arcs:
+        - step: ctx_step_20
+
+  - step: ctx_step_20
+    desc: Simulate patients_needing_conditions result
+    tool:
+      kind: python
+      code: |
+        result = {"patient_ids": list(range(10001, 10051)), "count": 50, "reason": "conditions_refresh"}
+    next:
+      spec: { mode: exclusive }
+      arcs:
+        - step: ctx_step_21
+
+  - step: ctx_step_21
+    desc: Simulate patients_needing_adt result
+    tool:
+      kind: python
+      code: |
+        result = {"patient_ids": list(range(10001, 10051)), "count": 50, "reason": "adt_refresh"}
+    next:
+      spec: { mode: exclusive }
+      arcs:
+        - step: setup_test_data
+
+  # ── Phase 2: Create test data ─────────────────────────────────────────────────
+
+  - step: setup_test_data
+    desc: Create test tables and insert 3000 synthetic items (idempotent)
+    tool:
+      kind: postgres
+      auth: '{{ pg_auth }}'
+      command: |
+        CREATE TABLE IF NOT EXISTS public.stress_test_items (
+          item_id INTEGER PRIMARY KEY,
+          group_id INTEGER NOT NULL,
+          payload TEXT NOT NULL,
+          created_at TIMESTAMPTZ DEFAULT NOW()
+        );
+        CREATE TABLE IF NOT EXISTS public.stress_test_results (
+          item_id INTEGER PRIMARY KEY,
+          result_data JSONB NOT NULL,
+          processed_at TIMESTAMPTZ DEFAULT NOW()
+        );
+        DELETE FROM public.stress_test_results;
+        DELETE FROM public.stress_test_items;
+        INSERT INTO public.stress_test_items (item_id, group_id, payload)
+        SELECT
+          i AS item_id,
+          ((i - 1) / {{ batch_size | int }}) + 1 AS group_id,
+          'synthetic_payload_' || i || '_' || repeat('x', 64) AS payload
+        FROM generate_series(1, {{ total_items | int }}) AS i;
+      spec:
+        policy:
+          rules:
+            - when: "{{ outcome.status == 'error' }}"
+              then: { do: retry, attempts: 5, backoff: exponential, delay: 2.0 }
+            - else:
+                then: { do: break }
+    next:
+      spec: { mode: exclusive }
+      arcs:
+        - step: build_batch_plan
+
+  # ── Phase 3: Parallel chunk worker dispatch ──────────────────────────────────
+  # Dispatches batch workers in parallel via distributed loop.
+  # Each chunk worker processes its items with per-item distributed parallelism.
+  # Peak concurrent commands: concurrent_batches × items_max_in_flight = 2 × 2 = 4.
+  # Must stay within deployed worker Postgres pool capacity (max_size=4 per pod × 2 pods = 8).
+  # NOTE: task_sequence tool is NOT recognized by _is_db_heavy_tool(), so the
+  # max_inflight_db_commands semaphore does not throttle these commands.
+  # Playbook-level max_in_flight is the only control over DB concurrency here.
+
+  - step: build_batch_plan
+    desc: Compute batch windows for parallel chunk worker dispatch
+    tool:
+      kind: python
+      args:
+        total_items: '{{ total_items }}'
+        batch_size: '{{ batch_size }}'
+      code: |
+        total = int(total_items or 3000)
+        size = int(batch_size or 100)
+        batches = []
+        for idx in range(0, total, size):
+            batch_number = (idx // size) + 1
+            limit = min(size, total - idx)
+            batches.append({
+                "batch_number": batch_number,
+                "offset": idx,
+                "limit": limit,
+            })
+        result = {
+            "batches": batches,
+            "batch_count": len(batches),
+            "batch_size": size,
+            "total_items": total,
+        }
+    next:
+      spec: { mode: exclusive }
+      arcs:
+        - step: run_batch_workers
+
+  - step: run_batch_workers
+    desc: Dispatch chunk workers in parallel across planned batch windows
+    loop:
+      in: '{{ build_batch_plan.batches }}'
+      iterator: batch
+      spec:
+        mode: parallel
+        max_in_flight: 2
+        policy:
+          exec: distributed
+    tool:
+      kind: playbook
+      path: '{{ chunk_worker_path }}'
+      return_step: end
+      timeout: 900
+      args:
+        pg_auth: '{{ pg_auth }}'
+        parent_execution_id: '{{ job.execution_id }}'
+        batch_number: '{{ iter.batch.batch_number }}'
+        offset: '{{ iter.batch.offset }}'
+        batch_size: '{{ iter.batch.limit }}'
+        items_max_in_flight: '{{ items_max_in_flight }}'
+    next:
+      spec: { mode: exclusive }
+      arcs:
+        - step: verify_completion_counts
+          when: '{{ event.name == ''loop.done'' }}'
+
+  # ── Phase 4: Verification and summary ────────────────────────────────────────
+
+  - step: verify_completion_counts
+    desc: Verify all items were processed correctly
+    tool:
+      kind: postgres
+      auth: '{{ pg_auth }}'
+      query: |
+        SELECT
+          (SELECT COUNT(*) FROM public.stress_test_items) AS total_items,
+          (SELECT COUNT(*) FROM public.stress_test_results) AS processed_items,
+          (
+            SELECT COUNT(*)
+            FROM public.stress_test_items s
+            WHERE NOT EXISTS (
+              SELECT 1
+              FROM public.stress_test_results r
+              WHERE r.item_id = s.item_id
+            )
+          ) AS remaining_items;
+    next:
+      spec: { mode: exclusive }
+      arcs:
+        - step: summarize
+
+  - step: summarize
+    desc: Return stress test summary with throughput metrics
+    tool:
+      kind: python
+      args:
+        verify_result: '{{ verify_completion_counts }}'
+        batch_plan: '{{ build_batch_plan }}'
+        worker_loop: '{{ run_batch_workers | default({}) }}'
+        concurrent_batches: '{{ concurrent_batches }}'
+        items_max_in_flight: '{{ items_max_in_flight }}'
+      code: |
+        rows = verify_result.get("command_0", {}).get("rows", []) if isinstance(verify_result, dict) else []
+        row = rows[0] if rows else {}
+        total_items = int(row.get("total_items", 0) or 0)
+        processed_items = int(row.get("processed_items", 0) or 0)
+        remaining_items = int(row.get("remaining_items", 0) or 0)
+
+        plan = batch_plan if isinstance(batch_plan, dict) else {}
+        loop_stats = worker_loop.get("stats", {}) if isinstance(worker_loop, dict) else {}
+
+        result = {
+            "status": "completed",
+            "total_items": total_items,
+            "processed_items": processed_items,
+            "remaining_items": remaining_items,
+            "is_complete": remaining_items == 0 and processed_items == total_items,
+            "batch_plan": {
+                "batch_count": int(plan.get("batch_count", 0) or 0),
+                "batch_size": int(plan.get("batch_size", 0) or 0),
+                "concurrent_batches": int(concurrent_batches or 2),
+                "items_max_in_flight": int(items_max_in_flight or 2),
+            },
+            "worker_loop": {
+                "total": int(loop_stats.get("total", 0) or 0),
+                "failed": int(loop_stats.get("failed", 0) or 0),
+            },
+        }
+    next:
+      spec: { mode: exclusive }
+      arcs:
+        - step: cleanup
+          when: '{{ (drop_tables | string | lower) == "true" }}'
+        - step: end
+
+  - step: cleanup
+    desc: Drop test tables (comment out if you want to inspect results)
+    tool:
+      kind: postgres
+      auth: '{{ pg_auth }}'
+      command: |
+        DROP TABLE IF EXISTS public.stress_test_results;
+        DROP TABLE IF EXISTS public.stress_test_items;
+    next:
+      spec: { mode: exclusive }
+      arcs:
+        - step: end
+
+  - step: end
+    desc: End
+    tool:
+      kind: python
+      code: |
+        result = {"status": "done"}

@@ -8,123 +8,122 @@ executor:
   profile: local
   version: noetl-runtime/1
 workflow:
-  - step: start
-    desc: Begin destroy workflow
-    tool:
-      kind: shell
-      cmds:
-        - echo "Starting environment destroy..."
-    next:
-      spec:
-        mode: exclusive
-      arcs:
-        - step: kill_port_forwards
-
+- step: start
+  desc: Begin destroy workflow
+  tool:
+    kind: shell
+    cmds:
+    - echo "Starting environment destroy..."
+  next:
   - step: kill_port_forwards
-    desc: Kill kubectl port-forward processes
-    tool:
-      kind: shell
-      cmds:
-        - |
-          echo "Killing port-forward processes..."
-          pkill -f "kubectl port-forward" 2>/dev/null || true
-          # Give Docker Desktop time to release ports
-          sleep 2
-          echo "OK Port-forward processes terminated"
-    next:
-      spec:
-        mode: exclusive
-      arcs:
-        - step: delete_cluster
+- step: kill_port_forwards
+  desc: Kill kubectl port-forward processes
+  tool:
+    kind: shell
+    cmds:
+    - 'echo "Killing port-forward processes..."
 
+      pkill -f "kubectl port-forward" 2>/dev/null || true
+
+      # Give Docker Desktop time to release ports
+
+      sleep 2
+
+      echo "OK Port-forward processes terminated"
+
+      '
+  next:
   - step: delete_cluster
-    desc: Delete kind cluster
-    tool:
-      kind: shell
-      cmds:
-        - |
-          echo "Deleting kind cluster..."
-          kind delete cluster --name=noetl 2>/dev/null || echo "INFO Cluster not found or already deleted"
-          # Give Docker Desktop time to release ports after cluster deletion
-          sleep 3
-    next:
-      spec:
-        mode: exclusive
-      arcs:
-        - step: cleanup_docker
+- step: delete_cluster
+  desc: Delete kind cluster
+  tool:
+    kind: shell
+    cmds:
+    - 'echo "Deleting kind cluster..."
 
+      kind delete cluster --name=noetl 2>/dev/null || echo "INFO Cluster not found
+      or already deleted"
+
+      # Give Docker Desktop time to release ports after cluster deletion
+
+      sleep 3
+
+      '
+  next:
   - step: cleanup_docker
-    desc: Clean up Docker resources
-    tool:
-      kind: shell
-      cmds:
-        - |
-          docker builder prune --all --force
-          docker image prune --all --force
-          docker volume prune --force || echo "Docker cleanup skipped or failed"
-    next:
-      spec:
-        mode: exclusive
-      arcs:
-        - step: clear_cache
+- step: cleanup_docker
+  desc: Clean up Docker resources
+  tool:
+    kind: shell
+    cmds:
+    - 'docker builder prune --all --force
 
+      docker image prune --all --force
+
+      docker volume prune --force || echo "Docker cleanup skipped or failed"
+
+      '
+  next:
   - step: clear_cache
-    desc: Clear cache directories
-    tool:
-      kind: shell
-      cmds:
-        - |
-          rm -rf ci/kind/cache/pg-data/*
-          rm -rf ci/kind/cache/noetl-data/*
-          rm -rf ci/kind/cache/noetl-logs/*
-          echo "✓ All cache directories cleared" || echo "Cache clear skipped or failed"
-    next:
-      spec:
-        mode: exclusive
-      arcs:
-        - step: clear_noetl_data
-
+- step: clear_cache
+  desc: Clear cache directories
+  tool:
+    kind: shell
+    cmds:
+    - "rm -rf ci/kind/cache/pg-data/*\nrm -rf ci/kind/cache/noetl-data/*\nrm -rf ci/kind/cache/noetl-logs/*\n\
+      echo \"\u2713 All cache directories cleared\" || echo \"Cache clear skipped\
+      \ or failed\"\n"
+  next:
   - step: clear_noetl_data
-    desc: Clear NoETL data
-    tool:
-      kind: shell
-      cmds:
-        - rm -rf ci/kind/cache/noetl-data/* || echo "Data clear skipped or failed"
-    next:
-      spec:
-        mode: exclusive
-      arcs:
-        - step: summary
-
+- step: clear_noetl_data
+  desc: Clear NoETL data
+  tool:
+    kind: shell
+    cmds:
+    - rm -rf ci/kind/cache/noetl-data/* || echo "Data clear skipped or failed"
+  next:
   - step: summary
-    desc: Show destruction summary
-    tool:
-      kind: shell
-      cmds:
-        - |
-          echo ""
-          echo "Environment Destroyed!"
-          echo ""
-          echo "Cleanup completed:"
-          echo "  - Port-forward processes: killed"
-          echo "  - Kind cluster: deleted"
-          echo "  - Docker resources: cleaned"
-          echo "  - Cache directories: cleared"
-          echo "  - NoETL data: cleared"
-          echo ""
-          echo "You can now run bootstrap again:"
-          echo "  noetl run boot"
-          echo ""
-          echo "NOTE: If ports are still in use (macOS), restart Docker Desktop:"
-          echo "  osascript -e 'quit app \"Docker\"' && sleep 5 && open -a Docker"
-          echo ""
-    next:
-      spec:
-        mode: exclusive
-      arcs:
-        - step: end
+- step: summary
+  desc: Show destruction summary
+  tool:
+    kind: shell
+    cmds:
+    - 'echo ""
 
+      echo "Environment Destroyed!"
+
+      echo ""
+
+      echo "Cleanup completed:"
+
+      echo "  - Port-forward processes: killed"
+
+      echo "  - Kind cluster: deleted"
+
+      echo "  - Docker resources: cleaned"
+
+      echo "  - Cache directories: cleared"
+
+      echo "  - NoETL data: cleared"
+
+      echo ""
+
+      echo "You can now run bootstrap again:"
+
+      echo "  noetl run boot"
+
+      echo ""
+
+      echo "NOTE: If ports are still in use (macOS), restart Docker Desktop:"
+
+      echo "  osascript -e ''quit app \"Docker\"'' && sleep 5 && open -a Docker"
+
+      echo ""
+
+      '
+  next:
   - step: end
-    desc: End destroy workflow
-    tool:
-      kind: noop
+- step: end
+  desc: End destroy workflow
+  tool:
+    kind: noop

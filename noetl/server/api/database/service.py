@@ -14,11 +14,15 @@ from fastapi import HTTPException
 from noetl.core.common import get_async_db_connection, get_pgdb_connection
 from noetl.core.logger import setup_logger
 from psycopg.rows import dict_row
+from noetl.server.api.credential.service import CredentialService
 from .schema import (
     PostgresExecuteRequest,
     PostgresExecuteResponse,
     WeatherAlertSummaryResponse,
-    WeatherAlertSummaryRow
+    WeatherAlertSummaryRow,
+    AuthSessionValidateRequest,
+    AuthSessionValidateResponse,
+    AuthSessionUser,
 )
 
 logger = setup_logger(__name__)
@@ -51,8 +55,14 @@ class DatabaseService:
         # Priority 2: Credential from credential table
         if request.credential:
             try:
-                from noetl.core.credential_loader import load_credential_from_store
-                credential_data = load_credential_from_store(request.credential)
+                credential_obj = await CredentialService.get_credential(
+                    request.credential,
+                    include_data=True,
+                )
+                credential_data = {
+                    "type": credential_obj.type,
+                    "data": credential_obj.data or {},
+                }
                 
                 if not credential_data or credential_data.get('type') != 'postgres':
                     raise HTTPException(
@@ -125,7 +135,16 @@ class DatabaseService:
                     result = None
                     
                     if request.query:
-                        await cursor.execute(request.query)
+                        if request.parameters is not None:
+                            params = request.parameters
+                            if isinstance(params, dict):
+                                await cursor.execute(request.query, params)
+                            elif isinstance(params, (list, tuple)):
+                                await cursor.execute(request.query, params)
+                            else:
+                                await cursor.execute(request.query, (params,))
+                        else:
+                            await cursor.execute(request.query)
                         try:
                             result = await cursor.fetchall()
                         except Exception:
@@ -160,6 +179,89 @@ class DatabaseService:
             logger.exception(f"Error executing database operation: {e}")
             return PostgresExecuteResponse(
                 status="error",
+                error=str(e)
+            )
+
+    @staticmethod
+    async def validate_auth_session(request: AuthSessionValidateRequest) -> AuthSessionValidateResponse:
+        """
+        Validate auth session token against auth schema.
+
+        Uses dedicated query path (no dynamic SQL from caller).
+        """
+        token = (request.session_token or "").strip()
+        if not token:
+            raise HTTPException(status_code=400, detail="session_token is required")
+
+        try:
+            connection_request = PostgresExecuteRequest(
+                credential=request.credential or "pg_auth"
+            )
+            connection_string = await DatabaseService._resolve_connection_string(connection_request)
+
+            async with get_async_db_connection(connection_string=connection_string) as conn:
+                async with conn.cursor(row_factory=dict_row) as cursor:
+                    await cursor.execute(
+                        """
+                        SELECT
+                          s.user_id,
+                          u.email,
+                          COALESCE(NULLIF(u.display_name, ''), u.email) AS display_name,
+                          s.expires_at::text AS expires_at,
+                          COALESCE(
+                            (
+                              SELECT json_agg(r.role_name ORDER BY r.role_name)
+                              FROM auth.user_roles ur
+                              JOIN auth.roles r ON ur.role_id = r.role_id
+                              WHERE ur.user_id = s.user_id
+                                AND (ur.expires_at IS NULL OR ur.expires_at > NOW())
+                            ),
+                            '[]'::json
+                          ) AS roles
+                        FROM auth.sessions s
+                        JOIN auth.users u ON u.user_id = s.user_id
+                        WHERE s.session_token = %s
+                          AND s.is_active = TRUE
+                          AND u.is_active = TRUE
+                          AND s.expires_at > NOW()
+                        LIMIT 1
+                        """,
+                        (token,)
+                    )
+                    row = await cursor.fetchone()
+
+            if not row:
+                return AuthSessionValidateResponse(
+                    status="ok",
+                    valid=False,
+                    user=None,
+                    expires_at=None,
+                )
+
+            roles = row.get("roles")
+            if not isinstance(roles, list):
+                roles = []
+
+            return AuthSessionValidateResponse(
+                status="ok",
+                valid=True,
+                user=AuthSessionUser(
+                    user_id=int(row.get("user_id") or 0),
+                    email=str(row.get("email") or ""),
+                    display_name=str(row.get("display_name") or row.get("email") or ""),
+                    roles=[str(r) for r in roles if r is not None],
+                ),
+                expires_at=str(row.get("expires_at") or ""),
+            )
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.exception(f"Error validating auth session: {e}")
+            return AuthSessionValidateResponse(
+                status="error",
+                valid=False,
+                user=None,
+                expires_at=None,
                 error=str(e)
             )
     

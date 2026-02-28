@@ -10,6 +10,71 @@ from noetl.core.logger import setup_logger
 logger = setup_logger(__name__, include_location=True)
 
 
+class TaskResultProxy:
+    """Lightweight proxy allowing ``{{ step.field }}`` attribute access on dict results.
+
+    Defined at module level to avoid class re-creation on every render call.
+    """
+
+    __slots__ = ("_data", "_name")
+
+    def __init__(self, data: dict, name: str = ""):
+        object.__setattr__(self, "_data", data)
+        object.__setattr__(self, "_name", name)
+
+    def __getattr__(self, name: str):
+        data = object.__getattribute__(self, "_data")
+        if name == "data" and name not in data:
+            return self
+        if name == "result" and name not in data:
+            return self
+        if name == "is_defined":
+            return True
+        if isinstance(data, dict) and name in data:
+            val = data[name]
+            # Wrap nested dicts so chained attribute access works (e.g., iter.batch.offset)
+            if isinstance(val, dict):
+                return TaskResultProxy(val, name=name)
+            return val
+        raise AttributeError(f"'{type(data).__name__}' object has no attribute '{name}'")
+
+    def __getitem__(self, key):
+        try:
+            return object.__getattribute__(self, "_data")[key]
+        except Exception as e:
+            raise KeyError(key) from e
+
+    def get(self, key, default=None):
+        data = object.__getattribute__(self, "_data")
+        if isinstance(data, dict):
+            return data.get(key, default)
+        return default
+
+    def __str__(self):
+        return json.dumps(object.__getattribute__(self, "_data"), default=str)
+
+    def __repr__(self):
+        return json.dumps(object.__getattribute__(self, "_data"), default=str)
+
+    def __contains__(self, key):
+        return key in object.__getattribute__(self, "_data")
+
+    def __iter__(self):
+        return iter(object.__getattribute__(self, "_data"))
+
+    def __len__(self):
+        return len(object.__getattribute__(self, "_data"))
+
+    def items(self):
+        return object.__getattribute__(self, "_data").items()
+
+    def keys(self):
+        return object.__getattribute__(self, "_data").keys()
+
+    def values(self):
+        return object.__getattribute__(self, "_data").values()
+
+
 def _handle_undefined_values(value: Any) -> Any:
     """Convert Undefined values to None to prevent JSON serialization errors."""
     if isinstance(value, Undefined):
@@ -105,13 +170,21 @@ def render_template(env: Environment, template: Any, context: Dict, rules: Dict 
     Returns:
         The rendered template
     """
-    logger.debug(f"render_template called with template: {template}, type: {type(template)}")
+    logger.debug(
+        "render_template called: template_type=%s template_len=%s",
+        type(template).__name__,
+        len(template) if isinstance(template, str) else "-",
+    )
 
     env = add_b64encode_filter(env)
     if isinstance(template, str) and (('{{' in template and '}}' in template) or ('{%' in template and '%}' in template)):
-        logger.debug(f"Render template: {template} | context_keys={list(context.keys())}")
+        logger.debug(
+            "Render template: has_jinja=true context_key_count=%s template_len=%s",
+            len(context.keys()) if isinstance(context, dict) else 0,
+            len(template),
+        )
         if rules:
-            logger.debug(f"Render template rules: {rules}")
+            logger.debug("Render template rules_keys=%s", list(rules.keys()) if isinstance(rules, dict) else type(rules).__name__)
 
     render_ctx = dict(context)
     if rules:
@@ -120,10 +193,10 @@ def render_template(env: Environment, template: Any, context: Dict, rules: Dict 
     if isinstance(template, str):
         if (('{{' not in template or '}}' not in template) and 
             ('{%' not in template or '%}' not in template)):
-            logger.debug(f"render_template: Plain string (no template vars), returning as-is: {template}")
+            logger.debug("render_template: plain string (no variables), length=%s", len(template))
             return template
 
-        logger.debug(f"render_template: String with template vars: {template}")
+        logger.debug("render_template: string with variables, length=%s", len(template))
         try:
             expr = template.strip()
             if expr == '{{}}':
@@ -150,56 +223,15 @@ def render_template(env: Environment, template: Any, context: Dict, rules: Dict 
             if strict_keys:
                 template_obj = env.from_string(template)
             else:
-                # Inherit undefined class from parent environment
-                temp_env = Environment(loader=env.loader, undefined=env.undefined)
-                for name, filter_func in env.filters.items():
-                    temp_env.filters[name] = filter_func
-                for name, global_var in env.globals.items():
-                    temp_env.globals[name] = global_var
+                # Use overlay() for lightweight environment derivation (shares
+                # filters/globals with parent instead of copying them one-by-one).
+                temp_env = env.overlay()
+                # Ensure custom filters survive the overlay
+                temp_env = add_b64encode_filter(temp_env)
                 template_obj = temp_env.from_string(template)
                 
             try:
                 custom_context = render_ctx.copy()
-
-                class TaskResultProxy:
-                    def __init__(self, data, name=""):
-                        self._data = data
-                        self._name = name
-
-                    def __getattr__(self, name):
-                        if name == 'data' and name not in self._data:
-                            return self
-                        elif name == 'result' and name not in self._data:
-                            return self
-                        elif name == 'is_defined':
-                            return True
-                        elif name.startswith('command_') and isinstance(self._data, dict) and name in self._data:
-                            return self._data[name]
-                        elif isinstance(self._data, dict) and name in self._data:
-                            return self._data[name]
-                        raise AttributeError(f"'{type(self._data).__name__}' object has no attribute '{name}'")
-
-                    def __getitem__(self, key):
-                        try:
-                            return self._data[key]
-                        except Exception as e:
-                            raise KeyError(key) from e
-
-                    def get(self, key, default=None):
-                        """Support dict-like .get() method for Jinja2 templates."""
-                        if isinstance(self._data, dict):
-                            return self._data.get(key, default)
-                        return default
-
-                    def __str__(self):
-                        """Return JSON string representation when TaskResultProxy is rendered directly in Jinja2"""
-                        import json
-                        return json.dumps(self._data, default=str)
-                    
-                    def __repr__(self):
-                        """Return JSON string representation for debugging"""
-                        import json
-                        return json.dumps(self._data, default=str)
 
                 reserved = {'work', 'workload', 'context', 'env', 'job', 'input', 'data', 'results'}
                 for key, value in render_ctx.items():
@@ -219,9 +251,16 @@ def render_template(env: Environment, template: Any, context: Dict, rules: Dict 
                 custom_context = _handle_undefined_values(custom_context)
 
                 rendered = template_obj.render(**custom_context)
-                logger.debug(f"render_template: Successfully rendered: {rendered}")
+                logger.debug(
+                    "render_template: rendered successfully output_type=%s output_len=%s",
+                    type(rendered).__name__,
+                    len(rendered) if isinstance(rendered, str) else "-",
+                )
             except Exception as e:
-                error_msg = f"Template rendering error: {e}, template: {template}"
+                error_msg = (
+                    f"Template rendering error: {e} "
+                    f"(template_len={len(template) if isinstance(template, str) else '-'})"
+                )
                 # Reduce noise: always suppress persistence for undefined-variable cases.
                 # These are expected when rendering loop-scoped variables like {{ city_item }} before evaluation.
                 msg = str(e)
@@ -245,10 +284,17 @@ def render_template(env: Environment, template: Any, context: Dict, rules: Dict 
                             var_path = var_path_match.group(1).strip()
                             fixed_path = var_path.replace('.data.', '.').replace('.result.', '.')
                             fixed_template = template.replace(var_path, fixed_path)
-                            logger.info(f"Attempting fallback rendering with modified path: {fixed_template}")
+                            logger.debug(
+                                "Attempting fallback rendering with modified path template_len=%s",
+                                len(fixed_template),
+                            )
                             fixed_obj = env.from_string(fixed_template)
                             rendered = fixed_obj.render(**render_ctx)
-                            logger.info(f"Fallback rendering succeeded: {rendered}")
+                            logger.debug(
+                                "Fallback rendering succeeded output_type=%s output_len=%s",
+                                type(rendered).__name__,
+                                len(rendered) if isinstance(rendered, str) else "-",
+                            )
                             return rendered
                     except Exception as fallback_error:
                         logger.error(f"Fallback rendering also failed: {fallback_error}")
@@ -260,7 +306,7 @@ def render_template(env: Environment, template: Any, context: Dict, rules: Dict 
             # Check if the original template used tojson filter - if so, respect the string output
             # The user explicitly requested JSON string format, don't parse it back to dict
             if '| tojson' in template or '|tojson' in template:
-                logger.debug(f"render_template: Template uses tojson filter, returning string as-is: {rendered[:100]}...")
+                logger.debug("render_template: Template uses tojson filter, returning string output as-is")
                 return rendered
 
             if (rendered.startswith('[') and rendered.endswith(']')) or \
@@ -303,7 +349,10 @@ def render_template(env: Environment, template: Any, context: Dict, rules: Dict 
 
             return rendered
         except Exception as e:
-            error_msg = f"Template rendering error: {e}, template: {template}"
+            error_msg = (
+                f"Template rendering error: {e} "
+                f"(template_len={len(template) if isinstance(template, str) else '-'})"
+            )
             logger.error(error_msg)
             
             log_error(
@@ -324,7 +373,10 @@ def render_template(env: Environment, template: Any, context: Dict, rules: Dict 
     elif isinstance(template, list):
         return [render_template(env, item, render_ctx, rules, strict_keys=strict_keys) for item in template]
 
-    logger.debug(f"render_template: Returning template unchanged: {template}")
+    logger.debug(
+        "render_template: returning unchanged value type=%s",
+        type(template).__name__,
+    )
     return template
 
 
@@ -395,7 +447,7 @@ def render_sql_template(env: Environment, sql_template: str, context: Dict) -> s
         return final_sql
 
     except Exception as e:
-        error_msg = f"Error rendering SQL template: {e} | template={sql_template[:200]}..."
+        error_msg = f"Error rendering SQL template: {e} | template_len={len(sql_template)}"
         logger.error(error_msg)
         
         log_error(

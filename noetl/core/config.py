@@ -437,13 +437,22 @@ class WorkerSettings(BaseModel):
     nats_stream: str = Field(default="NOETL_COMMANDS", alias="NATS_STREAM")
     nats_consumer: str = Field(default="noetl_worker_pool", alias="NATS_CONSUMER")
     nats_subject: str = Field(default="noetl.commands", alias="NATS_SUBJECT")
-    
+    nats_fetch_timeout_seconds: float = Field(30.0, alias="NOETL_WORKER_NATS_FETCH_TIMEOUT_SECONDS")
+    nats_fetch_heartbeat_seconds: float = Field(5.0, alias="NOETL_WORKER_NATS_FETCH_HEARTBEAT_SECONDS")
+    nats_max_ack_pending: int = Field(64, alias="NOETL_WORKER_NATS_MAX_ACK_PENDING")
+    nats_max_deliver: int = Field(1000, alias="NOETL_WORKER_NATS_MAX_DELIVER")
+
     # Keychain configuration
     keychain_refresh_threshold: int = Field(default=300, alias="NOETL_KEYCHAIN_REFRESH_THRESHOLD")
-    
+
     # HTTP timeout configuration (seconds)
     http_client_timeout: float = Field(default=120.0, alias="NOETL_WORKER_HTTP_TIMEOUT")
     http_event_timeout: float = Field(default=60.0, alias="NOETL_WORKER_EVENT_TIMEOUT")
+    command_timeout_seconds: float = Field(default=180.0, alias="NOETL_WORKER_COMMAND_TIMEOUT_SECONDS")
+    max_inflight_commands: int = Field(8, alias="NOETL_WORKER_MAX_INFLIGHT_COMMANDS")
+    max_inflight_db_commands: int = Field(4, alias="NOETL_WORKER_MAX_INFLIGHT_DB_COMMANDS")
+    throttle_poll_interval: float = Field(0.2, alias="NOETL_WORKER_THROTTLE_POLL_INTERVAL_SECONDS")
+    postgres_pool_waiting_threshold: int = Field(2, alias="NOETL_WORKER_POSTGRES_POOL_WAITING_THRESHOLD")
 
     @field_validator('pool_runtime', mode='before')
     def normalize_runtime(cls, v):
@@ -473,7 +482,15 @@ class WorkerSettings(BaseModel):
     )
     def coerce_numeric(cls, v, info):
         target = info.field_name
-        if target in {'deregister_retries', 'max_workers'}:
+        if target in {
+            'deregister_retries',
+            'max_workers',
+            'nats_max_ack_pending',
+            'nats_max_deliver',
+            'max_inflight_commands',
+            'max_inflight_db_commands',
+            'postgres_pool_waiting_threshold',
+        }:
             if isinstance(v, int):
                 return v
             if isinstance(v, str):
@@ -487,6 +504,32 @@ class WorkerSettings(BaseModel):
         if isinstance(v, str):
             return float(v.strip())
         raise ValueError("Invalid numeric value")
+
+    @model_validator(mode='after')
+    def validate_throttle_config(self):
+        if self.nats_max_ack_pending < 1:
+            raise ValueError("NOETL_WORKER_NATS_MAX_ACK_PENDING must be >= 1")
+        if self.nats_max_deliver < 1:
+            raise ValueError("NOETL_WORKER_NATS_MAX_DELIVER must be >= 1")
+        if self.max_inflight_commands < 1:
+            raise ValueError("NOETL_WORKER_MAX_INFLIGHT_COMMANDS must be >= 1")
+        if self.max_inflight_db_commands < 1:
+            raise ValueError("NOETL_WORKER_MAX_INFLIGHT_DB_COMMANDS must be >= 1")
+        if self.max_inflight_db_commands > self.max_inflight_commands:
+            raise ValueError(
+                "NOETL_WORKER_MAX_INFLIGHT_DB_COMMANDS must be <= NOETL_WORKER_MAX_INFLIGHT_COMMANDS"
+            )
+        if self.nats_fetch_timeout_seconds <= 0:
+            raise ValueError("NOETL_WORKER_NATS_FETCH_TIMEOUT_SECONDS must be > 0")
+        if self.nats_fetch_heartbeat_seconds <= 0:
+            raise ValueError("NOETL_WORKER_NATS_FETCH_HEARTBEAT_SECONDS must be > 0")
+        if self.throttle_poll_interval <= 0:
+            raise ValueError("NOETL_WORKER_THROTTLE_POLL_INTERVAL_SECONDS must be > 0")
+        if self.postgres_pool_waiting_threshold < 0:
+            raise ValueError("NOETL_WORKER_POSTGRES_POOL_WAITING_THRESHOLD must be >= 0")
+        if self.command_timeout_seconds <= 0:
+            raise ValueError("NOETL_WORKER_COMMAND_TIMEOUT_SECONDS must be > 0")
+        return self
 
     @property
     def hostname(self) -> str:
@@ -668,7 +711,20 @@ def get_worker_settings(reload: bool = False) -> WorkerSettings:
             NATS_STREAM=env.get('NATS_STREAM', 'NOETL_COMMANDS'),
             NATS_CONSUMER=env.get('NATS_CONSUMER', 'noetl_worker_pool'),
             NATS_SUBJECT=env.get('NATS_SUBJECT', 'noetl.commands'),
+            NOETL_WORKER_NATS_FETCH_TIMEOUT_SECONDS=env.get('NOETL_WORKER_NATS_FETCH_TIMEOUT_SECONDS', '30'),
+            NOETL_WORKER_NATS_FETCH_HEARTBEAT_SECONDS=env.get('NOETL_WORKER_NATS_FETCH_HEARTBEAT_SECONDS', '5'),
+            NOETL_WORKER_NATS_MAX_ACK_PENDING=env.get('NOETL_WORKER_NATS_MAX_ACK_PENDING', '64'),
             NOETL_KEYCHAIN_REFRESH_THRESHOLD=env.get('NOETL_KEYCHAIN_REFRESH_THRESHOLD', '300'),
+            NOETL_WORKER_HTTP_TIMEOUT=env.get('NOETL_WORKER_HTTP_TIMEOUT', '120'),
+            NOETL_WORKER_EVENT_TIMEOUT=env.get('NOETL_WORKER_EVENT_TIMEOUT', '60'),
+            NOETL_WORKER_MAX_INFLIGHT_COMMANDS=env.get('NOETL_WORKER_MAX_INFLIGHT_COMMANDS', '8'),
+            NOETL_WORKER_MAX_INFLIGHT_DB_COMMANDS=env.get('NOETL_WORKER_MAX_INFLIGHT_DB_COMMANDS', '4'),
+            NOETL_WORKER_THROTTLE_POLL_INTERVAL_SECONDS=env.get(
+                'NOETL_WORKER_THROTTLE_POLL_INTERVAL_SECONDS', '0.2'
+            ),
+            NOETL_WORKER_POSTGRES_POOL_WAITING_THRESHOLD=env.get(
+                'NOETL_WORKER_POSTGRES_POOL_WAITING_THRESHOLD', '2'
+            ),
         )
     return _worker_settings
 

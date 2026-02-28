@@ -16,6 +16,15 @@ pub struct Context {
     /// Default Auth0 domain for gateway login command.
     #[serde(default)]
     pub gateway_auth0_domain: Option<String>,
+    /// Auth0 application client_id used to construct the browser authorization URL.
+    #[serde(default)]
+    pub gateway_auth0_client_id: Option<String>,
+    /// Auth0 redirect URI — the URL Auth0 sends the token to after login.
+    #[serde(default)]
+    pub gateway_auth0_redirect_uri: Option<String>,
+    /// Auth0 client_secret for password grant (stored locally, used by 'noetl auth login --password').
+    #[serde(default)]
+    pub gateway_auth0_client_secret: Option<String>,
 }
 
 fn default_runtime() -> String {
@@ -29,6 +38,9 @@ impl Context {
             runtime: default_runtime(),
             gateway_session_token: None,
             gateway_auth0_domain: None,
+            gateway_auth0_client_id: None,
+            gateway_auth0_redirect_uri: None,
+            gateway_auth0_client_secret: None,
         }
     }
     
@@ -39,6 +51,21 @@ impl Context {
 
     pub fn with_gateway_auth0_domain(mut self, domain: Option<String>) -> Self {
         self.gateway_auth0_domain = domain;
+        self
+    }
+
+    pub fn with_gateway_auth0_client_id(mut self, client_id: Option<String>) -> Self {
+        self.gateway_auth0_client_id = client_id;
+        self
+    }
+
+    pub fn with_gateway_auth0_redirect_uri(mut self, redirect_uri: Option<String>) -> Self {
+        self.gateway_auth0_redirect_uri = redirect_uri;
+        self
+    }
+
+    pub fn with_gateway_auth0_client_secret(mut self, client_secret: Option<String>) -> Self {
+        self.gateway_auth0_client_secret = client_secret;
         self
     }
 }

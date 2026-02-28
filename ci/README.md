@@ -7,7 +7,7 @@ The following tools are available for in-cluster troubleshooting: [Tshoot](manif
 
 After deployment, the following components are available on the host system:
 - Noetl server: http://localhost:8082/
-- VictoriaLogs: http://localhost:9428/select/vmui
+- VictoriaLogs: http://localhost:39428/select/vmui
 - Grafana: http://localhost:3000
   - with login: `admin`; password: `admin`
 - Postgres: **`localhost:54321`**

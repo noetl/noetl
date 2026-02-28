@@ -75,6 +75,17 @@ def _prepare_event_payload(
     return url, json_data
 
 
+def _payload_log_summary(json_data: str) -> str:
+    """Return a metadata-only summary for logging."""
+    try:
+        parsed = json.loads(json_data)
+    except Exception:
+        return f"<non-json payload len={len(json_data)}>"
+    if isinstance(parsed, dict):
+        return f"keys={list(parsed.keys())} len={len(json_data)}"
+    return f"type={type(parsed).__name__} len={len(json_data)}"
+
+
 def report_event(event_data: Dict[str, Any], server_url: str) -> Dict[str, Any]:
     """
     Report an event to the NoETL server synchronously.
@@ -123,8 +134,8 @@ async def report_event_async(
         # For debugging: log the request payload on failure
         if response.status_code == 422:
             logger.error(
-                "Validation error for event. Request payload: %s",
-                json_data[:500] if len(json_data) > 500 else json_data
+                "Validation error for event payload (%s)",
+                _payload_log_summary(json_data),
             )
         raise RuntimeError(
             f"Failed to report event, status code: {response.status_code}, response: {response.text[:200]}"

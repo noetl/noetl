@@ -18,13 +18,13 @@ nodes:
 
         # Grafana
       - containerPort: 30300
-        hostPort: 3000
+        hostPort: 33000
         listenAddress: "127.0.0.1"
         protocol: TCP
 
         # VictoriaLogs
       - containerPort: 30428
-        hostPort: 9428
+        hostPort: 39428
         listenAddress: "127.0.0.1"
         protocol: TCP
 
@@ -54,31 +54,31 @@ nodes:
 
         # NATS Client
       - containerPort: 30422
-        hostPort: 30422
+        hostPort: 32422
         listenAddress: "127.0.0.1"
         protocol: TCP
 
         # NATS Monitoring
       - containerPort: 30822
-        hostPort: 30822
+        hostPort: 32822
         listenAddress: "127.0.0.1"
         protocol: TCP
 
         # Superset (Analytics)
       - containerPort: 30888
-        hostPort: 30888
+        hostPort: 32888
         listenAddress: "127.0.0.1"
         protocol: TCP
 
         # JupyterLab (Analytics)
       - containerPort: 30999
-        hostPort: 30999
+        hostPort: 32999
         listenAddress: "127.0.0.1"
         protocol: TCP
 
         # Pagination Test Server
       - containerPort: 30555
-        hostPort: 30555
+        hostPort: 32555
         listenAddress: "127.0.0.1"
         protocol: TCP
 
@@ -90,13 +90,13 @@ nodes:
 
         # Gateway API
       - containerPort: 30090
-        hostPort: 8090
+        hostPort: 38090
         listenAddress: "127.0.0.1"
         protocol: TCP
 
         # Gateway UI
       - containerPort: 30080
-        hostPort: 8080
+        hostPort: 38080
         listenAddress: "127.0.0.1"
         protocol: TCP
 

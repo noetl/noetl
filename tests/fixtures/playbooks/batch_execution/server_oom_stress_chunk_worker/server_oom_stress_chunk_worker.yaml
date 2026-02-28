@@ -1,0 +1,181 @@
+apiVersion: noetl.io/v2
+kind: Playbook
+
+metadata:
+  name: server_oom_stress_chunk_worker
+  path: tests/fixtures/playbooks/batch_execution/server_oom_stress_chunk_worker
+  description: |
+    Chunk worker for server OOM stress test.
+    Processes one batch of items with per-item distributed parallelism.
+    Each item generates ~250KB compute result triggering _ref externalization,
+    then persists the COMPLETE result (source item + all 600 computed fields) to Postgres.
+    Pool config on save task controls DB connection pressure per worker pod.
+
+workload:
+  pg_auth: pg_k8s
+  parent_execution_id: ''
+  batch_number: 1
+  offset: 0
+  batch_size: 100
+  items_max_in_flight: 2
+
+workflow:
+  - step: start
+    desc: Initialize chunk worker inputs
+    tool:
+      kind: python
+      args:
+        batch_number: '{{ batch_number }}'
+        offset: '{{ offset }}'
+        batch_size: '{{ batch_size }}'
+        items_max_in_flight: '{{ items_max_in_flight }}'
+      code: |
+        def _to_int(value, default):
+            try:
+                return int(value)
+            except (TypeError, ValueError):
+                return default
+
+        result = {
+            "status": "initialized",
+            "batch_number": _to_int(batch_number, 1),
+            "offset": _to_int(offset, 0),
+            "batch_size": _to_int(batch_size, 100),
+            "items_max_in_flight": _to_int(items_max_in_flight, 2),
+        }
+    next:
+      spec: { mode: exclusive }
+      arcs:
+        - step: fetch_batch
+
+  - step: fetch_batch
+    desc: Fetch one chunk of items by OFFSET/LIMIT (deterministic, no NOT EXISTS filter)
+    tool:
+      kind: postgres
+      auth: '{{ pg_auth }}'
+      query: |
+        SELECT s.item_id, s.group_id, s.payload
+        FROM public.stress_test_items s
+        ORDER BY s.item_id ASC
+        OFFSET {{ offset | int }}
+        LIMIT {{ batch_size | int }};
+    next:
+      spec: { mode: exclusive }
+      arcs:
+        - step: normalize_batch
+
+  - step: normalize_batch
+    desc: Extract rows from DB result for loop processing
+    tool:
+      kind: python
+      args:
+        db_result: '{{ fetch_batch }}'
+      code: |
+        rows = db_result.get("command_0", {}).get("rows", []) if isinstance(db_result, dict) else []
+        result = {
+            "batch_rows": rows,
+            "batch_count": len(rows),
+            "has_rows": len(rows) > 0,
+        }
+    next:
+      spec: { mode: exclusive }
+      arcs:
+        - step: process_items
+          when: '{{ (normalize_batch.has_rows | string | lower) == "true" }}'
+        - step: summarize
+
+  - step: process_items
+    desc: |
+      Per-item distributed parallel processing.
+      Each item dispatched to a separate worker via NATS — tests server-worker
+      communication at scale. Compute generates ~250KB result per item
+      (triggers _ref externalization > 64KB threshold), then save persists
+      the COMPLETE result payload to Postgres: original source fields
+      (item_id, group_id, payload) plus status and all 600 computed data fields.
+      NOTE: task_sequence commands bypass _is_db_heavy_tool() check, so
+      max_inflight_db_commands semaphore is not engaged. The loop
+      max_in_flight here is the effective DB concurrency control.
+    loop:
+      in: '{{ normalize_batch.batch_rows }}'
+      iterator: item
+      spec:
+        mode: parallel
+        # max_in_flight cannot be templated; keep aligned with workload.items_max_in_flight
+        max_in_flight: 2
+        policy:
+          exec: distributed
+    tool:
+      - name: compute
+        kind: python
+        args:
+          item_id: '{{ iter.item.item_id }}'
+          group_id: '{{ iter.item.group_id }}'
+          payload: '{{ iter.item.payload }}'
+        code: |
+          # Generate ~250KB result per item (600 fields x ~70 bytes each).
+          # This triggers _ref externalization when result > 64KB.
+          # Full source payload is included so result_data is self-contained.
+          iid = int(item_id or 0)
+          gid = int(group_id or 0)
+          fields = {f"field_{j:03d}": f"value_{iid}_{j}_" + "x" * 64 for j in range(600)}
+          result = {
+              "item_id": iid,
+              "group_id": gid,
+              "payload": payload,
+              "status": "ok",
+              "data": fields,
+          }
+      - name: save
+        kind: postgres
+        auth: '{{ pg_auth }}'
+        pool:
+          max_size: 4
+          max_waiting: 10
+          timeout: 30
+        command: |
+          INSERT INTO public.stress_test_results (item_id, result_data)
+          VALUES (
+            {{ compute.item_id }},
+            '{{ compute | tojson }}'::jsonb
+          )
+          ON CONFLICT (item_id) DO UPDATE SET
+            result_data = EXCLUDED.result_data,
+            processed_at = NOW();
+    next:
+      spec: { mode: exclusive }
+      arcs:
+        - step: summarize
+          when: '{{ event.name == ''loop.done'' }}'
+
+  - step: summarize
+    desc: Return chunk summary
+    tool:
+      kind: python
+      args:
+        normalize: '{{ normalize_batch }}'
+        processed: '{{ process_items | default({}) }}'
+        batch_number: '{{ batch_number }}'
+      code: |
+        batch_count = int(normalize.get("batch_count", 0) or 0) if isinstance(normalize, dict) else 0
+        loop_stats = processed.get("stats", {}) if isinstance(processed, dict) else {}
+
+        result = {
+            "status": "completed",
+            "batch_number": int(batch_number or 0),
+            "batch_count": batch_count,
+            "loop": {
+                "total": int(loop_stats.get("total", 0) or 0),
+                "failed": int(loop_stats.get("failed", 0) or 0),
+            },
+        }
+    next:
+      spec: { mode: exclusive }
+      arcs:
+        - step: end
+
+  - step: end
+    desc: End worker
+    tool:
+      kind: python
+      code: |
+        result = {"status": "completed"}

@@ -1,0 +1,263 @@
+apiVersion: noetl.io/v2
+kind: Playbook
+metadata:
+  name: heavy_payload_pipeline_chunk_worker
+  path: tests/fixtures/playbooks/batch_execution/heavy_payload_pipeline_chunk_worker
+  description: Process one chunk of IDs and run per-item heavy task-sequence pipeline.
+
+workload:
+  pg_auth: pg_k8s
+  parent_execution_id: ''
+  batch_number: 1
+  offset: 0
+  batch_size: 40
+  payload_kb_per_item: 256
+  details_api_url: https://httpbin.org/anything/heavy-item-detail
+
+workflow:
+  - step: start
+    desc: Initialize worker chunk inputs
+    tool:
+      kind: python
+      args:
+        batch_number: '{{ batch_number }}'
+        offset: '{{ offset }}'
+        batch_size: '{{ batch_size }}'
+        payload_kb_per_item: '{{ payload_kb_per_item }}'
+      code: |
+        def _to_int(value, default):
+            try:
+                return int(value)
+            except (TypeError, ValueError):
+                return default
+
+        result = {
+            "status": "initialized",
+            "batch_number": _to_int(batch_number, 1),
+            "offset": _to_int(offset, 0),
+            "batch_size": _to_int(batch_size, 40),
+            "payload_kb_per_item": _to_int(payload_kb_per_item, 256),
+        }
+    next:
+      spec:
+        mode: exclusive
+      arcs:
+        - step: fetch_batch_ids
+
+  - step: fetch_batch_ids
+    desc: Fetch one chunk of IDs for this worker execution
+    tool:
+      kind: postgres
+      auth: '{{ pg_auth }}'
+      query: |
+        SELECT item_id, item_key
+        FROM public.heavy_payload_source
+        WHERE execution_id = '{{ parent_execution_id }}'
+        ORDER BY item_id ASC
+        OFFSET {{ offset | int }}
+        LIMIT {{ batch_size | int }};
+    next:
+      spec:
+        mode: exclusive
+      arcs:
+        - step: normalize_batch
+
+  - step: normalize_batch
+    desc: Normalize fetched ID rows for loop processing
+    tool:
+      kind: python
+      args:
+        db_result: '{{ fetch_batch_ids }}'
+      code: |
+        rows = db_result.get("command_0", {}).get("rows", []) if isinstance(db_result, dict) else []
+        result = {
+            "batch_rows": rows,
+            "batch_count": len(rows),
+            "has_rows": len(rows) > 0,
+        }
+    next:
+      spec:
+        mode: exclusive
+      arcs:
+        - step: process_batch_pipeline
+          when: '{{ (normalize_batch.has_rows | string | lower) == "true" }}'
+        - step: summarize
+
+  - step: process_batch_pipeline
+    desc: Per-item pipeline (python -> http -> python -> postgres) with large payloads
+    loop:
+      in: '{{ normalize_batch.batch_rows }}'
+      iterator: item
+      spec:
+        mode: parallel
+        max_in_flight: 15
+        policy:
+          exec: distributed
+    tool:
+      - name: build_large_request
+        kind: python
+        args:
+          item: '{{ iter.item }}'
+          payload_kb_per_item: '{{ payload_kb_per_item }}'
+        code: |
+          import hashlib
+
+          size_kb = int(payload_kb_per_item or 256)
+          size_bytes = max(1024, size_kb * 1024)
+
+          item_id = int(item.get("item_id", 0) or 0) if isinstance(item, dict) else 0
+          item_key = str(item.get("item_key", "") or "") if isinstance(item, dict) else ""
+
+          seed = f"{item_id}:{item_key}".encode("utf-8")
+          block = hashlib.sha256(seed).hexdigest()
+          repeat_count = (size_bytes // len(block)) + 2
+          request_blob = (block * repeat_count)[:size_bytes]
+
+          result = {
+              "item_id": item_id,
+              "item_key": item_key,
+              "request_blob": request_blob,
+              "request_bytes": len(request_blob.encode("utf-8")),
+          }
+      - name: fetch_detail
+        kind: http
+        method: POST
+        url: '{{ details_api_url }}'
+        headers:
+          Content-Type: application/json
+          Accept: application/json
+        payload:
+          item_id: '{{ build_large_request.item_id }}'
+          item_key: '{{ build_large_request.item_key }}'
+          request_blob: '{{ build_large_request.request_blob }}'
+        spec:
+          policy:
+            rules:
+              - when: '{{ outcome.status == "error" and (outcome.http.status in [429, 500, 502, 503, 504]) }}'
+                then: { do: retry, attempts: 4, backoff: exponential, delay: 1.0 }
+              - when: '{{ outcome.status == "error" }}'
+                then: { do: fail }
+              - else:
+                  then: { do: continue }
+      - name: project_result
+        kind: python
+        libs:
+          json: json
+        args:
+          request_payload: '{{ build_large_request }}'
+          http_result: '{{ fetch_detail }}'
+          mode: chunked_optimal
+          batch_number: '{{ batch_number }}'
+        code: |
+          status_code = int(http_result.get("status_code", 0) or 0) if isinstance(http_result, dict) else 0
+          response_headers = http_result.get("headers", {}) if isinstance(http_result, dict) else {}
+
+          content_length = response_headers.get("content-length") or response_headers.get("Content-Length")
+          if isinstance(content_length, str) and content_length.isdigit():
+              response_bytes = int(content_length)
+          else:
+              response_bytes = len(json.dumps(http_result.get("data", {}), separators=(",", ":"))) if isinstance(http_result, dict) else 0
+
+          result = {
+              "item_id": int(request_payload.get("item_id", 0) or 0),
+              "item_key": str(request_payload.get("item_key", "") or ""),
+              "mode": str(mode),
+              "batch_number": int(batch_number or 0),
+              "http_status": status_code,
+              "request_bytes": int(request_payload.get("request_bytes", 0) or 0),
+              "response_bytes": int(response_bytes or 0),
+              "has_response": status_code > 0,
+              "response_meta": {
+                  "url": http_result.get("url") if isinstance(http_result, dict) else None,
+                  "elapsed": http_result.get("elapsed") if isinstance(http_result, dict) else None,
+              },
+              "error_message": "",
+          }
+      - name: persist_result
+        kind: postgres
+        auth: '{{ pg_auth }}'
+        command: |
+          INSERT INTO public.heavy_payload_results (
+            execution_id,
+            item_id,
+            item_key,
+            mode,
+            batch_number,
+            http_status,
+            request_bytes,
+            response_bytes,
+            has_response,
+            response_meta,
+            error_message
+          )
+          VALUES (
+            '{{ parent_execution_id }}',
+            {{ project_result.item_id }},
+            '{{ project_result.item_key | replace("'", "''") }}',
+            '{{ project_result.mode }}',
+            {{ project_result.batch_number }},
+            {{ project_result.http_status }},
+            {{ project_result.request_bytes }},
+            {{ project_result.response_bytes }},
+            {{ 'true' if project_result.has_response else 'false' }},
+            '{{ project_result.response_meta | tojson | replace("'", "''") }}'::jsonb,
+            NULLIF('{{ project_result.error_message | replace("'", "''") }}', '')
+          )
+          ON CONFLICT (execution_id, item_id)
+          DO UPDATE SET
+            item_key = EXCLUDED.item_key,
+            mode = EXCLUDED.mode,
+            batch_number = EXCLUDED.batch_number,
+            http_status = EXCLUDED.http_status,
+            request_bytes = EXCLUDED.request_bytes,
+            response_bytes = EXCLUDED.response_bytes,
+            has_response = EXCLUDED.has_response,
+            response_meta = EXCLUDED.response_meta,
+            error_message = EXCLUDED.error_message,
+            processed_at = NOW();
+      - name: finalize
+        kind: python
+        args:
+          projected: '{{ project_result }}'
+        code: |
+          result = projected
+    next:
+      spec:
+        mode: exclusive
+      arcs:
+        - step: summarize
+          when: '{{ event.name == ''loop.done'' }}'
+
+  - step: summarize
+    desc: Return chunk summary
+    tool:
+      kind: python
+      args:
+        normalize: '{{ normalize_batch }}'
+        processed: '{{ process_batch_pipeline | default({}) }}'
+        batch_number: '{{ batch_number }}'
+      code: |
+        batch_count = int(normalize.get("batch_count", 0) or 0) if isinstance(normalize, dict) else 0
+        loop_stats = processed.get("stats", {}) if isinstance(processed, dict) else {}
+
+        result = {
+            "status": "completed",
+            "batch_number": int(batch_number or 0),
+            "batch_count": batch_count,
+            "loop": {
+                "total": int(loop_stats.get("total", 0) or 0),
+                "failed": int(loop_stats.get("failed", 0) or 0),
+            },
+        }
+    next:
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
+
+  - step: end
+    desc: End worker
+    tool:
+      kind: python
+      code: |
+        result = {"status": "completed"}

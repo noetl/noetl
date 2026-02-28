@@ -16,7 +16,6 @@ from jinja2 import Environment
 from noetl.core.dsl.render import render_template
 from noetl.core.logger import setup_logger
 from noetl.core.auth.resolver import resolve_auth_map
-from noetl.core.sanitize import sanitize_sensitive_data
 from noetl.worker.auth_compatibility import transform_credentials_to_auth, validate_auth_transition
 from noetl.worker.keychain_resolver import populate_keychain_context
 
@@ -25,6 +24,38 @@ from .request import build_request_args, redact_sensitive_headers
 from .response import process_response, create_mock_response, build_result_reference
 
 logger = setup_logger(__name__, include_location=True)
+
+
+def _safe_endpoint(endpoint: str) -> str:
+    """Return a minimally identifying endpoint string without query/fragment."""
+    parsed = urlparse(endpoint or "")
+    if not parsed.scheme and not parsed.netloc:
+        return str(endpoint or "")
+    return f"{parsed.scheme}://{parsed.netloc}{parsed.path}"
+
+
+def _mapping_key_count(value: Any) -> int:
+    return len(value.keys()) if isinstance(value, dict) else 0
+
+
+def _request_shape_summary(request_args: Dict[str, Any]) -> Dict[str, Any]:
+    summary = {
+        "has_params": isinstance(request_args.get("params"), dict),
+        "param_keys": _mapping_key_count(request_args.get("params")),
+        "has_json": "json" in request_args,
+        "has_data": "data" in request_args,
+        "has_files": "files" in request_args,
+        "json_keys": _mapping_key_count(request_args.get("json")),
+        "data_keys": _mapping_key_count(request_args.get("data")),
+        "file_keys": _mapping_key_count(request_args.get("files")),
+    }
+    if request_args.get("json") is not None and not isinstance(request_args.get("json"), dict):
+        summary["json_type"] = type(request_args.get("json")).__name__
+    if request_args.get("data") is not None and not isinstance(request_args.get("data"), dict):
+        summary["data_type"] = type(request_args.get("data")).__name__
+    if request_args.get("files") is not None and not isinstance(request_args.get("files"), dict):
+        summary["files_type"] = type(request_args.get("files")).__name__
+    return summary
 
 
 def _read_int_env(name: str, default: int, min_value: int = 1) -> int:
@@ -129,7 +160,11 @@ async def execute_http_task(
     Returns:
         A dictionary of the task result
     """
-    logger.debug(f"HTTP.EXECUTE_HTTP_TASK: Entry - task_config={task_config}, task_with={task_with}")
+    logger.debug(
+        "HTTP.EXECUTE_HTTP_TASK: Entry task_config_keys=%s task_with_keys=%s",
+        _mapping_key_count(task_config),
+        _mapping_key_count(task_with),
+    )
 
     task_id = str(uuid.uuid4())
     task_name = task_config.get('task', 'http_task')
@@ -157,9 +192,12 @@ async def execute_http_task(
                 execution_id=execution_id,
                 api_base_url=server_url
             )
-            logger.debug(f"HTTP: Keychain context populated: {list(context.get('keychain', {}).keys())}")
+            logger.debug(
+                "HTTP: Keychain context populated (key_count=%s)",
+                _mapping_key_count(context.get("keychain")),
+            )
         else:
-            logger.warning("HTTP: No catalog_id in context, skipping keychain resolution")
+            logger.debug("HTTP: No catalog_id in context, skipping keychain resolution")
             
         method = task_config.get('method', 'GET').upper()
         logger.debug(f"HTTP.EXECUTE_HTTP_TASK: Rendering HTTP task configuration | method={method}")
@@ -173,7 +211,11 @@ async def execute_http_task(
             or task_config.get('url', '')
         )
         endpoint = render_template(jinja_env, raw_endpoint_template, context)
-        logger.critical(f"HTTP.EXECUTE: endpoint_template={raw_endpoint_template} | rendered={endpoint} | context_keys={list(context.keys())} | patient_id={'patient_id' in context}:{context.get('patient_id')}")
+        logger.debug(
+            "HTTP.EXECUTE: endpoint=%s context_keys=%s",
+            _safe_endpoint(endpoint),
+            _mapping_key_count(context),
+        )
 
         # Process authentication FIRST and add to context for template rendering
         auth_headers, resolved_auth_map = await _process_authentication_with_context(task_config, task_with, jinja_env, context)
@@ -187,13 +229,17 @@ async def execute_http_task(
         data_map = render_template(jinja_env, raw_data or {}, context)
         if not isinstance(data_map, dict):
             data_map = {}
-        logger.debug(f"HTTP.EXECUTE_HTTP_TASK: Rendered data={data_map}")
+        logger.debug(
+            "HTTP.EXECUTE_HTTP_TASK: Rendered data key_count=%s",
+            _mapping_key_count(data_map),
+        )
 
         # Direct params/payload (alternative to data.query/data.body)
         # Also support 'body' key as an alias for 'payload' (common pattern)
         params = render_template(jinja_env, task_config.get('params', {}), context)
         raw_payload = task_config.get('payload') or task_config.get('body')
         payload = render_template(jinja_env, raw_payload or {}, context)
+        headers = render_template(jinja_env, task_config.get('headers', {}), context)
 
         # Apply runtime overrides from task_with (e.g., pagination retry params)
         if isinstance(task_with, dict):
@@ -207,15 +253,18 @@ async def execute_http_task(
                 # Merge into data_map for completeness
                 data_map.update(task_with['data'])
 
-        headers = render_template(jinja_env, task_config.get('headers', {}), context)
-
         # Apply auth headers (already processed above)
         if auth_headers:
             headers.update(auth_headers)
 
         # Log headers with sensitive values redacted (SECURITY: no tokens/passwords in logs)
         redacted_headers = redact_sensitive_headers(headers)
-        logger.info(f"HTTP.EXECUTE_HTTP_TASK: headers_keys={list(headers.keys())} | auth_applied={len(auth_headers) if auth_headers else 0} | redacted_headers={redacted_headers}")
+        logger.debug(
+            "HTTP.EXECUTE_HTTP_TASK: headers_keys=%s auth_applied=%s redacted_headers=%s",
+            list(headers.keys()),
+            len(auth_headers) if auth_headers else 0,
+            redacted_headers,
+        )
 
         timeout = task_config.get('timeout', 30)
         verify_ssl = task_config.get('verify_ssl')
@@ -229,7 +278,7 @@ async def execute_http_task(
         try:
             # Check for local domain mocking
             if _should_mock_request(endpoint):
-                logger.info(f"HTTP.EXECUTE_HTTP_TASK: Mocking request to local domain: {endpoint}")
+                logger.debug("HTTP.EXECUTE_HTTP_TASK: Mocking request to local domain")
                 mock_data = create_mock_response(endpoint, method, params, payload, data_map)
                 # Apply sink-driven reference if sink is configured
                 if sink_config:
@@ -245,16 +294,16 @@ async def execute_http_task(
                 endpoint, method, headers, data_map, params, payload
             )
 
-            # SECURITY: Log request with sensitive data redacted (no tokens/passwords in logs)
             redacted_headers = redact_sensitive_headers(headers)
-            # Sanitize request args for logging (may contain auth in headers or payload)
-            sanitized_args = sanitize_sensitive_data(request_args)
-            logger.info(
-                "HTTP.EXECUTE_HTTP_TASK: Making request | timeout=%s | shared_client=true | "
-                "headers=%s | args=%s",
+            logger.debug(
+                "HTTP.EXECUTE_HTTP_TASK: Request | method=%s endpoint=%s timeout=%s shared_client=true "
+                "header_keys=%s redacted_headers=%s request_shape=%s",
+                method,
+                _safe_endpoint(endpoint),
                 timeout,
+                list(headers.keys()) if isinstance(headers, dict) else [],
                 redacted_headers,
-                sanitized_args,
+                _request_shape_summary(request_args),
             )
 
             response = client.request(method, timeout=timeout, **request_args)
@@ -284,7 +333,10 @@ async def execute_http_task(
             )
 
         except httpx.HTTPStatusError as e:
-            error_msg = f"HTTP error: {e.response.status_code} - {e.response.text}"
+            error_msg = (
+                f"HTTP error: status={e.response.status_code} "
+                f"reason={e.response.reason_phrase} body_bytes={len(e.response.text or '')}"
+            )
             logger.error(f"HTTP.EXECUTE_HTTP_TASK: HTTPStatusError - {error_msg}")
             raise Exception(error_msg)
         except httpx.RequestError as e:
@@ -319,7 +371,11 @@ async def execute_http_task(
             'status': 'error',
             'error': error_msg
         }
-        logger.debug(f"HTTP.EXECUTE_HTTP_TASK: Exit (error) - result={result}")
+        logger.debug(
+            "HTTP.EXECUTE_HTTP_TASK: Exit (error) status=%s id=%s",
+            result.get("status"),
+            result.get("id"),
+        )
         return result
 
 
@@ -484,5 +540,10 @@ def _complete_task(
     else:
         logger.debug(f"HTTP.COMPLETE_TASK: Task duration={duration} seconds")
     
-    logger.debug(f"HTTP.COMPLETE_TASK: Exit (success) - result={result}")
+    logger.debug(
+        "HTTP.COMPLETE_TASK: Exit (success) status=%s id=%s duration=%ss",
+        result.get("status"),
+        result.get("id"),
+        round(duration, 3),
+    )
     return result

@@ -81,6 +81,10 @@ if [ "$BUILD_RUST" = true ]; then
         mkdir -p "$PROJECT_ROOT/bin"
         cp target/release/noetl "$PROJECT_ROOT/bin/noetl"
         echo "✓ Local binary copied to bin/noetl"
+        # Ad-hoc sign on macOS to prevent Gatekeeper SIGKILL on freshly built binaries
+        if [[ "$(uname)" == "Darwin" ]]; then
+            codesign --sign - "$PROJECT_ROOT/bin/noetl" 2>/dev/null && echo "✓ Codesigned bin/noetl" || true
+        fi
     fi
     
     cd "$PROJECT_ROOT"

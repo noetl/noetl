@@ -8,8 +8,9 @@ checks for interrupted executions and automatically resumes them using event rep
 import asyncio
 from typing import Optional, List, Dict, Any
 from psycopg.rows import dict_row
+from psycopg.types.json import Json
 
-from noetl.core.db.pool import get_pool_connection
+from noetl.core.db.pool import get_pool_connection, get_snowflake_id
 from noetl.core.logger import setup_logger
 
 logger = setup_logger(__name__, include_location=True)
@@ -106,14 +107,49 @@ async def mark_execution_cancelled(execution_id: int, reason: str = "Server rest
     """
     try:
         async with get_pool_connection() as conn:
-            async with conn.cursor() as cur:
+            async with conn.cursor(row_factory=dict_row) as cur:
+                await cur.execute(
+                    """
+                    SELECT catalog_id
+                    FROM noetl.event
+                    WHERE execution_id = %s
+                    ORDER BY event_id ASC
+                    LIMIT 1
+                    """,
+                    (execution_id,),
+                )
+                row = await cur.fetchone()
+                if not row or not row.get("catalog_id"):
+                    logger.warning(
+                        "[AUTO-RESUME] Could not resolve catalog_id for execution %s; skipping cancel marker",
+                        execution_id,
+                    )
+                    return False
+
+                event_id = await get_snowflake_id()
+                cancel_payload = {"reason": reason, "auto_cancelled": True}
+                cancel_meta = {
+                    "actionable": False,
+                    "informative": True,
+                    "auto_resume": True,
+                }
                 await cur.execute("""
                     INSERT INTO noetl.event (
-                        execution_id, event_type, status, payload, created_at
+                        execution_id, catalog_id, event_id, event_type,
+                        node_id, node_name, status, result, meta, created_at
                     ) VALUES (
-                        %s, 'execution.cancelled', 'CANCELLED', %s, NOW()
+                        %s, %s, %s, 'execution.cancelled',
+                        %s, %s, 'CANCELLED', %s, %s, NOW()
                     )
-                """, (execution_id, {"reason": reason, "auto_cancelled": True}))
+                """, (
+                    execution_id,
+                    row["catalog_id"],
+                    int(event_id),
+                    "workflow",
+                    "workflow",
+                    Json({"kind": "data", "data": cancel_payload}),
+                    Json(cancel_meta),
+                ))
                 await conn.commit()
 
         logger.info(f"[AUTO-RESUME] Marked execution {execution_id} as CANCELLED")

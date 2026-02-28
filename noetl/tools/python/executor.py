@@ -29,6 +29,12 @@ from noetl.worker.auth_resolver import resolve_auth
 
 logger = setup_logger(__name__, include_location=True)
 
+def _size_hint(value: Any) -> int:
+    try:
+        return len(json.dumps(value, default=str))
+    except Exception:
+        return len(str(value))
+
 
 def _inject_auth_credentials(
     task_config: Dict[str, Any],
@@ -48,7 +54,10 @@ def _inject_auth_credentials(
     if not auth_config or auth_config == {}:
         return {}
     
-    logger.info(f"PYTHON.AUTH: Resolving auth config: {auth_config}")
+    logger.debug(
+        "PYTHON.AUTH: Resolving auth config keys=%s",
+        list(auth_config.keys()) if isinstance(auth_config, dict) else type(auth_config).__name__,
+    )
     
     # Create a Jinja environment for auth resolution
     jinja_env = Environment(autoescape=False)
@@ -56,7 +65,7 @@ def _inject_auth_credentials(
     # Resolve credentials using the unified auth system
     try:
         mode, resolved_items = resolve_auth(auth_config, jinja_env, context)
-        logger.info(f"PYTHON.AUTH: Resolved auth mode={mode}, items={len(resolved_items)}")
+        logger.debug(f"PYTHON.AUTH: Resolved auth mode={mode}, items={len(resolved_items)}")
     except Exception as e:
         logger.error(f"PYTHON.AUTH: Failed to resolve auth: {e}", exc_info=True)
         return {}
@@ -81,7 +90,7 @@ def _inject_auth_credentials(
                 
                 original_env['GOOGLE_APPLICATION_CREDENTIALS'] = os.environ.get('GOOGLE_APPLICATION_CREDENTIALS', '')
                 os.environ['GOOGLE_APPLICATION_CREDENTIALS'] = path
-                logger.info(f"PYTHON.AUTH: Set GOOGLE_APPLICATION_CREDENTIALS to {path}")
+                logger.debug("PYTHON.AUTH: Set GOOGLE_APPLICATION_CREDENTIALS temp file")
                 
             elif service == 'gcs_hmac' and 'access_key_id' in payload:
                 # HMAC credentials for GCS S3 compatibility
@@ -89,7 +98,7 @@ def _inject_auth_credentials(
                 original_env['AWS_SECRET_ACCESS_KEY'] = os.environ.get('AWS_SECRET_ACCESS_KEY', '')
                 os.environ['AWS_ACCESS_KEY_ID'] = payload['access_key_id']
                 os.environ['AWS_SECRET_ACCESS_KEY'] = payload['secret_access_key']
-                logger.info(f"PYTHON.AUTH: Set AWS_ACCESS_KEY_ID for GCS HMAC")
+                logger.debug("PYTHON.AUTH: Set AWS_ACCESS_KEY_ID for GCS HMAC")
         
         elif service in ('s3', 's3_hmac', 'aws'):
             # AWS S3 credentials
@@ -103,14 +112,14 @@ def _inject_auth_credentials(
                     original_env['AWS_DEFAULT_REGION'] = os.environ.get('AWS_DEFAULT_REGION', '')
                     os.environ['AWS_DEFAULT_REGION'] = payload['region']
                 
-                logger.info(f"PYTHON.AUTH: Set AWS credentials")
+                logger.debug("PYTHON.AUTH: Set AWS credentials")
         
         elif service in ('azure', 'azure_storage'):
             # Azure Storage credentials
             if 'connection_string' in payload:
                 original_env['AZURE_STORAGE_CONNECTION_STRING'] = os.environ.get('AZURE_STORAGE_CONNECTION_STRING', '')
                 os.environ['AZURE_STORAGE_CONNECTION_STRING'] = payload['connection_string']
-                logger.info(f"PYTHON.AUTH: Set AZURE_STORAGE_CONNECTION_STRING")
+                logger.debug("PYTHON.AUTH: Set AZURE_STORAGE_CONNECTION_STRING")
     
     return original_env
 
@@ -301,7 +310,10 @@ async def execute_python_task_async(
     # This allows 'args' field in YAML to be used
     if not args:
         args = task_config.get('args', {})
-        logger.debug(f"PYTHON.EXECUTE_PYTHON_TASK: Extracted args from task_config: {args}")
+        logger.debug(
+            "PYTHON.EXECUTE_PYTHON_TASK: Extracted args from task_config (keys=%s)",
+            list(args.keys()) if isinstance(args, dict) else [],
+        )
     else:
         # Merge task_config args with provided args (provided args take precedence)
         config_args = task_config.get('args', {})
@@ -312,9 +324,18 @@ async def execute_python_task_async(
     
     # Use args if provided, otherwise empty dict
     args = args or {}
+    args_meta = {
+        "arg_count": len(args) if isinstance(args, dict) else 0,
+        "arg_keys": sorted(list(args.keys()))[:25] if isinstance(args, dict) else [],
+    }
 
     try:
-        logger.debug(f"PYTHON.EXECUTE_PYTHON_TASK: config_keys={list(task_config.keys())} | args={args} | context_keys={list((context or {}).keys())}")
+        logger.debug(
+            "PYTHON.EXECUTE_PYTHON_TASK: config_keys=%s args_keys=%s context_key_count=%s",
+            list(task_config.keys()),
+            list(args.keys()) if isinstance(args, dict) else [],
+            len((context or {}).keys()) if isinstance(context, dict) else 0,
+        )
 
         # Get and decode the code (priority: script > code_b64 > code)
         code = None
@@ -406,7 +427,7 @@ async def execute_python_task_async(
                 imports_block = '\n'.join(import_statements)
                 code = f"{imports_block}\n\n{code}"
                 logger.info(f"PYTHON.EXECUTE_PYTHON_TASK: Prepended {len(import_statements)} library imports")
-                logger.debug(f"PYTHON.EXECUTE_PYTHON_TASK: Imports block:\n{imports_block}")
+                logger.debug("PYTHON.EXECUTE_PYTHON_TASK: Imports block prepared (len=%s)", len(imports_block))
             else:
                 logger.warning(f"PYTHON.EXECUTE_PYTHON_TASK: 'libs' must be a dict, got {type(libs_config)}")
 
@@ -418,7 +439,7 @@ async def execute_python_task_async(
             event_id = log_event_callback(
                 'task_start', task_id, task_name, 'python',
                 'in_progress', 0, context, None,
-                {'args': args}, None
+                args_meta, None
             )
             logger.debug(f"PYTHON: Task start event_id={event_id} | setting up execution globals")
         
@@ -467,16 +488,26 @@ async def execute_python_task_async(
                         # Simple variable reference without dots, filters, or operators
                         if ' ' not in var_name and '.' not in var_name and '|' not in var_name:
                             if var_name in (context or {}):
-                                logger.info(f"PYTHON.INJECT: Using context value directly for key={k} from var={var_name}, type={type(context[var_name]).__name__}")
+                                logger.debug(
+                                    "PYTHON.INJECT: Using context value directly for key=%s from var=%s type=%s",
+                                    k,
+                                    var_name,
+                                    type(context[var_name]).__name__,
+                                )
                                 rendered_args[k] = context[var_name]
                                 continue
                     
                     # Otherwise, render as template
                     try:
-                        logger.info(f"PYTHON.INJECT: Rendering template for key={k}, value={v[:100]}")
+                        logger.debug(f"PYTHON.INJECT: Rendering template for key={k}")
                         tmpl = jinja_env.from_string(v)
                         rendered = tmpl.render(context or {})
-                        logger.info(f"PYTHON.INJECT: Rendered result for key={k}: {str(rendered)[:200]}")
+                        logger.debug(
+                            "PYTHON.INJECT: Rendered result for key=%s type=%s size=%sB",
+                            k,
+                            type(rendered).__name__,
+                            _size_hint(rendered),
+                        )
                         rendered_args[k] = rendered
                     except Exception as render_ex:
                         logger.exception(f"PYTHON.INJECT: Exception rendering key={k}: {render_ex}")
@@ -488,20 +519,31 @@ async def execute_python_task_async(
             for k, v in rendered_args.items():
                 coerced = _coerce_param(v)
                 exec_globals[k] = coerced
-                logger.info(f"PYTHON.INJECT: Injected {k}={type(coerced).__name__}, preview={str(coerced)[:100]}")
+                logger.debug(f"PYTHON.INJECT: Injected {k} type={type(coerced).__name__}")
         
         # Auto-inject 'data' from context if not in args (for sink execution)
-        logger.critical(f"PYTHON.AUTO_INJECT: Checking context for data | context keys={list(context.keys()) if context else None} | 'data' in exec_globals={('data' in exec_globals)}")
+        logger.debug(
+            "PYTHON.AUTO_INJECT: context_key_count=%s data_in_exec_globals=%s",
+            len(context.keys()) if isinstance(context, dict) else 0,
+            ('data' in exec_globals),
+        )
         if context and 'data' not in exec_globals:
-            logger.critical(f"PYTHON.AUTO_INJECT: Context has data={('data' in context)} | has result={('result' in context)}")
+            logger.debug(
+                "PYTHON.AUTO_INJECT: context_has_data=%s context_has_result=%s",
+                ('data' in context),
+                ('result' in context),
+            )
             if 'data' in context:
                 exec_globals['data'] = context['data']
-                logger.critical(f"PYTHON.INJECT: Auto-injected 'data' from context, type={type(context['data']).__name__}, len={len(context['data']) if isinstance(context['data'], (list, dict)) else 'N/A'}")
+                logger.debug("PYTHON.INJECT: Auto-injected 'data' from context (type=%s)", type(context['data']).__name__)
             elif 'result' in context:
                 exec_globals['data'] = context['result']
-                logger.critical(f"PYTHON.INJECT: Auto-injected 'data' from context['result'], type={type(context['result']).__name__}, len={len(context['result']) if isinstance(context['result'], (list, dict)) else 'N/A'}")
+                logger.debug("PYTHON.INJECT: Auto-injected 'data' from context['result'] (type=%s)", type(context['result']).__name__)
         
-        logger.debug(f"PYTHON.EXECUTE_PYTHON_TASK: Execution globals keys: {list(exec_globals.keys())}")
+        logger.debug(
+            "PYTHON.EXECUTE_PYTHON_TASK: Execution globals prepared count=%s",
+            len(exec_globals.keys()),
+        )
 
         exec_locals = {}
         logger.debug(f"PYTHON.EXECUTE_PYTHON_TASK: Executing Python code")
@@ -511,7 +553,10 @@ async def execute_python_task_async(
         loop = asyncio.get_running_loop()
         await loop.run_in_executor(None, lambda: exec(code, exec_globals, exec_locals))
         
-        logger.debug(f"PYTHON.EXECUTE_PYTHON_TASK: Execution completed | locals_keys={list(exec_locals.keys())}")
+        logger.debug(
+            "PYTHON.EXECUTE_PYTHON_TASK: Execution completed locals_count=%s",
+            len(exec_locals.keys()),
+        )
 
         # Check if code defines main() function (legacy support)
         if 'main' in exec_locals and callable(exec_locals['main']):
@@ -526,14 +571,19 @@ async def execute_python_task_async(
                         rendered_args[k] = v._data
                     # Check if value is dict or list (already resolved data structures)
                     elif isinstance(v, (dict, list)):
-                        logger.info(f"PYTHON.RENDER: Using dict/list directly for key={k}, type={type(v).__name__}")
+                        logger.debug(f"PYTHON.RENDER: Using dict/list directly for key={k}, type={type(v).__name__}")
                         rendered_args[k] = v
                     elif isinstance(v, str):
                         try:
-                            logger.info(f"PYTHON.RENDER: Rendering template for key={k}, value={v[:100]}")
+                            logger.debug(f"PYTHON.RENDER: Rendering template for key={k}")
                             tmpl = jinja_env.from_string(v)
                             rendered = tmpl.render(context or {})
-                            logger.info(f"PYTHON.RENDER: Rendered result for key={k}: {rendered[:200]}")
+                            logger.debug(
+                                "PYTHON.RENDER: Rendered result for key=%s type=%s size=%sB",
+                                k,
+                                type(rendered).__name__,
+                                _size_hint(rendered),
+                            )
                             rendered_args[k] = rendered
                         except Exception as render_ex:
                             logger.exception(f"PYTHON.RENDER: Exception rendering key={k}: {render_ex}")
@@ -548,7 +598,12 @@ async def execute_python_task_async(
             try:
                 for k, v in rendered_args.items():
                     coerced = _coerce_param(v)
-                    logger.info(f"PYTHON.COERCE: key={k}, type before={type(v).__name__}, type after={type(coerced).__name__}, value={str(coerced)[:200]}")
+                    logger.debug(
+                        "PYTHON.COERCE: key=%s type_before=%s type_after=%s",
+                        k,
+                        type(v).__name__,
+                        type(coerced).__name__,
+                    )
                     coerced_args[k] = coerced
             except Exception as coerce_ex:
                 logger.exception(f"PYTHON.COERCE: Exception: {coerce_ex}")
@@ -573,7 +628,7 @@ async def execute_python_task_async(
                 log_event_callback(
                     'task_complete', task_id, task_name, 'python',
                     'success', duration, context, result_data,
-                    {'args': args}, event_id
+                    args_meta, event_id
                 )
 
             return {
@@ -589,7 +644,10 @@ async def execute_python_task_async(
             if 'result' in exec_locals:
                 result_data = exec_locals['result']
                 logger.info(f"PYTHON.EXECUTE_PYTHON_TASK: Captured 'result' variable, type={type(result_data).__name__}")
-                logger.debug(f"PYTHON.EXECUTE_PYTHON_TASK: Result preview: {str(result_data)[:500]}")
+                logger.debug(
+                    "PYTHON.EXECUTE_PYTHON_TASK: Result size=%sB",
+                    _size_hint(result_data),
+                )
             else:
                 # No explicit result - return success status with available locals
                 logger.warning("PYTHON.EXECUTE_PYTHON_TASK: No 'result' variable found, returning success status")
@@ -611,7 +669,7 @@ async def execute_python_task_async(
                 log_event_callback(
                     'task_complete', task_id, task_name, 'python',
                     'success', duration, context, result_data,
-                    {'args': args}, event_id
+                    args_meta, event_id
                 )
 
             return {
@@ -631,7 +689,7 @@ async def execute_python_task_async(
             log_event_callback(
                 'task_error', task_id, task_name, 'python',
                 'error', duration, context, None,
-                {'error': error_msg, 'args': args}, None
+                {"error": error_msg, **args_meta}, None
             )
 
         return {
