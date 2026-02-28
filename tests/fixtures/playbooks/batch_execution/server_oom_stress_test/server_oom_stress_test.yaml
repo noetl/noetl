@@ -27,7 +27,7 @@ workload:
   batch_size: 100
   drop_tables: false
   concurrent_batches: 2
-  items_max_in_flight: 3
+  items_max_in_flight: 2
   chunk_worker_path: tests/fixtures/playbooks/batch_execution/server_oom_stress_chunk_worker
 
 workflow:
@@ -346,7 +346,7 @@ workflow:
   # ── Phase 3: Parallel chunk worker dispatch ──────────────────────────────────
   # Dispatches batch workers in parallel via distributed loop.
   # Each chunk worker processes its items with per-item distributed parallelism.
-  # Peak concurrent commands: concurrent_batches × items_max_in_flight = 2 × 3 = 6.
+  # Peak concurrent commands: concurrent_batches × items_max_in_flight = 2 × 2 = 4.
   # Must stay within deployed worker Postgres pool capacity (max_size=4 per pod × 2 pods = 8).
   # NOTE: task_sequence tool is NOT recognized by _is_db_heavy_tool(), so the
   # max_inflight_db_commands semaphore does not throttle these commands.
@@ -465,7 +465,7 @@ workflow:
                 "batch_count": int(plan.get("batch_count", 0) or 0),
                 "batch_size": int(plan.get("batch_size", 0) or 0),
                 "concurrent_batches": int(concurrent_batches or 2),
-                "items_max_in_flight": int(items_max_in_flight or 3),
+                "items_max_in_flight": int(items_max_in_flight or 2),
             },
             "worker_loop": {
                 "total": int(loop_stats.get("total", 0) or 0),

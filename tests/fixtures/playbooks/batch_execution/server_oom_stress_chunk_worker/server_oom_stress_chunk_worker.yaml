@@ -17,7 +17,7 @@ workload:
   batch_number: 1
   offset: 0
   batch_size: 100
-  items_max_in_flight: 3
+  items_max_in_flight: 2
 
 workflow:
   - step: start
@@ -41,7 +41,7 @@ workflow:
             "batch_number": _to_int(batch_number, 1),
             "offset": _to_int(offset, 0),
             "batch_size": _to_int(batch_size, 100),
-            "items_max_in_flight": _to_int(items_max_in_flight, 3),
+            "items_max_in_flight": _to_int(items_max_in_flight, 2),
         }
     next:
       spec: { mode: exclusive }
@@ -100,7 +100,7 @@ workflow:
       iterator: item
       spec:
         mode: parallel
-        max_in_flight: 3
+        max_in_flight: '{{ items_max_in_flight }}'
         policy:
           exec: distributed
     tool:
