@@ -100,7 +100,8 @@ workflow:
       iterator: item
       spec:
         mode: parallel
-        max_in_flight: '{{ items_max_in_flight }}'
+        # max_in_flight cannot be templated; keep aligned with workload.items_max_in_flight
+        max_in_flight: 2
         policy:
           exec: distributed
     tool:
