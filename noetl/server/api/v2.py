@@ -1311,7 +1311,93 @@ async def get_execution_status(execution_id: str, full: bool = False):
         state = engine.state_store.get_state(execution_id)
         
         if not state:
-            raise HTTPException(404, "Execution not found")
+            async with get_pool_connection() as conn:
+                async with conn.cursor(row_factory=dict_row) as cur:
+                    try:
+                        exec_id_int = int(execution_id)
+                    except ValueError:
+                        raise HTTPException(404, "Execution not found")
+
+                    await cur.execute("""
+                        SELECT event_type, node_name, status
+                        FROM noetl.event
+                        WHERE execution_id = %s
+                        ORDER BY event_id DESC
+                        LIMIT 1
+                    """, (exec_id_int,))
+                    latest_event = await cur.fetchone()
+
+                    if not latest_event:
+                        raise HTTPException(404, "Execution not found")
+
+                    await cur.execute("""
+                        SELECT event_type
+                        FROM noetl.event
+                        WHERE execution_id = %s
+                          AND event_type IN (
+                            'playbook.completed',
+                            'workflow.completed',
+                            'playbook.failed',
+                            'workflow.failed',
+                            'execution.cancelled'
+                          )
+                        ORDER BY event_id DESC
+                        LIMIT 1
+                    """, (exec_id_int,))
+                    terminal_event = await cur.fetchone()
+
+                    await cur.execute("""
+                        SELECT node_name
+                        FROM noetl.event
+                        WHERE execution_id = %s
+                          AND event_type = 'step.exit'
+                          AND status = 'COMPLETED'
+                        ORDER BY event_id ASC
+                    """, (exec_id_int,))
+                    step_rows = await cur.fetchall()
+
+            terminal_complete_events = {"playbook.completed", "workflow.completed"}
+            terminal_failed_events = {"playbook.failed", "workflow.failed", "execution.cancelled"}
+
+            completed = False
+            failed = False
+            completion_inferred = True
+
+            terminal_type = terminal_event["event_type"] if terminal_event else None
+            if terminal_type in terminal_complete_events:
+                completed = True
+                failed = False
+            elif terminal_type in terminal_failed_events:
+                completed = True
+                failed = terminal_type != "execution.cancelled"
+            elif (
+                latest_event["node_name"] == "end"
+                and latest_event["status"] == "COMPLETED"
+                and latest_event["event_type"] in {"command.completed", "call.done", "step.exit"}
+            ):
+                completed = True
+                failed = False
+
+            completed_steps: list[str] = []
+            seen_steps: set[str] = set()
+            for row in step_rows or []:
+                step_name = row.get("node_name")
+                if not step_name or step_name in seen_steps:
+                    continue
+                seen_steps.add(step_name)
+                completed_steps.append(step_name)
+
+            fallback_variables: dict[str, Any] = {}
+            return {
+                "execution_id": execution_id,
+                "current_step": latest_event.get("node_name"),
+                "completed_steps": completed_steps,
+                "failed": failed,
+                "completed": completed,
+                "completion_inferred": completion_inferred,
+                "variables": fallback_variables if full else _compact_status_variables(fallback_variables),
+                "source": "event_log_fallback",
+            }
 
         completed = state.completed
         failed = state.failed
