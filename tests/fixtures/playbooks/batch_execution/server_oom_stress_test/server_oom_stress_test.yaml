@@ -5,23 +5,30 @@ metadata:
   name: server_oom_stress_test
   path: tests/fixtures/playbooks/batch_execution/server_oom_stress_test
   description: |
-    Stress test for server/worker memory under large-context batch processing with loopback.
-    Reproduces production conditions from state_report_generation_prod_v10.yaml:
+    Stress test for server/worker communication under large-context batch processing.
+    Validates that server-worker communication handles big data without degradation:
       - 21 context steps (~3-8KB each) to simulate fat execution context (42 vars in prod)
-      - 3000 items processed in 100-row batches via loopback (loop.done -> load_batch)
+      - 3000 items dispatched across parallel chunk workers (2 batches concurrent)
       - Each item produces a ~250KB compute result (matching MDS assessment JSON payloads)
         which triggers _ref externalization (> 64KB NOETL_INLINE_MAX_BYTES threshold)
+      - Per-item distributed parallel processing exercises: NATS dispatch, claim protocol,
+        adaptive concurrency controller, event pipeline, and DB pool under controlled contention
       - No sensitive data, no external HTTP calls
-    Expected failure modes:
-      - Worker OOMKilled: holding 250KB result + template context during render/serialize
-      - Server OOMKilled: accumulating _ref metadata + context copies across 100 iterations
-    If both survive 3000 items (30 loopback cycles) → OOM bug is fixed.
+    What this test validates:
+      - Concurrent worker claims at scale (up to 6 simultaneous NATS commands)
+      - Adaptive concurrency controller ramp-up and stabilization under load
+      - Server DB pool handling parallel event ingestion from multiple workers
+      - Postgres pool pressure remains within deployed max_size (4 per worker)
+      - No data loss: all 3000 items processed correctly under concurrent load
 
 workload:
   pg_auth: pg_k8s
   total_items: 3000
   batch_size: 100
   drop_tables: false
+  concurrent_batches: 2
+  items_max_in_flight: 3
+  chunk_worker_path: tests/fixtures/playbooks/batch_execution/server_oom_stress_chunk_worker
 
 workflow:
 
@@ -321,9 +328,9 @@ workflow:
         INSERT INTO public.stress_test_items (item_id, group_id, payload)
         SELECT
           i AS item_id,
-          ((i - 1) / 100) + 1 AS group_id,
+          ((i - 1) / {{ batch_size | int }}) + 1 AS group_id,
           'synthetic_payload_' || i || '_' || repeat('x', 64) AS payload
-        FROM generate_series(1, 3000) AS i;
+        FROM generate_series(1, {{ total_items | int }}) AS i;
       spec:
         policy:
           rules:
@@ -334,122 +341,79 @@ workflow:
     next:
       spec: { mode: exclusive }
       arcs:
-        - step: load_batch
+        - step: build_batch_plan
 
-  # ── Phase 3: Batch loop with loopback ─────────────────────────────────────────
-  # This is the section being stress-tested.
-  # Mirrors the production pattern: load -> normalize -> loop(100) -> load (loopback)
+  # ── Phase 3: Parallel chunk worker dispatch ──────────────────────────────────
+  # Dispatches batch workers in parallel via distributed loop.
+  # Each chunk worker processes its items with per-item distributed parallelism.
+  # Peak concurrent commands: concurrent_batches × items_max_in_flight = 2 × 3 = 6.
+  # Must stay within deployed worker Postgres pool capacity (max_size=4 per pod × 2 pods = 8).
+  # NOTE: task_sequence tool is NOT recognized by _is_db_heavy_tool(), so the
+  # max_inflight_db_commands semaphore does not throttle these commands.
+  # Playbook-level max_in_flight is the only control over DB concurrency here.
 
-  - step: load_batch
-    desc: Load next 100 unprocessed items (NOT EXISTS ensures idempotency, loopback target)
-    tool:
-      kind: postgres
-      auth: '{{ pg_auth }}'
-      query: |
-        SELECT s.item_id, s.group_id, s.payload
-        FROM public.stress_test_items s
-        WHERE NOT EXISTS (
-          SELECT 1 FROM public.stress_test_results r
-          WHERE r.item_id = s.item_id
-        )
-        ORDER BY s.item_id
-        LIMIT 100;
-      spec:
-        policy:
-          rules:
-            - when: "{{ outcome.status == 'error' }}"
-              then: { do: retry, attempts: 5, backoff: exponential, delay: 2.0 }
-            - else:
-                then: { do: break }
-    next:
-      spec: { mode: exclusive }
-      arcs:
-        - step: normalize_batch
-
-  - step: normalize_batch
-    desc: Extract rows from DB result via Python (mirrors production normalize_mds pattern)
+  - step: build_batch_plan
+    desc: Compute batch windows for parallel chunk worker dispatch
     tool:
       kind: python
       args:
-        db_result: '{{ load_batch }}'
+        total_items: '{{ total_items }}'
+        batch_size: '{{ batch_size }}'
       code: |
-        rows = db_result.get("command_0", {}).get("rows", []) if isinstance(db_result, dict) else []
+        total = int(total_items or 3000)
+        size = int(batch_size or 100)
+        batches = []
+        for idx in range(0, total, size):
+            batch_number = (idx // size) + 1
+            limit = min(size, total - idx)
+            batches.append({
+                "batch_number": batch_number,
+                "offset": idx,
+                "limit": limit,
+            })
         result = {
-            "batch_rows": rows,
-            "batch_count": len(rows),
-            "has_rows": len(rows) > 0,
+            "batches": batches,
+            "batch_count": len(batches),
+            "batch_size": size,
+            "total_items": total,
         }
     next:
       spec: { mode: exclusive }
       arcs:
-        - step: process_batch
-          when: '{{ (normalize_batch.has_rows | string | lower) == "true" }}'
-        - step: verify_completion_counts
-          when: '{{ (normalize_batch.has_rows | string | lower) != "true" }}'
+        - step: run_batch_workers
 
-  - step: process_batch
-    desc: Process each item in the batch (parallel loop, mirrors production fetch_mds_assessment_details)
+  - step: run_batch_workers
+    desc: Dispatch chunk workers in parallel across planned batch windows
     loop:
-      in: '{{ normalize_batch.batch_rows }}'
-      iterator: item_row
+      in: '{{ build_batch_plan.batches }}'
+      iterator: batch
       spec:
         mode: parallel
-        max_in_flight: 10
+        max_in_flight: 2
+        policy:
+          exec: distributed
     tool:
-      - name: compute
-        kind: python
-        args:
-          item_id: '{{ iter.item_row.item_id }}'
-        code: |
-          # Simulate a large API response (~250KB JSON), matching MDS assessment payloads.
-          # This triggers _ref externalization (> 64KB threshold) and stresses worker
-          # memory during template rendering and result serialization — the same
-          # conditions that cause worker/server OOM in production.
-          fields = {f"field_{j:03d}": f"value_{item_id}_{j}_" + "x" * 64 for j in range(600)}
-          result = {
-              "item_id": int(item_id),
-              "status": "ok",
-              "data": fields,
-          }
-        spec:
-          policy:
-            rules:
-              - when: "{{ outcome.status == 'error' }}"
-                then: { do: fail }
-              - else:
-                  then:
-                    do: continue
-                    set_iter:
-                      item_result: '{{ outcome.result.data }}'
-      - name: save
-        kind: postgres
-        auth: '{{ pg_auth }}'
-        command: |
-          INSERT INTO public.stress_test_results (item_id, result_data)
-          VALUES (
-            {{ iter.item_row.item_id }},
-            '{{ iter.item_result | tojson | replace("'", "''") }}'::jsonb
-          )
-          ON CONFLICT (item_id) DO UPDATE SET
-            result_data = EXCLUDED.result_data,
-            processed_at = NOW();
-        spec:
-          policy:
-            rules:
-              - when: "{{ outcome.status == 'error' and (outcome.error.retryable | default(false)) }}"
-                then: { do: retry, attempts: 5, backoff: exponential, delay: 0.1 }
-              - when: "{{ outcome.status == 'error' }}"
-                then: { do: fail }
-              - else:
-                  then: { do: break }
+      kind: playbook
+      path: '{{ chunk_worker_path }}'
+      return_step: end
+      timeout: 900
+      args:
+        pg_auth: '{{ pg_auth }}'
+        parent_execution_id: '{{ job.execution_id }}'
+        batch_number: '{{ iter.batch.batch_number }}'
+        offset: '{{ iter.batch.offset }}'
+        batch_size: '{{ iter.batch.limit }}'
+        items_max_in_flight: '{{ items_max_in_flight }}'
     next:
       spec: { mode: exclusive }
       arcs:
-        - step: load_batch
-          when: "{{ event.name == 'loop.done' }}"
+        - step: verify_completion_counts
+          when: '{{ event.name == ''loop.done'' }}'
+
+  # ── Phase 4: Verification and summary ────────────────────────────────────────
 
   - step: verify_completion_counts
-    desc: Verify whether all items are processed before finalizing
+    desc: Verify all items were processed correctly
     tool:
       kind: postgres
       auth: '{{ pg_auth }}'
@@ -469,56 +433,44 @@ workflow:
     next:
       spec: { mode: exclusive }
       arcs:
-        - step: decide_completion
+        - step: summarize
 
-  - step: decide_completion
-    desc: Decide whether to continue loopback or finalize
+  - step: summarize
+    desc: Return stress test summary with throughput metrics
     tool:
       kind: python
       args:
         verify_result: '{{ verify_completion_counts }}'
+        batch_plan: '{{ build_batch_plan }}'
+        worker_loop: '{{ run_batch_workers | default({}) }}'
+        concurrent_batches: '{{ concurrent_batches }}'
+        items_max_in_flight: '{{ items_max_in_flight }}'
       code: |
         rows = verify_result.get("command_0", {}).get("rows", []) if isinstance(verify_result, dict) else []
         row = rows[0] if rows else {}
         total_items = int(row.get("total_items", 0) or 0)
         processed_items = int(row.get("processed_items", 0) or 0)
         remaining_items = int(row.get("remaining_items", 0) or 0)
+
+        plan = batch_plan if isinstance(batch_plan, dict) else {}
+        loop_stats = worker_loop.get("stats", {}) if isinstance(worker_loop, dict) else {}
+
         result = {
+            "status": "completed",
             "total_items": total_items,
             "processed_items": processed_items,
             "remaining_items": remaining_items,
             "is_complete": remaining_items == 0 and processed_items == total_items,
-        }
-    next:
-      spec: { mode: exclusive }
-      arcs:
-        - step: load_batch
-          when: '{{ (decide_completion.is_complete | string | lower) != "true" }}'
-        - step: summarize
-
-  # ── Phase 4: Summary ─────────────────────────────────────────────────────────
-
-  - step: summarize
-    desc: Return stress test summary
-    tool:
-      kind: python
-      args:
-        batch_count: '{{ normalize_batch.batch_count }}'
-        total_items: '{{ decide_completion.total_items }}'
-        processed_items: '{{ decide_completion.processed_items }}'
-        remaining_items: '{{ decide_completion.remaining_items }}'
-      code: |
-        count = int(batch_count or 0) if batch_count else 0
-        total = int(total_items or 0) if total_items else 0
-        processed = int(processed_items or 0) if processed_items else 0
-        remaining = int(remaining_items or 0) if remaining_items else 0
-        result = {
-            "status": "completed",
-            "last_batch_count": count,
-            "total_items": total,
-            "processed_items": processed,
-            "remaining_items": remaining,
-            "is_complete": remaining == 0 and processed == total,
+            "batch_plan": {
+                "batch_count": int(plan.get("batch_count", 0) or 0),
+                "batch_size": int(plan.get("batch_size", 0) or 0),
+                "concurrent_batches": int(concurrent_batches or 2),
+                "items_max_in_flight": int(items_max_in_flight or 3),
+            },
+            "worker_loop": {
+                "total": int(loop_stats.get("total", 0) or 0),
+                "failed": int(loop_stats.get("failed", 0) or 0),
+            },
         }
     next:
       spec: { mode: exclusive }
