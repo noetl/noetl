@@ -4,6 +4,7 @@ HTTP response processing for HTTP plugin.
 Handles response parsing and data extraction.
 """
 
+import os
 from typing import Dict, Any, Optional
 import httpx
 
@@ -11,6 +12,15 @@ from noetl.core.logger import setup_logger
 from noetl.core.sanitize import sanitize_headers
 
 logger = setup_logger(__name__, include_location=True)
+
+# Allow opting out of sink-driven reference wrapping (useful for local/kind clusters
+# where keeping full payloads inline is preferable for debugging).
+SINK_REFERENCES_ENABLED = os.getenv("NOETL_SINK_REFERENCES_ENABLED", "true").lower() not in (
+    "0",
+    "false",
+    "no",
+    "off",
+)
 
 
 def process_response(response: httpx.Response) -> Dict[str, Any]:
@@ -114,7 +124,7 @@ def build_result_reference(
     Returns:
         Dictionary with data_reference, metadata, and _internal_data
     """
-    if not sink_config:
+    if not sink_config or not SINK_REFERENCES_ENABLED:
         return response_data
     
     # Extract sink tool configuration
