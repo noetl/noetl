@@ -3180,7 +3180,122 @@ class ControlFlowEngine:
         is_loop_step = step_def.loop is not None and event.step in state.loop_state
         if event.name in ("call.done", "call.error") and not is_loop_step:
             next_commands = await self._evaluate_next_transitions(state, step_def, event)
-            
+
+        # Handle loop iteration counting for non-task_sequence loop steps on call.done.
+        # Task sequence steps handle loop counting in the :task_sequence block above.
+        # Non-task_sequence tools (playbook, postgres, python, etc.) in distributed loops
+        # need loop counting here because step.exit is emitted as non-actionable and
+        # never triggers handle_event().
+        if event.name == "call.done" and is_loop_step:
+            response_data = event.payload.get("response", event.payload)
+            loop_state = state.loop_state[event.step]
+            if not loop_state.get("aggregation_finalized", False):
+                failed = (response_data.get("status", "") or "").upper() in ("FAILED", "ERROR")
+                state.add_loop_result(event.step, response_data, failed=failed)
+                logger.info(f"[LOOP-CALL.DONE] Added iteration result to loop aggregation for {event.step}")
+
+                # Increment NATS K/V loop counter
+                try:
+                    nats_cache = await get_nats_cache()
+                    payload_loop_event_id = (
+                        event.payload.get("loop_event_id")
+                        if isinstance(event.payload, dict)
+                        else None
+                    )
+                    loop_event_id = payload_loop_event_id or loop_state.get("event_id")
+                    event_id_candidates = []
+                    if loop_event_id:
+                        event_id_candidates.append(str(loop_event_id))
+                    for candidate in self._build_loop_event_id_candidates(state, event.step, loop_state):
+                        if candidate not in event_id_candidates:
+                            event_id_candidates.append(candidate)
+                    resolved_loop_event_id = (
+                        event_id_candidates[0] if event_id_candidates else f"exec_{state.execution_id}"
+                    )
+
+                    new_count = -1
+                    for candidate_event_id in event_id_candidates:
+                        candidate_count = await nats_cache.increment_loop_completed(
+                            str(state.execution_id), event.step, event_id=candidate_event_id
+                        )
+                        if candidate_count >= 0:
+                            new_count = candidate_count
+                            resolved_loop_event_id = candidate_event_id
+                            break
+
+                    if new_count < 0:
+                        new_count = len(loop_state.get("results", []))
+                        persisted_count = await self._count_step_events(
+                            state.execution_id, event.step, "call.done"
+                        )
+                        if persisted_count >= 0:
+                            new_count = max(new_count, persisted_count)
+                        logger.warning(
+                            f"[LOOP-CALL.DONE] Could not increment NATS loop count for {event.step}; "
+                            f"falling back to persisted/local count {new_count}"
+                        )
+                    else:
+                        logger.info(
+                            f"[LOOP-CALL.DONE] Incremented loop count in NATS K/V for "
+                            f"{event.step} via {resolved_loop_event_id}: {new_count}"
+                        )
+
+                    loop_state["event_id"] = resolved_loop_event_id
+
+                    # Resolve collection size from NATS or re-render
+                    nats_loop_state = await nats_cache.get_loop_state(
+                        str(state.execution_id), event.step, event_id=resolved_loop_event_id
+                    )
+                    collection_size = int((nats_loop_state or {}).get("collection_size", 0) or 0)
+
+                    if collection_size == 0:
+                        loop_context = state.get_render_context(event)
+                        rendered_collection = self._render_template(step_def.loop.in_, loop_context)
+                        rendered_collection = self._normalize_loop_collection(rendered_collection, event.step)
+                        loop_state["collection"] = rendered_collection
+                        collection_size = len(rendered_collection)
+                        logger.info(f"[LOOP-CALL.DONE] Re-rendered collection for {event.step}: {collection_size} items")
+
+                    # Check if loop is done
+                    if collection_size > 0 and new_count >= collection_size:
+                        loop_state["completed"] = True
+                        loop_state["aggregation_finalized"] = True
+                        logger.info(f"[LOOP-CALL.DONE] Loop completed for {event.step}: {new_count}/{collection_size}")
+
+                        loop_aggregation = state.get_loop_aggregation(event.step)
+                        state.mark_step_completed(event.step, loop_aggregation)
+
+                        loop_done_event = Event(
+                            execution_id=event.execution_id,
+                            step=event.step,
+                            name="loop.done",
+                            payload={
+                                "status": "completed",
+                                "iterations": new_count,
+                                "result": loop_aggregation,
+                            },
+                        )
+                        loop_done_commands = await self._evaluate_next_transitions(
+                            state, step_def, loop_done_event
+                        )
+                        commands.extend(loop_done_commands)
+                        logger.info(
+                            f"[LOOP-CALL.DONE] Generated {len(loop_done_commands)} commands from loop.done"
+                        )
+                    else:
+                        # More iterations needed
+                        logger.info(
+                            f"[LOOP-CALL.DONE] Issuing iteration commands for {event.step}: "
+                            f"{new_count}/{collection_size} (mode={step_def.loop.mode})"
+                        )
+                        iter_cmds = await self._issue_loop_commands(
+                            state, step_def, {"__loop_continue": True}
+                        )
+                        commands.extend(iter_cmds)
+
+                except Exception as e:
+                    logger.error(f"[LOOP-CALL.DONE] Error handling loop: {e}", exc_info=True)
+
         # Identify retry commands (commands targeting the same step are retries)
         server_retry_commands = [c for c in next_commands if c.step == event.step]
 
