@@ -72,7 +72,7 @@ Port forwarding is configured in `ci/kind/config.yaml`. Do **NOT** use kubectl p
 | Gateway UI       | 8080      | 30080          | http://localhost:8080             |
 | PostgreSQL       | 54321     | 30321          | localhost:54321                   |
 | Grafana          | 3000      | 30300          | http://localhost:3000             |
-| VictoriaLogs     | 9428      | 30428          | http://localhost:9428             |
+| VictoriaLogs     | 39428     | 30428          | http://localhost:39428            |
 | NATS Client      | 30422     | 30422          | nats://localhost:30422            |
 | NATS Monitoring  | 30822     | 30822          | http://localhost:30822            |
 | ClickHouse HTTP  | 30123     | 30123          | http://localhost:30123            |
