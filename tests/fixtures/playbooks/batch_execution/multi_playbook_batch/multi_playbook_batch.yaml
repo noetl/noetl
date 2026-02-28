@@ -17,11 +17,7 @@ workload:
   temperature_threshold: 26
   baseFilePath: /opt/noetl/data/test
   bucket: test-bucket
-  pg_host: postgres.postgres.svc.cluster.local
-  pg_port: '5432'
-  pg_user: demo
-  pg_password: demo
-  pg_db: demo_noetl
+  pg_auth: pg_k8s
 
 workflow:
   - step: start
@@ -78,11 +74,7 @@ workflow:
       payload:
         baseFilePath: '{{ baseFilePath }}'
         bucket: '{{ bucket }}'
-        pg_host: '{{ pg_host }}'
-        pg_port: '{{ pg_port }}'
-        pg_user: '{{ pg_user }}'
-        pg_password: '{{ pg_password }}'
-        pg_db: '{{ pg_db }}'
+        pg_auth: '{{ pg_auth }}'
     next:
       spec:
         mode: exclusive
@@ -92,103 +84,36 @@ workflow:
   - step: store_results
     desc: Store the results from all playbooks
     tool:
-      kind: python
-      libs:
-        duckdb: duckdb
-        json: json
-        time: time
-      args:
-        http_result: '{{ run_http_test }}'
-        weather_result: '{{ run_weather_processing }}'
-        data_result: '{{ run_data_transformation }}'
-        pg_host: '{{ pg_host }}'
-        pg_port: '{{ pg_port }}'
-        pg_user: '{{ pg_user }}'
-        pg_password: '{{ pg_password }}'
-        pg_db: '{{ pg_db }}'
-        execution_id: '{{ job.uuid }}'
-      code: |
-        # Convert results to JSON strings
-        http_json = json.dumps(http_result) if isinstance(http_result, dict) else str(http_result)
-        weather_json = json.dumps(weather_result) if isinstance(weather_result, dict) else str(weather_result)
-        data_json = json.dumps(data_result) if isinstance(data_result, dict) else str(data_result)
+      kind: duckdb
+      auth:
+        pg_db:
+          source: credential
+          tool: postgres
+          key: "{{ pg_auth }}"
+      commands: |
+        ATTACH '' AS pg_db (TYPE POSTGRES, SECRET pg_db);
 
-        # Create DuckDB connection
-        conn = duckdb.connect()
+        CREATE TABLE IF NOT EXISTS pg_db.playbook_batch_results (
+            id BIGINT PRIMARY KEY,
+            execution_id TEXT,
+            http_result TEXT,
+            weather_result TEXT,
+            data_result TEXT
+        );
 
-        try:
-            # Install and load required extensions
-            conn.execute("INSTALL postgres")
-            conn.execute("LOAD postgres")
-            conn.execute("INSTALL json")
-            conn.execute("LOAD json")
+        INSERT INTO pg_db.playbook_batch_results (
+            id, execution_id, http_result, weather_result, data_result
+        ) VALUES (
+            {{ execution_id }},
+            '{{ execution_id }}',
+            '{{ run_http_test | tojson | replace("'", "''") }}',
+            '{{ run_weather_processing | tojson | replace("'", "''") }}',
+            '{{ run_data_transformation | tojson | replace("'", "''") }}'
+        );
 
-            # Attach Postgres database
-            attach_query = f"ATTACH 'dbname={pg_db} user={pg_user} password={pg_password} host={pg_host} port={pg_port}' AS postgres_db (TYPE postgres)"
-            try:
-                conn.execute(attach_query)
-            except Exception as e:
-                if "already attached" not in str(e):
-                    raise e
-
-            # Create local DuckDB table
-            conn.execute("""
-                CREATE TABLE IF NOT EXISTS playbook_batch_results (
-                    id BIGINT,
-                    execution_id VARCHAR,
-                    http_result TEXT,
-                    weather_result TEXT,
-                    data_result TEXT,
-                    timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                )
-            """)
-
-            # Insert into local DuckDB table
-            current_time_ms = int(time.time() * 1000)
-            conn.execute("""
-                INSERT INTO playbook_batch_results (
-                    id, execution_id, http_result, weather_result, data_result
-                ) VALUES (?, ?, ?, ?, ?)
-            """, [current_time_ms, execution_id, http_json, weather_json, data_json])
-
-            # Create Postgres table
-            conn.execute("""
-                CREATE TABLE IF NOT EXISTS postgres_db.playbook_batch_results (
-                    id BIGINT PRIMARY KEY,
-                    execution_id VARCHAR,
-                    http_result TEXT,
-                    weather_result TEXT,
-                    data_result TEXT,
-                    timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                )
-            """)
-
-            # Insert into Postgres table
-            conn.execute("""
-                INSERT INTO postgres_db.playbook_batch_results (
-                    id, execution_id, http_result, weather_result, data_result
-                ) VALUES (?, ?, ?, ?, ?)
-            """, [current_time_ms + 1, execution_id, http_json, weather_json, data_json])
-
-            # Verify insertion
-            query_result = conn.execute("SELECT COUNT(*) FROM playbook_batch_results").fetchone()
-            total_records = query_result[0] if query_result else 0
-
-            result = {
-                "status": "success",
-                "message": "Batch results stored successfully",
-                "total_records": total_records,
-                "execution_id": execution_id
-            }
-
-        except Exception as e:
-            result = {
-                "status": "error",
-                "message": f"Failed to store batch results: {str(e)}",
-                "execution_id": execution_id
-            }
-        finally:
-            conn.close()
+        SELECT COUNT(*) AS total_records
+        FROM pg_db.playbook_batch_results
+        WHERE execution_id = '{{ execution_id }}';
     next:
       spec:
         mode: exclusive

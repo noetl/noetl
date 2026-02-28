@@ -331,6 +331,13 @@ workflow:
           ((i - 1) / {{ batch_size | int }}) + 1 AS group_id,
           'synthetic_payload_' || i || '_' || repeat('x', 64) AS payload
         FROM generate_series(1, {{ total_items | int }}) AS i;
+      spec:
+        policy:
+          rules:
+            - when: "{{ outcome.status == 'error' }}"
+              then: { do: retry, attempts: 5, backoff: exponential, delay: 2.0 }
+            - else:
+                then: { do: break }
     next:
       spec: { mode: exclusive }
       arcs:
