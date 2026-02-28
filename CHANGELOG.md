@@ -2,6 +2,27 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.8.6](https://github.com/noetl/noetl/compare/v2.8.5...v2.8.6) (2026-02-28)
+
+### Bug Fixes
+
+* Add deployment and service configuration for paginated API in GKE ([87c424d](https://github.com/noetl/noetl/commit/87c424d07b1990eabe3349cd9a6d0871ab52feee))
+* add SINK_REFERENCES_ENABLED env var to toggle HTTP response reference wrapping ([b61584d](https://github.com/noetl/noetl/commit/b61584d28b97f7843d6c21c153a5905422c2a3bd))
+* Add tests for NATSCommandSubscriber and TempStore functionality ([89b9a95](https://github.com/noetl/noetl/commit/89b9a9564f0acce35aa136dc40347c1006ce778a))
+* auto-resume functionality and improve Postgres pool management ([b62b94a](https://github.com/noetl/noetl/commit/b62b94ac36c82968bcb5c1af10a6291980c3727e))
+* end step handling ([c8b911c](https://github.com/noetl/noetl/commit/c8b911cbb6f012c74bf46e10055c7a162fb4f52d))
+* event handling and credential fetching in the worker ([9e66e13](https://github.com/noetl/noetl/commit/9e66e137c76e02a61e1fee8cf20dc1f0792007f0))
+* Implement adaptive concurrency control for worker-server communication ([3963bea](https://github.com/noetl/noetl/commit/3963bead16bed9abb92b9ea626bf2697116e7ddd))
+* loop execution with max_in_flight control and parallel dispatch ([e3ec10a](https://github.com/noetl/noetl/commit/e3ec10a0e193b710a19c56493d986473a9076f2a))
+* optimize Postgres configuration and enhance async task execution ([55368ce](https://github.com/noetl/noetl/commit/55368ce750f5439c59b2e4aa6113b10c5fb93bd6))
+* parallel chunk-worker stress test with engine LOOP-CALL.DONE fix and full payload storage ([d1fc390](https://github.com/noetl/noetl/commit/d1fc3905a54c01d13cfb65336c9a2058a5bf4520))
+* parallel chunk-worker stress test with engine LOOP-CALL.DONE fix and full payload storage ([dfca19e](https://github.com/noetl/noetl/commit/dfca19ed70342a9cb4a1c3b919887f9da9b4e78d))
+* reduce items_max_in_flight to improve resource management in stress tests ([0697e47](https://github.com/noetl/noetl/commit/0697e4714044b5e4c2d3248de6b8b69687e895c8))
+* Refactor batch processing playbooks to enhance error handling and memory management ([e5dd34e](https://github.com/noetl/noetl/commit/e5dd34e343b8384d21882059aec3965b91ed5dee))
+* task sequence handling and add terminal event emissions for command failures ([b776e23](https://github.com/noetl/noetl/commit/b776e23b0df78ca03f29251b7da8f2cc961efc17))
+* Update dependencies and enhance Auth0 integration with new configuration options ([adf8ef7](https://github.com/noetl/noetl/commit/adf8ef75dde2c095cb028f2679552269815b4df6))
+* update max_in_flight in server OOM stress chunk worker to a static value ([ef6cdb4](https://github.com/noetl/noetl/commit/ef6cdb4807cfce7f04379d978e9f6feb5257eaea))
+
 ## [2.8.5](https://github.com/noetl/noetl/compare/v2.8.4...v2.8.5) (2026-02-24)
 
 ### Bug Fixes
