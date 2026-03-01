@@ -1,0 +1,81 @@
+apiVersion: noetl.io/v2
+kind: Playbook
+metadata:
+  name: publish_distribution_repos
+  path: automation/release/publish_distribution_repos
+  description: Publish Homebrew tap and APT repository updates for a released NoETL version
+
+executor:
+  profile: local
+  version: noetl-runtime/1
+
+workload:
+  action: help
+  version: "2.8.7"
+  homebrew_repo: "/Users/akuksin/projects/noetl/homebrew-tap"
+  apt_repo: "/Users/akuksin/projects/noetl/apt"
+  homebrew_remote: "git@github.com:noetl/homebrew-tap.git"
+  apt_remote: "git@github.com:noetl/apt.git"
+  apt_arch: "auto"
+  refresh_links: "true"
+  push_changes: "true"
+
+workflow:
+  - step: route_action
+    desc: Route requested action
+    tool:
+      kind: shell
+      cmds:
+        - echo "publish_distribution_repos action={{ workload.action }} version={{ workload.version }}"
+    next:
+      - step: publish
+        when: '{{ action == ''publish'' }}'
+      - step: show_help
+        when: '{{ action == ''help'' }}'
+      - step: show_help
+
+  - step: publish
+    desc: Publish updates to homebrew-tap and apt repositories
+    tool:
+      kind: shell
+      cmds:
+        - |
+          set -euo pipefail
+          ./scripts/publish_distribution_repos.sh \
+            "{{ workload.version }}" \
+            "{{ workload.homebrew_repo }}" \
+            "{{ workload.apt_repo }}" \
+            "{{ workload.apt_arch }}" \
+            "{{ workload.refresh_links }}" \
+            "{{ workload.push_changes }}" \
+            "{{ workload.homebrew_remote }}" \
+            "{{ workload.apt_remote }}"
+    next:
+      - step: end
+
+  - step: show_help
+    desc: Show usage
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo "Usage:"
+          echo "  noetl run automation/release/publish_distribution_repos.yaml --runtime local --set action=publish --set version=2.8.7"
+          echo ""
+          echo "Workload variables:"
+          echo "  action=help|publish"
+          echo "  version=<release-version>"
+          echo "  homebrew_repo=/Users/akuksin/projects/noetl/homebrew-tap"
+          echo "  apt_repo=/Users/akuksin/projects/noetl/apt"
+          echo "  homebrew_remote=git@github.com:noetl/homebrew-tap.git"
+          echo "  apt_remote=git@github.com:noetl/apt.git"
+          echo "  apt_arch=auto|arm64|amd64"
+          echo "  refresh_links=true|false"
+          echo "  push_changes=true|false"
+    next:
+      - step: end
+
+  - step: end
+    desc: Done
+    tool:
+      kind: noop

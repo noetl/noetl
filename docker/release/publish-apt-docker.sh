@@ -3,6 +3,7 @@ set -e
 
 VERSION=${1:-2.5.4}
 ARCH=${2:-arm64}
+EXISTING_DEB_DIR=${3:-}
 DEB_FILE="build/deb/noetl_${VERSION}-1_${ARCH}.deb"
 
 if [ ! -f "$DEB_FILE" ]; then
@@ -17,12 +18,20 @@ echo "Package: $DEB_FILE"
 # Build Docker image for APT repository creation
 docker build -f docker/release/Dockerfile.apt-publish -t noetl-apt-publisher:latest .
 
+# Optionally mount existing published packages to preserve prior versions
+DOCKER_ARGS=(
+  --rm
+  -v "$(pwd)/build:/build"
+  -e VERSION="$VERSION"
+  -e ARCH="$ARCH"
+)
+
+if [ -n "$EXISTING_DEB_DIR" ] && [ -d "$EXISTING_DEB_DIR" ]; then
+  DOCKER_ARGS+=(-v "${EXISTING_DEB_DIR}:/existing-deb:ro")
+fi
+
 # Run container to generate APT repository
-docker run --rm \
-  -v "$(pwd)/build:/build" \
-  -e VERSION="$VERSION" \
-  -e ARCH="$ARCH" \
-  noetl-apt-publisher:latest
+docker run "${DOCKER_ARGS[@]}" noetl-apt-publisher:latest
 
 echo ""
 echo "✅ APT repository created successfully!"

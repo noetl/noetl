@@ -11,5 +11,5 @@ WORKDIR /work
 # Copy the publish script
 COPY scripts/publish_apt.sh /work/publish_apt.sh
 
-# The deb file will be mounted from host
-CMD ["/bin/bash", "-c", "mkdir -p /work/build/deb && cp /build/deb/*.deb /work/build/deb/ && ./publish_apt.sh \"${VERSION}\" \"${ARCH}\" && cp -r apt-repo /build/"]
+# The deb file will be mounted from host; existing published packages can also be mounted at /existing-deb
+CMD ["/bin/bash", "-c", "mkdir -p /work/build/deb && cp /build/deb/*.deb /work/build/deb/ && if [ -d /existing-deb ]; then cp /existing-deb/*.deb /work/build/deb/ 2>/dev/null || true; fi && ./publish_apt.sh \"${VERSION}\" \"${ARCH}\" && cp -r apt-repo /build/"]

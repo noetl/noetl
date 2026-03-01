@@ -5,7 +5,6 @@ VERSION=${1:-2.5.3}
 ARCH=${2:-amd64}
 DEB_FILE="build/deb/noetl_${VERSION}-1_${ARCH}.deb"
 REPO_DIR="apt-repo"
-COMPONENTS="main"
 CODENAMES="jammy focal noble"  # Ubuntu 22.04, 20.04, 24.04
 
 if [ ! -f "$DEB_FILE" ]; then
@@ -16,30 +15,67 @@ fi
 
 echo "📦 Publishing NoETL .deb to APT repository..."
 
-# Create repository structure
+# Create clean repository structure
+rm -rf "$REPO_DIR"
 mkdir -p "$REPO_DIR/dists" "$REPO_DIR/pool/main"
 
-# Copy .deb to pool
-cp "$DEB_FILE" "$REPO_DIR/pool/main/"
+# Copy all Linux .deb packages from build cache to pool (keeps previous published versions)
+for PKG in build/deb/noetl_*.deb; do
+    [ -e "$PKG" ] || continue
+    PKG_ARCH=$(basename "$PKG" | sed -E 's/^noetl_[^-]+-[0-9]+_([^.]+)\.deb$/\1/')
+    case "$PKG_ARCH" in
+        amd64|arm64)
+            cp "$PKG" "$REPO_DIR/pool/main/"
+            ;;
+    esac
+done
+
+if ! ls "$REPO_DIR"/pool/main/noetl_*.deb >/dev/null 2>&1; then
+    echo "❌ No Linux .deb packages found in build/deb/"
+    exit 1
+fi
+
+# Collect architectures present in repository pool
+ARCHES=()
+for PKG in "$REPO_DIR"/pool/main/noetl_*.deb; do
+    PKG_ARCH=$(basename "$PKG" | sed -E 's/^noetl_[^-]+-[0-9]+_([^.]+)\.deb$/\1/')
+    case "$PKG_ARCH" in
+        amd64|arm64)
+            if [[ ! " ${ARCHES[*]} " =~ " ${PKG_ARCH} " ]]; then
+                ARCHES+=("$PKG_ARCH")
+            fi
+            ;;
+    esac
+done
+
+if [ "${#ARCHES[@]}" -eq 0 ]; then
+    echo "❌ No supported architectures found in pool/main"
+    exit 1
+fi
+
+ARCH_LINE="${ARCHES[*]}"
 
 # Create Packages file for each codename
 for CODENAME in $CODENAMES; do
-    DIST_DIR="$REPO_DIR/dists/$CODENAME/main/binary-$ARCH"
-    mkdir -p "$DIST_DIR"
-    
-    # Generate Packages file
     cd "$REPO_DIR"
-    dpkg-scanpackages --arch "$ARCH" pool/ > "dists/$CODENAME/main/binary-$ARCH/Packages"
-    gzip -k -f "dists/$CODENAME/main/binary-$ARCH/Packages"
-    
-    # Generate Release file for component
-    cat > "dists/$CODENAME/main/binary-$ARCH/Release" <<EOF
+
+    for REPO_ARCH in "${ARCHES[@]}"; do
+        DIST_DIR="dists/$CODENAME/main/binary-$REPO_ARCH"
+        mkdir -p "$DIST_DIR"
+
+        # Generate Packages file
+        dpkg-scanpackages --multiversion --arch "$REPO_ARCH" pool/ > "dists/$CODENAME/main/binary-$REPO_ARCH/Packages"
+        gzip -k -f "dists/$CODENAME/main/binary-$REPO_ARCH/Packages"
+
+        # Generate Release file for component
+        cat > "dists/$CODENAME/main/binary-$REPO_ARCH/Release" <<EOF
 Archive: $CODENAME
 Component: main
 Origin: NoETL
 Label: NoETL
-Architecture: $ARCH
+Architecture: $REPO_ARCH
 EOF
+    done
     
     # Generate Release file for distribution
     cat > "dists/$CODENAME/Release" <<EOF
@@ -48,7 +84,7 @@ Label: NoETL APT Repository
 Suite: $CODENAME
 Codename: $CODENAME
 Version: ${VERSION}
-Architectures: amd64 arm64
+Architectures: ${ARCH_LINE}
 Components: main
 Description: NoETL APT Repository for Ubuntu
 Date: $(date -Ru)

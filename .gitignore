@@ -39,6 +39,7 @@ tests/fixtures/playbooks/**/temp/
 !.env.worker
 # Distribution repositories (symlinks)
 homebrew-tap
+apt
 # Virtual environments
 publish_env/
 test_env/
@@ -98,6 +99,7 @@ submodules/
 
 # Distribution repositories (symlinks)
 homebrew-tap
+apt
 
 # Extracted release tarballs (from testing)
 noetl-*/
@@ -116,6 +118,7 @@ debian/*.log
 
 # Distribution repositories (symlinks)
 homebrew-tap
+apt
 
 # Extracted release tarballs (from testing)
 noetl-*/

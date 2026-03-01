@@ -43,6 +43,8 @@ automation/
 │   ├── setup_tooling.yaml     # OS-aware tooling setup (auto-detects OS)
 │   ├── tooling_macos.yaml     # Development tool setup for macOS (Homebrew)
 │   └── tooling_linux.yaml     # Development tool setup for Linux/WSL2 (apt-get)
+├── release/                   # Distribution publishing workflows
+│   └── publish_distribution_repos.yaml # Publish Homebrew tap + APT repo updates
 ├── test/                      # Testing workflows
 │   └── pagination-server.yaml # Pagination test server automation
 ├── iap/                       # Infrastructure as Playbook
@@ -234,6 +236,23 @@ noetl run automation/test/pagination-server.yaml --set action=test
 noetl run automation/test/pagination-server.yaml --set action=logs
 noetl run automation/test/pagination-server.yaml --set action=undeploy
 ```
+
+#### Release Workflows
+
+Publish a released version to Homebrew tap and APT repositories:
+
+```bash
+noetl run automation/release/publish_distribution_repos.yaml --runtime local \
+  --set action=publish \
+  --set version=2.8.7
+```
+
+Defaults:
+- Homebrew repo: `/Users/akuksin/projects/noetl/homebrew-tap`
+- APT repo: `/Users/akuksin/projects/noetl/apt`
+- Clones missing repos from `noetl/homebrew-tap` and `noetl/apt`
+- Creates/refreshes local links `homebrew-tap` and `apt`
+- Preserves previously published `.deb` versions in APT pool/index
 
 #### Infrastructure as Playbook (IaP)
 
