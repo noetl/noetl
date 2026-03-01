@@ -2475,6 +2475,78 @@ async fn get_status(
     execution_id: &str,
     json_only: bool,
 ) -> Result<()> {
+    fn parse_status_timestamp(value: &str) -> Option<chrono::DateTime<chrono::Utc>> {
+        if let Ok(parsed) = chrono::DateTime::parse_from_rfc3339(value) {
+            return Some(parsed.with_timezone(&chrono::Utc));
+        }
+        if let Ok(naive) = chrono::NaiveDateTime::parse_from_str(value, "%Y-%m-%dT%H:%M:%S%.f") {
+            return Some(chrono::DateTime::<chrono::Utc>::from_naive_utc_and_offset(
+                naive,
+                chrono::Utc,
+            ));
+        }
+        None
+    }
+
+    fn format_duration_human(total_seconds: f64) -> String {
+        let seconds = total_seconds.max(0.0).round() as i64;
+        let days = seconds / 86_400;
+        let hours = (seconds % 86_400) / 3_600;
+        let minutes = (seconds % 3_600) / 60;
+        let secs = seconds % 60;
+
+        let mut parts: Vec<String> = Vec::new();
+        if days > 0 {
+            parts.push(format!("{}d", days));
+        }
+        if hours > 0 {
+            parts.push(format!("{}h", hours));
+        }
+        if minutes > 0 {
+            parts.push(format!("{}m", minutes));
+        }
+        if secs > 0 || parts.is_empty() {
+            parts.push(format!("{}s", secs));
+        }
+        parts.join(" ")
+    }
+
+    let infer_duration_human = |result: &serde_json::Value| -> Option<String> {
+        if let Some(human) = result.get("duration_human").and_then(|v| v.as_str()) {
+            if !human.is_empty() {
+                return Some(human.to_string());
+            }
+        }
+
+        let seconds = result
+            .get("duration_seconds")
+            .and_then(|v| v.as_f64())
+            .or_else(|| result.get("duration_seconds").and_then(|v| v.as_i64()).map(|v| v as f64));
+        if let Some(total_seconds) = seconds {
+            return Some(format_duration_human(total_seconds));
+        }
+
+        let start = result
+            .get("start_time")
+            .and_then(|v| v.as_str())
+            .and_then(parse_status_timestamp);
+        let end = result
+            .get("end_time")
+            .and_then(|v| v.as_str())
+            .and_then(parse_status_timestamp);
+        let completed = result.get("completed").and_then(|v| v.as_bool()).unwrap_or(false);
+
+        if let Some(start_dt) = start {
+            let effective_end = end.or_else(|| if completed { None } else { Some(chrono::Utc::now()) });
+            if let Some(end_dt) = effective_end {
+                let total_seconds = (end_dt - start_dt).num_milliseconds().max(0) as f64 / 1000.0;
+                return Some(format_duration_human(total_seconds));
+            }
+        }
+
+        None
+    };
+
     let summarize_and_print = |result: &serde_json::Value, show_fallback_note: bool| {
         // Show a concise summary by default
         let completed = result.get("completed").and_then(|v| v.as_bool()).unwrap_or(false);
@@ -2502,6 +2574,9 @@ async fn get_status(
         println!("Execution: {}", execution_id);
         println!("Status:    {}{}\x1b[0m", status_color, status_str);
         println!("Steps:     {} completed", completed_steps);
+        if let Some(duration_human) = infer_duration_human(result) {
+            println!("Duration:  {}", duration_human);
+        }
         if !completed {
             println!("Current:   {}", current_step);
         }
@@ -2574,6 +2649,22 @@ async fn get_status(
                 .unwrap_or("unknown");
             let completed = matches!(fallback_status, "COMPLETED" | "FAILED" | "CANCELLED");
             let failed = fallback_status == "FAILED";
+            let start_time = execution_doc
+                .get("start_time")
+                .cloned()
+                .unwrap_or(serde_json::Value::Null);
+            let end_time = execution_doc
+                .get("end_time")
+                .cloned()
+                .unwrap_or(serde_json::Value::Null);
+            let duration_seconds = execution_doc
+                .get("duration_seconds")
+                .cloned()
+                .unwrap_or(serde_json::Value::Null);
+            let duration_human = execution_doc
+                .get("duration_human")
+                .cloned()
+                .unwrap_or(serde_json::Value::Null);
 
             let normalized = serde_json::json!({
                 "execution_id": execution_id,
@@ -2585,6 +2676,10 @@ async fn get_status(
                 "variables": {},
                 "status": fallback_status,
                 "source": "executions_endpoint_fallback",
+                "start_time": start_time,
+                "end_time": end_time,
+                "duration_seconds": duration_seconds,
+                "duration_human": duration_human,
             });
 
             if json_only {

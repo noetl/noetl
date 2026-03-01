@@ -36,6 +36,7 @@ NoETL is an **AI-data-driven workflow runtime** designed for domain-centric data
 - [Installation](/docs/getting-started/installation) - PyPI and Kubernetes setup
 - [Playbook Structure](/docs/features/playbook_structure) - Learn the DSL
 - [DSL Reference](/docs/reference/dsl/) - Complete specification
+- [GKE Runbook Notes](/docs/operations/notes) - Build, deploy, auth, execute, and validate on GKE
 
 ## Architecture Overview
 

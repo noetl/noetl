@@ -45,6 +45,35 @@ def _as_iso(value: Optional[datetime]) -> Optional[str]:
     return value.isoformat()
 
 
+def _duration_seconds(start_time: Optional[datetime], end_time: Optional[datetime]) -> Optional[float]:
+    if not start_time or not end_time:
+        return None
+    start = start_time if start_time.tzinfo else start_time.replace(tzinfo=timezone.utc)
+    end = end_time if end_time.tzinfo else end_time.replace(tzinfo=timezone.utc)
+    return max(0.0, (end - start).total_seconds())
+
+
+def _format_duration_human(total_seconds: Optional[float]) -> Optional[str]:
+    if total_seconds is None:
+        return None
+
+    seconds = max(0, int(round(float(total_seconds))))
+    days, rem = divmod(seconds, 86400)
+    hours, rem = divmod(rem, 3600)
+    minutes, secs = divmod(rem, 60)
+
+    parts: list[str] = []
+    if days:
+        parts.append(f"{days}d")
+    if hours:
+        parts.append(f"{hours}h")
+    if minutes:
+        parts.append(f"{minutes}m")
+    if secs or not parts:
+        parts.append(f"{secs}s")
+    return " ".join(parts)
+
+
 def _truncate_text(value: Optional[str], max_len: int = 600) -> Optional[str]:
     if value is None:
         return None
@@ -997,6 +1026,8 @@ async def get_execution(
                         "status": status,
                         "start_time": None,
                         "end_time": None,
+                        "duration_seconds": None,
+                        "duration_human": None,
                         "parent_execution_id": state.parent_execution_id,
                         "events": [],
                         "pagination": {
@@ -1061,14 +1092,20 @@ async def get_execution(
         # Non-terminal command/step events can have COMPLETED status while execution is still running.
         final_status = "RUNNING"
 
+    start_time = first_event.get("created_at") if first_event else None
+    end_time = latest_event.get("created_at") if latest_event else None
+    duration_seconds = _duration_seconds(start_time, end_time)
+
     return {
         "execution_id": execution_id,
         "path": playbook_path,
         "catalog_id": str(catalog_id) if catalog_id else None,
         "version": playbook_version,
         "status": final_status,
-        "start_time": first_event["created_at"].isoformat() if first_event.get("created_at") else None,
-        "end_time": latest_event["created_at"].isoformat() if latest_event and latest_event.get("created_at") else None,
+        "start_time": _as_iso(start_time),
+        "end_time": _as_iso(end_time),
+        "duration_seconds": round(duration_seconds, 3) if duration_seconds is not None else None,
+        "duration_human": _format_duration_human(duration_seconds),
         "parent_execution_id": first_event.get("parent_execution_id"),
         "events": events,
         "pagination": {
