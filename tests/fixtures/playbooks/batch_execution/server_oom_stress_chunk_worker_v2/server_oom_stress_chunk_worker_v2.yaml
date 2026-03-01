@@ -1,0 +1,130 @@
+apiVersion: noetl.io/v2
+kind: Playbook
+
+metadata:
+  name: server_oom_stress_chunk_worker_v2
+  path: tests/fixtures/playbooks/batch_execution/server_oom_stress_chunk_worker_v2
+  description: |
+    Chunk worker v2 for server OOM stress test.
+    Processes a full batch in a single SQL upsert statement:
+      - reads the batch window with OFFSET/LIMIT
+      - builds full result_data (item_id, group_id, payload, status, 600 fields)
+      - upserts all rows in one DB command
+    This variant removes per-item distributed subcommands to compare throughput.
+
+workload:
+  pg_auth: pg_k8s
+  parent_execution_id: ''
+  batch_number: 1
+  offset: 0
+  batch_size: 50
+  items_max_in_flight: 1
+
+workflow:
+  - step: start
+    desc: Initialize chunk worker inputs (v2 batch upsert variant)
+    tool:
+      kind: python
+      args:
+        batch_number: '{{ batch_number }}'
+        offset: '{{ offset }}'
+        batch_size: '{{ batch_size }}'
+        items_max_in_flight: '{{ items_max_in_flight }}'
+      code: |
+        def _to_int(value, default):
+            try:
+                return int(value)
+            except (TypeError, ValueError):
+                return default
+
+        result = {
+            "status": "initialized",
+            "batch_number": _to_int(batch_number, 1),
+            "offset": _to_int(offset, 0),
+            "batch_size": _to_int(batch_size, 100),
+            "items_max_in_flight": _to_int(items_max_in_flight, 1),
+            "variant": "batch_upsert_sql",
+        }
+    next:
+      spec: { mode: exclusive }
+      arcs:
+        - step: upsert_batch
+
+  - step: upsert_batch
+    desc: Upsert full batch in one SQL command (includes full payload + 600 computed fields)
+    tool:
+      kind: postgres
+      auth: '{{ pg_auth }}'
+      pool:
+        max_size: 2
+        max_waiting: 4
+        timeout: 30
+      query: |
+        WITH batch AS (
+          SELECT s.item_id, s.group_id, s.payload
+          FROM public.stress_test_items s
+          ORDER BY s.item_id ASC
+          OFFSET {{ offset | int }}
+          LIMIT {{ batch_size | int }}
+        ),
+        upserted AS (
+          INSERT INTO public.stress_test_results (item_id, result_data)
+          SELECT
+            b.item_id,
+            jsonb_build_object(
+              'item_id', b.item_id,
+              'group_id', b.group_id,
+              'payload', b.payload,
+              'status', 'ok',
+              'data',
+              to_jsonb((
+                SELECT json_object_agg(
+                  'field_' || lpad(g::text, 3, '0'),
+                  'value_' || b.item_id::text || '_' || g::text || '_' || repeat('x', 64)
+                )
+                FROM generate_series(0, 599) AS g
+              ))
+            ) AS result_data
+          FROM batch b
+          ON CONFLICT (item_id) DO UPDATE SET
+            result_data = EXCLUDED.result_data,
+            processed_at = NOW()
+          RETURNING item_id
+        )
+        SELECT COUNT(*)::int AS upserted_count FROM upserted;
+    next:
+      spec: { mode: exclusive }
+      arcs:
+        - step: summarize
+
+  - step: summarize
+    desc: Return chunk summary for v2 batch upsert worker
+    tool:
+      kind: python
+      args:
+        upsert_result: '{{ upsert_batch }}'
+        batch_number: '{{ batch_number }}'
+        batch_size: '{{ batch_size }}'
+      code: |
+        rows = upsert_result.get("command_0", {}).get("rows", []) if isinstance(upsert_result, dict) else []
+        upserted_count = int(rows[0].get("upserted_count", 0) or 0) if rows else 0
+
+        result = {
+            "status": "completed",
+            "variant": "batch_upsert_sql",
+            "batch_number": int(batch_number or 0),
+            "batch_size": int(batch_size or 0),
+            "batch_count": upserted_count,
+            "loop": {"total": upserted_count, "failed": 0},
+        }
+    next:
+      spec: { mode: exclusive }
+      arcs:
+        - step: end
+
+  - step: end
+    desc: End worker
+    tool:
+      kind: python
+      code: |
+        result = {"status": "completed"}

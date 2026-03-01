@@ -2,15 +2,15 @@ apiVersion: noetl.io/v2
 kind: Playbook
 
 metadata:
-  name: server_oom_stress_test
-  path: tests/fixtures/playbooks/batch_execution/server_oom_stress_test
+  name: server_oom_stress_test_v2
+  path: tests/fixtures/playbooks/batch_execution/server_oom_stress_test_v2
   description: |
-    Stress test for server/worker communication under large-context batch processing.
+    Stress test v2 for server/worker communication under large-context batch processing.
     Validates that server-worker communication handles big data without degradation:
       - 21 context steps (~3-8KB each) to simulate fat execution context (42 vars in prod)
       - 3000 items dispatched across chunk workers (serial by default)
-      - Each item produces a ~250KB compute result (matching MDS assessment JSON payloads)
-        which triggers _ref externalization (> 64KB NOETL_INLINE_MAX_BYTES threshold)
+      - Each item persists full result_data (source payload + 600 computed fields)
+        generated in SQL within chunk worker batch upserts
       - Per-item distributed parallel processing exercises: NATS dispatch, claim protocol,
         adaptive concurrency controller, event pipeline, and DB pool under controlled contention
       - No sensitive data, no external HTTP calls
@@ -30,7 +30,7 @@ workload:
   # run only one batch at a time and one item in-flight inside each worker
   concurrent_batches: 1
   items_max_in_flight: 1
-  chunk_worker_path: tests/fixtures/playbooks/batch_execution/server_oom_stress_chunk_worker
+  chunk_worker_path: tests/fixtures/playbooks/batch_execution/server_oom_stress_chunk_worker_v2
 
 workflow:
 
@@ -347,7 +347,7 @@ workflow:
 
   # ── Phase 3: Parallel chunk worker dispatch ──────────────────────────────────
   # Dispatches batch workers in parallel via distributed loop.
-  # Each chunk worker processes its items with per-item distributed parallelism.
+  # Each chunk worker upserts the full batch in one SQL command (v2 variant).
   # Peak concurrent chunk workers is controlled by this loop max_in_flight.
   # Keep at 1 for Cloud SQL stability unless explicitly load-testing higher concurrency.
   # NOTE: task_sequence tool is NOT recognized by _is_db_heavy_tool(), so the

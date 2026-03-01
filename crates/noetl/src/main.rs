@@ -1,7 +1,7 @@
 mod config;
 mod playbook_runner;
 
-use anyhow::{Context as AnyhowContext, Result};
+use anyhow::{bail, Context as AnyhowContext, Result};
 use base64::prelude::*;
 use clap::{Parser, Subcommand};
 use config::{Config, Context};
@@ -1235,6 +1235,60 @@ fn build_variables(
     Ok(vars)
 }
 
+/// Build distributed execution payload from input file, --payload JSON, and --set overrides.
+/// Merge order (last wins): input file -> --payload -> --set.
+fn build_distributed_payload(
+    input: Option<&PathBuf>,
+    payload: Option<&str>,
+    variables: &[String],
+) -> Result<serde_json::Value> {
+    let mut merged = serde_json::Map::new();
+
+    if let Some(input_file) = input {
+        let content = fs::read_to_string(input_file)
+            .context(format!("Failed to read input file: {:?}", input_file))?;
+        let input_json: serde_json::Value =
+            serde_json::from_str(&content).context("Failed to parse input JSON")?;
+        match input_json {
+            serde_json::Value::Object(map) => {
+                for (k, v) in map {
+                    merged.insert(k, v);
+                }
+            }
+            _ => bail!("Input file JSON must be an object"),
+        }
+    }
+
+    if let Some(payload_str) = payload {
+        let payload_json: serde_json::Value =
+            serde_json::from_str(payload_str).context("Failed to parse --payload JSON")?;
+        match payload_json {
+            serde_json::Value::Object(map) => {
+                for (k, v) in map {
+                    merged.insert(k, v);
+                }
+            }
+            _ => bail!("--payload must be a JSON object"),
+        }
+    }
+
+    for var in variables {
+        let parts: Vec<&str> = var.splitn(2, '=').collect();
+        if parts.len() != 2 {
+            eprintln!("Warning: Invalid variable format '{}', expected key=value", var);
+            continue;
+        }
+
+        let key = parts[0].to_string();
+        let raw = parts[1];
+        let value = serde_json::from_str::<serde_json::Value>(raw)
+            .unwrap_or_else(|_| serde_json::Value::String(raw.to_string()));
+        merged.insert(key, value);
+    }
+
+    Ok(serde_json::Value::Object(merged))
+}
+
 /// Resolve playbook file path and optional target step
 /// Implements File-First Strategy:
 /// 1. Check if first arg is explicit path (contains / or \ or ends with .yaml/.yml)
@@ -1441,16 +1495,6 @@ async fn main() -> Result<()> {
             // Build variables from payload and --set flags
             let vars = build_variables(payload.as_deref(), &variables)?;
             
-            // Load variables from input file if provided (used in distributed mode)
-            let _input_payload = if let Some(input_file) = &input {
-                let content = fs::read_to_string(input_file)
-                    .context(format!("Failed to read input file: {:?}", input_file))?;
-                Some(serde_json::from_str::<serde_json::Value>(&content)
-                    .context("Failed to parse input JSON")?)
-            } else {
-                None
-            };
-            
             if verbose {
                 println!("Execution Context:");
                 println!("  Reference: {}", reference);
@@ -1529,6 +1573,12 @@ async fn main() -> Result<()> {
                             (path.clone(), exec_ctx.version.clone())
                         }
                     };
+
+                    let request_payload = build_distributed_payload(
+                        input.as_ref(),
+                        payload.as_deref(),
+                        &variables,
+                    )?;
                     
                     execute_playbook_distributed(
                         &client, 
@@ -1536,7 +1586,7 @@ async fn main() -> Result<()> {
                         effective_gateway_proxy,
                         &path, 
                         version.and_then(|v| v.parse().ok()), 
-                        input, 
+                        request_payload,
                         json
                     ).await?;
                 }
@@ -1595,7 +1645,7 @@ async fn main() -> Result<()> {
                     use_gateway_proxy,
                     &catalog_path, 
                     None, // version
-                    None, // input file
+                    build_distributed_payload(None, payload.as_deref(), &variables)?,
                     false // json output
                 ).await?;
             } else {
@@ -2351,17 +2401,9 @@ async fn execute_playbook_distributed(
     use_gateway_proxy: bool,
     path: &str,
     version: Option<i64>,
-    input: Option<PathBuf>,
+    payload: serde_json::Value,
     json_only: bool,
 ) -> Result<()> {
-    let payload = if let Some(input_file) = input {
-        let content =
-            fs::read_to_string(&input_file).context(format!("Failed to read input file: {:?}", input_file))?;
-        serde_json::from_str(&content).context("Failed to parse input JSON")?
-    } else {
-        serde_json::Value::Object(serde_json::Map::new())
-    };
-
     // Build request with optional version
     let url = api_url(base_url, "execute", use_gateway_proxy);
     let mut request_body = serde_json::json!({
@@ -2422,7 +2464,8 @@ async fn execute_playbook(
     json_only: bool,
 ) -> Result<()> {
     // Legacy function - delegate to new one without version
-    execute_playbook_distributed(client, base_url, use_gateway_proxy, path, None, input, json_only).await
+    let payload = build_distributed_payload(input.as_ref(), None, &[])?;
+    execute_playbook_distributed(client, base_url, use_gateway_proxy, path, None, payload, json_only).await
 }
 
 async fn get_status(
@@ -2432,67 +2475,236 @@ async fn get_status(
     execution_id: &str,
     json_only: bool,
 ) -> Result<()> {
-    let url = api_url(base_url, &format!("executions/{}/status", execution_id), use_gateway_proxy);
-    let response = client.get(&url).send().await.context("Failed to send status request")?;
+    fn parse_status_timestamp(value: &str) -> Option<chrono::DateTime<chrono::Utc>> {
+        if let Ok(parsed) = chrono::DateTime::parse_from_rfc3339(value) {
+            return Some(parsed.with_timezone(&chrono::Utc));
+        }
+        if let Ok(naive) = chrono::NaiveDateTime::parse_from_str(value, "%Y-%m-%dT%H:%M:%S%.f") {
+            return Some(chrono::DateTime::<chrono::Utc>::from_naive_utc_and_offset(
+                naive,
+                chrono::Utc,
+            ));
+        }
+        None
+    }
+
+    fn format_duration_human(total_seconds: f64) -> String {
+        let seconds = total_seconds.max(0.0).round() as i64;
+        let days = seconds / 86_400;
+        let hours = (seconds % 86_400) / 3_600;
+        let minutes = (seconds % 3_600) / 60;
+        let secs = seconds % 60;
+
+        let mut parts: Vec<String> = Vec::new();
+        if days > 0 {
+            parts.push(format!("{}d", days));
+        }
+        if hours > 0 {
+            parts.push(format!("{}h", hours));
+        }
+        if minutes > 0 {
+            parts.push(format!("{}m", minutes));
+        }
+        if secs > 0 || parts.is_empty() {
+            parts.push(format!("{}s", secs));
+        }
+        parts.join(" ")
+    }
+
+    let infer_duration_human = |result: &serde_json::Value| -> Option<String> {
+        if let Some(human) = result.get("duration_human").and_then(|v| v.as_str()) {
+            if !human.is_empty() {
+                return Some(human.to_string());
+            }
+        }
+
+        let seconds = result
+            .get("duration_seconds")
+            .and_then(|v| v.as_f64())
+            .or_else(|| result.get("duration_seconds").and_then(|v| v.as_i64()).map(|v| v as f64));
+        if let Some(total_seconds) = seconds {
+            return Some(format_duration_human(total_seconds));
+        }
+
+        let start = result
+            .get("start_time")
+            .and_then(|v| v.as_str())
+            .and_then(parse_status_timestamp);
+        let end = result
+            .get("end_time")
+            .and_then(|v| v.as_str())
+            .and_then(parse_status_timestamp);
+        let completed = result.get("completed").and_then(|v| v.as_bool()).unwrap_or(false);
+
+        if let Some(start_dt) = start {
+            let effective_end = end.or_else(|| if completed { None } else { Some(chrono::Utc::now()) });
+            if let Some(end_dt) = effective_end {
+                let total_seconds = (end_dt - start_dt).num_milliseconds().max(0) as f64 / 1000.0;
+                return Some(format_duration_human(total_seconds));
+            }
+        }
+
+        None
+    };
+
+    let summarize_and_print = |result: &serde_json::Value, show_fallback_note: bool| {
+        // Show a concise summary by default
+        let completed = result.get("completed").and_then(|v| v.as_bool()).unwrap_or(false);
+        let failed = result.get("failed").and_then(|v| v.as_bool()).unwrap_or(false);
+        let current_step = result.get("current_step").and_then(|v| v.as_str()).unwrap_or("unknown");
+        let completed_steps = result
+            .get("completed_steps")
+            .and_then(|v| v.as_array())
+            .map(|a| a.len())
+            .unwrap_or(0);
+
+        let status_str = if completed {
+            if failed { "FAILED" } else { "COMPLETED" }
+        } else {
+            "RUNNING"
+        };
+
+        let status_color = if completed {
+            if failed { "\x1b[31m" } else { "\x1b[32m" }  // red or green
+        } else {
+            "\x1b[33m"  // yellow
+        };
+
+        println!("\n{}{}\x1b[0m", status_color, "=".repeat(60));
+        println!("Execution: {}", execution_id);
+        println!("Status:    {}{}\x1b[0m", status_color, status_str);
+        println!("Steps:     {} completed", completed_steps);
+        if let Some(duration_human) = infer_duration_human(result) {
+            println!("Duration:  {}", duration_human);
+        }
+        if !completed {
+            println!("Current:   {}", current_step);
+        }
+
+        if failed {
+            if let Some(error) = result.get("error").and_then(|v| v.as_str()) {
+                println!("\x1b[31mError:\x1b[0m     {}", error);
+            }
+        }
+
+        if let Some(steps) = result.get("completed_steps").and_then(|v| v.as_array()) {
+            if !steps.is_empty() {
+                println!("\nCompleted steps:");
+                for step in steps {
+                    if let Some(step_name) = step.as_str() {
+                        println!("  - {}", step_name);
+                    }
+                }
+            }
+        }
+
+        println!("{}{}\x1b[0m\n", status_color, "=".repeat(60));
+        if show_fallback_note {
+            println!("Note: status served from execution event log fallback (server state cache miss).");
+        }
+        println!("Use --json for full execution details");
+    };
+
+    let status_url = api_url(base_url, &format!("executions/{}/status", execution_id), use_gateway_proxy);
+    let response = client
+        .get(&status_url)
+        .send()
+        .await
+        .context("Failed to send status request")?;
 
     if response.status().is_success() {
         let result: serde_json::Value = response.json().await?;
         if json_only {
             println!("{}", serde_json::to_string(&result)?);
         } else {
-            // Show a concise summary by default
-            let completed = result.get("completed").and_then(|v| v.as_bool()).unwrap_or(false);
-            let failed = result.get("failed").and_then(|v| v.as_bool()).unwrap_or(false);
-            let current_step = result.get("current_step").and_then(|v| v.as_str()).unwrap_or("unknown");
-            let completed_steps = result.get("completed_steps").and_then(|v| v.as_array()).map(|a| a.len()).unwrap_or(0);
-            
-            let status_str = if completed {
-                if failed { "FAILED" } else { "COMPLETED" }
-            } else {
-                "RUNNING"
-            };
-            
-            let status_color = if completed {
-                if failed { "\x1b[31m" } else { "\x1b[32m" }  // red or green
-            } else {
-                "\x1b[33m"  // yellow
-            };
-            
-            println!("\n{}{}\x1b[0m", status_color, "=".repeat(60));
-            println!("Execution: {}", execution_id);
-            println!("Status:    {}{}\x1b[0m", status_color, status_str);
-            println!("Steps:     {} completed", completed_steps);
-            if !completed {
-                println!("Current:   {}", current_step);
-            }
-            
-            // Show error if failed
-            if failed {
-                if let Some(error) = result.get("error").and_then(|v| v.as_str()) {
-                    println!("\x1b[31mError:\x1b[0m     {}", error);
-                }
-            }
-            
-            // Show completed steps list
-            if let Some(steps) = result.get("completed_steps").and_then(|v| v.as_array()) {
-                if !steps.is_empty() {
-                    println!("\nCompleted steps:");
-                    for step in steps {
-                        if let Some(step_name) = step.as_str() {
-                            println!("  - {}", step_name);
-                        }
-                    }
-                }
-            }
-            
-            println!("{}{}\x1b[0m\n", status_color, "=".repeat(60));
-            println!("Use --json for full execution details");
+            summarize_and_print(&result, false);
         }
-    } else {
-        let status = response.status();
-        let text = response.text().await?;
-        eprintln!("Failed to get status: {} - {}", status, text);
+        return Ok(());
     }
+
+    if response.status() == reqwest::StatusCode::NOT_FOUND {
+        let fallback_url = api_url(
+            base_url,
+            &format!("executions/{}?page=1&page_size=10", execution_id),
+            use_gateway_proxy,
+        );
+        let fallback_response = client
+            .get(&fallback_url)
+            .send()
+            .await
+            .context("Failed to send fallback execution request")?;
+
+        if fallback_response.status().is_success() {
+            let execution_doc: serde_json::Value = fallback_response.json().await?;
+            let fallback_status = execution_doc
+                .get("status")
+                .and_then(|v| v.as_str())
+                .unwrap_or("UNKNOWN");
+            let latest_node = execution_doc
+                .get("events")
+                .and_then(|v| v.as_array())
+                .and_then(|events| events.first())
+                .and_then(|event| event.get("node_name"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("unknown");
+            let completed = matches!(fallback_status, "COMPLETED" | "FAILED" | "CANCELLED");
+            let failed = fallback_status == "FAILED";
+            let start_time = execution_doc
+                .get("start_time")
+                .cloned()
+                .unwrap_or(serde_json::Value::Null);
+            let end_time = execution_doc
+                .get("end_time")
+                .cloned()
+                .unwrap_or(serde_json::Value::Null);
+            let duration_seconds = execution_doc
+                .get("duration_seconds")
+                .cloned()
+                .unwrap_or(serde_json::Value::Null);
+            let duration_human = execution_doc
+                .get("duration_human")
+                .cloned()
+                .unwrap_or(serde_json::Value::Null);
+
+            let normalized = serde_json::json!({
+                "execution_id": execution_id,
+                "current_step": latest_node,
+                "completed_steps": [],
+                "failed": failed,
+                "completed": completed,
+                "completion_inferred": true,
+                "variables": {},
+                "status": fallback_status,
+                "source": "executions_endpoint_fallback",
+                "start_time": start_time,
+                "end_time": end_time,
+                "duration_seconds": duration_seconds,
+                "duration_human": duration_human,
+            });
+
+            if json_only {
+                println!("{}", serde_json::to_string(&normalized)?);
+            } else {
+                summarize_and_print(&normalized, true);
+            }
+            return Ok(());
+        }
+
+        let fallback_status = fallback_response.status();
+        let fallback_text = fallback_response.text().await?;
+        eprintln!(
+            "Failed to get status: {} - {}; fallback failed: {} - {}",
+            response.status(),
+            "Execution not found in server state cache",
+            fallback_status,
+            fallback_text
+        );
+        return Ok(());
+    }
+
+    let status = response.status();
+    let text = response.text().await?;
+    eprintln!("Failed to get status: {} - {}", status, text);
     Ok(())
 }
 

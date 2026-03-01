@@ -1448,16 +1448,44 @@ workflow:
           }
           trap cleanup EXIT
 
-          kubectl port-forward -n noetl svc/noetl 18082:8082 >"$PF_LOG" 2>&1 &
-          PF_PID=$!
-
-          READY=false
+          # Wait until service has ready endpoints before opening a tunnel.
           for _ in $(seq 1 30); do
-            if curl -fsS "$NOETL_URL/api/health" >/dev/null 2>&1; then
-              READY=true
+            EP_COUNT=$(kubectl get endpoints -n noetl noetl -o jsonpath='{.subsets[*].addresses[*].ip}' 2>/dev/null | wc -w | tr -d ' ')
+            if [ "${EP_COUNT:-0}" -ge 1 ]; then
               break
             fi
             sleep 2
+          done
+
+          READY=false
+          for TARGET in "svc/noetl 8082" "deployment/noetl-server 8082"; do
+            TARGET_REF=$(echo "$TARGET" | awk '{print $1}')
+            TARGET_PORT=$(echo "$TARGET" | awk '{print $2}')
+            for ATTEMPT in $(seq 1 5); do
+              if [ -n "$PF_PID" ] && kill -0 "$PF_PID" >/dev/null 2>&1; then
+                kill "$PF_PID" >/dev/null 2>&1 || true
+                wait "$PF_PID" 2>/dev/null || true
+              fi
+              : >"$PF_LOG"
+              echo "Starting port-forward ($TARGET_REF -> 18082:$TARGET_PORT), attempt $ATTEMPT..."
+              kubectl port-forward -n noetl "$TARGET_REF" 18082:"$TARGET_PORT" >"$PF_LOG" 2>&1 &
+              PF_PID=$!
+
+              for _ in $(seq 1 15); do
+                if curl -fsS "$NOETL_URL/api/health" >/dev/null 2>&1; then
+                  READY=true
+                  break 2
+                fi
+                if ! kill -0 "$PF_PID" >/dev/null 2>&1; then
+                  break
+                fi
+                sleep 2
+              done
+
+              echo "Port-forward attempt failed for $TARGET_REF (attempt $ATTEMPT)."
+              tail -n 20 "$PF_LOG" || true
+              sleep 1
+            done
           done
 
           if [ "$READY" != "true" ]; then
@@ -1520,7 +1548,8 @@ workflow:
             noetl --server-url "$NOETL_URL" register playbook -f "tests/fixtures/playbooks/api_integration/auth0/$pb"
           done
 
-          EXEC_JSON=$(noetl exec catalog://api_integration/auth0/provision_auth_schema -r distributed --endpoint "$NOETL_URL" --json)
+          # Force direct NoETL API mode (not gateway proxy) for local port-forward bootstrap.
+          EXEC_JSON=$(NOETL_USE_GATEWAY=0 noetl --server-url "$NOETL_URL" exec catalog://api_integration/auth0/provision_auth_schema -r distributed --json)
           EXEC_ID=$(printf '%s' "$EXEC_JSON" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("execution_id", ""))')
 
           if [ -z "$EXEC_ID" ]; then

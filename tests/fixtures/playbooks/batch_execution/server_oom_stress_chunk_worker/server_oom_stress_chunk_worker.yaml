@@ -16,8 +16,8 @@ workload:
   parent_execution_id: ''
   batch_number: 1
   offset: 0
-  batch_size: 100
-  items_max_in_flight: 2
+  batch_size: 50
+  items_max_in_flight: 1
 
 workflow:
   - step: start
@@ -41,7 +41,7 @@ workflow:
             "batch_number": _to_int(batch_number, 1),
             "offset": _to_int(offset, 0),
             "batch_size": _to_int(batch_size, 100),
-            "items_max_in_flight": _to_int(items_max_in_flight, 2),
+            "items_max_in_flight": _to_int(items_max_in_flight, 1),
         }
     next:
       spec: { mode: exclusive }
@@ -101,7 +101,7 @@ workflow:
       spec:
         mode: parallel
         # max_in_flight cannot be templated; keep aligned with workload.items_max_in_flight
-        max_in_flight: 2
+        max_in_flight: 1
         policy:
           exec: distributed
     tool:
@@ -128,9 +128,10 @@ workflow:
       - name: save
         kind: postgres
         auth: '{{ pg_auth }}'
+        # Keep per-worker DB pressure low for db-f1-micro + PgBouncer (pool size 4)
         pool:
-          max_size: 4
-          max_waiting: 10
+          max_size: 2
+          max_waiting: 4
           timeout: 30
         command: |
           INSERT INTO public.stress_test_results (item_id, result_data)

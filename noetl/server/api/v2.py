@@ -213,6 +213,61 @@ def _compact_status_variables(variables: dict[str, Any]) -> dict[str, Any]:
     return compacted
 
 
+def _normalize_utc_timestamp(value: Optional[datetime]) -> Optional[datetime]:
+    if value is None:
+        return None
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
+
+
+def _iso_timestamp(value: Optional[datetime]) -> Optional[str]:
+    normalized = _normalize_utc_timestamp(value)
+    return normalized.isoformat() if normalized else None
+
+
+def _format_duration_human(total_seconds: Optional[float]) -> Optional[str]:
+    if total_seconds is None:
+        return None
+
+    seconds = max(0, int(round(float(total_seconds))))
+    days, rem = divmod(seconds, 86400)
+    hours, rem = divmod(rem, 3600)
+    minutes, secs = divmod(rem, 60)
+
+    parts: list[str] = []
+    if days:
+        parts.append(f"{days}d")
+    if hours:
+        parts.append(f"{hours}h")
+    if minutes:
+        parts.append(f"{minutes}m")
+    if secs or not parts:
+        parts.append(f"{secs}s")
+    return " ".join(parts)
+
+
+def _duration_fields(
+    start_time: Optional[datetime],
+    end_time: Optional[datetime],
+    completed: bool,
+) -> dict[str, Any]:
+    start_dt = _normalize_utc_timestamp(start_time)
+    end_dt = _normalize_utc_timestamp(end_time)
+
+    duration_seconds: Optional[float] = None
+    if start_dt:
+        effective_end = end_dt if completed and end_dt else datetime.now(timezone.utc)
+        duration_seconds = max(0.0, (effective_end - start_dt).total_seconds())
+
+    return {
+        "start_time": _iso_timestamp(start_dt),
+        "end_time": _iso_timestamp(end_dt if completed else None),
+        "duration_seconds": round(duration_seconds, 3) if duration_seconds is not None else None,
+        "duration_human": _format_duration_human(duration_seconds),
+    }
+
+
 # ============================================================================
 # Request/Response Models
 # ============================================================================
@@ -1311,28 +1366,137 @@ async def get_execution_status(execution_id: str, full: bool = False):
         state = engine.state_store.get_state(execution_id)
         
         if not state:
-            raise HTTPException(404, "Execution not found")
+            async with get_pool_connection() as conn:
+                async with conn.cursor(row_factory=dict_row) as cur:
+                    try:
+                        exec_id_int = int(execution_id)
+                    except ValueError:
+                        raise HTTPException(404, "Execution not found")
+
+                    await cur.execute("""
+                        SELECT event_type, node_name, status, created_at
+                        FROM noetl.event
+                        WHERE execution_id = %s
+                        ORDER BY event_id DESC
+                        LIMIT 1
+                    """, (exec_id_int,))
+                    latest_event = await cur.fetchone()
+
+                    if not latest_event:
+                        raise HTTPException(404, "Execution not found")
+
+                    await cur.execute("""
+                        SELECT created_at
+                        FROM noetl.event
+                        WHERE execution_id = %s
+                        ORDER BY event_id ASC
+                        LIMIT 1
+                    """, (exec_id_int,))
+                    first_event = await cur.fetchone()
+
+                    await cur.execute("""
+                        SELECT event_type
+                        FROM noetl.event
+                        WHERE execution_id = %s
+                          AND event_type IN (
+                            'playbook.completed',
+                            'workflow.completed',
+                            'playbook.failed',
+                            'workflow.failed',
+                            'execution.cancelled'
+                          )
+                        ORDER BY event_id DESC
+                        LIMIT 1
+                    """, (exec_id_int,))
+                    terminal_event = await cur.fetchone()
+
+                    await cur.execute("""
+                        SELECT node_name
+                        FROM noetl.event
+                        WHERE execution_id = %s
+                          AND event_type = 'step.exit'
+                          AND status = 'COMPLETED'
+                        ORDER BY event_id ASC
+                    """, (exec_id_int,))
+                    step_rows = await cur.fetchall()
+
+            terminal_complete_events = {"playbook.completed", "workflow.completed"}
+            terminal_failed_events = {"playbook.failed", "workflow.failed", "execution.cancelled"}
+
+            completed = False
+            failed = False
+            completion_inferred = True
+
+            terminal_type = terminal_event["event_type"] if terminal_event else None
+            if terminal_type in terminal_complete_events:
+                completed = True
+                failed = False
+            elif terminal_type in terminal_failed_events:
+                completed = True
+                failed = terminal_type != "execution.cancelled"
+            elif (
+                latest_event["node_name"] == "end"
+                and latest_event["status"] == "COMPLETED"
+                and latest_event["event_type"] in {"command.completed", "call.done", "step.exit"}
+            ):
+                completed = True
+                failed = False
+
+            completed_steps: list[str] = []
+            seen_steps: set[str] = set()
+            for row in step_rows or []:
+                step_name = row.get("node_name")
+                if not step_name or step_name in seen_steps:
+                    continue
+                seen_steps.add(step_name)
+                completed_steps.append(step_name)
+
+            fallback_variables: dict[str, Any] = {}
+            duration = _duration_fields(
+                first_event.get("created_at") if first_event else None,
+                latest_event.get("created_at") if latest_event else None,
+                completed,
+            )
+            return {
+                "execution_id": execution_id,
+                "current_step": latest_event.get("node_name"),
+                "completed_steps": completed_steps,
+                "failed": failed,
+                "completed": completed,
+                "completion_inferred": completion_inferred,
+                "variables": fallback_variables if full else _compact_status_variables(fallback_variables),
+                "source": "event_log_fallback",
+                **duration,
+            }
 
         completed = state.completed
         failed = state.failed
         completion_inferred = False
 
+        async with get_pool_connection() as conn:
+            async with conn.cursor(row_factory=dict_row) as cur:
+                await cur.execute("""
+                    SELECT created_at
+                    FROM noetl.event
+                    WHERE execution_id = %s
+                    ORDER BY event_id ASC
+                    LIMIT 1
+                """, (int(execution_id),))
+                first_event = await cur.fetchone()
+
+                await cur.execute("""
+                    SELECT event_type, node_name, status, created_at
+                    FROM noetl.event
+                    WHERE execution_id = %s
+                    ORDER BY event_id DESC
+                    LIMIT 1
+                """, (int(execution_id),))
+                latest_event = await cur.fetchone()
+
         # Fallback completion inference:
         # Some runs reach terminal step completion in events but may miss
         # playbook/workflow terminal flags in engine state.
         if not completed:
-            latest_event = None
-            async with get_pool_connection() as conn:
-                async with conn.cursor(row_factory=dict_row) as cur:
-                    await cur.execute("""
-                        SELECT event_type, node_name, status
-                        FROM noetl.event
-                        WHERE execution_id = %s
-                        ORDER BY event_id DESC
-                        LIMIT 1
-                    """, (int(execution_id),))
-                    latest_event = await cur.fetchone()
-
             if state.current_step == "end" and "end" in state.completed_steps and not failed:
                 completed = True
                 completion_inferred = True
@@ -1350,11 +1514,17 @@ async def get_execution_status(execution_id: str, full: bool = False):
                 elif (
                     latest_event["node_name"] == "end"
                     and latest_event["status"] == "COMPLETED"
-                    and latest_event["event_type"] in {"command.completed", "call.done", "step.exit"}
+                        and latest_event["event_type"] in {"command.completed", "call.done", "step.exit"}
                 ):
                     completed = True
                     completion_inferred = True
-        
+
+        duration = _duration_fields(
+            first_event.get("created_at") if first_event else None,
+            latest_event.get("created_at") if latest_event else None,
+            completed,
+        )
+
         return {
             "execution_id": execution_id,
             "current_step": state.current_step,
@@ -1363,6 +1533,7 @@ async def get_execution_status(execution_id: str, full: bool = False):
             "completed": completed,
             "completion_inferred": completion_inferred,
             "variables": state.variables if full else _compact_status_variables(state.variables),
+            **duration,
         }
     except HTTPException:
         raise
