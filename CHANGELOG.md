@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.8.7](https://github.com/noetl/noetl/compare/v2.8.6...v2.8.7) (2026-03-01)
+
+### Bug Fixes
+
+* execution status retrieval and optimize batch processing ([14a7903](https://github.com/noetl/noetl/commit/14a79039201f7ea7b69aa50adf35febf16e6dd93))
+* execution status with duration metrics and human-readable format ([9cb0cdc](https://github.com/noetl/noetl/commit/9cb0cdce886c52dea1d5b03cd8b1beded20a627c))
+
 ## [2.8.6](https://github.com/noetl/noetl/compare/v2.8.5...v2.8.6) (2026-02-28)
 
 ### Bug Fixes
