@@ -27,4 +27,4 @@ With **NoETL Gateway**, playbooks can be deployed as a **distributed backend**: 
 
 ## License
 
-MIT License — see [LICENSE](LICENSE) for details.
+Dual License — see [LICENSE](LICENSE) for details.
