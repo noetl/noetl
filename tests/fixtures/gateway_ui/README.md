@@ -155,7 +155,7 @@ This provides fast session lookups while keeping Postgres as the source of truth
 ## Testing Flow
 
 ### Local Development
-1. **Start Gateway**: `cd crates/gateway && cargo run --release`
+1. **Start Gateway**: `cd ../gateway && cargo run --release`
 2. **Start UI server**: `cd tests/fixtures/gateway_ui && python3 -m http.server 8090`
 3. **Open browser**: `http://localhost:8090/login.html`
 4. **Login**: Use Auth0 token or test session token

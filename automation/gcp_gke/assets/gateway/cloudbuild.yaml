@@ -3,10 +3,10 @@ steps:
     args:
       - build
       - -f
-      - crates/gateway/Dockerfile
+      - ../gateway/Dockerfile
       - -t
       - ${_IMAGE}
-      - crates/gateway
+      - ../gateway
 images:
   - ${_IMAGE}
 substitutions:

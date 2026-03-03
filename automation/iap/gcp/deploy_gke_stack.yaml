@@ -38,10 +38,10 @@ workload:
   # Python images:
   build_noetl: true          # Python NoETL (docker/noetl/pip) - same image for server AND worker
   # Rust images (all disabled by default - slow to compile):
-  build_noetlctl: false      # Rust noetlctl CLI binary (crates/noetlctl) - builds 'noetl' command
-  build_gateway: false       # Rust Gateway (crates/gateway) - API gateway
-  build_worker_pool: false   # Rust Worker Pool (crates/worker-pool) - not used yet
-  build_control_plane: false # Rust Control Plane (crates/control-plane) - not used yet
+  build_noetlctl: false      # Rust noetlctl CLI binary (../cli) - builds 'noetl' command
+  build_gateway: false       # Rust Gateway (../gateway) - API gateway
+  build_worker_pool: false   # Rust Worker Pool (../worker) - not used yet
+  build_control_plane: false # Rust Control Plane (../server) - not used yet
 
   # Gateway exposure - when true, Gateway becomes public LoadBalancer
   # NoETL server always stays internal (ClusterIP)
@@ -325,7 +325,7 @@ workflow:
             if [ "{{ workload.build_noetlctl }}" = "true" ]; then
               echo ""
               echo "=== Building noetlctl (Rust CLI) via Cloud Build ==="
-              if [ -f "crates/noetlctl/Dockerfile" ]; then
+              if [ -f "../cli/Dockerfile" ]; then
               # Create temporary cloudbuild.yaml for noetlctl
               cat > /tmp/cloudbuild-noetlctl.yaml << 'CLOUDBUILD'
           steps:
@@ -337,7 +337,7 @@ workflow:
                 - '-t'
                 - '$_IMAGE:latest'
                 - '-f'
-                - 'crates/noetlctl/Dockerfile'
+                - '../cli/Dockerfile'
                 - '.'
           images:
             - '$_IMAGE:$_TAG'
@@ -353,7 +353,7 @@ workflow:
                 .
                 echo "noetlctl image built: {{ vars.noetlctl_image }}:$TAG"
               else
-                echo "WARNING: crates/noetlctl/Dockerfile not found, skipping"
+                echo "WARNING: ../cli/Dockerfile not found, skipping"
               fi
             else
               echo ""
@@ -364,7 +364,7 @@ workflow:
             if [ "{{ workload.build_gateway }}" = "true" ]; then
               echo ""
               echo "=== Building Gateway via Cloud Build ==="
-              if [ -f "crates/gateway/Dockerfile" ]; then
+              if [ -f "../gateway/Dockerfile" ]; then
               # Create temporary cloudbuild.yaml for gateway
               cat > /tmp/cloudbuild-gateway.yaml << 'CLOUDBUILD'
           steps:
@@ -376,7 +376,7 @@ workflow:
                 - '-t'
                 - '$_IMAGE:latest'
                 - '-f'
-                - 'crates/gateway/Dockerfile'
+                - '../gateway/Dockerfile'
                 - '.'
           images:
             - '$_IMAGE:$_TAG'
@@ -392,7 +392,7 @@ workflow:
                 .
                 echo "Gateway image built: {{ vars.gateway_image }}:$TAG"
               else
-                echo "WARNING: crates/gateway/Dockerfile not found, skipping"
+                echo "WARNING: ../gateway/Dockerfile not found, skipping"
               fi
             else
               echo ""
@@ -453,17 +453,17 @@ workflow:
             if [ "{{ workload.build_noetlctl }}" = "true" ]; then
               echo ""
               echo "=== Building noetlctl (Rust CLI) ==="
-              if [ -f "crates/noetlctl/Dockerfile" ]; then
+              if [ -f "../cli/Dockerfile" ]; then
               docker build --platform {{ workload.docker_platform }} \
                 -t {{ vars.noetlctl_image }}:$TAG \
                 -t {{ vars.noetlctl_image }}:latest \
-                -f crates/noetlctl/Dockerfile \
+                -f ../cli/Dockerfile \
                 .
               docker push {{ vars.noetlctl_image }}:$TAG
                 docker push {{ vars.noetlctl_image }}:latest
                 echo "noetlctl image pushed: {{ vars.noetlctl_image }}:$TAG"
               else
-                echo "WARNING: crates/noetlctl/Dockerfile not found, skipping"
+                echo "WARNING: ../cli/Dockerfile not found, skipping"
               fi
             else
               echo ""
@@ -474,17 +474,17 @@ workflow:
             if [ "{{ workload.build_gateway }}" = "true" ]; then
               echo ""
               echo "=== Building Gateway ==="
-              if [ -f "crates/gateway/Dockerfile" ]; then
+              if [ -f "../gateway/Dockerfile" ]; then
               docker build --platform {{ workload.docker_platform }} \
                 -t {{ vars.gateway_image }}:$TAG \
                 -t {{ vars.gateway_image }}:{{ workload.gateway_image_tag }} \
-                -f crates/gateway/Dockerfile \
+                -f ../gateway/Dockerfile \
                 .
               docker push {{ vars.gateway_image }}:$TAG
                 docker push {{ vars.gateway_image }}:{{ workload.gateway_image_tag }}
                 echo "Gateway image pushed: {{ vars.gateway_image }}:$TAG"
               else
-                echo "WARNING: crates/gateway/Dockerfile not found, skipping"
+                echo "WARNING: ../gateway/Dockerfile not found, skipping"
               fi
             else
               echo ""

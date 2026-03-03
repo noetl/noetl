@@ -92,7 +92,7 @@ workflow:
           
           docker buildx build --load --platform $PLATFORM \
             -t noetl-gateway:latest \
-            -f crates/gateway/Dockerfile crates/gateway
+            -f ../gateway/Dockerfile ../gateway
           
           echo "Gateway image built: noetl-gateway:latest"
     next:

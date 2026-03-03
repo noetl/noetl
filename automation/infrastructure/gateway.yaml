@@ -53,7 +53,7 @@ workflow:
         - |
           echo ""
           echo "Building Gateway Docker image..."
-          docker buildx build --load --platform linux/amd64 -t noetl-gateway:latest -f crates/gateway/Dockerfile crates/gateway
+          docker buildx build --load --platform linux/amd64 -t noetl-gateway:latest -f ../gateway/Dockerfile ../gateway
           echo "Loading Gateway image into kind cluster..."
           kind load docker-image noetl-gateway:latest --name noetl
           echo "Gateway image built and loaded into kind cluster"
@@ -111,7 +111,7 @@ workflow:
         - |
           echo ""
           echo "Building and deploying Gateway API and UI..."
-          docker buildx build --load --platform linux/amd64 -t noetl-gateway:latest -f crates/gateway/Dockerfile crates/gateway
+          docker buildx build --load --platform linux/amd64 -t noetl-gateway:latest -f ../gateway/Dockerfile ../gateway
           kind load docker-image noetl-gateway:latest --name noetl
           kubectl apply -f ci/manifests/gateway/namespace.yaml
           kubectl apply -f ci/manifests/gateway/deployment.yaml
@@ -150,7 +150,7 @@ workflow:
       cmds:
         - echo ""
         - echo "Rebuilding Gateway image..."
-        - docker buildx build --progress=plain --load --platform linux/amd64 -t noetl-gateway:latest -f crates/gateway/Dockerfile crates/gateway
+        - docker buildx build --progress=plain --load --platform linux/amd64 -t noetl-gateway:latest -f ../gateway/Dockerfile ../gateway
         - echo "Loading into kind cluster..."
         - kind load docker-image noetl-gateway:latest --name noetl
         - echo "Restarting deployment..."
@@ -270,7 +270,7 @@ workflow:
           echo "  # Test endpoints"
           echo "  noetl run automation/infrastructure/gateway.yaml --set action=test"
           echo ""
-          echo "Gateway Location: crates/gateway"
+          echo "Gateway Location: ../gateway"
           echo ""
     next:
       spec:

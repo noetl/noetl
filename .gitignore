@@ -103,8 +103,6 @@ apt
 
 # Extracted release tarballs (from testing)
 noetl-*/
-# Exception: keep crates/noetl-tools (part of Rust workspace)
-!crates/noetl-tools/
 
 # Debian package build artifacts
 build/deb/
@@ -122,7 +120,5 @@ apt
 
 # Extracted release tarballs (from testing)
 noetl-*/
-# Exception: keep crates/noetl-tools (part of Rust workspace)
-!crates/noetl-tools/
 bin/
 AGENTS.md

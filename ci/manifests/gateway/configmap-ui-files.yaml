@@ -60,7 +60,7 @@ data:
     (sub-millisecond)\n3. **Cache miss:** Gateway calls `auth0_validate_session` →
     refreshes NATS K/V cache\n\nThis provides fast session lookups while keeping Postgres
     as the source of truth.\n\n## Testing Flow\n\n### Local Development\n1. **Start
-    Gateway**: `cd crates/gateway && cargo run --release`\n2. **Start UI server**:
+    Gateway**: `cd ../gateway && cargo run --release`\n2. **Start UI server**:
     `cd tests/fixtures/gateway_ui && python3 -m http.server 8090`\n3. **Open browser**:
     `http://localhost:8090/login.html`\n4. **Login**: Use Auth0 token or test session
     token\n\n### Kind Kubernetes Cluster\n1. **Deploy to Kind**: See documentation/docs/development/kind_kubernetes.md\n2.

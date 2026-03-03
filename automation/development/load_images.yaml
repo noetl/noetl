@@ -105,7 +105,7 @@ workflow:
           else
             echo "WARNING: Gateway image $GATEWAY_IMAGE not found in Docker"
             echo "If you need Gateway, build it first:"
-            echo "  docker buildx build --load --platform linux/amd64 -t noetl-gateway:latest -f crates/gateway/Dockerfile crates/gateway"
+            echo "  docker buildx build --load --platform linux/amd64 -t noetl-gateway:latest -f ../gateway/Dockerfile ../gateway"
           fi
     next:
       spec:

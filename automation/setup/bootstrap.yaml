@@ -93,14 +93,14 @@ workflow:
       # For guaranteed consistency, use: --set build_rust_cli=true\n\nif [ \"$FORCE_BUILD\"\
       \ = \"true\" ]; then\n  echo \"INFO Force build requested via build_rust_cli=true\"\
       \n  echo \"Building Rust CLI (this may take a while)...\"\n  cargo build --release\
-      \ --manifest-path crates/noetlctl/Cargo.toml\n  if [ -f \"target/release/noetl\"\
+      \ --manifest-path ../cli/Cargo.toml\n  if [ -f \"target/release/noetl\"\
       \ ]; then\n    echo \"OK noetl CLI built successfully\"\n    ls -la target/release/noetl\n\
       \  else\n    echo \"ERROR noetl CLI build failed\"\n    exit 1\n  fi\nelif [\
       \ -f \"target/release/noetl\" ]; then\n  echo \"OK noetl binary found at target/release/noetl\"\
       \n  echo \"   To force rebuild: noetl run boot --set build_rust_cli=true\"\n\
       \  ls -la target/release/noetl\nelse\n  echo \"INFO noetl binary not found at\
       \ target/release/noetl\"\n  echo \"Building Rust CLI (this may take a while)...\"\
-      \n  cargo build --release --manifest-path crates/noetlctl/Cargo.toml\n  if [\
+      \n  cargo build --release --manifest-path ../cli/Cargo.toml\n  if [\
       \ -f \"target/release/noetl\" ]; then\n    echo \"OK noetl CLI built successfully\"\
       \n    ls -la target/release/noetl\n  else\n    echo \"ERROR noetl CLI build\
       \ failed\"\n    exit 1\n  fi\nfi\n"
@@ -278,8 +278,8 @@ workflow:
       \ ]; then\n  PLATFORM=\"linux/arm64\"\n  echo \"Detected ARM64 architecture,\
       \ building for: $PLATFORM\"\nelse\n  PLATFORM=\"linux/amd64\"\n  echo \"Detected\
       \ AMD64 architecture, building for: $PLATFORM\"\nfi\n\ndocker buildx build --load\
-      \ --platform $PLATFORM \\\n  -t noetl-gateway:latest \\\n  -f crates/gateway/Dockerfile\
-      \ crates/gateway\necho \"Gateway image built successfully\"\n"
+      \ --platform $PLATFORM \\\n  -t noetl-gateway:latest \\\n  -f ../gateway/Dockerfile\
+      \ ../gateway\necho \"Gateway image built successfully\"\n"
   next:
   - step: reload_noetl_image
 - step: reload_noetl_image

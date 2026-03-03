@@ -180,7 +180,7 @@ gcloud builds submit --project $PROJECT_ID \
   --tag ${REGISTRY}/noetl-gateway:${TAG} \
   --timeout=3600 \
   --machine-type=e2-highcpu-32 \
-  -f crates/gateway/Dockerfile .
+  -f ../gateway/Dockerfile .
 ```
 
 ### Deploy Stack to Existing Cluster
