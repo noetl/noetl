@@ -12,6 +12,22 @@ With **NoETL Gateway**, playbooks can be deployed as a **distributed backend**: 
 
 **https://noetl.dev**
 
+## Repository model (ai-meta driven)
+
+NoETL development is now coordinated through the `ai-meta` repository:
+
+- Orchestration/meta: https://github.com/noetl/ai-meta
+- Server: https://github.com/noetl/server
+- Worker: https://github.com/noetl/worker
+- Gateway: https://github.com/noetl/gateway
+- CLI: https://github.com/noetl/cli
+- Tools: https://github.com/noetl/tools
+- Ops/automation: https://github.com/noetl/ops
+- Docs: https://github.com/noetl/docs
+
+`ai-meta` tracks all component repositories as Git submodules and is the primary place to
+coordinate cross-repo changes, pointer bumps, and release choreography.
+
 ## Distribution channels
 
 - **PyPI**
