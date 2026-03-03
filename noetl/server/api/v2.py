@@ -22,6 +22,7 @@ from noetl.core.dsl.v2.models import Event
 from noetl.core.dsl.v2.engine import ControlFlowEngine, PlaybookRepo, StateStore
 from noetl.core.db.pool import get_pool_connection, get_server_pool_stats
 from noetl.core.messaging import NATSCommandPublisher
+from noetl.claim_policy import decide_reclaim_for_existing_claim
 
 from noetl.core.logger import setup_logger
 logger = setup_logger(__name__, include_location=True)
@@ -99,6 +100,10 @@ async def get_pool_status():
 _CLAIM_WORKER_HEARTBEAT_STALE_SECONDS = max(
     5.0,
     float(os.getenv("NOETL_COMMAND_WORKER_HEARTBEAT_STALE_SECONDS", "30")),
+)
+_CLAIM_HEALTHY_WORKER_HARD_TIMEOUT_SECONDS = max(
+    _CLAIM_LEASE_SECONDS,
+    float(os.getenv("NOETL_COMMAND_CLAIM_HEALTHY_WORKER_HARD_TIMEOUT_SECONDS", "1800")),
 )
 _STATUS_VALUE_MAX_BYTES = max(
     256,
@@ -721,40 +726,42 @@ async def claim_command(event_id: int, req: ClaimRequest):
                                 exc_info=True,
                             )
 
-                        worker_inactive = (
-                            worker_runtime_status is not None
-                            and worker_runtime_status != "ready"
-                        )
-                        heartbeat_stale = (
-                            worker_heartbeat_age is not None
-                            and worker_heartbeat_age >= _CLAIM_WORKER_HEARTBEAT_STALE_SECONDS
+                        decision = decide_reclaim_for_existing_claim(
+                            existing_worker=existing_worker,
+                            requesting_worker=req.worker_id,
+                            claim_age_seconds=claim_age_seconds,
+                            lease_seconds=_CLAIM_LEASE_SECONDS,
+                            worker_runtime_status=worker_runtime_status,
+                            worker_heartbeat_age_seconds=worker_heartbeat_age,
+                            heartbeat_stale_seconds=_CLAIM_WORKER_HEARTBEAT_STALE_SECONDS,
+                            healthy_worker_hard_timeout_seconds=_CLAIM_HEALTHY_WORKER_HARD_TIMEOUT_SECONDS,
                         )
 
-                        if worker_inactive or heartbeat_stale:
+                        if decision.reclaim:
                             stale_reclaim = True
                             reclaimed_from_worker = existing_worker
-                            reclaimed_reason = (
-                                "worker_inactive"
-                                if worker_inactive
-                                else "worker_heartbeat_stale"
-                            )
+                            reclaimed_reason = decision.reason or "lease_expired"
                             logger.warning(
-                                "[CLAIM] Reclaiming command %s from inactive worker=%s "
-                                "(status=%s heartbeat_age=%.3fs threshold=%.3fs)",
+                                "[CLAIM] Reclaiming command %s from worker=%s age=%.3fs reason=%s "
+                                "(lease=%.3fs heartbeat_age=%.3fs status=%s)",
                                 command_id,
                                 existing_worker,
-                                worker_runtime_status,
+                                claim_age_seconds,
+                                reclaimed_reason,
+                                _CLAIM_LEASE_SECONDS,
                                 worker_heartbeat_age or -1.0,
-                                _CLAIM_WORKER_HEARTBEAT_STALE_SECONDS,
+                                worker_runtime_status,
                             )
-                        elif claim_age_seconds < _CLAIM_LEASE_SECONDS:
-                            retry_after = max(
-                                1,
-                                min(
-                                    _CLAIM_ACTIVE_RETRY_AFTER_SECONDS,
-                                    int(max(1.0, _CLAIM_LEASE_SECONDS - claim_age_seconds)),
-                                ),
-                            )
+                        else:
+                            retry_after = _CLAIM_ACTIVE_RETRY_AFTER_SECONDS
+                            if decision.retry_reason == "lease_active":
+                                retry_after = max(
+                                    1,
+                                    min(
+                                        _CLAIM_ACTIVE_RETRY_AFTER_SECONDS,
+                                        int(max(1.0, _CLAIM_LEASE_SECONDS - claim_age_seconds)),
+                                    ),
+                                )
                             raise HTTPException(
                                 409,
                                 detail={
@@ -763,6 +770,8 @@ async def claim_command(event_id: int, req: ClaimRequest):
                                     "worker_id": existing_worker,
                                     "age_seconds": round(claim_age_seconds, 3),
                                     "lease_seconds": _CLAIM_LEASE_SECONDS,
+                                    "hard_timeout_seconds": _CLAIM_HEALTHY_WORKER_HARD_TIMEOUT_SECONDS,
+                                    "claim_policy": decision.retry_reason,
                                     "worker_status": worker_runtime_status,
                                     "worker_heartbeat_age_seconds": (
                                         round(worker_heartbeat_age, 3)
@@ -771,17 +780,6 @@ async def claim_command(event_id: int, req: ClaimRequest):
                                     ),
                                 },
                                 headers={"Retry-After": str(retry_after)},
-                            )
-                        else:
-                            stale_reclaim = True
-                            reclaimed_from_worker = existing_worker
-                            reclaimed_reason = "lease_expired"
-                            logger.warning(
-                                "[CLAIM] Reclaiming stale command %s from worker=%s age=%.3fs (lease=%.3fs)",
-                                command_id,
-                                existing_worker,
-                                claim_age_seconds,
-                                _CLAIM_LEASE_SECONDS,
                             )
                     # Already claimed by same worker - idempotent, return command details
                     if not stale_reclaim:
