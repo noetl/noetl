@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.8.8](https://github.com/noetl/noetl/compare/v2.8.7...v2.8.8) (2026-03-03)
+
+### Bug Fixes
+
+* add new testing playbooks for longtime batches ([3758f41](https://github.com/noetl/noetl/commit/3758f41bcc06f27b1bdfa3d7f3023adb29e3a931))
+* **claim:** avoid reclaiming healthy long-running worker commands ([b8b699b](https://github.com/noetl/noetl/commit/b8b699b6dc1f2925c1087a8bf469c5e894046c4b))
+* **claim:** reject same-worker duplicate command while running ([c67674b](https://github.com/noetl/noetl/commit/c67674bcd724c0201224f413d52ad772ed2d6134))
+
 ## [2.8.7](https://github.com/noetl/noetl/compare/v2.8.6...v2.8.7) (2026-03-01)
 
 ### Bug Fixes
