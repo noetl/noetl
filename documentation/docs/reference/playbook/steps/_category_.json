@@ -1,8 +1,0 @@
-{
-  "label": "Step Types",
-  "position": 2,
-  "link": {
-    "type": "doc",
-    "id": "reference/playbook/steps/index"
-  }
-}
