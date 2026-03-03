@@ -781,6 +781,35 @@ async def claim_command(event_id: int, req: ClaimRequest):
                                 },
                                 headers={"Retry-After": str(retry_after)},
                             )
+                    if existing_worker and existing_worker == req.worker_id:
+                        await cur.execute(
+                            """
+                            SELECT event_type FROM noetl.event
+                            WHERE execution_id = %s
+                              AND event_type IN ('command.started', 'command.completed', 'command.failed')
+                              AND (meta->>'command_id' = %s OR (result->'data'->>'command_id' = %s))
+                            ORDER BY event_id DESC
+                            LIMIT 1
+                            """,
+                            (execution_id, command_id, command_id),
+                        )
+                        same_worker_latest = await cur.fetchone()
+                        latest_event_type = (same_worker_latest or {}).get("event_type")
+                        if latest_event_type == "command.started":
+                            raise HTTPException(
+                                409,
+                                detail={
+                                    "code": "active_claim",
+                                    "message": f"Command already running on {existing_worker}",
+                                    "worker_id": existing_worker,
+                                    "age_seconds": round(claim_age_seconds, 3),
+                                    "lease_seconds": _CLAIM_LEASE_SECONDS,
+                                    "hard_timeout_seconds": _CLAIM_HEALTHY_WORKER_HARD_TIMEOUT_SECONDS,
+                                    "claim_policy": "same_worker_running",
+                                    "worker_status": "running",
+                                },
+                                headers={"Retry-After": str(_CLAIM_ACTIVE_RETRY_AFTER_SECONDS)},
+                            )
                     # Already claimed by same worker - idempotent, return command details
                     if not stale_reclaim:
                         return ClaimResponse(
