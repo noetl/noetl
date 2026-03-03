@@ -1,0 +1,394 @@
+apiVersion: noetl.io/v2
+kind: Playbook
+
+metadata:
+  name: kind_playbook_lease_expiry
+  path: tests/fixtures/playbooks/batch_execution/kind_playbook_lease_expiry
+  description: |
+    Regression test for NATS lease (120s) expiry in kind:playbook dispatch loops.
+    Uses two combined mechanisms to guarantee lease expiry → duplicate batch workers.
+
+    Bug summary:
+      When a loop step uses `kind: playbook` with `exec: distributed` and `max_in_flight: 1`,
+      the parent worker holds a NATS consumer lease (120s) while the child runs. If the
+      child takes >120s (due to API latency, NATS queue placement, NoETL sync overhead),
+      OR the server takes >120s to dispatch (due to large render_context under concurrent
+      load), the lease expires → call.error → command.failed → parent execution FAILS.
+      The stale command is reclaimed by another worker, spawning a DUPLICATE child
+      execution for the same batch offset → ON CONFLICT DO UPDATE → count doesn't grow.
+
+    Mechanism 1 — large execution context (~900KB):
+      Phase 1 (ctx_step_01..10) builds 6 × 5000-row patient arrays (~150KB each).
+      Without ctx clearing (our fix), these remain in render_context when
+      run_batch_workers dispatches. Server must JSON-deserialize + Jinja2-render ~900KB
+      per dispatch. Under concurrent load (many workers running simultaneously) this
+      makes each dispatch take 2-5s CPU. With many batches queued, some exceed 120s.
+
+    Mechanism 2 — long-running worker (simulate_api_delay: 130s):
+      Each chunk worker sleeps 130s before processing items, simulating the real MDS
+      bottleneck: external API response latency + NATS queue placement + NoETL sync.
+      With max_in_flight: 1 the parent holds its lease while the child runs.
+      130s sleep guarantees the 120s lease expires for every batch.
+
+    Both mechanisms fire simultaneously → reliable lease expiry → duplicate workers.
+
+    Bug condition (without ctx_step_09 set_ctx clearing):
+      render_context ~900KB + worker 130s sleep → command.failed on every batch
+      → stress_test_results count never grows (ON CONFLICT DO UPDATE overwrites)
+
+    Fix condition (with ctx_step_09 set_ctx clearing):
+      render_context ~20KB → fast dispatch. Worker still sleeps 130s, so the fix
+      must also address lease timeout for long-running children (increase NATS
+      consumer ack_wait, or switch dispatch pattern).
+
+    Expected pass: ALL batches complete, loop.done fires, summarize step runs.
+    Expected fail (bug): command.failed on batches, execution ends before summarize.
+
+workload:
+  pg_auth: pg_k8s
+  batch_size: 50
+  item_delay_seconds: 1
+  api_delay_seconds: 130
+  chunk_worker_path: tests/fixtures/playbooks/batch_execution/kind_playbook_lease_expiry_worker
+
+workflow:
+
+  # ── Phase 1: Build fat execution context (mirrors production) ─────────────
+  # Reproduces the ~150KB context accumulated in state_report_generation_prod_v10
+  # before the MDS batch dispatch phase.
+
+  - step: start
+    desc: Initialize test
+    tool:
+      kind: python
+      args:
+        batch_size: '{{ batch_size }}'
+        item_delay_seconds: '{{ item_delay_seconds }}'
+      code: |
+        result = {
+            "status": "started",
+            "batch_size": int(batch_size or 50),
+            "item_delay_seconds": int(item_delay_seconds or 1),
+        }
+    next:
+      spec: { mode: exclusive }
+      arcs:
+        - step: ctx_step_01
+
+  - step: ctx_step_01
+    desc: Simulate load_next_facility result (~1KB)
+    tool:
+      kind: python
+      code: |
+        result = {
+            "facility_id": 9,
+            "facility_name": "Test Facility for Lease Expiry Regression",
+            "facility_org_uuid": "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+            "facility_mapping_id": 414,
+            "rows": [{"facility_id": 9, "facility_name": "Test Facility", "active": True}],
+        }
+    next:
+      spec: { mode: exclusive }
+      arcs:
+        - step: ctx_step_02
+
+  - step: ctx_step_02
+    desc: |
+      Simulate load_patient_ids_context result with 5000 rows (~150KB).
+      In production this is SELECT DISTINCT athena_patient_id FROM patient_ids_work.
+      This is stored as ctx.patients_rows and is the primary source of context bloat.
+      5000 rows × 6 arrays = ~900KB total ctx → server needs 2-5s CPU per dispatch.
+      With 60 batches queued simultaneously, batches 40+ wait >120s → lease expiry.
+    tool:
+      kind: python
+      code: |
+        result = {
+            "command_0": {"rows": [{"patient_count": 5000}], "row_count": 1},
+            "command_1": {
+                "rows": [{"athena_patient_id": 10000000 + i} for i in range(5000)],
+                "row_count": 5000,
+            },
+        }
+    set_ctx:
+      patients_rows: "{{ ctx_step_02.command_1.rows }}"
+    next:
+      spec: { mode: exclusive }
+      arcs:
+        - step: ctx_step_03
+
+  - step: ctx_step_03
+    desc: Simulate load_patients_for_assessments (~150KB, 5000 patient_id rows)
+    tool:
+      kind: python
+      code: |
+        result = {
+            "command_0": {
+                "rows": [{"patient_id": 50000 + i} for i in range(5000)],
+                "row_count": 5000,
+            },
+        }
+    set_ctx:
+      patients_needing_assessments: "{{ ctx_step_03.command_0.rows }}"
+    next:
+      spec: { mode: exclusive }
+      arcs:
+        - step: ctx_step_04
+
+  - step: ctx_step_04
+    desc: Simulate load_patients_for_demographics (~150KB, 5000 patient_id rows)
+    tool:
+      kind: python
+      code: |
+        result = {
+            "command_0": {
+                "rows": [{"patient_id": 50000 + i} for i in range(5000)],
+                "row_count": 5000,
+            },
+        }
+    set_ctx:
+      patients_needing_demographics: "{{ ctx_step_04.command_0.rows }}"
+    next:
+      spec: { mode: exclusive }
+      arcs:
+        - step: ctx_step_05
+
+  - step: ctx_step_05
+    desc: Simulate load_patients_for_conditions (~150KB, 5000 patient_id rows)
+    tool:
+      kind: python
+      code: |
+        result = {
+            "command_0": {
+                "rows": [{"patient_id": 50000 + i} for i in range(5000)],
+                "row_count": 5000,
+            },
+        }
+    set_ctx:
+      patients_needing_conditions: "{{ ctx_step_05.command_0.rows }}"
+    next:
+      spec: { mode: exclusive }
+      arcs:
+        - step: ctx_step_06
+
+  - step: ctx_step_06
+    desc: Simulate load_patients_for_medications (~150KB, 5000 patient_id rows)
+    tool:
+      kind: python
+      code: |
+        result = {
+            "command_0": {
+                "rows": [{"patient_id": 50000 + i} for i in range(5000)],
+                "row_count": 5000,
+            },
+        }
+    set_ctx:
+      patients_needing_medications: "{{ ctx_step_06.command_0.rows }}"
+    next:
+      spec: { mode: exclusive }
+      arcs:
+        - step: ctx_step_07
+
+  - step: ctx_step_07
+    desc: Simulate load_patients_for_adt (~150KB, 5000 patient_id rows)
+    tool:
+      kind: python
+      code: |
+        result = {
+            "command_0": {
+                "rows": [{"patient_id": 50000 + i} for i in range(5000)],
+                "row_count": 5000,
+            },
+        }
+    set_ctx:
+      patients_needing_adt: "{{ ctx_step_07.command_0.rows }}"
+    next:
+      spec: { mode: exclusive }
+      arcs:
+        - step: ctx_step_08
+
+  - step: ctx_step_08
+    desc: Simulate parse_demographics result (small INSERT summary)
+    tool:
+      kind: python
+      code: |
+        result = {"command_0": {"status": "success", "message": "Command executed. 581 rows affected.", "row_count": 581},
+                  "command_1": {"status": "success", "message": "Command executed. 581 rows affected.", "row_count": 581}}
+    next:
+      spec: { mode: exclusive }
+      arcs:
+        - step: ctx_step_09
+
+  - step: ctx_step_09
+    desc: Simulate parse_assessments result + CLEAR all patient arrays (our fix)
+    tool:
+      kind: python
+      code: |
+        result = {"command_0": {"status": "success", "message": "Command executed. 3450 rows affected.", "row_count": 3450},
+                  "command_1": {"status": "success", "message": "Command executed. 3450 rows affected.", "row_count": 3450}}
+    set_ctx:
+      patients_rows: ""
+      patients_needing_assessments: ""
+      patients_needing_demographics: ""
+      patients_needing_conditions: ""
+      patients_needing_medications: ""
+      patients_needing_adt: ""
+    next:
+      spec: { mode: exclusive }
+      arcs:
+        - step: ctx_step_10
+
+  - step: ctx_step_10
+    desc: Simulate parse_conditions, parse_medications, parse_adt_records results (~2KB total)
+    tool:
+      kind: python
+      code: |
+        result = {
+            "parse_conditions":  {"command_0": {"status": "success", "row_count": 18589}},
+            "parse_medications":  {"command_0": {"status": "success", "row_count": 5550}},
+            "parse_adt_records": {"command_0": {"status": "success", "row_count": 2371}},
+        }
+    next:
+      spec: { mode: exclusive }
+      arcs:
+        - step: count_items
+
+  # ── Phase 2: Count + plan (mirrors extract_mds → count_mds → build_mds_batch_plan) ──
+
+  - step: count_items
+    desc: Count items available for batch processing. Mirrors count_mds_assessments.
+    tool:
+      kind: postgres
+      auth: '{{ pg_auth }}'
+      query: |
+        SELECT COUNT(*) AS item_count FROM public.stress_test_items;
+    next:
+      spec: { mode: exclusive }
+      arcs:
+        - step: build_batch_plan
+
+  - step: build_batch_plan
+    desc: |
+      Build list of OFFSET/LIMIT batch windows. Mirrors build_mds_batch_plan.
+      Each batch gets a unique, non-overlapping slice of stress_test_items.
+    tool:
+      kind: python
+      args:
+        total_count: "{{ count_items.command_0.rows[0].item_count }}"
+        batch_size: '{{ batch_size }}'
+      code: |
+        import math
+
+        def _to_int(value, default):
+            try:
+                return int(value)
+            except (TypeError, ValueError):
+                return default
+
+        total = _to_int(total_count, 0)
+        size  = _to_int(batch_size, 50)
+
+        if total == 0 or size == 0:
+            result = {"batches": [], "batch_count": 0, "total_count": total, "batch_size": size}
+        else:
+            n = math.ceil(total / size)
+            batches = [
+                {
+                    "batch_number": i + 1,
+                    "offset": i * size,
+                    "limit": min(size, total - i * size),
+                }
+                for i in range(n)
+            ]
+            result = {
+                "batches": batches,
+                "batch_count": n,
+                "total_count": total,
+                "batch_size": size,
+            }
+    next:
+      spec: { mode: exclusive }
+      arcs:
+        - step: run_batch_workers
+          when: '{{ (build_batch_plan.batch_count | int) > 0 }}'
+        - step: summarize
+
+  # ── Phase 3: Dispatch chunk workers (exact mirror of run_mds_batch_workers) ─────────
+  #
+  # BUG TRIGGER (combined):
+  #   Mechanism 1 — render_context ~900KB (ctx_step_09 set_ctx NOT clearing arrays)
+  #     → server CPU-bound dispatch under concurrent load → some dispatches >120s
+  #   Mechanism 2 — each worker sleeps 130s (simulate_api_delay step)
+  #     → parent holds NATS lease while child runs → 130s > 120s lease → always expires
+  #   Both → command.failed → reclaim → duplicate child for same offset → count frozen
+  #
+  # To toggle bug ON/OFF: comment/uncomment set_ctx block in ctx_step_09
+  # api_delay_seconds: 0 disables mechanism 2 (isolates context-size mechanism alone)
+
+  - step: run_batch_workers
+    desc: |
+      Dispatch chunk workers one at a time (max_in_flight: 1, exec: distributed).
+      Mirrors run_mds_batch_workers in state_report_generation_prod_v10.yaml exactly.
+      Each worker sleeps api_delay_seconds (130s) before processing, exceeding the
+      120s NATS lease. Combined with large render_context, guarantees duplicate workers.
+    loop:
+      in: '{{ build_batch_plan.batches }}'
+      iterator: batch
+      spec:
+        mode: parallel
+        max_in_flight: 1
+        policy:
+          exec: distributed
+    tool:
+      kind: playbook
+      path: '{{ chunk_worker_path }}'
+      return_step: end
+      timeout: 900
+      args:
+        pg_auth: 'pg_k8s'
+        batch_number: '{{ iter.batch.batch_number }}'
+        offset: '{{ iter.batch.offset }}'
+        batch_size: '{{ iter.batch.limit }}'
+        item_delay_seconds: '{{ item_delay_seconds }}'
+        api_delay_seconds: '{{ api_delay_seconds }}'
+    next:
+      spec: { mode: exclusive }
+      arcs:
+        - step: summarize
+          when: "{{ event.name == 'loop.done' }}"
+
+  # ── Phase 4: Summarize ─────────────────────────────────────────────────────
+  # If run_batch_workers reaches loop.done, this step runs → test PASSES.
+  # If run_batch_workers fails (lease expiry bug), this step never runs → test FAILS.
+
+  - step: summarize
+    desc: |
+      Validate all batches completed. If this step runs, the loop reached loop.done
+      and all batches dispatched successfully (bug is NOT present or is fixed).
+    tool:
+      kind: postgres
+      auth: '{{ pg_auth }}'
+      query: |
+        SELECT COUNT(*) AS processed_count FROM public.stress_test_results;
+    next:
+      spec: { mode: exclusive }
+      arcs:
+        - step: end
+
+  - step: end
+    desc: Test complete
+    tool:
+      kind: python
+      args:
+        result_summary: '{{ summarize }}'
+        batch_plan: '{{ build_batch_plan }}'
+      code: |
+        rows = result_summary.get("command_0", {}).get("rows", []) if isinstance(result_summary, dict) else []
+        processed = int(rows[0].get("processed_count", 0) or 0) if rows else 0
+        total = int(batch_plan.get("total_count", 0) or 0) if isinstance(batch_plan, dict) else 0
+
+        result = {
+            "status": "completed",
+            "processed_count": processed,
+            "total_count": total,
+            "all_processed": processed >= total,
+        }
