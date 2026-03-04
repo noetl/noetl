@@ -176,11 +176,11 @@ docker build --platform linux/amd64 -t ${REGISTRY}/noetl:${TAG} \
 docker push ${REGISTRY}/noetl:${TAG}
 
 # Build and push Gateway (Rust - use Cloud Build on ARM Mac)
-gcloud builds submit --project $PROJECT_ID \
+gcloud builds submit ../gateway \
+  --project $PROJECT_ID \
   --tag ${REGISTRY}/noetl-gateway:${TAG} \
   --timeout=3600 \
-  --machine-type=e2-highcpu-32 \
-  -f ../gateway/Dockerfile .
+  --machine-type=e2-highcpu-32
 ```
 
 ### Deploy Stack to Existing Cluster

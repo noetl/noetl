@@ -70,7 +70,7 @@ workflow:
             -f ../worker/Dockerfile \
             -t $IMAGE \
             -t {{ workload.registry }}/{{ workload.image_name }}:latest \
-            .
+            ../worker
 
           echo $IMAGE_TAG > .worker_pool_last_build_tag.txt
           echo "Build complete: $IMAGE"

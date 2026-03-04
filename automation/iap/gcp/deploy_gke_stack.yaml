@@ -337,7 +337,7 @@ workflow:
                 - '-t'
                 - '$_IMAGE:latest'
                 - '-f'
-                - '../cli/Dockerfile'
+                - 'Dockerfile'
                 - '.'
           images:
             - '$_IMAGE:$_TAG'
@@ -350,7 +350,7 @@ workflow:
                 --project {{ workload.project_id }} \
                 --config=/tmp/cloudbuild-noetlctl.yaml \
                 --substitutions=_IMAGE={{ vars.noetlctl_image }},_TAG=$TAG \
-                .
+                ../cli
                 echo "noetlctl image built: {{ vars.noetlctl_image }}:$TAG"
               else
                 echo "WARNING: ../cli/Dockerfile not found, skipping"
@@ -376,7 +376,7 @@ workflow:
                 - '-t'
                 - '$_IMAGE:latest'
                 - '-f'
-                - '../gateway/Dockerfile'
+                - 'Dockerfile'
                 - '.'
           images:
             - '$_IMAGE:$_TAG'
@@ -389,7 +389,7 @@ workflow:
                 --project {{ workload.project_id }} \
                 --config=/tmp/cloudbuild-gateway.yaml \
                 --substitutions=_IMAGE={{ vars.gateway_image }},_TAG=$TAG \
-                .
+                ../gateway
                 echo "Gateway image built: {{ vars.gateway_image }}:$TAG"
               else
                 echo "WARNING: ../gateway/Dockerfile not found, skipping"
@@ -458,7 +458,7 @@ workflow:
                 -t {{ vars.noetlctl_image }}:$TAG \
                 -t {{ vars.noetlctl_image }}:latest \
                 -f ../cli/Dockerfile \
-                .
+                ../cli
               docker push {{ vars.noetlctl_image }}:$TAG
                 docker push {{ vars.noetlctl_image }}:latest
                 echo "noetlctl image pushed: {{ vars.noetlctl_image }}:$TAG"
@@ -479,7 +479,7 @@ workflow:
                 -t {{ vars.gateway_image }}:$TAG \
                 -t {{ vars.gateway_image }}:{{ workload.gateway_image_tag }} \
                 -f ../gateway/Dockerfile \
-                .
+                ../gateway
               docker push {{ vars.gateway_image }}:$TAG
                 docker push {{ vars.gateway_image }}:{{ workload.gateway_image_tag }}
                 echo "Gateway image pushed: {{ vars.gateway_image }}:$TAG"

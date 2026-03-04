@@ -155,6 +155,7 @@ This provides fast session lookups while keeping Postgres as the source of truth
 ## Testing Flow
 
 ### Local Development
+0. **Prerequisite**: Clone `noetl/gateway` as a sibling directory (`../gateway`)
 1. **Start Gateway**: `cd ../gateway && cargo run --release`
 2. **Start UI server**: `cd tests/fixtures/gateway_ui && python3 -m http.server 8090`
 3. **Open browser**: `http://localhost:8090/login.html`

@@ -92,7 +92,7 @@ workflow:
       # Version mismatch is possible if source changed but binary wasn't rebuilt.\n\
       # For guaranteed consistency, use: --set build_rust_cli=true\n\nif [ \"$FORCE_BUILD\"\
       \ = \"true\" ]; then\n  echo \"INFO Force build requested via build_rust_cli=true\"\
-      \n  echo \"Building Rust CLI (this may take a while)...\"\n  cargo build --release\
+      \n  echo \"Building Rust CLI (this may take a while)...\"\n  CARGO_TARGET_DIR=target cargo build --release\
       \ --manifest-path ../cli/Cargo.toml\n  if [ -f \"target/release/noetl\"\
       \ ]; then\n    echo \"OK noetl CLI built successfully\"\n    ls -la target/release/noetl\n\
       \  else\n    echo \"ERROR noetl CLI build failed\"\n    exit 1\n  fi\nelif [\
@@ -100,7 +100,7 @@ workflow:
       \n  echo \"   To force rebuild: noetl run boot --set build_rust_cli=true\"\n\
       \  ls -la target/release/noetl\nelse\n  echo \"INFO noetl binary not found at\
       \ target/release/noetl\"\n  echo \"Building Rust CLI (this may take a while)...\"\
-      \n  cargo build --release --manifest-path ../cli/Cargo.toml\n  if [\
+      \n  CARGO_TARGET_DIR=target cargo build --release --manifest-path ../cli/Cargo.toml\n  if [\
       \ -f \"target/release/noetl\" ]; then\n    echo \"OK noetl CLI built successfully\"\
       \n    ls -la target/release/noetl\n  else\n    echo \"ERROR noetl CLI build\
       \ failed\"\n    exit 1\n  fi\nfi\n"
