@@ -4,7 +4,6 @@
 # Explicitly include needed directories
 !docker/
 !noetl/
-!crates/
 
 # Git files
 .git/
@@ -58,4 +57,4 @@ documentation/docs/
 ci/
 automation/playbooks/
 
-# NOTE: Do NOT ignore crates/noetl-tools - it's needed for Rust builds
+# Rust components are maintained in dedicated repositories outside this repo.

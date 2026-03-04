@@ -665,7 +665,7 @@ async def claim_command(event_id: int, req: ClaimRequest):
 
                 # Check if already claimed
                 await cur.execute("""
-                    SELECT worker_id, meta, created_at FROM noetl.event
+                    SELECT event_id, worker_id, meta, created_at FROM noetl.event
                     WHERE execution_id = %s
                       AND event_type = 'command.claimed'
                       AND (meta->>'command_id' = %s OR (result->'data'->>'command_id' = %s))
@@ -678,6 +678,7 @@ async def claim_command(event_id: int, req: ClaimRequest):
                 reclaimed_from_worker = None
                 reclaimed_reason = None
                 if existing:
+                    existing_event_id = existing.get("event_id")
                     existing_worker = existing.get('worker_id') or (existing.get('meta') or {}).get('worker_id')
                     created_at = existing.get("created_at")
                     claim_age_seconds = 0.0
@@ -768,6 +769,7 @@ async def claim_command(event_id: int, req: ClaimRequest):
                                     "code": "active_claim",
                                     "message": f"Command already claimed by {existing_worker}",
                                     "worker_id": existing_worker,
+                                    "claim_event_id": existing_event_id,
                                     "age_seconds": round(claim_age_seconds, 3),
                                     "lease_seconds": _CLAIM_LEASE_SECONDS,
                                     "hard_timeout_seconds": _CLAIM_HEALTHY_WORKER_HARD_TIMEOUT_SECONDS,
@@ -802,6 +804,7 @@ async def claim_command(event_id: int, req: ClaimRequest):
                                     "code": "active_claim",
                                     "message": f"Command already running on {existing_worker}",
                                     "worker_id": existing_worker,
+                                    "claim_event_id": existing_event_id,
                                     "age_seconds": round(claim_age_seconds, 3),
                                     "lease_seconds": _CLAIM_LEASE_SECONDS,
                                     "hard_timeout_seconds": _CLAIM_HEALTHY_WORKER_HARD_TIMEOUT_SECONDS,

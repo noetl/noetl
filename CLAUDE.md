@@ -81,9 +81,8 @@ Port forwarding is configured in `ci/kind/config.yaml`. Do **NOT** use kubectl p
 
 ## Project Structure
 
-- `crates/` - Rust components (gateway, server, executor, etc.)
 - `noetl/` - Python package
 - `tests/fixtures/playbooks/` - Playbook definitions
 - `automation/` - Automation scripts and configurations
-- `documentation/` - Project documentation
+- `README.md` - Root overview and distribution links
 - `ci/kind/config.yaml` - Kind cluster configuration with port mappings

@@ -1,0 +1,139 @@
+apiVersion: noetl.io/v2
+kind: Playbook
+
+metadata:
+  name: parallel_distributed_claim_regression_worker
+  path: tests/fixtures/playbooks/batch_execution/parallel_distributed_claim_regression_worker
+  description: |
+    Child worker for distributed parallel claim regression.
+    Records one run per batch offset and processes that batch.
+
+workload:
+  pg_auth: pg_k8s
+  batch_number: 1
+  offset: 0
+  batch_size: 50
+  worker_delay_seconds: 130
+
+workflow:
+  - step: start
+    tool:
+      kind: python
+      args:
+        batch_number: '{{ batch_number }}'
+        offset: '{{ offset }}'
+        batch_size: '{{ batch_size }}'
+        worker_delay_seconds: '{{ worker_delay_seconds }}'
+      code: |
+        result = {
+          "status": "started",
+          "batch_number": int(batch_number or 1),
+          "offset": int(offset or 0),
+          "batch_size": int(batch_size or 50),
+          "worker_delay_seconds": int(worker_delay_seconds or 130),
+        }
+    next:
+      spec: { mode: exclusive }
+      arcs:
+        - step: register_batch_run
+
+  - step: register_batch_run
+    tool:
+      kind: postgres
+      auth: '{{ pg_auth }}'
+      query: |
+        INSERT INTO public.stress_test_batch_runs (batch_offset, runs, last_execution_id)
+        VALUES ({{ offset | int }}, 1, '{{ execution_id }}')
+        ON CONFLICT (batch_offset)
+        DO UPDATE SET
+          runs = public.stress_test_batch_runs.runs + 1,
+          last_execution_id = EXCLUDED.last_execution_id,
+          updated_at = NOW();
+    next:
+      spec: { mode: exclusive }
+      arcs:
+        - step: fetch_batch
+
+  - step: fetch_batch
+    tool:
+      kind: postgres
+      auth: '{{ pg_auth }}'
+      query: |
+        SELECT item_id, group_id, payload
+        FROM public.stress_test_items
+        ORDER BY item_id ASC
+        OFFSET {{ offset | int }}
+        LIMIT {{ batch_size | int }};
+    next:
+      spec: { mode: exclusive }
+      arcs:
+        - step: simulate_delay
+
+  - step: simulate_delay
+    tool:
+      kind: postgres
+      auth: '{{ pg_auth }}'
+      query: |
+        SELECT pg_sleep({{ worker_delay_seconds | int }}) AS slept_seconds;
+    next:
+      spec: { mode: exclusive }
+      arcs:
+        - step: process_items
+
+  - step: process_items
+    loop:
+      in: '{{ fetch_batch.command_0.rows }}'
+      iterator: item
+      spec:
+        mode: parallel
+        max_in_flight: 10
+        policy:
+          exec: distributed
+    tool:
+      kind: postgres
+      auth: '{{ pg_auth }}'
+      command: |
+        INSERT INTO public.stress_test_results (item_id, result_data, processed_at)
+        VALUES (
+          {{ iter.item.item_id }},
+          jsonb_build_object(
+            'item_id', {{ iter.item.item_id }},
+            'group_id', {{ iter.item.group_id }},
+            'batch_number', {{ batch_number | int }},
+            'worker_execution_id', '{{ execution_id }}'
+          ),
+          NOW()
+        )
+        ON CONFLICT (item_id)
+        DO UPDATE SET
+          result_data = EXCLUDED.result_data,
+          processed_at = NOW();
+    next:
+      spec: { mode: exclusive }
+      arcs:
+        - step: summarize
+          when: "{{ event.name == 'loop.done' }}"
+
+  - step: summarize
+    tool:
+      kind: python
+      args:
+        fetched: '{{ fetch_batch }}'
+        batch_number: '{{ batch_number }}'
+      code: |
+        rows = fetched.get("command_0", {}).get("rows", []) if isinstance(fetched, dict) else []
+        result = {
+          "status": "completed",
+          "batch_number": int(batch_number or 1),
+          "processed": len(rows),
+        }
+    next:
+      spec: { mode: exclusive }
+      arcs:
+        - step: end
+
+  - step: end
+    tool:
+      kind: python
+      code: |
+        result = {"status": "completed"}

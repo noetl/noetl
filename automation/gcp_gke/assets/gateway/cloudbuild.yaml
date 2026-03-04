@@ -1,16 +1,26 @@
 steps:
+  - name: gcr.io/cloud-builders/git
+    args:
+      - clone
+      - --depth
+      - "1"
+      - --branch
+      - ${_GATEWAY_REF}
+      - https://github.com/noetl/gateway.git
+      - gateway
   - name: gcr.io/cloud-builders/docker
     args:
       - build
       - -f
-      - crates/gateway/Dockerfile
+      - gateway/Dockerfile
       - -t
       - ${_IMAGE}
-      - crates/gateway
+      - gateway
 images:
   - ${_IMAGE}
 substitutions:
   _IMAGE: us-central1-docker.pkg.dev/noetl-demo-19700101/noetl/gateway:latest
+  _GATEWAY_REF: main
 options:
   substitutionOption: ALLOW_LOOSE
   machineType: E2_HIGHCPU_8

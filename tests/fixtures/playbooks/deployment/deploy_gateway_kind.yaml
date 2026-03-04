@@ -225,12 +225,12 @@ workflow:
             echo "Using --no-cache for clean rebuild"
             docker build --no-cache \
               -t {{ image_name }}:{{ image_tag }} \
-              -f crates/gateway/Dockerfile \
+              -f ../gateway/Dockerfile \
               .
           else
             docker build \
               -t {{ image_name }}:{{ image_tag }} \
-              -f crates/gateway/Dockerfile \
+              -f ../gateway/Dockerfile \
               .
           fi
 

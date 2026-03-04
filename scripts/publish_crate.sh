@@ -1,10 +1,37 @@
 #!/bin/bash
-set -e
+set -euo pipefail
 
-VERSION=${1:-$(grep '^version' Cargo.toml | head -1 | cut -d'"' -f2)}
-CRATE=${2:-noetl-cli}
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+WORKSPACE_DIR="$(cd "${ROOT_DIR}/.." && pwd)"
+CRATE="${1:-noetl}"
 
-echo "📦 Publishing ${CRATE} v${VERSION} to crates.io..."
+declare -A CRATE_DIRS=(
+  [noetl]="${WORKSPACE_DIR}/cli"
+  [noetl-gateway]="${WORKSPACE_DIR}/gateway"
+  [noetl-server]="${WORKSPACE_DIR}/server"
+  [noetl-worker]="${WORKSPACE_DIR}/worker"
+  [noetl-tools]="${WORKSPACE_DIR}/tools"
+)
+
+TARGET_DIR="${CRATE_DIRS[${CRATE}]:-}"
+if [ -z "${TARGET_DIR}" ]; then
+  echo "❌ Unsupported crate '${CRATE}'"
+  echo "Supported: ${!CRATE_DIRS[*]}"
+  exit 1
+fi
+
+if [ ! -d "${TARGET_DIR}" ]; then
+  echo "❌ Target repository not found: ${TARGET_DIR}"
+  exit 1
+fi
+
+if [ ! -f "${TARGET_DIR}/Cargo.toml" ]; then
+  echo "❌ Cargo.toml not found in ${TARGET_DIR}"
+  exit 1
+fi
+
+VERSION="$(grep '^version' "${TARGET_DIR}/Cargo.toml" | head -1 | cut -d'"' -f2)"
+echo "📦 Publishing ${CRATE} v${VERSION} from ${TARGET_DIR}"
 
 # Check if already logged in
 if ! cargo login --help &>/dev/null; then
@@ -29,16 +56,7 @@ if [ ! -f ~/.cargo/credentials.toml ] && [ -z "$CARGO_REGISTRY_TOKEN" ]; then
     exit 1
 fi
 
-# Navigate to crate directory
-if [ -d "crates/${CRATE}" ]; then
-    cd "crates/${CRATE}"
-    echo "📂 Publishing from crates/${CRATE}"
-elif [ -f "Cargo.toml" ] && grep -q "name = \"${CRATE}\"" Cargo.toml; then
-    echo "📂 Publishing from current directory"
-else
-    echo "❌ Crate ${CRATE} not found"
-    exit 1
-fi
+cd "${TARGET_DIR}"
 
 # Verify Cargo.toml has required fields
 echo "🔍 Verifying package metadata..."
@@ -107,8 +125,8 @@ cargo publish
 echo ""
 echo "✅ Successfully published ${CRATE} v${VERSION}!"
 echo ""
-echo "Package will be available at:"
-echo "  https://crates.io/crates/${CRATE}"
+echo "Package is searchable at:"
+echo "  https://crates.io/search?q=${CRATE}"
 echo ""
 echo "Users can install with:"
 echo "  cargo install ${CRATE}"

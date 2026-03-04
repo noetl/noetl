@@ -8,8 +8,6 @@ target
 .project
 .pydevproject
 .DS_Store
-crates/gateway/target
-crates/noetlctl/target
 *.log
 clusterManagement/out
 clusterManagement/clients

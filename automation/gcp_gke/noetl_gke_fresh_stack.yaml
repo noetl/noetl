@@ -495,7 +495,7 @@ workflow:
           if [ "{{ workload.build_gateway_image }}" = "true" ]; then
             echo "Building Gateway image -> $GATEWAY_IMAGE:{{ workload.gateway_image_tag }}"
             gcloud builds submit \
-              crates/gateway \
+              ../gateway \
               --project {{ workload.project_id }} \
               --tag "$GATEWAY_IMAGE:{{ workload.gateway_image_tag }}"
           fi

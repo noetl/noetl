@@ -32,10 +32,12 @@ coordinate cross-repo changes, pointer bumps, and release choreography.
 
 - **PyPI**
   - `noetl` (Python): https://pypi.org/project/noetl/
-  - `noetlctl` (Rust CLI): https://pypi.org/project/noetlctl/
-- **crates.io**
-  - `noetl`: https://crates.io/crates/noetl
-  - `noetl-gateway`: https://crates.io/crates/noetl-gateway
+- **Rust components**
+  - CLI repo: https://github.com/noetl/cli
+  - Gateway repo: https://github.com/noetl/gateway
+  - Server repo: https://github.com/noetl/server
+  - Worker repo: https://github.com/noetl/worker
+  - Tools repo: https://github.com/noetl/tools
 - **APT (Debian/Ubuntu)**
   - Repo: https://github.com/noetl/apt
 - **Homebrew**

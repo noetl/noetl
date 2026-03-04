@@ -1,0 +1,199 @@
+apiVersion: noetl.io/v2
+kind: Playbook
+
+metadata:
+  name: parallel_distributed_claim_regression
+  path: tests/fixtures/playbooks/batch_execution/parallel_distributed_claim_regression
+  description: |
+    Regression for duplicate child execution in distributed loop mode.
+    Runs batch workers with:
+      - loop.spec.mode: parallel
+      - loop.spec.max_in_flight: 4
+      - loop.spec.policy.exec: distributed
+    and verifies each batch offset is executed at most once.
+
+workload:
+  pg_auth: pg_k8s
+  total_items: 200
+  batch_size: 50
+  worker_delay_seconds: 130
+  chunk_worker_path: tests/fixtures/playbooks/batch_execution/parallel_distributed_claim_regression_worker
+
+workflow:
+  - step: start
+    tool:
+      kind: python
+      args:
+        total_items: '{{ total_items }}'
+        batch_size: '{{ batch_size }}'
+      code: |
+        result = {
+          "status": "started",
+          "total_items": int(total_items or 200),
+          "batch_size": int(batch_size or 50),
+        }
+    next:
+      spec: { mode: exclusive }
+      arcs:
+        - step: setup_data
+
+  - step: setup_data
+    tool:
+      kind: postgres
+      auth: '{{ pg_auth }}'
+      query: |
+        CREATE TABLE IF NOT EXISTS public.stress_test_items (
+          item_id BIGINT PRIMARY KEY,
+          group_id INT NOT NULL,
+          payload TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS public.stress_test_results (
+          item_id BIGINT PRIMARY KEY,
+          result_data JSONB NOT NULL,
+          processed_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        );
+        CREATE TABLE IF NOT EXISTS public.stress_test_batch_runs (
+          batch_offset INT PRIMARY KEY,
+          runs INT NOT NULL DEFAULT 0,
+          last_execution_id TEXT,
+          updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        );
+        TRUNCATE TABLE public.stress_test_results;
+        TRUNCATE TABLE public.stress_test_batch_runs;
+        TRUNCATE TABLE public.stress_test_items;
+        INSERT INTO public.stress_test_items (item_id, group_id, payload)
+        SELECT i,
+               CEIL(i::numeric / {{ batch_size | int }})::int,
+               CONCAT('synthetic_payload_', i, '_', repeat('x', 64))
+        FROM generate_series(1, {{ total_items | int }}) AS g(i);
+    next:
+      spec: { mode: exclusive }
+      arcs:
+        - step: build_batch_plan
+
+  - step: build_batch_plan
+    tool:
+      kind: python
+      args:
+        total_items: '{{ total_items }}'
+        batch_size: '{{ batch_size }}'
+      code: |
+        import math
+        total = int(total_items or 200)
+        size = int(batch_size or 50)
+        count = math.ceil(total / size) if size > 0 else 0
+        result = {
+          "batch_count": count,
+          "batches": [
+            {
+              "batch_number": i + 1,
+              "offset": i * size,
+              "limit": min(size, total - i * size),
+            }
+            for i in range(count)
+          ],
+        }
+    next:
+      spec: { mode: exclusive }
+      arcs:
+        - step: run_batch_workers
+
+  - step: run_batch_workers
+    loop:
+      in: '{{ build_batch_plan.batches }}'
+      iterator: batch
+      spec:
+        mode: parallel
+        max_in_flight: 4
+        policy:
+          exec: distributed
+    tool:
+      kind: playbook
+      path: '{{ chunk_worker_path }}'
+      return_step: end
+      timeout: 1200
+      args:
+        pg_auth: '{{ pg_auth }}'
+        batch_number: '{{ iter.batch.batch_number }}'
+        offset: '{{ iter.batch.offset }}'
+        batch_size: '{{ iter.batch.limit }}'
+        worker_delay_seconds: '{{ worker_delay_seconds }}'
+    next:
+      spec: { mode: exclusive }
+      arcs:
+        - step: verify_batch_run_uniqueness
+          when: "{{ event.name == 'loop.done' }}"
+
+  - step: verify_batch_run_uniqueness
+    tool:
+      kind: postgres
+      auth: '{{ pg_auth }}'
+      query: |
+        SELECT batch_offset, runs, last_execution_id
+        FROM public.stress_test_batch_runs
+        WHERE runs > 1
+        ORDER BY batch_offset;
+    next:
+      spec: { mode: exclusive }
+      arcs:
+        - step: assert_no_duplicate_batch_runs
+
+  - step: assert_no_duplicate_batch_runs
+    tool:
+      kind: python
+      args:
+        db_result: '{{ verify_batch_run_uniqueness }}'
+      code: |
+        rows = db_result.get("command_0", {}).get("rows", []) if isinstance(db_result, dict) else []
+        if rows:
+            raise RuntimeError(f"Duplicate batch executions detected: {rows}")
+        result = {"status": "ok", "duplicate_batch_runs": 0}
+    next:
+      spec: { mode: exclusive }
+      arcs:
+        - step: verify_results
+
+  - step: verify_results
+    tool:
+      kind: postgres
+      auth: '{{ pg_auth }}'
+      query: |
+        SELECT COUNT(*) AS total_rows, COUNT(DISTINCT item_id) AS distinct_items
+        FROM public.stress_test_results;
+    next:
+      spec: { mode: exclusive }
+      arcs:
+        - step: assert_result_count
+
+  - step: assert_result_count
+    tool:
+      kind: python
+      args:
+        expected_total: '{{ total_items }}'
+        db_result: '{{ verify_results }}'
+      code: |
+        rows = db_result.get("command_0", {}).get("rows", []) if isinstance(db_result, dict) else []
+        metrics = rows[0] if rows else {}
+        total_rows = int(metrics.get("total_rows", 0) or 0)
+        distinct_items = int(metrics.get("distinct_items", 0) or 0)
+        expected = int(expected_total or 0)
+        if total_rows != expected or distinct_items != expected:
+            raise RuntimeError(
+                f"Unexpected result count: total_rows={total_rows}, distinct_items={distinct_items}, expected={expected}"
+            )
+        result = {
+          "status": "ok",
+          "total_rows": total_rows,
+          "distinct_items": distinct_items,
+          "expected": expected,
+        }
+    next:
+      spec: { mode: exclusive }
+      arcs:
+        - step: end
+
+  - step: end
+    tool:
+      kind: python
+      code: |
+        result = {"status": "completed"}

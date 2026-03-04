@@ -109,7 +109,7 @@ workflow:
           exit $fail
           '
           echo "Building noetlctl locally..."
-          cargo build --release --manifest-path crates/noetlctl/Cargo.toml
+          cargo build --release --manifest-path ../cli/Cargo.toml
     next:
       spec:
         mode: exclusive
