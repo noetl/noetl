@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.8.9](https://github.com/noetl/noetl/compare/v2.8.8...v2.8.9) (2026-03-04)
+
+### Bug Fixes
+
+* add distributed-claim regression playbooks and remove legacy crates workspace ([f8e380b](https://github.com/noetl/noetl/commit/f8e380b8647a22095912fc277ad713f7183922b3))
+* address PR247 copilot path and build-context issues ([7973b70](https://github.com/noetl/noetl/commit/7973b70dd4c088c20bea39f92a25f59ae02fa907))
+
 ## [2.8.8](https://github.com/noetl/noetl/compare/v2.8.7...v2.8.8) (2026-03-03)
 
 ### Bug Fixes
