@@ -278,6 +278,24 @@ def get_engine():
     return _engine
 
 
+async def _invalidate_execution_state_cache(
+    execution_id: str,
+    reason: str,
+    engine: Optional[ControlFlowEngine] = None,
+) -> None:
+    """Best-effort cache invalidation to recover from partial command issuance failures."""
+    try:
+        active_engine = engine or get_engine()
+        await active_engine.state_store.invalidate_state(str(execution_id), reason=reason)
+    except Exception as cache_error:
+        logger.warning(
+            "[STATE-CACHE-INVALIDATE] failed execution_id=%s reason=%s error=%s",
+            execution_id,
+            reason,
+            cache_error,
+        )
+
+
 async def get_nats_publisher():
     """Get or initialize NATS publisher."""
     global _nats_publisher
@@ -1062,6 +1080,8 @@ async def handle_event(req: EventRequest) -> EventResponse:
     - command.completed: Already processed by worker
     - step.enter: Just marks step started
     """
+    engine: Optional[ControlFlowEngine] = None
+    commands_generated = False
     try:
         engine = get_engine()
         
@@ -1221,6 +1241,7 @@ async def handle_event(req: EventRequest) -> EventResponse:
         if req.name not in skip_engine_events:
             # Pass already_persisted=True because we already persisted the event above
             commands = await engine.handle_event(event, already_persisted=True)
+            commands_generated = bool(commands)
             logger.debug(f"[ENGINE] Processed {req.name} for step {req.step}, generated {len(commands)} commands")
         else:
             logger.debug(f"[ENGINE] Skipped engine for administrative event {req.name}")
@@ -1336,6 +1357,12 @@ async def handle_event(req: EventRequest) -> EventResponse:
         return EventResponse(status="ok", event_id=evt_id, commands_generated=len(commands))
     
     except PoolTimeout:
+        if engine is not None and commands_generated:
+            await _invalidate_execution_state_cache(
+                req.execution_id,
+                reason="command_issue_pool_timeout",
+                engine=engine,
+            )
         retry_after = _compute_retry_after()
         logger.warning("[EVENTS] DB pool saturated while persisting %s for step %s retry_after=%ss", req.name, req.step, retry_after)
         raise HTTPException(
@@ -1344,6 +1371,12 @@ async def handle_event(req: EventRequest) -> EventResponse:
             headers={"Retry-After": retry_after},
         )
     except Exception as e:
+        if engine is not None and commands_generated:
+            await _invalidate_execution_state_cache(
+                req.execution_id,
+                reason=f"command_issue_failed:{type(e).__name__}",
+                engine=engine,
+            )
         logger.error(f"handle_event failed: {e}", exc_info=True)
         raise HTTPException(500, str(e))
 
@@ -1695,10 +1728,20 @@ async def _issue_commands_for_batch(job: _BatchAcceptJob, commands: list) -> Non
 
 async def _process_accepted_batch(job: _BatchAcceptJob) -> int:
     commands: list = []
+    engine: Optional[ControlFlowEngine] = None
     if job.last_actionable_event:
         engine = get_engine()
         commands = await engine.handle_event(job.last_actionable_event, already_persisted=True)
-    await _issue_commands_for_batch(job, commands)
+    try:
+        await _issue_commands_for_batch(job, commands)
+    except Exception as e:
+        if engine is not None and commands:
+            await _invalidate_execution_state_cache(
+                str(job.execution_id),
+                reason=f"batch_command_issue_failed:{type(e).__name__}",
+                engine=engine,
+            )
+        raise
     return len(commands)
 
 

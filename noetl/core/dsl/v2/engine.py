@@ -944,6 +944,24 @@ class StateStore:
         if deleted:
             logger.info(f"Evicted completed execution {execution_id} from cache")
 
+    async def invalidate_state(self, execution_id: str, reason: str = "manual") -> bool:
+        """Invalidate cached execution state so next load reconstructs from events."""
+        execution_key = str(execution_id)
+        deleted = await self._memory_cache.delete(execution_key)
+        if deleted:
+            logger.warning(
+                "[STATE-CACHE-INVALIDATE] execution_id=%s reason=%s",
+                execution_key,
+                reason,
+            )
+        else:
+            logger.debug(
+                "[STATE-CACHE-INVALIDATE] execution_id=%s reason=%s cache_miss=true",
+                execution_key,
+                reason,
+            )
+        return deleted
+
 
 class TemplateCache:
     """
