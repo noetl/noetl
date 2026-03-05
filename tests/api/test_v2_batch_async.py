@@ -1,4 +1,5 @@
 import asyncio
+from types import SimpleNamespace
 
 import pytest
 from fastapi import HTTPException
@@ -113,3 +114,132 @@ async def test_batch_worker_unavailable_error_code(monkeypatch):
 
     assert exc.value.status_code == 503
     assert exc.value.detail["code"] == v2_api._BATCH_FAILURE_WORKER_UNAVAILABLE
+
+
+@pytest.mark.asyncio
+async def test_process_accepted_batch_invalidates_state_cache_when_command_issue_fails(monkeypatch):
+    invalidations = []
+
+    class FakeStateStore:
+        async def invalidate_state(self, execution_id, reason="manual"):
+            invalidations.append((execution_id, reason))
+            return True
+
+    class FakeEngine:
+        def __init__(self):
+            self.state_store = FakeStateStore()
+
+        async def handle_event(self, _event, already_persisted=False):
+            assert already_persisted is True
+            return [SimpleNamespace(step="next")]
+
+    async def _fail_issue(_job, _commands):
+        raise RuntimeError("command insert failed")
+
+    fake_engine = FakeEngine()
+    monkeypatch.setattr(v2_api, "get_engine", lambda: fake_engine)
+    monkeypatch.setattr(v2_api, "_issue_commands_for_batch", _fail_issue)
+
+    job = _build_acceptance_result().job
+    job.last_actionable_event = SimpleNamespace(name="call.done")
+
+    with pytest.raises(RuntimeError, match="command insert failed"):
+        await v2_api._process_accepted_batch(job)
+
+    assert invalidations
+    assert invalidations[0][0] == "1"
+    assert invalidations[0][1].startswith("batch_command_issue_failed:")
+
+
+@pytest.mark.asyncio
+async def test_handle_event_invalidates_state_cache_when_command_persist_fails(monkeypatch):
+    invalidations = []
+
+    class FakeStateStore:
+        async def invalidate_state(self, execution_id, reason="manual"):
+            invalidations.append((execution_id, reason))
+            return True
+
+    class FakeEngine:
+        def __init__(self):
+            self.state_store = FakeStateStore()
+
+        async def handle_event(self, _event, already_persisted=False):
+            assert already_persisted is True
+            return [SimpleNamespace(step="next")]
+
+    class _CursorCtx:
+        def __init__(self, cursor):
+            self._cursor = cursor
+
+        async def __aenter__(self):
+            return self._cursor
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+    class _PersistCursor:
+        async def execute(self, *_args, **_kwargs):
+            return None
+
+        async def fetchone(self):
+            return {"catalog_id": 10}
+
+    class _PersistConn:
+        def cursor(self, row_factory=None):
+            return _CursorCtx(_PersistCursor())
+
+        async def commit(self):
+            return None
+
+    class _ConnCtx:
+        def __init__(self, conn):
+            self._conn = conn
+
+        async def __aenter__(self):
+            return self._conn
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+    class _FailConnCtx:
+        async def __aenter__(self):
+            raise RuntimeError("command persist failed")
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+    calls = {"count": 0}
+
+    def _fake_get_pool_connection():
+        calls["count"] += 1
+        if calls["count"] == 1:
+            return _ConnCtx(_PersistConn())
+        return _FailConnCtx()
+
+    async def _fake_get_nats_publisher():
+        return SimpleNamespace()
+
+    async def _fake_next_snowflake_id(_cur):
+        return 12345
+
+    fake_engine = FakeEngine()
+    monkeypatch.setattr(v2_api, "get_engine", lambda: fake_engine)
+    monkeypatch.setattr(v2_api, "get_pool_connection", _fake_get_pool_connection)
+    monkeypatch.setattr(v2_api, "_next_snowflake_id", _fake_next_snowflake_id)
+    monkeypatch.setattr(v2_api, "get_nats_publisher", _fake_get_nats_publisher)
+
+    req = v2_api.EventRequest(
+        execution_id="42",
+        step="step1",
+        name="call.done",
+        payload={"status": "completed"},
+    )
+
+    with pytest.raises(HTTPException) as exc:
+        await v2_api.handle_event(req)
+
+    assert exc.value.status_code == 500
+    assert invalidations
+    assert invalidations[0][0] == "42"
+    assert invalidations[0][1].startswith("command_issue_failed:")
