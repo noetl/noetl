@@ -1,4 +1,5 @@
 import pytest
+import httpx
 
 import noetl.worker.v2_worker_nats as worker_module
 from noetl.worker.v2_worker_nats import V2Worker
@@ -195,6 +196,106 @@ async def test_execute_playbook_waits_for_status_endpoint_not_transient_executio
     assert result["failed"] is False
     assert worker._http_client.status_polls == 2
     assert worker._http_client.execution_polls == 0
+
+
+@pytest.mark.asyncio
+async def test_execute_playbook_retries_transient_errors_on_spawn(monkeypatch):
+    worker = V2Worker(worker_id="test-worker")
+
+    class FakeResponse:
+        def __init__(self, payload, status_code=200):
+            self._payload = payload
+            self.status_code = status_code
+
+        def raise_for_status(self):
+            if self.status_code >= 400:
+                raise RuntimeError(f"HTTP {self.status_code}")
+
+        def json(self):
+            return self._payload
+
+    class FakeHttpClient:
+        def __init__(self):
+            self.post_calls = 0
+
+        async def post(self, url, json=None, timeout=None):
+            self.post_calls += 1
+            if self.post_calls < 3:
+                raise httpx.ConnectError("transient connect failure", request=httpx.Request("POST", url))
+            return FakeResponse({"execution_id": "child-exec-3"})
+
+    async def fast_sleep(_seconds):
+        return None
+
+    worker._http_client = FakeHttpClient()
+    monkeypatch.setattr(worker_module.asyncio, "sleep", fast_sleep)
+
+    result = await worker._execute_playbook(
+        {"path": "tests/fixtures/playbooks/example_child"},
+        {"batch_number": 3},
+    )
+
+    assert result["status"] == "started"
+    assert result["execution_id"] == "child-exec-3"
+    assert worker._http_client.post_calls == 3
+
+
+@pytest.mark.asyncio
+async def test_execute_playbook_retries_transient_errors_while_polling_status(monkeypatch):
+    worker = V2Worker(worker_id="test-worker")
+
+    class FakeResponse:
+        def __init__(self, payload, status_code=200):
+            self._payload = payload
+            self.status_code = status_code
+
+        def raise_for_status(self):
+            if self.status_code >= 400:
+                raise RuntimeError(f"HTTP {self.status_code}")
+
+        def json(self):
+            return self._payload
+
+    class FakeHttpClient:
+        def __init__(self):
+            self.status_calls = 0
+
+        async def post(self, _url, json=None, timeout=None):
+            return FakeResponse({"execution_id": "child-exec-4"})
+
+        async def get(self, url, timeout=None):
+            if url.endswith("/status"):
+                self.status_calls += 1
+                if self.status_calls == 1:
+                    raise httpx.ReadError("transient read failure", request=httpx.Request("GET", url))
+                return FakeResponse(
+                    {
+                        "execution_id": "child-exec-4",
+                        "current_step": "end",
+                        "completed": True,
+                        "failed": False,
+                    }
+                )
+            raise AssertionError("Unexpected fallback status endpoint call")
+
+    async def fast_sleep(_seconds):
+        return None
+
+    worker._http_client = FakeHttpClient()
+    monkeypatch.setattr(worker_module.asyncio, "sleep", fast_sleep)
+
+    result = await worker._execute_playbook(
+        {
+            "path": "tests/fixtures/playbooks/example_child",
+            "return_step": "end",
+            "timeout": 4,
+        },
+        {"batch_number": 4},
+    )
+
+    assert result["completed"] is True
+    assert result["failed"] is False
+    assert worker._http_client.status_calls == 2
 
 
 @pytest.mark.asyncio
