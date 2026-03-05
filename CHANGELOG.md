@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.10.2](https://github.com/noetl/noetl/compare/v2.10.1...v2.10.2) (2026-03-05)
+
+### Bug Fixes
+
+* invalidate stale execution cache when command issuance fails ([2c7bf66](https://github.com/noetl/noetl/commit/2c7bf6699d64fdfdd8f9d5889f2a976cb088a763))
+
 ## [2.10.1](https://github.com/noetl/noetl/compare/v2.10.0...v2.10.1) (2026-03-05)
 
 ### Bug Fixes
