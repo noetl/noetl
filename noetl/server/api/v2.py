@@ -10,7 +10,11 @@ Single source of truth: noetl.event table
 
 import os
 import json
-from fastapi import APIRouter, HTTPException
+import time
+import asyncio
+from dataclasses import dataclass
+from fastapi import APIRouter, HTTPException, Request
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field, model_validator
 from typing import Any, Optional, Literal
 from datetime import datetime, timezone
@@ -45,6 +49,33 @@ _CLAIM_ACTIVE_RETRY_AFTER_SECONDS = max(
     1,
     int(os.getenv("NOETL_COMMAND_CLAIM_RETRY_AFTER_SECONDS", "2")),
 )
+_BATCH_ACCEPT_ENQUEUE_TIMEOUT_SECONDS = max(
+    0.01,
+    float(os.getenv("NOETL_BATCH_ACCEPT_ENQUEUE_TIMEOUT_SECONDS", "0.25")),
+)
+_BATCH_ACCEPT_QUEUE_MAXSIZE = max(
+    1,
+    int(os.getenv("NOETL_BATCH_ACCEPT_QUEUE_MAXSIZE", "1024")),
+)
+_BATCH_ACCEPT_WORKERS = max(
+    0,
+    int(os.getenv("NOETL_BATCH_ACCEPT_WORKERS", "1")),
+)
+_BATCH_PROCESSING_TIMEOUT_SECONDS = max(
+    0.1,
+    float(os.getenv("NOETL_BATCH_PROCESSING_TIMEOUT_SECONDS", "15.0")),
+)
+_BATCH_STATUS_STREAM_POLL_SECONDS = max(
+    0.1,
+    float(os.getenv("NOETL_BATCH_STATUS_STREAM_POLL_SECONDS", "0.5")),
+)
+
+_BATCH_FAILURE_ENQUEUE_TIMEOUT = "ack_timeout"
+_BATCH_FAILURE_ENQUEUE_ERROR = "enqueue_error"
+_BATCH_FAILURE_QUEUE_UNAVAILABLE = "queue_unavailable"
+_BATCH_FAILURE_WORKER_UNAVAILABLE = "worker_unavailable"
+_BATCH_FAILURE_PROCESSING_TIMEOUT = "processing_timeout"
+_BATCH_FAILURE_PROCESSING_ERROR = "processing_error"
 
 
 def _compute_retry_after(min_seconds: float = 1.0, max_seconds: float = 15.0) -> str:
@@ -113,6 +144,126 @@ _STATUS_PREVIEW_ITEMS = max(
     1,
     int(os.getenv("NOETL_STATUS_PREVIEW_ITEMS", "5")),
 )
+
+
+@dataclass(slots=True)
+class _BatchAcceptJob:
+    request_id: str
+    execution_id: int
+    catalog_id: Optional[int]
+    worker_id: Optional[str]
+    idempotency_key: Optional[str]
+    events: list["BatchEventItem"]
+    last_actionable_event: Optional[Event]
+    last_actionable_evt_id: Optional[int]
+    accepted_event_id: int
+    accepted_at_monotonic: float
+
+
+@dataclass(slots=True)
+class _BatchAcceptanceResult:
+    job: _BatchAcceptJob
+    event_ids: list[int]
+    duplicate: bool
+
+
+class _BatchEnqueueError(RuntimeError):
+    def __init__(self, code: str, message: str):
+        super().__init__(message)
+        self.code = code
+        self.message = message
+
+
+_batch_accept_queue: Optional[asyncio.Queue[_BatchAcceptJob]] = None
+_batch_accept_workers_tasks: list[asyncio.Task] = []
+_batch_acceptor_lock: Optional[asyncio.Lock] = None
+
+_batch_metrics: dict[str, float] = {
+    "accepted_total": 0,
+    "enqueue_error_total": 0,
+    "ack_timeout_total": 0,
+    "queue_unavailable_total": 0,
+    "worker_unavailable_total": 0,
+    "processing_timeout_total": 0,
+    "processing_error_total": 0,
+    "enqueue_latency_seconds_sum": 0.0,
+    "enqueue_latency_seconds_count": 0,
+    "first_worker_claim_latency_seconds_sum": 0.0,
+    "first_worker_claim_latency_seconds_count": 0,
+}
+
+
+def _get_batch_acceptor_lock() -> asyncio.Lock:
+    global _batch_acceptor_lock
+    if _batch_acceptor_lock is None:
+        _batch_acceptor_lock = asyncio.Lock()
+    return _batch_acceptor_lock
+
+
+def _inc_batch_metric(name: str, amount: float = 1.0) -> None:
+    _batch_metrics[name] = float(_batch_metrics.get(name, 0.0)) + amount
+
+
+def _observe_batch_metric(prefix: str, value: float) -> None:
+    safe_value = max(0.0, float(value))
+    _inc_batch_metric(f"{prefix}_sum", safe_value)
+    _inc_batch_metric(f"{prefix}_count", 1.0)
+
+
+def _batch_queue_depth() -> int:
+    if _batch_accept_queue is None:
+        return 0
+    return _batch_accept_queue.qsize()
+
+
+def _has_live_batch_workers() -> bool:
+    return any(not task.done() for task in _batch_accept_workers_tasks)
+
+
+def get_batch_metrics_snapshot() -> dict[str, float]:
+    """Export in-process batch acceptance metrics for /metrics endpoint."""
+    snapshot = dict(_batch_metrics)
+    snapshot["queue_depth"] = float(_batch_queue_depth())
+    snapshot["worker_count"] = float(sum(1 for task in _batch_accept_workers_tasks if not task.done()))
+    return snapshot
+
+
+async def ensure_batch_acceptor_started() -> bool:
+    """Ensure in-process batch acceptor queue and workers are running."""
+    global _batch_accept_queue
+
+    if _BATCH_ACCEPT_WORKERS <= 0:
+        return False
+
+    lock = _get_batch_acceptor_lock()
+    async with lock:
+        if _batch_accept_queue is None:
+            _batch_accept_queue = asyncio.Queue(maxsize=_BATCH_ACCEPT_QUEUE_MAXSIZE)
+
+        # Clean up completed workers before scaling up.
+        _batch_accept_workers_tasks[:] = [task for task in _batch_accept_workers_tasks if not task.done()]
+        while len(_batch_accept_workers_tasks) < _BATCH_ACCEPT_WORKERS:
+            worker_idx = len(_batch_accept_workers_tasks) + 1
+            task = asyncio.create_task(
+                _batch_accept_worker_loop(worker_idx),
+                name=f"batch-acceptor-{worker_idx}",
+            )
+            _batch_accept_workers_tasks.append(task)
+
+        return _has_live_batch_workers()
+
+
+async def shutdown_batch_acceptor() -> None:
+    """Stop in-process batch acceptor workers."""
+    lock = _get_batch_acceptor_lock()
+    async with lock:
+        if not _batch_accept_workers_tasks:
+            return
+        tasks = list(_batch_accept_workers_tasks)
+        _batch_accept_workers_tasks.clear()
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
 
 
 def get_engine():
@@ -347,10 +498,14 @@ class BatchEventRequest(BaseModel):
 
 
 class BatchEventResponse(BaseModel):
-    """Response for batch event submission."""
+    """Response for async batch event acceptance."""
     status: str
-    event_ids: list[int]
-    commands_generated: int
+    request_id: str
+    event_ids: list[int] = Field(default_factory=list)
+    commands_generated: int = 0
+    queue_depth: int = 0
+    duplicate: bool = False
+    idempotency_key: Optional[str] = None
 
 
 # ============================================================================
@@ -1193,199 +1348,637 @@ async def handle_event(req: EventRequest) -> EventResponse:
         raise HTTPException(500, str(e))
 
 
-@router.post("/events/batch", response_model=BatchEventResponse)
-async def handle_batch_events(req: BatchEventRequest) -> BatchEventResponse:
-    """
-    Persist multiple events for one execution in a single DB transaction.
+def _status_from_event_name(event_name: str) -> str:
+    lowered = event_name.lower()
+    if "error" in lowered or "failed" in lowered:
+        return "FAILED"
+    if "done" in lowered or "exit" in lowered or "completed" in lowered:
+        return "COMPLETED"
+    return "RUNNING"
 
-    Only the LAST actionable event in the batch is routed through the engine
-    to generate commands. Non-actionable events (command.started, step.enter,
-    command.completed, step.exit without routing) are persisted directly.
 
-    This reduces HTTP round-trips from 5 per loop iteration to 2 (batch + call.done).
-    """
-    try:
-        engine = get_engine()
+async def _persist_batch_status_event(
+    execution_id: int,
+    catalog_id: Optional[int],
+    request_id: str,
+    worker_id: Optional[str],
+    idempotency_key: Optional[str],
+    event_type: str,
+    status: str,
+    payload: dict[str, Any],
+    error: Optional[str] = None,
+) -> None:
+    async with get_pool_connection() as conn:
+        async with conn.cursor(row_factory=dict_row) as cur:
+            evt_id = await _next_snowflake_id(cur)
+            meta_obj: dict[str, Any] = {
+                "batch_request_id": request_id,
+                "actionable": False,
+                "informative": True,
+            }
+            if worker_id:
+                meta_obj["worker_id"] = worker_id
+            if idempotency_key:
+                meta_obj["idempotency_key"] = idempotency_key
 
-        skip_engine_events = {
-            "command.claimed", "command.started", "command.completed",
-            "step.enter",
-        }
-
-        event_ids: list[int] = []
-        last_actionable_event: Optional[Event] = None
-        last_actionable_evt_id: Optional[int] = None
-
-        # Persist all events in a single transaction
-        async with get_pool_connection() as conn:
-            async with conn.cursor(row_factory=dict_row) as cur:
-                await cur.execute(
-                    "SELECT catalog_id FROM noetl.event WHERE execution_id = %s LIMIT 1",
-                    (int(req.execution_id),),
-                )
-                row = await cur.fetchone()
-                catalog_id = row["catalog_id"] if row else None
-
-                for item in req.events:
-                    evt_id = await _next_snowflake_id(cur)
-                    event_ids.append(evt_id)
-
-                    meta_obj: dict[str, Any] = {
-                        "actionable": item.actionable,
-                        "informative": item.informative,
-                    }
-                    if req.worker_id:
-                        meta_obj["worker_id"] = req.worker_id
-
-                    result_obj = {"kind": "data", "data": item.payload}
-
-                    if "error" in item.name or "failed" in item.name:
-                        status = "FAILED"
-                    elif "done" in item.name or "exit" in item.name or "completed" in item.name:
-                        status = "COMPLETED"
-                    else:
-                        status = "RUNNING"
-
-                    await cur.execute(
-                        """
-                        INSERT INTO noetl.event (
-                            event_id, execution_id, catalog_id, event_type,
-                            node_id, node_name, status, result, meta, worker_id, created_at
-                        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                        """,
-                        (
-                            evt_id,
-                            int(req.execution_id),
-                            catalog_id,
-                            item.name,
-                            item.step,
-                            item.step,
-                            status,
-                            Json(result_obj),
-                            Json(meta_obj),
-                            req.worker_id,
-                            datetime.now(timezone.utc),
-                        ),
-                    )
-
-                    # Track last actionable event for engine processing
-                    if item.actionable and item.name not in skip_engine_events:
-                        last_actionable_event = Event(
-                            execution_id=req.execution_id,
-                            step=item.step,
-                            name=item.name,
-                            payload=item.payload,
-                            meta=meta_obj,
-                            timestamp=datetime.now(timezone.utc),
-                            worker_id=req.worker_id,
-                        )
-                        last_actionable_evt_id = evt_id
-
-                await conn.commit()
-
-        # Process only the last actionable event through the engine
-        commands: list = []
-        if last_actionable_event:
-            commands = await engine.handle_event(last_actionable_event, already_persisted=True)
-
-        # Emit command.issued for generated commands
-        if commands:
-            nats_pub = await get_nats_publisher()
-            server_url = os.getenv(
-                "NOETL_SERVER_URL",
-                "http://noetl.noetl.svc.cluster.local:8082",
+            await cur.execute(
+                """
+                INSERT INTO noetl.event (
+                    event_id, execution_id, catalog_id, event_type,
+                    node_id, node_name, status, result, meta, worker_id, error, created_at
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                """,
+                (
+                    evt_id,
+                    execution_id,
+                    catalog_id,
+                    event_type,
+                    "events.batch",
+                    "events.batch",
+                    status,
+                    Json({"kind": "data", "data": payload}),
+                    Json(meta_obj),
+                    worker_id,
+                    error,
+                    datetime.now(timezone.utc),
+                ),
             )
-            async with get_pool_connection() as conn:
-                async with conn.cursor(row_factory=dict_row) as cur:
-                    for cmd in commands:
-                        await cur.execute(
-                            "SELECT catalog_id, parent_execution_id FROM noetl.event WHERE execution_id = %s LIMIT 1",
-                            (int(cmd.execution_id),),
-                        )
-                        row = await cur.fetchone()
-                        cat_id = row["catalog_id"] if row else catalog_id
-                        parent_exec = row["parent_execution_id"] if row else None
+            await conn.commit()
 
-                        cmd_suffix = await _next_snowflake_id(cur)
-                        cmd_id = f"{cmd.execution_id}:{cmd.step}:{cmd_suffix}"
-                        new_evt_id = await _next_snowflake_id(cur)
 
-                        context = {
-                            "tool_config": cmd.tool.config,
-                            "args": cmd.args or {},
-                            "render_context": cmd.render_context,
-                            "next_targets": cmd.next_targets,
-                            "pipeline": cmd.pipeline,
-                            "spec": cmd.spec.model_dump() if cmd.spec else None,
-                        }
-                        meta = {
-                            "command_id": cmd_id,
-                            "step": cmd.step,
-                            "tool_kind": cmd.tool.kind,
-                            "triggered_by": last_actionable_event.name if last_actionable_event else "batch",
-                            "actionable": True,
-                        }
-                        if cmd.metadata:
-                            meta.update({k: v for k, v in cmd.metadata.items() if v is not None})
+def _build_batch_error(code: str, message: str, request_id: Optional[str] = None) -> dict[str, Any]:
+    detail: dict[str, Any] = {"code": code, "message": message}
+    if request_id:
+        detail["request_id"] = request_id
+    return detail
 
-                        await cur.execute(
-                            """
-                            INSERT INTO noetl.event (
-                                event_id, execution_id, catalog_id, event_type,
-                                node_id, node_name, node_type, status,
-                                context, meta, parent_event_id, parent_execution_id,
-                                created_at
-                            ) VALUES (
-                                %(event_id)s, %(execution_id)s, %(catalog_id)s, %(event_type)s,
-                                %(node_id)s, %(node_name)s, %(node_type)s, %(status)s,
-                                %(context)s, %(meta)s, %(parent_event_id)s, %(parent_execution_id)s,
-                                %(created_at)s
-                            )
-                            """,
-                            {
-                                "event_id": new_evt_id,
-                                "execution_id": int(cmd.execution_id),
-                                "catalog_id": cat_id,
-                                "event_type": "command.issued",
-                                "node_id": cmd.step,
-                                "node_name": cmd.step,
-                                "node_type": cmd.tool.kind,
-                                "status": "PENDING",
-                                "context": Json(context),
-                                "meta": Json(meta),
-                                "parent_event_id": last_actionable_evt_id,
-                                "parent_execution_id": parent_exec,
-                                "created_at": datetime.now(timezone.utc),
-                            },
-                        )
 
-                        await nats_pub.publish_command(
-                            execution_id=int(cmd.execution_id),
-                            event_id=new_evt_id,
-                            command_id=cmd_id,
-                            step=cmd.step,
-                            server_url=server_url,
-                        )
-
-                    await conn.commit()
-
-        return BatchEventResponse(
-            status="ok",
-            event_ids=event_ids,
-            commands_generated=len(commands),
+async def _persist_batch_failed_event(job: _BatchAcceptJob, code: str, message: str) -> None:
+    try:
+        await _persist_batch_status_event(
+            execution_id=job.execution_id,
+            catalog_id=job.catalog_id,
+            request_id=job.request_id,
+            worker_id=job.worker_id,
+            idempotency_key=job.idempotency_key,
+            event_type="batch.failed",
+            status="FAILED",
+            payload={"request_id": job.request_id, "error_code": code, "message": message},
+            error=message,
+        )
+    except Exception as persist_error:
+        logger.error(
+            "[BATCH-EVENTS] Failed to persist batch.failed request_id=%s code=%s: %s",
+            job.request_id,
+            code,
+            persist_error,
+            exc_info=True,
         )
 
+
+async def _persist_batch_acceptance(
+    req: BatchEventRequest,
+    idempotency_key: Optional[str],
+) -> _BatchAcceptanceResult:
+    skip_engine_events = {
+        "command.claimed",
+        "command.started",
+        "command.completed",
+        "step.enter",
+    }
+    execution_id = int(req.execution_id)
+
+    async with get_pool_connection() as conn:
+        async with conn.cursor(row_factory=dict_row) as cur:
+            await cur.execute(
+                "SELECT catalog_id FROM noetl.event WHERE execution_id = %s LIMIT 1",
+                (execution_id,),
+            )
+            row = await cur.fetchone()
+            catalog_id = row["catalog_id"] if row else None
+
+            if idempotency_key:
+                await cur.execute(
+                    """
+                    SELECT meta, result
+                    FROM noetl.event
+                    WHERE execution_id = %s
+                      AND event_type = 'batch.accepted'
+                      AND meta->>'idempotency_key' = %s
+                    ORDER BY event_id DESC
+                    LIMIT 1
+                    """,
+                    (execution_id, idempotency_key),
+                )
+                existing = await cur.fetchone()
+                if existing:
+                    existing_meta = existing.get("meta") or {}
+                    existing_result = existing.get("result") or {}
+                    existing_data = existing_result.get("data") if isinstance(existing_result, dict) else {}
+                    request_id = str(existing_meta.get("batch_request_id") or existing_data.get("request_id"))
+                    existing_event_ids = existing_data.get("event_ids") or []
+                    if request_id:
+                        noop_job = _BatchAcceptJob(
+                            request_id=request_id,
+                            execution_id=execution_id,
+                            catalog_id=catalog_id,
+                            worker_id=req.worker_id,
+                            idempotency_key=idempotency_key,
+                            events=[],
+                            last_actionable_event=None,
+                            last_actionable_evt_id=None,
+                            accepted_event_id=0,
+                            accepted_at_monotonic=time.perf_counter(),
+                        )
+                        return _BatchAcceptanceResult(
+                            job=noop_job,
+                            event_ids=[int(evt_id) for evt_id in existing_event_ids if isinstance(evt_id, int)],
+                            duplicate=True,
+                        )
+
+            request_id = str(await _next_snowflake_id(cur))
+            accepted_event_id = await _next_snowflake_id(cur)
+
+            event_ids: list[int] = []
+            last_actionable_event: Optional[Event] = None
+            last_actionable_evt_id: Optional[int] = None
+            for item in req.events:
+                evt_id = await _next_snowflake_id(cur)
+                event_ids.append(evt_id)
+                meta_obj: dict[str, Any] = {
+                    "actionable": item.actionable,
+                    "informative": item.informative,
+                    "batch_request_id": request_id,
+                }
+                if req.worker_id:
+                    meta_obj["worker_id"] = req.worker_id
+                if idempotency_key:
+                    meta_obj["idempotency_key"] = idempotency_key
+
+                await cur.execute(
+                    """
+                    INSERT INTO noetl.event (
+                        event_id, execution_id, catalog_id, event_type,
+                        node_id, node_name, status, result, meta, worker_id, created_at
+                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    """,
+                    (
+                        evt_id,
+                        execution_id,
+                        catalog_id,
+                        item.name,
+                        item.step,
+                        item.step,
+                        _status_from_event_name(item.name),
+                        Json({"kind": "data", "data": item.payload}),
+                        Json(meta_obj),
+                        req.worker_id,
+                        datetime.now(timezone.utc),
+                    ),
+                )
+
+                if item.actionable and item.name not in skip_engine_events:
+                    last_actionable_event = Event(
+                        execution_id=req.execution_id,
+                        step=item.step,
+                        name=item.name,
+                        payload=item.payload,
+                        meta=meta_obj,
+                        timestamp=datetime.now(timezone.utc),
+                        worker_id=req.worker_id,
+                    )
+                    last_actionable_evt_id = evt_id
+
+            accepted_meta: dict[str, Any] = {
+                "batch_request_id": request_id,
+                "actionable": False,
+                "informative": True,
+                "event_count": len(req.events),
+            }
+            if req.worker_id:
+                accepted_meta["worker_id"] = req.worker_id
+            if idempotency_key:
+                accepted_meta["idempotency_key"] = idempotency_key
+            if last_actionable_evt_id is not None:
+                accepted_meta["last_actionable_event_id"] = str(last_actionable_evt_id)
+
+            await cur.execute(
+                """
+                INSERT INTO noetl.event (
+                    event_id, execution_id, catalog_id, event_type,
+                    node_id, node_name, status, result, meta, worker_id, created_at
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                """,
+                (
+                    accepted_event_id,
+                    execution_id,
+                    catalog_id,
+                    "batch.accepted",
+                    "events.batch",
+                    "events.batch",
+                    "PENDING",
+                    Json(
+                        {
+                            "kind": "data",
+                            "data": {
+                                "request_id": request_id,
+                                "event_ids": event_ids,
+                                "commands_generated": 0,
+                            },
+                        }
+                    ),
+                    Json(accepted_meta),
+                    req.worker_id,
+                    datetime.now(timezone.utc),
+                ),
+            )
+            await conn.commit()
+
+    job = _BatchAcceptJob(
+        request_id=request_id,
+        execution_id=execution_id,
+        catalog_id=catalog_id,
+        worker_id=req.worker_id,
+        idempotency_key=idempotency_key,
+        events=req.events,
+        last_actionable_event=last_actionable_event,
+        last_actionable_evt_id=last_actionable_evt_id,
+        accepted_event_id=accepted_event_id,
+        accepted_at_monotonic=time.perf_counter(),
+    )
+    return _BatchAcceptanceResult(job=job, event_ids=event_ids, duplicate=False)
+
+
+async def _issue_commands_for_batch(job: _BatchAcceptJob, commands: list) -> None:
+    if not commands:
+        return
+
+    nats_pub = await get_nats_publisher()
+    server_url = os.getenv("NOETL_SERVER_URL", "http://noetl.noetl.svc.cluster.local:8082")
+    publish_items: list[tuple[int, str, str, int]] = []
+
+    async with get_pool_connection() as conn:
+        async with conn.cursor(row_factory=dict_row) as cur:
+            for cmd in commands:
+                await cur.execute(
+                    "SELECT catalog_id, parent_execution_id FROM noetl.event WHERE execution_id = %s LIMIT 1",
+                    (int(cmd.execution_id),),
+                )
+                row = await cur.fetchone()
+                cat_id = row["catalog_id"] if row else job.catalog_id
+                parent_exec = row["parent_execution_id"] if row else None
+
+                cmd_suffix = await _next_snowflake_id(cur)
+                cmd_id = f"{cmd.execution_id}:{cmd.step}:{cmd_suffix}"
+                new_evt_id = await _next_snowflake_id(cur)
+                context = {
+                    "tool_config": cmd.tool.config,
+                    "args": cmd.args or {},
+                    "render_context": cmd.render_context,
+                    "next_targets": cmd.next_targets,
+                    "pipeline": cmd.pipeline,
+                    "spec": cmd.spec.model_dump() if cmd.spec else None,
+                }
+                meta = {
+                    "command_id": cmd_id,
+                    "step": cmd.step,
+                    "tool_kind": cmd.tool.kind,
+                    "triggered_by": job.last_actionable_event.name if job.last_actionable_event else "batch",
+                    "actionable": True,
+                    "batch_request_id": job.request_id,
+                }
+                if cmd.metadata:
+                    meta.update({k: v for k, v in cmd.metadata.items() if v is not None})
+
+                await cur.execute(
+                    """
+                    INSERT INTO noetl.event (
+                        event_id, execution_id, catalog_id, event_type,
+                        node_id, node_name, node_type, status,
+                        context, meta, parent_event_id, parent_execution_id,
+                        created_at
+                    ) VALUES (
+                        %(event_id)s, %(execution_id)s, %(catalog_id)s, %(event_type)s,
+                        %(node_id)s, %(node_name)s, %(node_type)s, %(status)s,
+                        %(context)s, %(meta)s, %(parent_event_id)s, %(parent_execution_id)s,
+                        %(created_at)s
+                    )
+                    """,
+                    {
+                        "event_id": new_evt_id,
+                        "execution_id": int(cmd.execution_id),
+                        "catalog_id": cat_id,
+                        "event_type": "command.issued",
+                        "node_id": cmd.step,
+                        "node_name": cmd.step,
+                        "node_type": cmd.tool.kind,
+                        "status": "PENDING",
+                        "context": Json(context),
+                        "meta": Json(meta),
+                        "parent_event_id": job.last_actionable_evt_id,
+                        "parent_execution_id": parent_exec,
+                        "created_at": datetime.now(timezone.utc),
+                    },
+                )
+                publish_items.append((int(cmd.execution_id), cmd.step, cmd_id, new_evt_id))
+            await conn.commit()
+
+    for execution_id, step, cmd_id, evt_id in publish_items:
+        await nats_pub.publish_command(
+            execution_id=execution_id,
+            event_id=evt_id,
+            command_id=cmd_id,
+            step=step,
+            server_url=server_url,
+        )
+
+
+async def _process_accepted_batch(job: _BatchAcceptJob) -> int:
+    commands: list = []
+    if job.last_actionable_event:
+        engine = get_engine()
+        commands = await engine.handle_event(job.last_actionable_event, already_persisted=True)
+    await _issue_commands_for_batch(job, commands)
+    return len(commands)
+
+
+async def _batch_accept_worker_loop(worker_idx: int) -> None:
+    logger.info("[BATCH-EVENTS] Batch acceptor worker-%s started", worker_idx)
+    while True:
+        try:
+            if _batch_accept_queue is None:
+                await asyncio.sleep(0.05)
+                continue
+            job = await _batch_accept_queue.get()
+        except asyncio.CancelledError:
+            logger.info("[BATCH-EVENTS] Batch acceptor worker-%s stopped", worker_idx)
+            raise
+
+        queue_wait_seconds = max(0.0, time.perf_counter() - job.accepted_at_monotonic)
+        _observe_batch_metric("first_worker_claim_latency_seconds", queue_wait_seconds)
+        try:
+            await _persist_batch_status_event(
+                execution_id=job.execution_id,
+                catalog_id=job.catalog_id,
+                request_id=job.request_id,
+                worker_id=job.worker_id,
+                idempotency_key=job.idempotency_key,
+                event_type="batch.processing",
+                status="RUNNING",
+                payload={
+                    "request_id": job.request_id,
+                    "queue_wait_ms": round(queue_wait_seconds * 1000, 3),
+                    "event_count": len(job.events),
+                },
+            )
+
+            process_start = time.perf_counter()
+            try:
+                commands_generated = await asyncio.wait_for(
+                    _process_accepted_batch(job),
+                    timeout=_BATCH_PROCESSING_TIMEOUT_SECONDS,
+                )
+            except asyncio.TimeoutError:
+                _inc_batch_metric("processing_timeout_total")
+                await _persist_batch_failed_event(
+                    job,
+                    _BATCH_FAILURE_PROCESSING_TIMEOUT,
+                    f"Batch processing exceeded {_BATCH_PROCESSING_TIMEOUT_SECONDS}s timeout",
+                )
+                continue
+
+            await _persist_batch_status_event(
+                execution_id=job.execution_id,
+                catalog_id=job.catalog_id,
+                request_id=job.request_id,
+                worker_id=job.worker_id,
+                idempotency_key=job.idempotency_key,
+                event_type="batch.completed",
+                status="COMPLETED",
+                payload={
+                    "request_id": job.request_id,
+                    "commands_generated": commands_generated,
+                    "processing_ms": round((time.perf_counter() - process_start) * 1000, 3),
+                },
+            )
+        except Exception as e:
+            _inc_batch_metric("processing_error_total")
+            await _persist_batch_failed_event(job, _BATCH_FAILURE_PROCESSING_ERROR, str(e))
+        finally:
+            if _batch_accept_queue is not None:
+                _batch_accept_queue.task_done()
+
+
+@router.post("/events/batch", response_model=BatchEventResponse, status_code=202)
+async def handle_batch_events(req: BatchEventRequest, request: Request) -> BatchEventResponse:
+    """
+    Persist batched events and acknowledge with request_id before engine/NATS work.
+
+    Contract:
+    1. persist worker events + batch.accepted marker
+    2. enqueue async processing
+    3. return HTTP 202 with request_id
+    """
+    idempotency_key = request.headers.get("Idempotency-Key") or request.headers.get("X-Idempotency-Key")
+
+    try:
+        workers_ready = await ensure_batch_acceptor_started()
+        if _batch_accept_queue is None:
+            _inc_batch_metric("queue_unavailable_total")
+            raise HTTPException(
+                status_code=503,
+                detail=_build_batch_error(
+                    _BATCH_FAILURE_QUEUE_UNAVAILABLE,
+                    "Batch acceptance queue is unavailable",
+                ),
+            )
+        if not workers_ready:
+            _inc_batch_metric("worker_unavailable_total")
+            raise HTTPException(
+                status_code=503,
+                detail=_build_batch_error(
+                    _BATCH_FAILURE_WORKER_UNAVAILABLE,
+                    "No batch acceptance workers available",
+                ),
+            )
+
+        acceptance = await _persist_batch_acceptance(req, idempotency_key)
+        if acceptance.duplicate:
+            return BatchEventResponse(
+                status="accepted",
+                request_id=acceptance.job.request_id,
+                event_ids=acceptance.event_ids,
+                commands_generated=0,
+                queue_depth=_batch_queue_depth(),
+                duplicate=True,
+                idempotency_key=idempotency_key,
+            )
+
+        enqueue_start = time.perf_counter()
+        try:
+            await asyncio.wait_for(
+                _batch_accept_queue.put(acceptance.job),
+                timeout=_BATCH_ACCEPT_ENQUEUE_TIMEOUT_SECONDS,
+            )
+        except asyncio.TimeoutError:
+            _inc_batch_metric("ack_timeout_total")
+            await _persist_batch_failed_event(
+                acceptance.job,
+                _BATCH_FAILURE_ENQUEUE_TIMEOUT,
+                f"Timed out while waiting to enqueue batch request (>{_BATCH_ACCEPT_ENQUEUE_TIMEOUT_SECONDS}s)",
+            )
+            raise HTTPException(
+                status_code=503,
+                detail=_build_batch_error(
+                    _BATCH_FAILURE_ENQUEUE_TIMEOUT,
+                    "Timed out while waiting for batch enqueue acknowledgment",
+                    acceptance.job.request_id,
+                ),
+                headers={"Retry-After": "1"},
+            )
+        except Exception as e:
+            _inc_batch_metric("enqueue_error_total")
+            await _persist_batch_failed_event(
+                acceptance.job,
+                _BATCH_FAILURE_ENQUEUE_ERROR,
+                str(e),
+            )
+            raise HTTPException(
+                status_code=503,
+                detail=_build_batch_error(
+                    _BATCH_FAILURE_ENQUEUE_ERROR,
+                    f"Failed to enqueue batch request: {e}",
+                    acceptance.job.request_id,
+                ),
+            )
+
+        _observe_batch_metric("enqueue_latency_seconds", time.perf_counter() - enqueue_start)
+        _inc_batch_metric("accepted_total")
+        return BatchEventResponse(
+            status="accepted",
+            request_id=acceptance.job.request_id,
+            event_ids=acceptance.event_ids,
+            commands_generated=0,
+            queue_depth=_batch_queue_depth(),
+            duplicate=False,
+            idempotency_key=idempotency_key,
+        )
     except PoolTimeout:
         retry_after = _compute_retry_after()
-        logger.warning("[BATCH-EVENTS] DB pool saturated retry_after=%ss", retry_after)
+        logger.warning("[BATCH-EVENTS] DB pool saturated during acceptance retry_after=%ss", retry_after)
+        raise HTTPException(
+            status_code=503,
+            detail=_build_batch_error("pool_saturated", "Database temporarily overloaded; retry shortly"),
+            headers={"Retry-After": retry_after},
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("handle_batch_events failed: %s", e, exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail=_build_batch_error(_BATCH_FAILURE_ENQUEUE_ERROR, f"Batch acceptance failed: {e}"),
+        )
+
+
+async def _get_batch_request_state(request_id: str) -> dict[str, Any]:
+    async with get_pool_connection() as conn:
+        async with conn.cursor(row_factory=dict_row) as cur:
+            await cur.execute(
+                """
+                SELECT execution_id, event_type, status, result, error, created_at, meta
+                FROM noetl.event
+                WHERE meta->>'batch_request_id' = %s
+                  AND event_type IN ('batch.accepted', 'batch.processing', 'batch.completed', 'batch.failed')
+                ORDER BY event_id DESC
+                LIMIT 1
+                """,
+                (request_id,),
+            )
+            row = await cur.fetchone()
+
+    if not row:
+        raise HTTPException(404, f"Batch request not found: {request_id}")
+
+    event_type = row["event_type"]
+    if event_type == "batch.completed":
+        state = "completed"
+    elif event_type == "batch.failed":
+        state = "failed"
+    elif event_type == "batch.processing":
+        state = "processing"
+    else:
+        state = "accepted"
+
+    result_obj = row.get("result") or {}
+    result_data = result_obj.get("data") if isinstance(result_obj, dict) else {}
+    error_code = result_data.get("error_code")
+    message = result_data.get("message") or row.get("error")
+    meta = row.get("meta") or {}
+
+    return {
+        "request_id": request_id,
+        "execution_id": str(row["execution_id"]),
+        "state": state,
+        "status": row["status"],
+        "error_code": error_code,
+        "message": message,
+        "commands_generated": result_data.get("commands_generated"),
+        "idempotency_key": meta.get("idempotency_key"),
+        "updated_at": _iso_timestamp(row.get("created_at")),
+    }
+
+
+@router.get("/events/batch/{request_id}/status")
+async def get_batch_event_status(request_id: str):
+    """Fetch async processing status for a previously accepted batch request."""
+    try:
+        return await _get_batch_request_state(request_id)
+    except PoolTimeout:
+        retry_after = _compute_retry_after()
         raise HTTPException(
             status_code=503,
             detail={"code": "pool_saturated", "message": "Database temporarily overloaded; retry shortly"},
             headers={"Retry-After": retry_after},
         )
-    except Exception as e:
-        logger.error(f"handle_batch_events failed: {e}", exc_info=True)
-        raise HTTPException(500, str(e))
+
+
+@router.get("/events/batch/{request_id}/stream")
+async def stream_batch_event_status(request_id: str, timeout_seconds: float = 30.0):
+    """SSE stream for batch status updates (accepted/processing/completed/failed)."""
+    timeout_seconds = max(1.0, float(timeout_seconds))
+
+    async def _stream():
+        started_at = time.perf_counter()
+        while True:
+            try:
+                payload = await _get_batch_request_state(request_id)
+            except HTTPException as e:
+                payload = {
+                    "request_id": request_id,
+                    "state": "not_found" if e.status_code == 404 else "error",
+                    "status": "FAILED",
+                    "error_code": "not_found" if e.status_code == 404 else "lookup_error",
+                    "message": str(e.detail),
+                }
+                yield f"event: status\ndata: {json.dumps(payload)}\n\n"
+                break
+
+            yield f"event: status\ndata: {json.dumps(payload, default=str)}\n\n"
+            if payload.get("state") in {"completed", "failed"}:
+                break
+            if time.perf_counter() - started_at >= timeout_seconds:
+                timeout_payload = {
+                    "request_id": request_id,
+                    "state": "timeout",
+                    "status": "RUNNING",
+                    "message": "SSE stream timeout reached; continue polling /status",
+                }
+                yield f"event: status\ndata: {json.dumps(timeout_payload)}\n\n"
+                break
+            await asyncio.sleep(_BATCH_STATUS_STREAM_POLL_SECONDS)
+
+    return StreamingResponse(_stream(), media_type="text/event-stream")
 
 
 @router.get("/executions/{execution_id}/status")
