@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.10.1](https://github.com/noetl/noetl/compare/v2.10.0...v2.10.1) (2026-03-05)
+
+### Bug Fixes
+
+* **worker:** retry transient sub-playbook HTTP failures ([6fbf00e](https://github.com/noetl/noetl/commit/6fbf00ef6366c757943b2ed6ac086d1cffb82953))
+
 ## [2.10.0](https://github.com/noetl/noetl/compare/v2.9.0...v2.10.0) (2026-03-05)
 
 ### Features
