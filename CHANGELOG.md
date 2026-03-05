@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.10.0](https://github.com/noetl/noetl/compare/v2.9.0...v2.10.0) (2026-03-05)
+
+### Features
+
+* **server:** readiness-gated playbook recovery on startup ([40d42be](https://github.com/noetl/noetl/commit/40d42beb0758d49d4b50fd598fac972c3ceb9755))
+
+### Bug Fixes
+
+* **logging:** suppress health and pool-status access log flood ([71b5e7a](https://github.com/noetl/noetl/commit/71b5e7ab1bceb60e28334bbcb05a21102ded7dc0))
+
 ## [2.9.0](https://github.com/noetl/noetl/compare/v2.8.9...v2.9.0) (2026-03-05)
 
 ### Features
