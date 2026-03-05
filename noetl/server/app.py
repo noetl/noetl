@@ -23,6 +23,10 @@ from noetl.server.api.v2 import (
     shutdown_batch_acceptor,
     get_batch_metrics_snapshot,
 )
+from noetl.server.auto_resume import (
+    resume_interrupted_executions,
+    get_auto_resume_metrics_snapshot,
+)
 
 logger = setup_logger(__name__, include_location=True)
 
@@ -136,14 +140,17 @@ def _create_app(settings: Settings, enable_ui: Optional[bool] = None) -> FastAPI
         try:
             register_server_directly()
 
+            auto_resume_task: Optional[asyncio.Task] = None
             # --------------------------------------------------
-            # Auto-resume interrupted executions
+            # Auto-resume interrupted executions (readiness-gated)
             # --------------------------------------------------
-            from noetl.server.auto_resume import resume_interrupted_executions
             try:
-                await resume_interrupted_executions()
+                auto_resume_task = asyncio.create_task(
+                    resume_interrupted_executions(),
+                    name="auto-resume-recovery",
+                )
             except Exception as e:
-                logger.error(f"Auto-resume failed (non-fatal): {e}", exc_info=True)
+                logger.error(f"Auto-resume startup failed (non-fatal): {e}", exc_info=True)
 
             # Start async batch acceptance workers (202 + request_id contract).
             try:
@@ -255,6 +262,13 @@ def _create_app(settings: Settings, enable_ui: Optional[bool] = None) -> FastAPI
                         await sweeper_task
                 except Exception as e:
                     logger.exception(f"Critical error during sweeper task shutdown: {e}")
+            if auto_resume_task:
+                try:
+                    auto_resume_task.cancel()
+                    with contextlib.suppress(Exception):
+                        await auto_resume_task
+                except Exception as e:
+                    logger.exception(f"Critical error during auto-resume task shutdown: {e}")
             try:
                 await shutdown_batch_acceptor()
             except Exception as e:
@@ -378,6 +392,41 @@ def _create_app(settings: Settings, enable_ui: Optional[bool] = None) -> FastAPI
         lines.append(
             "noetl_batch_first_worker_claim_latency_seconds_count "
             f"{batch_metrics.get('first_worker_claim_latency_seconds_count', 0.0)}"
+        )
+
+        auto_resume_metrics = get_auto_resume_metrics_snapshot()
+        lines.append("# HELP noetl_auto_resume_attempts_total Dependency readiness attempts for auto-recovery")
+        lines.append("# TYPE noetl_auto_resume_attempts_total counter")
+        lines.append(f"noetl_auto_resume_attempts_total {auto_resume_metrics.get('attempts_total', 0.0)}")
+        lines.append("# HELP noetl_auto_resume_dependency_not_ready_total Auto-recovery readiness check failures")
+        lines.append("# TYPE noetl_auto_resume_dependency_not_ready_total counter")
+        lines.append(
+            "noetl_auto_resume_dependency_not_ready_total "
+            f"{auto_resume_metrics.get('dependency_not_ready_total', 0.0)}"
+        )
+        lines.append("# HELP noetl_auto_resume_recoveries_started_total Auto-recovery runs started")
+        lines.append("# TYPE noetl_auto_resume_recoveries_started_total counter")
+        lines.append(
+            "noetl_auto_resume_recoveries_started_total "
+            f"{auto_resume_metrics.get('recoveries_started_total', 0.0)}"
+        )
+        lines.append("# HELP noetl_auto_resume_recoveries_completed_total Auto-recovery runs completed")
+        lines.append("# TYPE noetl_auto_resume_recoveries_completed_total counter")
+        lines.append(
+            "noetl_auto_resume_recoveries_completed_total "
+            f"{auto_resume_metrics.get('recoveries_completed_total', 0.0)}"
+        )
+        lines.append("# HELP noetl_auto_resume_recoveries_failed_total Auto-recovery failures")
+        lines.append("# TYPE noetl_auto_resume_recoveries_failed_total counter")
+        lines.append(
+            "noetl_auto_resume_recoveries_failed_total "
+            f"{auto_resume_metrics.get('recoveries_failed_total', 0.0)}"
+        )
+        lines.append("# HELP noetl_auto_resume_recoveries_restarted_total Interrupted executions restarted by auto-recovery")
+        lines.append("# TYPE noetl_auto_resume_recoveries_restarted_total counter")
+        lines.append(
+            "noetl_auto_resume_recoveries_restarted_total "
+            f"{auto_resume_metrics.get('recoveries_restarted_total', 0.0)}"
         )
 
         body = "\n".join(lines) + "\n"

@@ -14,6 +14,44 @@ import argparse
 import sys
 import asyncio
 import logging
+import os
+
+_DEFAULT_SUPPRESSED_ACCESS_PATHS = (
+    "/api/worker/pool/register",
+    "/api/health",
+    "/health",
+    "/api/pool/status",
+    "/metrics",
+)
+
+
+def _load_suppressed_access_paths() -> tuple[str, ...]:
+    """
+    Resolve access-log suppression list.
+
+    NOETL_ACCESS_LOG_SUPPRESS_PATHS supports comma-separated path fragments.
+    Empty value falls back to defaults.
+    """
+    raw = os.getenv("NOETL_ACCESS_LOG_SUPPRESS_PATHS", "").strip()
+    if not raw:
+        return _DEFAULT_SUPPRESSED_ACCESS_PATHS
+    parts = tuple(p.strip() for p in raw.split(",") if p.strip())
+    return parts or _DEFAULT_SUPPRESSED_ACCESS_PATHS
+
+
+class AccessLogFilter(logging.Filter):
+    """Filter noisy health/internal access logs to prevent log floods."""
+
+    def __init__(self, suppressed_paths: tuple[str, ...]):
+        super().__init__()
+        self._suppressed_paths = tuple(p.lower() for p in suppressed_paths if p)
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        message = record.getMessage().lower()
+        for path in self._suppressed_paths:
+            if path in message:
+                return False
+        return True
 
 
 def main():
@@ -54,14 +92,9 @@ def main():
         import uvicorn
         from noetl.server.app import create_app
 
-        class AccessLogFilter(logging.Filter):
-            def filter(self, record: logging.LogRecord) -> bool:
-                message = record.getMessage()
-                if "/api/worker/pool/register" in message:
-                    return False
-                return True
-
-        logging.getLogger("uvicorn.access").addFilter(AccessLogFilter())
+        logging.getLogger("uvicorn.access").addFilter(
+            AccessLogFilter(_load_suppressed_access_paths())
+        )
         
         app = create_app()
         uvicorn.run(app, host=args.host, port=args.port)

@@ -1,12 +1,18 @@
 """
-Auto-resume interrupted playbook executions.
+Readiness-gated recovery for interrupted parent playbook executions.
 
-When NoETL server restarts (e.g., pod restart in Kubernetes), this module
-checks for interrupted executions and automatically resumes them using event replay.
+On server startup, recovery is delayed until core dependencies are healthy:
+- PostgreSQL reachable
+- NATS reachable
+- worker pool heartbeat present
 """
 
+from __future__ import annotations
+
 import asyncio
-from typing import Optional, List, Dict, Any
+import os
+from typing import Optional, Dict, Any
+
 from psycopg.rows import dict_row
 from psycopg.types.json import Json
 
@@ -15,96 +21,250 @@ from noetl.core.logger import setup_logger
 
 logger = setup_logger(__name__, include_location=True)
 
+_AUTO_RESUME_ENABLED = os.getenv("NOETL_AUTO_RESUME_ENABLED", "true").strip().lower() in {
+    "1",
+    "true",
+    "yes",
+    "on",
+}
+_AUTO_RESUME_MODE = os.getenv("NOETL_AUTO_RESUME_MODE", "restart").strip().lower()
+_AUTO_RESUME_LOOKBACK_MINUTES = max(
+    1,
+    int(os.getenv("NOETL_AUTO_RESUME_LOOKBACK_MINUTES", "15")),
+)
+_AUTO_RESUME_MAX_CANDIDATES = max(
+    1,
+    int(os.getenv("NOETL_AUTO_RESUME_MAX_CANDIDATES", "1")),
+)
+_AUTO_RESUME_READINESS_TIMEOUT_SECONDS = max(
+    1.0,
+    float(os.getenv("NOETL_AUTO_RESUME_READINESS_TIMEOUT_SECONDS", "300")),
+)
+_AUTO_RESUME_READINESS_POLL_SECONDS = max(
+    0.5,
+    float(os.getenv("NOETL_AUTO_RESUME_READINESS_POLL_SECONDS", "5")),
+)
+_AUTO_RESUME_STARTUP_DELAY_SECONDS = max(
+    0.0,
+    float(os.getenv("NOETL_AUTO_RESUME_STARTUP_DELAY_SECONDS", "3")),
+)
+_AUTO_RESUME_WORKER_HEARTBEAT_MAX_AGE_SECONDS = max(
+    5.0,
+    float(os.getenv("NOETL_AUTO_RESUME_WORKER_HEARTBEAT_MAX_AGE_SECONDS", "60")),
+)
+_AUTO_RESUME_MIN_READY_WORKERS = max(
+    1,
+    int(os.getenv("NOETL_AUTO_RESUME_MIN_READY_WORKERS", "1")),
+)
+
+_auto_resume_metrics: dict[str, float] = {
+    "attempts_total": 0.0,
+    "dependency_ready_total": 0.0,
+    "dependency_not_ready_total": 0.0,
+    "recoveries_started_total": 0.0,
+    "recoveries_completed_total": 0.0,
+    "recoveries_failed_total": 0.0,
+    "recoveries_cancelled_total": 0.0,
+    "recoveries_restarted_total": 0.0,
+}
+
+
+def _inc_metric(name: str, amount: float = 1.0) -> None:
+    _auto_resume_metrics[name] = float(_auto_resume_metrics.get(name, 0.0)) + amount
+
+
+def get_auto_resume_metrics_snapshot() -> dict[str, float]:
+    return dict(_auto_resume_metrics)
+
+
+async def _check_postgres_ready() -> tuple[bool, str]:
+    try:
+        async with get_pool_connection(timeout=3.0) as conn:
+            async with conn.cursor(row_factory=dict_row) as cur:
+                await cur.execute("SELECT 1 AS ok")
+                row = await cur.fetchone()
+                if row and int(row.get("ok", 0)) == 1:
+                    return True, "postgres_ok"
+        return False, "postgres_no_row"
+    except Exception as e:
+        return False, f"postgres_error:{e}"
+
+
+async def _check_nats_ready() -> tuple[bool, str]:
+    try:
+        # Reuse server's publisher bootstrap and verify active connection.
+        from noetl.server.api.v2 import get_nats_publisher
+
+        publisher = await get_nats_publisher()
+        nc = getattr(publisher, "_nc", None)
+        if nc is None:
+            return False, "nats_missing_connection"
+        if not bool(getattr(nc, "is_connected", False)):
+            return False, "nats_not_connected"
+        await nc.flush(timeout=1.0)
+        return True, "nats_ok"
+    except Exception as e:
+        return False, f"nats_error:{e}"
+
+
+async def _count_ready_workers(max_heartbeat_age_seconds: float) -> int:
+    async with get_pool_connection(timeout=3.0) as conn:
+        async with conn.cursor(row_factory=dict_row) as cur:
+            await cur.execute(
+                """
+                SELECT COUNT(*)::int AS ready_workers
+                FROM noetl.runtime
+                WHERE kind = 'worker_pool'
+                  AND status = 'ready'
+                  AND heartbeat >= NOW() - (%s * INTERVAL '1 second')
+                """,
+                (max_heartbeat_age_seconds,),
+            )
+            row = await cur.fetchone()
+            return int((row or {}).get("ready_workers", 0) or 0)
+
+
+async def _check_worker_ready() -> tuple[bool, str]:
+    try:
+        ready_workers = await _count_ready_workers(_AUTO_RESUME_WORKER_HEARTBEAT_MAX_AGE_SECONDS)
+        if ready_workers >= _AUTO_RESUME_MIN_READY_WORKERS:
+            return True, f"workers_ok:{ready_workers}"
+        return False, f"workers_insufficient:{ready_workers}"
+    except Exception as e:
+        return False, f"workers_error:{e}"
+
+
+async def _check_recovery_dependencies() -> tuple[bool, Dict[str, str]]:
+    postgres_ok, postgres_reason = await _check_postgres_ready()
+    nats_ok, nats_reason = await _check_nats_ready()
+    worker_ok, worker_reason = await _check_worker_ready()
+    details = {
+        "postgres": postgres_reason,
+        "nats": nats_reason,
+        "workers": worker_reason,
+    }
+    return postgres_ok and nats_ok and worker_ok, details
+
+
+async def _wait_for_dependencies_ready() -> bool:
+    timeout_seconds = _AUTO_RESUME_READINESS_TIMEOUT_SECONDS
+    poll_seconds = _AUTO_RESUME_READINESS_POLL_SECONDS
+    max_attempts = max(1, int(timeout_seconds / poll_seconds))
+
+    for attempt in range(1, max_attempts + 1):
+        _inc_metric("attempts_total")
+        ready, details = await _check_recovery_dependencies()
+        if ready:
+            _inc_metric("dependency_ready_total")
+            logger.info(
+                "[AUTO-RESUME] Dependencies ready (attempt %s/%s): postgres=%s nats=%s workers=%s",
+                attempt,
+                max_attempts,
+                details.get("postgres"),
+                details.get("nats"),
+                details.get("workers"),
+            )
+            return True
+
+        _inc_metric("dependency_not_ready_total")
+        logger.warning(
+            "[AUTO-RESUME] Dependencies not ready (attempt %s/%s): postgres=%s nats=%s workers=%s",
+            attempt,
+            max_attempts,
+            details.get("postgres"),
+            details.get("nats"),
+            details.get("workers"),
+        )
+        if attempt < max_attempts:
+            await asyncio.sleep(poll_seconds)
+    return False
+
+
+def _extract_workload_from_result(result_obj: Any) -> dict[str, Any]:
+    if not isinstance(result_obj, dict):
+        return {}
+    payload = result_obj
+    if "data" in payload and isinstance(payload["data"], dict):
+        payload = payload["data"]
+    if "result" in payload and isinstance(payload["result"], dict):
+        candidate = payload["result"].get("workload")
+        if isinstance(candidate, dict):
+            return candidate
+    candidate = payload.get("workload")
+    if isinstance(candidate, dict):
+        return candidate
+    return {}
+
 
 async def get_execution_status(execution_id: int) -> str:
-    """
-    Determine execution status by analyzing events.
-
-    Returns:
-        - "completed": playbook finished successfully
-        - "failed": playbook failed with error
-        - "cancelled": playbook was cancelled by user
-        - "running": execution in progress (or interrupted)
-    """
+    """Determine execution status from terminal events."""
     async with get_pool_connection() as conn:
         async with conn.cursor(row_factory=dict_row) as cur:
-            # Check for terminal events (completion, failure, cancellation)
-            await cur.execute("""
+            await cur.execute(
+                """
                 SELECT event_type, status
                 FROM noetl.event
                 WHERE execution_id = %s
                   AND event_type IN ('playbook.completed', 'playbook.failed', 'execution.cancelled')
                 ORDER BY created_at DESC
                 LIMIT 1
-            """, (execution_id,))
-
+                """,
+                (execution_id,),
+            )
             row = await cur.fetchone()
             if row:
-                if row['event_type'] == 'playbook.completed':
+                if row["event_type"] == "playbook.completed":
                     return "completed"
-                if row['event_type'] == 'playbook.failed':
+                if row["event_type"] == "playbook.failed":
                     return "failed"
-                if row['event_type'] == 'execution.cancelled':
+                if row["event_type"] == "execution.cancelled":
                     return "cancelled"
-
-            # Check if there are any FAILED or CANCELLED status events
-            await cur.execute("""
-                SELECT status
-                FROM noetl.event
-                WHERE execution_id = %s
-                  AND status IN ('FAILED', 'CANCELLED')
-                ORDER BY created_at DESC
-                LIMIT 1
-            """, (execution_id,))
-
-            row = await cur.fetchone()
-            if row:
-                if row['status'] == 'FAILED':
-                    return "failed"
-                if row['status'] == 'CANCELLED':
-                    return "cancelled"
-
-            # Otherwise, it's running (or interrupted)
             return "running"
 
 
-async def get_last_execution() -> Optional[Dict[str, Any]]:
+async def get_recovery_candidates() -> list[Dict[str, Any]]:
     """
-    Get the most recent execution that might be interrupted (within last 5 minutes).
+    Return recent parent playbooks that may need recovery.
 
-    Only returns executions from the last 5 minutes to avoid restarting old jobs.
-    Returns: {execution_id, path, catalog_id, created_at}
+    Parent only: `parent_execution_id IS NULL`.
     """
     async with get_pool_connection() as conn:
         async with conn.cursor(row_factory=dict_row) as cur:
-            await cur.execute("""
+            await cur.execute(
+                """
                 SELECT
                     e.execution_id,
                     c.path,
                     e.catalog_id,
+                    e.result,
                     e.created_at
                 FROM noetl.event e
                 JOIN noetl.catalog c ON c.catalog_id = e.catalog_id
                 WHERE e.event_type = 'playbook.initialized'
-                  AND e.created_at > NOW() - INTERVAL '5 minutes'
+                  AND e.parent_execution_id IS NULL
+                  AND e.created_at > NOW() - (%s * INTERVAL '1 minute')
+                  AND NOT EXISTS (
+                    SELECT 1
+                    FROM noetl.event t
+                    WHERE t.execution_id = e.execution_id
+                      AND t.event_type IN ('playbook.completed', 'playbook.failed', 'execution.cancelled')
+                  )
                 ORDER BY e.created_at DESC
-                LIMIT 1
-            """)
+                LIMIT %s
+                """,
+                (_AUTO_RESUME_LOOKBACK_MINUTES, _AUTO_RESUME_MAX_CANDIDATES),
+            )
+            rows = await cur.fetchall()
+    return list(rows or [])
 
-            return await cur.fetchone()
 
-
-async def mark_execution_cancelled(execution_id: int, reason: str = "Server restart") -> bool:
-    """
-    Mark an execution as cancelled due to server interruption.
-
-    Args:
-        execution_id: The execution to cancel
-        reason: Cancellation reason
-
-    Returns:
-        True if marked successfully, False otherwise
-    """
+async def mark_execution_cancelled(
+    execution_id: int,
+    reason: str = "Server restart",
+    meta_extra: Optional[dict[str, Any]] = None,
+    payload_extra: Optional[dict[str, Any]] = None,
+) -> bool:
+    """Mark an interrupted execution as cancelled."""
     try:
         async with get_pool_connection() as conn:
             async with conn.cursor(row_factory=dict_row) as cur:
@@ -127,13 +287,21 @@ async def mark_execution_cancelled(execution_id: int, reason: str = "Server rest
                     return False
 
                 event_id = await get_snowflake_id()
-                cancel_payload = {"reason": reason, "auto_cancelled": True}
-                cancel_meta = {
+                cancel_payload: dict[str, Any] = {
+                    "reason": reason,
+                    "auto_cancelled": True,
+                }
+                if payload_extra:
+                    cancel_payload.update(payload_extra)
+                cancel_meta: dict[str, Any] = {
                     "actionable": False,
                     "informative": True,
                     "auto_resume": True,
                 }
-                await cur.execute("""
+                if meta_extra:
+                    cancel_meta.update(meta_extra)
+                await cur.execute(
+                    """
                     INSERT INTO noetl.event (
                         execution_id, catalog_id, event_id, event_type,
                         node_id, node_name, status, result, meta, created_at
@@ -141,103 +309,142 @@ async def mark_execution_cancelled(execution_id: int, reason: str = "Server rest
                         %s, %s, %s, 'execution.cancelled',
                         %s, %s, 'CANCELLED', %s, %s, NOW()
                     )
-                """, (
-                    execution_id,
-                    row["catalog_id"],
-                    int(event_id),
-                    "workflow",
-                    "workflow",
-                    Json({"kind": "data", "data": cancel_payload}),
-                    Json(cancel_meta),
-                ))
+                    """,
+                    (
+                        execution_id,
+                        row["catalog_id"],
+                        int(event_id),
+                        "workflow",
+                        "workflow",
+                        Json({"kind": "data", "data": cancel_payload}),
+                        Json(cancel_meta),
+                    ),
+                )
                 await conn.commit()
 
-        logger.info(f"[AUTO-RESUME] Marked execution {execution_id} as CANCELLED")
+        _inc_metric("recoveries_cancelled_total")
+        logger.info("[AUTO-RESUME] Marked execution %s as CANCELLED", execution_id)
         return True
-
     except Exception as e:
-        logger.error(f"[AUTO-RESUME] Failed to mark execution {execution_id} as cancelled: {e}")
+        logger.error("[AUTO-RESUME] Failed to mark execution %s as cancelled: %s", execution_id, e, exc_info=True)
         return False
 
 
-async def resume_execution(execution_id: int, path: str, catalog_id: int) -> bool:
-    """
-    Resume an interrupted execution by marking it cancelled and optionally restarting.
-
-    IMPORTANT: We do NOT automatically restart playbooks anymore. Instead, we mark
-    interrupted executions as CANCELLED to clean up the state. Users can manually
-    restart if needed.
-
-    Args:
-        execution_id: The interrupted execution ID
-        path: Playbook path
-        catalog_id: Catalog ID of the playbook
-
-    Returns:
-        True if cancellation was successful, False otherwise
-    """
+async def _restart_execution(candidate: Dict[str, Any]) -> Optional[str]:
+    """Start a replacement playbook execution for interrupted parent run."""
     try:
-        logger.info(f"[AUTO-RESUME] Marking interrupted execution {execution_id} ({path}) as CANCELLED")
+        from noetl.server.api.v2 import execute, ExecuteRequest
 
-        # Mark the old execution as cancelled instead of leaving it stuck
-        success = await mark_execution_cancelled(
-            execution_id,
-            reason="Server restart - execution was interrupted"
+        workload = _extract_workload_from_result(candidate.get("result"))
+        req = ExecuteRequest(
+            catalog_id=int(candidate["catalog_id"]),
+            payload=workload,
+            parent_execution_id=int(candidate["execution_id"]),
+        )
+        response = await execute(req)
+        _inc_metric("recoveries_restarted_total")
+        return str(response.execution_id)
+    except Exception as e:
+        logger.error(
+            "[AUTO-RESUME] Restart failed for execution %s (%s): %s",
+            candidate.get("execution_id"),
+            candidate.get("path"),
+            e,
+            exc_info=True,
+        )
+        return None
+
+
+async def _recover_interrupted_parent_executions(mode: str) -> None:
+    candidates = await get_recovery_candidates()
+    if not candidates:
+        logger.info(
+            "[AUTO-RESUME] No interrupted parent executions found in last %s minutes",
+            _AUTO_RESUME_LOOKBACK_MINUTES,
+        )
+        return
+
+    logger.info(
+        "[AUTO-RESUME] Found %s interrupted parent execution candidate(s), mode=%s",
+        len(candidates),
+        mode,
+    )
+    for candidate in candidates:
+        execution_id = int(candidate["execution_id"])
+        path = str(candidate.get("path") or "")
+        status = await get_execution_status(execution_id)
+        if status != "running":
+            logger.info(
+                "[AUTO-RESUME] Skip execution %s (%s): status=%s",
+                execution_id,
+                path,
+                status,
+            )
+            continue
+
+        if mode == "restart":
+            restarted_execution_id = await _restart_execution(candidate)
+            if restarted_execution_id:
+                await mark_execution_cancelled(
+                    execution_id,
+                    reason="Auto-recovery restart launched replacement execution",
+                    meta_extra={"restarted_execution_id": restarted_execution_id},
+                    payload_extra={"restarted_execution_id": restarted_execution_id},
+                )
+                logger.info(
+                    "[AUTO-RESUME] Restarted execution %s (%s) -> new execution %s",
+                    execution_id,
+                    path,
+                    restarted_execution_id,
+                )
+            else:
+                _inc_metric("recoveries_failed_total")
+        else:
+            ok = await mark_execution_cancelled(
+                execution_id,
+                reason="Auto-recovery in cancel mode (restart disabled)",
+            )
+            if not ok:
+                _inc_metric("recoveries_failed_total")
+
+
+async def resume_interrupted_executions() -> None:
+    """
+    Recover interrupted parent executions after readiness checks pass.
+
+    Modes:
+    - restart (default): restart interrupted parent and cancel old execution.
+    - cancel: only cancel interrupted parent execution.
+    """
+    if not _AUTO_RESUME_ENABLED:
+        logger.info("[AUTO-RESUME] Disabled by NOETL_AUTO_RESUME_ENABLED=false")
+        return
+
+    mode = _AUTO_RESUME_MODE if _AUTO_RESUME_MODE in {"restart", "cancel"} else "restart"
+    if mode != _AUTO_RESUME_MODE:
+        logger.warning(
+            "[AUTO-RESUME] Unsupported NOETL_AUTO_RESUME_MODE=%s, defaulting to restart",
+            _AUTO_RESUME_MODE,
         )
 
-        if success:
-            logger.info(f"[AUTO-RESUME] Successfully cancelled interrupted execution {execution_id}")
-        else:
-            logger.warning(f"[AUTO-RESUME] Failed to cancel interrupted execution {execution_id}")
-
-        return success
-
-    except Exception as e:
-        logger.error(f"[AUTO-RESUME] Failed to handle interrupted execution {execution_id}: {e}", exc_info=True)
-        return False
-
-
-async def resume_interrupted_executions():
-    """
-    Clean up interrupted executions on server restart.
-
-    This is called on server startup to recover from pod restarts.
-    Checks the most recent execution (within last 5 minutes) - if it's in 'running' state,
-    marks it as CANCELLED to prevent stuck executions.
-
-    NOTE: Playbooks are NOT automatically restarted. Users must manually re-execute
-    if needed. This prevents duplicate executions and state confusion.
-    """
     try:
-        logger.info("[AUTO-RESUME] Checking for interrupted executions (last 5 minutes)...")
+        if _AUTO_RESUME_STARTUP_DELAY_SECONDS > 0:
+            await asyncio.sleep(_AUTO_RESUME_STARTUP_DELAY_SECONDS)
 
-        # Get the most recent execution (within 5 minutes)
-        last_execution = await get_last_execution()
-
-        if not last_execution:
-            logger.info("[AUTO-RESUME] No recent executions found (last 5 minutes)")
+        ready = await _wait_for_dependencies_ready()
+        if not ready:
+            logger.error(
+                "[AUTO-RESUME] Dependencies not ready within %.1fs, skipping recovery",
+                _AUTO_RESUME_READINESS_TIMEOUT_SECONDS,
+            )
             return
 
-        execution_id = last_execution['execution_id']
-        path = last_execution['path']
-        catalog_id = last_execution['catalog_id']
-
-        # Check execution status
-        status = await get_execution_status(execution_id)
-
-        logger.info(f"[AUTO-RESUME] Last execution {execution_id} ({path}): status={status}")
-
-        if status == "running":
-            # This execution was interrupted - mark it as cancelled
-            logger.info(f"[AUTO-RESUME] Cancelling interrupted execution {execution_id}")
-            success = await resume_execution(execution_id, path, catalog_id)
-            if success:
-                logger.info("[AUTO-RESUME] Successfully cancelled interrupted execution")
-            else:
-                logger.warning("[AUTO-RESUME] Failed to cancel interrupted execution")
-        else:
-            # Already completed or failed - nothing to do
-            logger.info(f"[AUTO-RESUME] Last execution already {status}, no action needed")
-
+        _inc_metric("recoveries_started_total")
+        await _recover_interrupted_parent_executions(mode=mode)
+        _inc_metric("recoveries_completed_total")
+    except asyncio.CancelledError:
+        logger.info("[AUTO-RESUME] Recovery task cancelled")
+        raise
     except Exception as e:
-        logger.error(f"[AUTO-RESUME] Critical error during auto-resume: {e}", exc_info=True)
+        _inc_metric("recoveries_failed_total")
+        logger.error("[AUTO-RESUME] Critical recovery error: %s", e, exc_info=True)
