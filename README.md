@@ -15,6 +15,7 @@ With **NoETL Gateway**, playbooks can be deployed as a **distributed backend**: 
 Async batch acceptance details for workers and operators:
 
 - [`noetl/server/api/BATCH_EVENTS_ASYNC.md`](noetl/server/api/BATCH_EVENTS_ASYNC.md)
+- [`noetl/server/api/RECOVERY_AUTORESUME.md`](noetl/server/api/RECOVERY_AUTORESUME.md)
 
 ## Repository model (ai-meta driven)
 
