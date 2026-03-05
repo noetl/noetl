@@ -17,7 +17,12 @@ from noetl.server.api import router as api_router
 from noetl.server.middleware import catch_exceptions_middleware
 
 # Import V2 API
-from noetl.server.api.v2 import router as v2_router
+from noetl.server.api.v2 import (
+    router as v2_router,
+    ensure_batch_acceptor_started,
+    shutdown_batch_acceptor,
+    get_batch_metrics_snapshot,
+)
 
 logger = setup_logger(__name__, include_location=True)
 
@@ -140,6 +145,12 @@ def _create_app(settings: Settings, enable_ui: Optional[bool] = None) -> FastAPI
             except Exception as e:
                 logger.error(f"Auto-resume failed (non-fatal): {e}", exc_info=True)
 
+            # Start async batch acceptance workers (202 + request_id contract).
+            try:
+                await ensure_batch_acceptor_started()
+            except Exception as e:
+                logger.error(f"Batch acceptor startup failed (non-fatal): {e}", exc_info=True)
+
             # --------------------------------------------------
             # Background runtime sweeper / server heartbeat
             # --------------------------------------------------
@@ -245,6 +256,10 @@ def _create_app(settings: Settings, enable_ui: Optional[bool] = None) -> FastAPI
                 except Exception as e:
                     logger.exception(f"Critical error during sweeper task shutdown: {e}")
             try:
+                await shutdown_batch_acceptor()
+            except Exception as e:
+                logger.error(f"Batch acceptor shutdown failed: {e}", exc_info=True)
+            try:
                 deregister_server_directly()
             except Exception as e:
                 logger.error(f"Server deregistration failed during shutdown: {e}")
@@ -322,6 +337,48 @@ def _create_app(settings: Settings, enable_ui: Optional[bool] = None) -> FastAPI
         lines.append("# HELP noetl_request_total Total HTTP requests served")
         lines.append("# TYPE noetl_request_total counter")
         lines.append(f"noetl_request_total {_metrics_counters.get(_request_count_key, 0)}")
+
+        # Async batch acceptance metrics
+        batch_metrics = get_batch_metrics_snapshot()
+        lines.append("# HELP noetl_batch_accepted_total Total accepted /api/events/batch requests")
+        lines.append("# TYPE noetl_batch_accepted_total counter")
+        lines.append(f"noetl_batch_accepted_total {batch_metrics.get('accepted_total', 0.0)}")
+        lines.append("# HELP noetl_batch_enqueue_error_total Total enqueue errors on /api/events/batch")
+        lines.append("# TYPE noetl_batch_enqueue_error_total counter")
+        lines.append(f"noetl_batch_enqueue_error_total {batch_metrics.get('enqueue_error_total', 0.0)}")
+        lines.append("# HELP noetl_batch_ack_timeout_total Total enqueue ack timeouts on /api/events/batch")
+        lines.append("# TYPE noetl_batch_ack_timeout_total counter")
+        lines.append(f"noetl_batch_ack_timeout_total {batch_metrics.get('ack_timeout_total', 0.0)}")
+        lines.append("# HELP noetl_batch_queue_unavailable_total Total queue unavailable errors")
+        lines.append("# TYPE noetl_batch_queue_unavailable_total counter")
+        lines.append(f"noetl_batch_queue_unavailable_total {batch_metrics.get('queue_unavailable_total', 0.0)}")
+        lines.append("# HELP noetl_batch_worker_unavailable_total Total worker unavailable errors")
+        lines.append("# TYPE noetl_batch_worker_unavailable_total counter")
+        lines.append(f"noetl_batch_worker_unavailable_total {batch_metrics.get('worker_unavailable_total', 0.0)}")
+        lines.append("# HELP noetl_batch_processing_timeout_total Total async batch processing timeouts")
+        lines.append("# TYPE noetl_batch_processing_timeout_total counter")
+        lines.append(f"noetl_batch_processing_timeout_total {batch_metrics.get('processing_timeout_total', 0.0)}")
+        lines.append("# HELP noetl_batch_queue_depth Current in-memory async batch queue depth")
+        lines.append("# TYPE noetl_batch_queue_depth gauge")
+        lines.append(f"noetl_batch_queue_depth {batch_metrics.get('queue_depth', 0.0)}")
+        lines.append("# HELP noetl_batch_enqueue_latency_seconds Batch enqueue latency summary (sum/count)")
+        lines.append("# TYPE noetl_batch_enqueue_latency_seconds summary")
+        lines.append(
+            f"noetl_batch_enqueue_latency_seconds_sum {batch_metrics.get('enqueue_latency_seconds_sum', 0.0)}"
+        )
+        lines.append(
+            f"noetl_batch_enqueue_latency_seconds_count {batch_metrics.get('enqueue_latency_seconds_count', 0.0)}"
+        )
+        lines.append("# HELP noetl_batch_first_worker_claim_latency_seconds Delay from acceptance to first worker claim")
+        lines.append("# TYPE noetl_batch_first_worker_claim_latency_seconds summary")
+        lines.append(
+            "noetl_batch_first_worker_claim_latency_seconds_sum "
+            f"{batch_metrics.get('first_worker_claim_latency_seconds_sum', 0.0)}"
+        )
+        lines.append(
+            "noetl_batch_first_worker_claim_latency_seconds_count "
+            f"{batch_metrics.get('first_worker_claim_latency_seconds_count', 0.0)}"
+        )
 
         body = "\n".join(lines) + "\n"
         return Response(content=body, media_type="text/plain; version=0.0.4; charset=utf-8")

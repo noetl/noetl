@@ -16,6 +16,7 @@ import httpx
 import os
 import random
 import time
+import uuid
 from collections import OrderedDict
 from typing import Optional, Any, Literal
 from datetime import datetime, timezone
@@ -2485,6 +2486,7 @@ class V2Worker:
             else float(worker_settings.http_event_timeout)
         )
         base_delay = 0.05
+        batch_idempotency_key = f"{self.worker_id}:{execution_id}:{uuid.uuid4().hex}"
 
         for attempt in range(retry_count):
             await self._concurrency.acquire()
@@ -2493,6 +2495,7 @@ class V2Worker:
                 response = await self._http_client.post(
                     batch_url,
                     json=batch_data,
+                    headers={"Idempotency-Key": batch_idempotency_key},
                     timeout=request_timeout,
                 )
                 if response.status_code == 404:
@@ -2516,6 +2519,15 @@ class V2Worker:
                     return True
 
                 if response.status_code == 503:
+                    detail_code = "server_busy"
+                    detail_message = "server returned 503"
+                    try:
+                        detail = response.json().get("detail")
+                        if isinstance(detail, dict):
+                            detail_code = str(detail.get("code") or detail_code)
+                            detail_message = str(detail.get("message") or detail_message)
+                    except Exception:
+                        pass
                     retry_after = 1.0
                     try:
                         retry_after = max(0.0, float(response.headers.get("Retry-After", "1")))
@@ -2525,25 +2537,35 @@ class V2Worker:
                     _released = True
                     if attempt == retry_count - 1:
                         logger.error(
-                            "[BATCH] 503 pool saturated after %s attempts for execution %s %s",
-                            retry_count, execution_id, self._concurrency.get_status(),
+                            "[BATCH] 503 after %s attempts for execution %s code=%s message=%s %s",
+                            retry_count, execution_id, detail_code, detail_message, self._concurrency.get_status(),
                         )
                         if raise_on_failure:
-                            raise RuntimeError("Batch event emission failed: server pool saturated")
+                            raise RuntimeError(
+                                f"Batch event emission failed: code={detail_code} message={detail_message}"
+                            )
                         return False
                     logger.warning(
-                        "[BATCH] 503 pool saturated attempt %s/%s; backoff applied %s",
-                        attempt + 1, retry_count, self._concurrency.get_status(),
+                        "[BATCH] 503 attempt %s/%s code=%s message=%s; backoff applied %s",
+                        attempt + 1, retry_count, detail_code, detail_message, self._concurrency.get_status(),
                     )
                     continue  # next acquire() waits out the controller backoff
 
                 response.raise_for_status()
                 await self._concurrency.release_success()
                 _released = True
+                batch_request_id = None
+                try:
+                    body = response.json()
+                    if isinstance(body, dict):
+                        batch_request_id = body.get("request_id")
+                except Exception:
+                    batch_request_id = None
                 logger.debug(
-                    "[BATCH] Emitted %s events for execution %s in single call",
+                    "[BATCH] Emitted %s events for execution %s in single call request_id=%s",
                     len(events),
                     execution_id,
+                    batch_request_id,
                 )
                 return True
 
