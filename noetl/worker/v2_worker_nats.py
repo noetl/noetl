@@ -2330,11 +2330,43 @@ class V2Worker:
         payload = {"path": path, "payload": args}
         if parent_execution_id:
             payload["parent_execution_id"] = parent_execution_id
-        
-        response = await self._http_client.post(
-            f"{server_url}/api/execute",
-            json=payload,
-            timeout=30.0
+
+        transient_errors = (httpx.ReadError, httpx.RemoteProtocolError, httpx.ConnectError)
+        retry_count = 3
+        base_delay = 0.05
+
+        async def _request_with_transient_retry(request_coro_factory, operation: str):
+            for attempt in range(retry_count):
+                try:
+                    return await request_coro_factory()
+                except transient_errors as e:
+                    is_last_attempt = attempt == retry_count - 1
+                    if is_last_attempt:
+                        logger.error(
+                            "Sub-playbook %s failed after %s transient retry attempts: %s",
+                            operation,
+                            retry_count,
+                            e,
+                        )
+                        raise
+                    delay = base_delay * (2 ** attempt)
+                    logger.warning(
+                        "Sub-playbook %s transient error (attempt %s/%s): %s. Retrying in %sms",
+                        operation,
+                        attempt + 1,
+                        retry_count,
+                        e,
+                        delay * 1000,
+                    )
+                    await asyncio.sleep(delay)
+
+        response = await _request_with_transient_retry(
+            lambda: self._http_client.post(
+                f"{server_url}/api/execute",
+                json=payload,
+                timeout=30.0,
+            ),
+            "spawn request",
         )
         response.raise_for_status()
         result = response.json()
@@ -2355,9 +2387,12 @@ class V2Worker:
                 # Check execution status using engine state endpoint.
                 # /api/executions/{id} can show transient COMPLETED for intermediate
                 # command.completed events, which is not a terminal playbook state.
-                status_response = await self._http_client.get(
-                    f"{server_url}/api/executions/{execution_id}/status",
-                    timeout=10.0
+                status_response = await _request_with_transient_retry(
+                    lambda: self._http_client.get(
+                        f"{server_url}/api/executions/{execution_id}/status",
+                        timeout=10.0,
+                    ),
+                    f"status polling for execution {execution_id}",
                 )
                 
                 if status_response.status_code == 200:
@@ -2369,9 +2404,12 @@ class V2Worker:
                         return status_data
                 else:
                     # Backward-compatible fallback for older servers without /status.
-                    fallback_response = await self._http_client.get(
-                        f"{server_url}/api/executions/{execution_id}",
-                        timeout=10.0
+                    fallback_response = await _request_with_transient_retry(
+                        lambda: self._http_client.get(
+                            f"{server_url}/api/executions/{execution_id}",
+                            timeout=10.0,
+                        ),
+                        f"fallback status polling for execution {execution_id}",
                     )
                     if fallback_response.status_code == 200:
                         fallback_data = fallback_response.json()
