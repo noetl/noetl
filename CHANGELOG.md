@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.9.0](https://github.com/noetl/noetl/compare/v2.8.9...v2.9.0) (2026-03-05)
+
+### Features
+
+* **server:** async batch acceptance with request_id tracking ([b4a18e1](https://github.com/noetl/noetl/commit/b4a18e1eb9b9d45736ef92b1d254bd50e1e90968))
+
 ## [2.8.9](https://github.com/noetl/noetl/compare/v2.8.8...v2.8.9) (2026-03-04)
 
 ### Bug Fixes
