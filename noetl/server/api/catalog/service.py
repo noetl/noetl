@@ -13,7 +13,6 @@ import yaml
 from psycopg.rows import dict_row
 from psycopg.types.json import Json
 from noetl.core.db.pool import get_pool_connection
-from noetl.server.api.catalog.schema import CatalogEntries
 from .schema import CatalogEntry, CatalogEntries
 from noetl.core.logger import setup_logger
 
@@ -282,6 +281,31 @@ class CatalogService:
         return version + 1
 
     @staticmethod
+    def _is_truthy(value: Any) -> bool:
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, str):
+            return value.strip().lower() in {"1", "true", "yes", "on"}
+        return bool(value)
+
+    @staticmethod
+    def _extract_agent_metadata(resource_data: Dict[str, Any]) -> Dict[str, Any]:
+        metadata = resource_data.get("metadata") if isinstance(resource_data, dict) else {}
+        metadata = metadata if isinstance(metadata, dict) else {}
+        capabilities = metadata.get("capabilities")
+        if isinstance(capabilities, list):
+            normalized_capabilities = [str(c).strip() for c in capabilities if str(c).strip()]
+        elif isinstance(capabilities, str) and capabilities.strip():
+            normalized_capabilities = [capabilities.strip()]
+        else:
+            normalized_capabilities = []
+
+        return {
+            "agent": CatalogService._is_truthy(metadata.get("agent", False)),
+            "capabilities": normalized_capabilities,
+        }
+
+    @staticmethod
     async def register_resource(content: str, resource_type: str = "Playbook") -> Dict[str, Any]:
         resource_data = yaml.safe_load(content) or {}
         path = (resource_data.get("metadata") or {}).get("path") or resource_data.get("path") or (
@@ -339,7 +363,12 @@ class CatalogService:
                         "kind": resource_type,
                         "content": content,
                         "payload": Json(resource_data),
-                        "meta": Json({"registered_at": datetime.now().astimezone().isoformat()}),
+                        "meta": Json(
+                            {
+                                "registered_at": datetime.now().astimezone().isoformat(),
+                                **CatalogService._extract_agent_metadata(resource_data),
+                            }
+                        ),
                     }
                 )
                 result = await cursor.fetchone()
@@ -358,15 +387,40 @@ class CatalogService:
         }
 
     @staticmethod
-    async def fetch_entries(resource_type: Optional[str] = None) -> List[CatalogEntry]:
+    async def fetch_entries(
+        resource_type: Optional[str] = None,
+        path: Optional[str] = None,
+        agent_only: bool = False,
+        capabilities: Optional[List[str]] = None,
+    ) -> List[CatalogEntry]:
         """List all catalog entries, optionally filtered by resource type"""
-        query, params = CatalogService._build_query_filter(resource_type=resource_type)
+        query, params = CatalogService._build_query_filter(
+            resource_type=resource_type,
+            path=path,
+            agent_only=agent_only,
+            capabilities=capabilities,
+        )
         return await CatalogService._fetch_filter(query, params)
+
+    @staticmethod
+    async def fetch_agent_entries(
+        path: Optional[str] = None,
+        capabilities: Optional[List[str]] = None,
+    ) -> List[CatalogEntry]:
+        """List catalog entries marked as agents, optionally filtered by capability/path."""
+        return await CatalogService.fetch_entries(
+            resource_type="Playbook",
+            path=path,
+            agent_only=True,
+            capabilities=capabilities,
+        )
     
     @staticmethod
     def _build_query_filter(
         resource_type: Optional[str] = None,
-        path: Optional[str] = None
+        path: Optional[str] = None,
+        agent_only: bool = False,
+        capabilities: Optional[List[str]] = None,
     ) -> tuple[str, Dict[str, Any]]:
         """
         Build SQL query for listing catalog entries.
@@ -394,6 +448,32 @@ class CatalogService:
         if path:
             conditions.append("AND c.path = %(path)s")
             params["path"] = path
+
+        if agent_only:
+            conditions.append(
+                "AND lower(coalesce(c.payload->'metadata'->>'agent', c.meta->>'agent', 'false')) IN ('1', 'true', 'yes', 'on')"
+            )
+
+        normalized_capabilities = [str(c).strip() for c in (capabilities or []) if str(c).strip()]
+        if normalized_capabilities:
+            conditions.append(
+                """
+                AND EXISTS (
+                    SELECT 1
+                    FROM jsonb_array_elements_text(
+                        CASE
+                            WHEN jsonb_typeof(c.payload->'metadata'->'capabilities') = 'array'
+                                THEN c.payload->'metadata'->'capabilities'
+                            WHEN jsonb_typeof(c.meta->'capabilities') = 'array'
+                                THEN c.meta->'capabilities'
+                            ELSE '[]'::jsonb
+                        END
+                    ) AS cap(value)
+                    WHERE cap.value = ANY(%(capabilities)s)
+                )
+                """
+            )
+            params["capabilities"] = normalized_capabilities
         
         order_clause = "ORDER BY c.created_at DESC"
         

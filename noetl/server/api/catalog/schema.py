@@ -23,6 +23,66 @@ class CatalogEntriesRequest(AppBaseModel):
         description="Filter by resource kind (e.g., 'Playbook', 'Tool', 'Model')",
         example="Playbook"
     )
+    path: Optional[str] = Field(
+        default=None,
+        description="Filter by exact catalog path (all versions)",
+        example="tests/fixtures/playbooks/hello_world/hello_world",
+    )
+    agent_only: bool = Field(
+        default=False,
+        description="If true, return only catalog entries with metadata.agent=true",
+    )
+    capability: Optional[str] = Field(
+        default=None,
+        description="Filter by a single agent capability",
+        example="code-review",
+    )
+    capabilities: Optional[list[str]] = Field(
+        default=None,
+        description="Filter by any of these agent capabilities",
+    )
+
+    @model_validator(mode="after")
+    def normalize_agent_filters(self) -> "CatalogEntriesRequest":
+        normalized: list[str] = []
+        if self.capabilities:
+            normalized.extend([str(c).strip() for c in self.capabilities if str(c).strip()])
+        if self.capability and str(self.capability).strip():
+            normalized.append(str(self.capability).strip())
+        if normalized:
+            # De-duplicate while preserving order
+            self.capabilities = list(dict.fromkeys(normalized))
+            self.agent_only = True
+        return self
+
+
+class CatalogAgentsRequest(AppBaseModel):
+    """Request schema for listing only agent catalog entries."""
+
+    path: Optional[str] = Field(
+        default=None,
+        description="Filter by exact catalog path (all versions)",
+        example="agents/release-coordinator",
+    )
+    capability: Optional[str] = Field(
+        default=None,
+        description="Filter by a single agent capability",
+        example="release-management",
+    )
+    capabilities: Optional[list[str]] = Field(
+        default=None,
+        description="Filter by any of these agent capabilities",
+    )
+
+    @model_validator(mode="after")
+    def normalize_capability_filters(self) -> "CatalogAgentsRequest":
+        normalized: list[str] = []
+        if self.capabilities:
+            normalized.extend([str(c).strip() for c in self.capabilities if str(c).strip()])
+        if self.capability and str(self.capability).strip():
+            normalized.append(str(self.capability).strip())
+        self.capabilities = list(dict.fromkeys(normalized)) if normalized else None
+        return self
 
 
 class CatalogEntryRequest(AppBaseModel):

@@ -13,6 +13,7 @@ This package contains all action executors moved from plugin/tools/:
 - container: Container execution
 - artifact: Result artifact storage (get/put from S3, GCS, filesystem)
 - nats: NATS JetStream, K/V Store, and Object Store operations
+- agent: External AI agent framework bridge (ADK/LangChain/custom)
 """
 
 # Import tool modules
@@ -28,6 +29,7 @@ from noetl.tools import (
     gcs,
     artifact,
     nats,
+    agent,
 )
 from noetl.tools.transfer import snowflake_transfer
 
@@ -44,6 +46,7 @@ from noetl.tools.container import execute_container_task
 from noetl.tools.gcs import execute_gcs_task
 from noetl.tools.artifact import execute_artifact_task, execute_artifact_get, execute_artifact_put
 from noetl.tools.nats import execute_nats_task
+from noetl.tools.agent import execute_agent_task
 
 # Tool registry for dynamic lookup
 REGISTRY = {
@@ -59,6 +62,7 @@ REGISTRY = {
     "gcs": gcs,
     "artifact": artifact,
     "nats": nats,
+    "agent": agent,
 }
 
 __all__ = [
@@ -75,6 +79,7 @@ __all__ = [
     "gcs",
     "artifact",
     "nats",
+    "agent",
     # Executors
     "execute_python_task",
     "execute_python_task_async",
@@ -92,7 +97,7 @@ __all__ = [
     "execute_artifact_get",
     "execute_artifact_put",
     "execute_nats_task",
+    "execute_agent_task",
     # Registry
     "REGISTRY",
 ]
-

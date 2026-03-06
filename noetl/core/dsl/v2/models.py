@@ -425,6 +425,7 @@ class ToolSpec(BaseModel):
         "gcs",
         "gateway",
         "nats",
+        "agent",
         "shell",
         "artifact",
         "noop",           # No-operation tool for routing/initialization

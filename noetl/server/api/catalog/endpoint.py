@@ -1,6 +1,7 @@
 from noetl.server.api.catalog.schema import (
     CatalogEntry,
     CatalogEntryRequest,
+    CatalogAgentsRequest,
     CatalogEntriesRequest,
     CatalogEntries,
     CatalogRegisterRequest,
@@ -365,12 +366,47 @@ async def list_resources(
     catalog_service: CatalogService = Depends(get_catalog_service)
 ):
     try:
-        return await catalog_service.fetch_entries(payload.resource_type)
+        return await catalog_service.fetch_entries(
+            resource_type=payload.resource_type,
+            path=payload.path,
+            agent_only=payload.agent_only,
+            capabilities=payload.capabilities,
+        )
     except Exception as e:
         logger.exception(f"Error listing resources: {e}")
         raise HTTPException(
             status_code=500,
             detail=f"Error listing resources: {e}"
+        )
+
+
+@router.post(
+    "/catalog/agents/list",
+    response_model=CatalogEntries,
+    tags=["Catalog"],
+    summary="List agent playbooks",
+    description="""
+Retrieve catalog entries that are explicitly marked as agents
+(`metadata.agent=true`), with optional capability and path filters.
+
+This endpoint is a dedicated discovery surface for agent orchestration clients.
+    """,
+)
+async def list_agent_resources(
+    request: Request,
+    payload: CatalogAgentsRequest,
+    catalog_service: CatalogService = Depends(get_catalog_service),
+):
+    try:
+        return await catalog_service.fetch_agent_entries(
+            path=payload.path,
+            capabilities=payload.capabilities,
+        )
+    except Exception as e:
+        logger.exception(f"Error listing agent resources: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error listing agent resources: {e}"
         )
 
 
