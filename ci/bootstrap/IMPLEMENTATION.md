@@ -151,7 +151,7 @@ project-using-noetl/
     │   └── vmstack/                # Monitoring configs
     │       ├── vmstack-values.yaml
     │       └── vmlogs-values.yaml
-    ├── automation/                 # NoETL infrastructure playbooks
+    ├── ../ops/automation/                 # NoETL infrastructure playbooks
     │   ├── setup/
     │   │   ├── bootstrap.yaml
     │   │   └── destroy.yaml
@@ -187,7 +187,7 @@ project-using-noetl/
        └── Deploy NoETL server + workers
 
 2. NoETL Playbooks
-   └── automation/
+   └── ../ops/automation/
        ├── setup/bootstrap.yaml     # Full infrastructure setup
        ├── infrastructure/kind.yaml # Kind cluster management
        ├── infrastructure/postgres.yaml
@@ -214,21 +214,21 @@ NoETL provides automation playbooks for infrastructure management:
 
 ```bash
 # Full bootstrap
-noetl run automation/setup/bootstrap.yaml
+noetl run ../ops/automation/setup/bootstrap.yaml
 
 # Individual components
-noetl run automation/infrastructure/kind.yaml --set action=create
-noetl run automation/infrastructure/kind.yaml --set action=delete
-noetl run automation/infrastructure/postgres.yaml --set action=deploy
-noetl run automation/infrastructure/monitoring.yaml --set action=deploy
-noetl run automation/deployment/noetl-stack.yaml --set action=deploy
+noetl run ../ops/automation/infrastructure/kind.yaml --set action=create
+noetl run ../ops/automation/infrastructure/kind.yaml --set action=delete
+noetl run ../ops/automation/infrastructure/postgres.yaml --set action=deploy
+noetl run ../ops/automation/infrastructure/monitoring.yaml --set action=deploy
+noetl run ../ops/automation/deployment/noetl-stack.yaml --set action=deploy
 
 # Development workflow
-noetl run automation/development/docker.yaml --set action=build
-noetl run automation/development/noetl.yaml --set action=redeploy
+noetl run ../ops/automation/development/docker.yaml --set action=build
+noetl run ../ops/automation/development/noetl.yaml --set action=redeploy
 
 # Destroy everything
-noetl run automation/setup/destroy.yaml
+noetl run ../ops/automation/setup/destroy.yaml
 ```
 
 ## OS-Specific Implementation

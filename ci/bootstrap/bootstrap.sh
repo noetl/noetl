@@ -39,6 +39,8 @@ NC='\033[0m' # No Color
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 NOETL_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 PROJECT_ROOT="$(cd "$NOETL_ROOT/.." && pwd)"
+NOETL_OPS_DIR="${NOETL_OPS_DIR:-$PROJECT_ROOT/ops}"
+OPS_AUTOMATION_DIR="${NOETL_OPS_DIR}/automation"
 VENV_PATH="$PROJECT_ROOT/.venv"
 
 # Default options
@@ -526,9 +528,15 @@ setup_cluster() {
         fi
     fi
 
-    # Run full bootstrap using noetl playbook
+    if [[ ! -f "$OPS_AUTOMATION_DIR/boot.yaml" ]]; then
+        log_error "Ops automation playbook not found: $OPS_AUTOMATION_DIR/boot.yaml"
+        log_error "Clone the ops repo at $NOETL_OPS_DIR or set NOETL_OPS_DIR."
+        exit 1
+    fi
+
+    # Run full bootstrap using ops-maintained NoETL playbook
     log_info "Running NoETL bootstrap (this may take several minutes)..."
-    noetl run automation/boot.yaml
+    noetl run "$OPS_AUTOMATION_DIR/boot.yaml"
 
     log_success "NoETL infrastructure ready"
     log_info "NoETL Server API: http://localhost:8082"
@@ -653,6 +661,7 @@ main() {
 
     log_info "Project root: $PROJECT_ROOT"
     log_info "NoETL root: $NOETL_ROOT"
+    log_info "Ops root: $NOETL_OPS_DIR"
     log_info "Venv path: $VENV_PATH"
     echo ""
 
@@ -724,9 +733,9 @@ main() {
     echo "  4. View server logs:     kubectl logs -n noetl -l app=noetl-server -f"
     echo ""
     echo "Common Playbook Commands:"
-    echo "  noetl run automation/boot.yaml                    # Full bootstrap"
-    echo "  noetl run automation/destroy.yaml                 # Destroy cluster"
-    echo "  noetl run automation/infrastructure/gateway.yaml --set action=status"
+    echo "  noetl run $OPS_AUTOMATION_DIR/boot.yaml                    # Full bootstrap"
+    echo "  noetl run $OPS_AUTOMATION_DIR/destroy.yaml                 # Destroy cluster"
+    echo "  noetl run $OPS_AUTOMATION_DIR/infrastructure/gateway.yaml --set action=status"
     echo ""
     echo "Execute Playbooks:"
     echo "  noetl execute playbook <name> --host localhost --port 8082"

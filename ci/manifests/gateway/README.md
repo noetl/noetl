@@ -51,22 +51,22 @@ Kubernetes manifests for deploying the NoETL Gateway (Rust API + Static UI) to k
 
 ```bash
 # Build and deploy everything
-noetl run automation/infrastructure/gateway.yaml --set action=deploy-all
+noetl run ../ops/automation/infrastructure/gateway.yaml --set action=deploy-all
 
 # Or step by step:
-noetl run automation/infrastructure/gateway.yaml --set action=build-image    # Build Gateway Docker image
-noetl run automation/infrastructure/gateway.yaml --set action=deploy         # Deploy Gateway API
-noetl run automation/infrastructure/gateway.yaml --set action=deploy-ui      # Deploy Gateway UI
+noetl run ../ops/automation/infrastructure/gateway.yaml --set action=build-image    # Build Gateway Docker image
+noetl run ../ops/automation/infrastructure/gateway.yaml --set action=deploy         # Deploy Gateway API
+noetl run ../ops/automation/infrastructure/gateway.yaml --set action=deploy-ui      # Deploy Gateway UI
 
 # Check status
-noetl run automation/infrastructure/gateway.yaml --set action=status
+noetl run ../ops/automation/infrastructure/gateway.yaml --set action=status
 
 # View logs
-noetl run automation/infrastructure/gateway.yaml --set action=logs
-noetl run automation/infrastructure/gateway.yaml --set action=logs-ui
+noetl run ../ops/automation/infrastructure/gateway.yaml --set action=logs
+noetl run ../ops/automation/infrastructure/gateway.yaml --set action=logs-ui
 
 # Test endpoints
-noetl run automation/infrastructure/gateway.yaml --set action=test
+noetl run ../ops/automation/infrastructure/gateway.yaml --set action=test
 ```
 
 ## Access URLs
@@ -141,21 +141,21 @@ Gateway API deployment:
 ```bash
 # Edit tests/fixtures/gateway_ui/*.html, *.js, *.css
 # Restart UI pod to reload
-noetl run automation/infrastructure/gateway.yaml --set action=restart
+noetl run ../ops/automation/infrastructure/gateway.yaml --set action=restart
 ```
 
 **Edit Gateway code:**
 ```bash
 # Edit ../gateway/src/**/*.rs
 # Rebuild and redeploy
-noetl run automation/infrastructure/gateway.yaml --set action=redeploy
+noetl run ../ops/automation/infrastructure/gateway.yaml --set action=redeploy
 ```
 
 ## Troubleshooting
 
 **Gateway not starting:**
 ```bash
-noetl run automation/infrastructure/gateway.yaml --set action=logs
+noetl run ../ops/automation/infrastructure/gateway.yaml --set action=logs
 # Check NoETL server is running
 kubectl get pods -n noetl
 ```
@@ -165,7 +165,7 @@ kubectl get pods -n noetl
 # Check mount
 kubectl exec -n gateway deployment/gateway-ui -- ls -la /usr/share/nginx/html
 # Restart UI
-noetl run automation/infrastructure/gateway.yaml --set action=restart
+noetl run ../ops/automation/infrastructure/gateway.yaml --set action=restart
 ```
 
 **CORS errors:**
@@ -183,5 +183,5 @@ lsof -i :8090
 
 ```bash
 # Remove Gateway completely
-noetl run automation/infrastructure/gateway.yaml --set action=remove
+noetl run ../ops/automation/infrastructure/gateway.yaml --set action=remove
 ```

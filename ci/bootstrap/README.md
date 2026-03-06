@@ -112,7 +112,7 @@ your-project/
     │   ├── manifests/              # K8s manifests
     │   └── vmstack/                # Monitoring configs
     ├── noetl/                      # NoETL Python package
-    └── automation/                 # NoETL playbooks for infrastructure
+    └── ../ops/automation/                 # NoETL playbooks for infrastructure
 ```
 
 ## Using NoETL Playbooks
@@ -121,23 +121,23 @@ NoETL provides automation playbooks for infrastructure management:
 
 ```bash
 # Bootstrap full environment
-noetl run automation/setup/bootstrap.yaml
+noetl run ../ops/automation/setup/bootstrap.yaml
 
 # Manage Kind cluster
-noetl run automation/infrastructure/kind.yaml --set action=create
-noetl run automation/infrastructure/kind.yaml --set action=delete
+noetl run ../ops/automation/infrastructure/kind.yaml --set action=create
+noetl run ../ops/automation/infrastructure/kind.yaml --set action=delete
 
 # Deploy PostgreSQL
-noetl run automation/infrastructure/postgres.yaml --set action=deploy
+noetl run ../ops/automation/infrastructure/postgres.yaml --set action=deploy
 
 # Deploy NoETL services
-noetl run automation/deployment/noetl-stack.yaml --set action=deploy
+noetl run ../ops/automation/deployment/noetl-stack.yaml --set action=deploy
 
 # Redeploy after code changes
-noetl run automation/development/noetl.yaml --set action=redeploy
+noetl run ../ops/automation/development/noetl.yaml --set action=redeploy
 
 # Build Docker image
-noetl run automation/development/docker.yaml --set action=build
+noetl run ../ops/automation/development/docker.yaml --set action=build
 ```
 
 ## Python Environment
@@ -223,12 +223,12 @@ Options:
 
 ```bash
 # Full setup (first time)
-noetl run automation/setup/bootstrap.yaml
+noetl run ../ops/automation/setup/bootstrap.yaml
 
 # Or incremental
-noetl run automation/infrastructure/kind.yaml --set action=create
-noetl run automation/infrastructure/postgres.yaml --set action=deploy
-noetl run automation/deployment/noetl-stack.yaml --set action=deploy
+noetl run ../ops/automation/infrastructure/kind.yaml --set action=create
+noetl run ../ops/automation/infrastructure/postgres.yaml --set action=deploy
+noetl run ../ops/automation/deployment/noetl-stack.yaml --set action=deploy
 ```
 
 ### 2. Register Credentials
@@ -273,11 +273,11 @@ noetl execute playbook my_workflow \
 open http://localhost:8083
 
 # Grafana (monitoring)
-noetl run automation/infrastructure/monitoring.yaml --set action=port-forward
+noetl run ../ops/automation/infrastructure/monitoring.yaml --set action=port-forward
 open http://localhost:3000
 
 # PostgreSQL
-noetl run automation/infrastructure/postgres.yaml --set action=port-forward
+noetl run ../ops/automation/infrastructure/postgres.yaml --set action=port-forward
 psql -h localhost -U noetl -d noetl
 ```
 
@@ -357,8 +357,8 @@ newgrp docker
 docker info
 
 # Delete and recreate cluster
-noetl run automation/infrastructure/kind.yaml --set action=delete
-noetl run automation/infrastructure/kind.yaml --set action=create
+noetl run ../ops/automation/infrastructure/kind.yaml --set action=delete
+noetl run ../ops/automation/infrastructure/kind.yaml --set action=create
 ```
 
 ### Python Dependencies Conflict

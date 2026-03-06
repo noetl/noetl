@@ -38,7 +38,7 @@ brew install helm
 
 ```bash
 # Complete environment setup (build + deploy all components)
-noetl run automation/setup/bootstrap.yaml
+noetl run ../ops/automation/setup/bootstrap.yaml
 ```
 
 This single command:
@@ -56,13 +56,13 @@ This single command:
 ### 1. Create **noetl** kind cluster
 
 ```bash
-noetl run automation/infrastructure/kind.yaml --set action=create
+noetl run ../ops/automation/infrastructure/kind.yaml --set action=create
 ```
 
 ### 2. Deploy Postgres
 
 ```bash
-noetl run automation/infrastructure/postgres.yaml --set action=deploy
+noetl run ../ops/automation/infrastructure/postgres.yaml --set action=deploy
 ```
 
 This command deploys Postgres 17.4 to the **noetl** cluster.
@@ -156,7 +156,7 @@ noetl k8s remove
 ### Using Automation Playbook (Recommended)
 
 ```bash
-noetl run automation/infrastructure/monitoring.yaml --set action=deploy
+noetl run ../ops/automation/infrastructure/monitoring.yaml --set action=deploy
 ```
 
 ### Manual Installation
@@ -215,69 +215,69 @@ Deploy ClickHouse, Qdrant, and NATS:
 
 ```bash
 # Deploy all observability services
-noetl run automation/infrastructure/observability.yaml --set action=deploy
+noetl run ../ops/automation/infrastructure/observability.yaml --set action=deploy
 
 # Check status
-noetl run automation/infrastructure/observability.yaml --set action=status
+noetl run ../ops/automation/infrastructure/observability.yaml --set action=status
 
 # Deploy individual services
-noetl run automation/infrastructure/clickhouse.yaml --set action=deploy
-noetl run automation/infrastructure/qdrant.yaml --set action=deploy
-noetl run automation/infrastructure/nats.yaml --set action=deploy
+noetl run ../ops/automation/infrastructure/clickhouse.yaml --set action=deploy
+noetl run ../ops/automation/infrastructure/qdrant.yaml --set action=deploy
+noetl run ../ops/automation/infrastructure/nats.yaml --set action=deploy
 ```
 
 ## Automation Playbooks Reference
 
-All automation playbooks are located in the `automation/` directory:
+All automation playbooks are located in the `../ops/automation/` directory:
 
 ### Setup
-- `automation/setup/bootstrap.yaml` - Complete environment setup
-- `automation/setup/destroy.yaml` - Tear down environment
+- `../ops/automation/setup/bootstrap.yaml` - Complete environment setup
+- `../ops/automation/setup/destroy.yaml` - Tear down environment
 
 ### Infrastructure
-- `automation/infrastructure/kind.yaml` - Kind cluster management
-- `automation/infrastructure/postgres.yaml` - PostgreSQL operations
-- `automation/infrastructure/monitoring.yaml` - VictoriaMetrics stack
-- `automation/infrastructure/observability.yaml` - Unified observability control
-- `automation/infrastructure/clickhouse.yaml` - ClickHouse operations
-- `automation/infrastructure/qdrant.yaml` - Qdrant operations
-- `automation/infrastructure/nats.yaml` - NATS operations
+- `../ops/automation/infrastructure/kind.yaml` - Kind cluster management
+- `../ops/automation/infrastructure/postgres.yaml` - PostgreSQL operations
+- `../ops/automation/infrastructure/monitoring.yaml` - VictoriaMetrics stack
+- `../ops/automation/infrastructure/observability.yaml` - Unified observability control
+- `../ops/automation/infrastructure/clickhouse.yaml` - ClickHouse operations
+- `../ops/automation/infrastructure/qdrant.yaml` - Qdrant operations
+- `../ops/automation/infrastructure/nats.yaml` - NATS operations
 
 ### Deployment
-- `automation/deployment/noetl-stack.yaml` - NoETL service deployment
+- `../ops/automation/deployment/noetl-stack.yaml` - NoETL service deployment
 
 ### Development
-- `automation/development/docker.yaml` - Docker image building
-- `automation/development/noetl.yaml` - Development workflow
+- `../ops/automation/development/docker.yaml` - Docker image building
+- `../ops/automation/development/noetl.yaml` - Development workflow
 
 ### Common Actions
 
 ```bash
 # Create cluster
-noetl run automation/infrastructure/kind.yaml --set action=create
+noetl run ../ops/automation/infrastructure/kind.yaml --set action=create
 
 # Delete cluster
-noetl run automation/infrastructure/kind.yaml --set action=delete
+noetl run ../ops/automation/infrastructure/kind.yaml --set action=delete
 
 # Deploy component
-noetl run automation/infrastructure/postgres.yaml --set action=deploy
+noetl run ../ops/automation/infrastructure/postgres.yaml --set action=deploy
 
 # Remove component
-noetl run automation/infrastructure/postgres.yaml --set action=remove
+noetl run ../ops/automation/infrastructure/postgres.yaml --set action=remove
 
 # Check status
-noetl run automation/infrastructure/postgres.yaml --set action=status
+noetl run ../ops/automation/infrastructure/postgres.yaml --set action=status
 
 # Port forward
-noetl run automation/infrastructure/postgres.yaml --set action=port-forward
+noetl run ../ops/automation/infrastructure/postgres.yaml --set action=port-forward
 ```
 
 ## Teardown
 
 ```bash
 # Destroy all infrastructure
-noetl run automation/setup/destroy.yaml
+noetl run ../ops/automation/setup/destroy.yaml
 
 # Or just delete the Kind cluster
-noetl run automation/infrastructure/kind.yaml --set action=delete
+noetl run ../ops/automation/infrastructure/kind.yaml --set action=delete
 ```

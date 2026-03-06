@@ -9,6 +9,7 @@ set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 NOETL_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+OPS_ROOT="$(cd "$NOETL_ROOT/.." && pwd)/ops"
 TEST_PROJECT="/tmp/noetl-bootstrap-test-$$"
 
 # Colors
@@ -55,6 +56,17 @@ main() {
     }
     log_success "NoETL submodule added"
     echo ""
+
+    # 2b. Add ops repo (automation moved out of noetl)
+    if [[ -d "$OPS_ROOT" ]]; then
+        log_info "Step 2b: Adding ops repository"
+        git submodule add "$OPS_ROOT" ops 2>/dev/null || cp -r "$OPS_ROOT" ops
+        log_success "Ops repository added"
+        echo ""
+    else
+        log_error "Ops repository not found at $OPS_ROOT"
+        exit 1
+    fi
 
     # 3. Copy bootstrap files
     log_info "Step 3: Copying bootstrap files"
@@ -150,19 +162,19 @@ EOF
 
     # 10. Verify NoETL automation playbooks exist
     log_info "Step 10: Verifying NoETL automation playbooks"
-    if [[ -f noetl/automation/setup/bootstrap.yaml ]]; then
+    if [[ -f ops/automation/setup/bootstrap.yaml ]]; then
         log_success "Bootstrap playbook found"
     else
         log_error "Bootstrap playbook not found"
     fi
 
-    if [[ -f noetl/automation/infrastructure/kind.yaml ]]; then
+    if [[ -f ops/automation/infrastructure/kind.yaml ]]; then
         log_success "Kind playbook found"
     else
         log_error "Kind playbook not found"
     fi
 
-    if [[ -f noetl/automation/infrastructure/postgres.yaml ]]; then
+    if [[ -f ops/automation/infrastructure/postgres.yaml ]]; then
         log_success "Postgres playbook found"
     else
         log_error "Postgres playbook not found"
@@ -183,7 +195,7 @@ EOF
     echo "  cd $TEST_PROJECT"
     echo "  source .venv/bin/activate"
     echo "  noetl --help"
-    echo "  noetl run noetl/automation/setup/bootstrap.yaml"
+    echo "  noetl run ops/automation/setup/bootstrap.yaml"
     echo ""
 }
 

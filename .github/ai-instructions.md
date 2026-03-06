@@ -40,11 +40,11 @@ NoETL is a workflow automation framework for data processing and MLOps orchestra
 
 **Setup & Testing:**
 ```bash
-noetl run automation/boot.yaml                                   # Complete K8s dev environment (build + deploy all)
-noetl run automation/infrastructure/postgres.yaml --set action=deploy    # Deploy PostgreSQL
-noetl run automation/development/noetl.yaml --set action=deploy          # Deploy NoETL server and workers
-noetl run automation/observability/all.yaml --set action=deploy          # Deploy ClickHouse, Qdrant, NATS
-noetl run automation/test/pagination-server.yaml --set action=full       # Deploy pagination test server
+noetl run ../ops/automation/boot.yaml                                   # Complete K8s dev environment (build + deploy all)
+noetl run ../ops/automation/infrastructure/postgres.yaml --set action=deploy    # Deploy PostgreSQL
+noetl run ../ops/automation/development/noetl.yaml --set action=deploy          # Deploy NoETL server and workers
+noetl run ../ops/automation/infrastructure/observability.yaml --set action=deploy  # Deploy ClickHouse, Qdrant, NATS
+noetl run ../ops/automation/test/pagination-server.yaml --set action=full       # Deploy pagination test server
 ```
 
 **Local Development (Rust CLI Recommended):**
@@ -67,9 +67,9 @@ noetl db init                  # Initialize database schema
 noetl db validate              # Validate database schema
 
 # Automation playbook commands
-noetl run automation/boot.yaml                   # Full K8s dev environment bootstrap
-noetl run automation/destroy.yaml                # Destroy cluster and resources
-noetl run automation/infrastructure/gateway.yaml --set action=status  # Check gateway
+noetl run ../ops/automation/boot.yaml                   # Full K8s dev environment bootstrap
+noetl run ../ops/automation/destroy.yaml                # Destroy cluster and resources
+noetl run ../ops/automation/infrastructure/gateway.yaml --set action=status  # Check gateway
 ```
 
 ## Project-Specific Patterns
@@ -274,10 +274,10 @@ See `tests/fixtures/playbooks/script_execution/` and `docs/script_attribute_desi
 - `noetl/tools/` - All action type implementations
 
 **Development Infrastructure:**
-- `automation/` - NoETL playbooks for infrastructure management
-- `automation/boot.yaml` - Full K8s environment bootstrap
-- `automation/destroy.yaml` - Cluster teardown
-- `automation/infrastructure/` - Individual service playbooks (postgres, gateway, nats, etc.)
+- `../ops/automation/` - NoETL playbooks for infrastructure management
+- `../ops/automation/boot.yaml` - Full K8s environment bootstrap
+- `../ops/automation/destroy.yaml` - Cluster teardown
+- `../ops/automation/infrastructure/` - Individual service playbooks (postgres, gateway, nats, etc.)
 - `ci/kind/config.yaml` - **Kind cluster configuration with NodePort mappings** (DO NOT use port-forward, ports are permanently mapped here)
 - `docker/` - Container build scripts for all components
 - `docker/test-server/` - Pagination test server Dockerfile
@@ -358,9 +358,9 @@ See `tests/fixtures/playbooks/script_execution/` and `docs/script_attribute_desi
   - Access: Client (NodePort 30422), Monitoring (NodePort 30822)
   - Features: Stream persistence, KV store, credentials (noetl/noetl)
 - **Commands**:
-  - `noetl run automation/infrastructure/clickhouse.yaml --set action=deploy`
-  - `noetl run automation/infrastructure/qdrant.yaml --set action=deploy`
-  - `noetl run automation/infrastructure/nats.yaml --set action=deploy`
+  - `noetl run ../ops/automation/infrastructure/clickhouse.yaml --set action=deploy`
+  - `noetl run ../ops/automation/infrastructure/qdrant.yaml --set action=deploy`
+  - `noetl run ../ops/automation/infrastructure/nats.yaml --set action=deploy`
 - **Documentation**: See `docs/observability_services.md` for complete guide
 
 **Test Infrastructure:**
@@ -368,9 +368,9 @@ See `tests/fixtures/playbooks/script_execution/` and `docs/script_attribute_desi
   - Access: ClusterIP (paginated-api.test-server.svc.cluster.local:5555), NodePort (localhost:30555)
   - Endpoints: `/api/v1/assessments` (page-based), `/api/v1/users` (offset-based), `/api/v1/events` (cursor-based), `/api/v1/flaky` (retry testing)
   - Commands:
-    - Deploy: `noetl run automation/test/pagination-server.yaml --set action=full`
-    - Status: `noetl run automation/test/pagination-server.yaml --set action=status`
-    - Test: `noetl run automation/test/pagination-server.yaml --set action=test`
+    - Deploy: `noetl run ../ops/automation/test/pagination-server.yaml --set action=full`
+    - Status: `noetl run ../ops/automation/test/pagination-server.yaml --set action=status`
+    - Test: `noetl run ../ops/automation/test/pagination-server.yaml --set action=test`
     - Logs: `kubectl logs -n test-server -l app=paginated-api`
   - Configuration: `ci/manifests/test-server/`, `docker/test-server/Dockerfile`
 

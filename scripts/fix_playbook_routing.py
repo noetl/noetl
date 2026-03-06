@@ -42,10 +42,10 @@ def fix_playbook(filepath):
 
 if __name__ == '__main__':
     files = [
-        'automation/infrastructure/clickhouse.yaml',
-        'automation/infrastructure/qdrant.yaml',
-        'automation/infrastructure/monitoring.yaml',
-        'automation/infrastructure/gateway.yaml'
+        '../ops/automation/infrastructure/clickhouse.yaml',
+        '../ops/automation/infrastructure/qdrant.yaml',
+        '../ops/automation/infrastructure/monitoring.yaml',
+        '../ops/automation/infrastructure/gateway.yaml'
     ]
     
     for filepath in files:

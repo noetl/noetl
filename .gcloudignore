@@ -55,6 +55,5 @@ homebrew-tap/
 # Large unnecessary directories for container builds
 documentation/docs/
 ci/
-automation/playbooks/
 
 # Rust components are maintained in dedicated repositories outside this repo.

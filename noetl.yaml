@@ -2,8 +2,8 @@ apiVersion: noetl.io/v2
 kind: Playbook
 metadata:
   name: noetl_automation_main
-  path: automation/main
-  description: Main automation entry point for NoETL development workflows
+  path: ops/automation/main
+  description: Main automation entry point for NoETL development workflows (delegates to ops repo)
 workload:
   registry: "local"
   image_name: "noetl"
@@ -45,8 +45,8 @@ workflow:
           echo "  noetl run dev"
           echo ""
           echo "Or with explicit paths:"
-          echo "  noetl run automation/main.yaml --set target=bootstrap"
-          echo "  noetl run automation/setup/bootstrap.yaml"
+          echo "  noetl run noetl.yaml --set target=bootstrap"
+          echo "  noetl run ../ops/automation/setup/bootstrap.yaml"
           echo ""
           echo "Available targets:"
           echo "  boot        - Complete K8s environment setup (alias: bootstrap)"
@@ -59,13 +59,13 @@ workflow:
     desc: Run complete bootstrap workflow
     tool:
       kind: playbook
-      path: automation/setup/bootstrap.yaml
+      path: ../ops/automation/setup/bootstrap.yaml
 
   - step: destroy
     desc: Run destroy workflow
     tool:
       kind: playbook
-      path: automation/setup/destroy.yaml
+      path: ../ops/automation/setup/destroy.yaml
 
   - step: quick_dev
     desc: Quick development cycle

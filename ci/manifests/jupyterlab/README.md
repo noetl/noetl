@@ -6,7 +6,7 @@ Quick reference for using JupyterLab to run and analyze NoETL regression tests.
 
 ```bash
 # Deploy JupyterLab to kind cluster
-noetl run automation/infrastructure/jupyterlab.yaml --set action=full
+noetl run ../ops/automation/infrastructure/jupyterlab.yaml --set action=full
 ```
 
 ## Access
@@ -26,19 +26,19 @@ noetl run automation/infrastructure/jupyterlab.yaml --set action=full
 
 ```bash
 # Check status
-noetl run automation/infrastructure/jupyterlab.yaml --set action=status
+noetl run ../ops/automation/infrastructure/jupyterlab.yaml --set action=status
 
 # View logs
-noetl run automation/infrastructure/jupyterlab.yaml --set action=logs
+noetl run ../ops/automation/infrastructure/jupyterlab.yaml --set action=logs
 
 # Restart
-noetl run automation/infrastructure/jupyterlab.yaml --set action=restart
+noetl run ../ops/automation/infrastructure/jupyterlab.yaml --set action=restart
 
 # Update notebook
-noetl run automation/infrastructure/jupyterlab.yaml --set action=update-notebook
+noetl run ../ops/automation/infrastructure/jupyterlab.yaml --set action=update-notebook
 
 # Remove deployment
-noetl run automation/infrastructure/jupyterlab.yaml --set action=undeploy
+noetl run ../ops/automation/infrastructure/jupyterlab.yaml --set action=undeploy
 ```
 
 ## Tech Stack
@@ -74,11 +74,11 @@ noetl run automation/infrastructure/jupyterlab.yaml --set action=undeploy
 kubectl get pods -n noetl -l app=jupyterlab
 
 # Connection issues
-noetl run automation/infrastructure/jupyterlab.yaml --set action=shell
+noetl run ../ops/automation/infrastructure/jupyterlab.yaml --set action=shell
 # Then test connections inside pod
 
 # Package errors
-noetl run automation/infrastructure/jupyterlab.yaml --set action=restart
+noetl run ../ops/automation/infrastructure/jupyterlab.yaml --set action=restart
 ```
 
 ## Documentation

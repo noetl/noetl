@@ -167,14 +167,14 @@ open http://localhost:8083
 
 **Grafana (monitoring):**
 ```bash
-noetl run automation/infrastructure/monitoring.yaml --set action=port-forward
+noetl run ../ops/automation/infrastructure/monitoring.yaml --set action=port-forward
 open http://localhost:3000
 # Username: admin, Password: admin
 ```
 
 **PostgreSQL:**
 ```bash
-noetl run automation/infrastructure/postgres.yaml --set action=port-forward
+noetl run ../ops/automation/infrastructure/postgres.yaml --set action=port-forward
 psql -h localhost -U noetl -d noetl
 # Password: noetl
 ```
@@ -206,7 +206,7 @@ my-noetl-project/
     │   ├── kind/                   # Kind cluster config
     │   ├── manifests/              # K8s manifests
     │   └── vmstack/                # Monitoring configs
-    ├── automation/                 # NoETL infrastructure playbooks
+    ├── ../ops/automation/                 # NoETL infrastructure playbooks
     └── noetl/                      # NoETL Python package
 ```
 
@@ -214,8 +214,8 @@ my-noetl-project/
 
 ```bash
 # Development
-noetl run automation/setup/bootstrap.yaml           # Full infrastructure setup
-noetl run automation/infrastructure/kind.yaml --set action=status  # Check cluster status
+noetl run ../ops/automation/setup/bootstrap.yaml           # Full infrastructure setup
+noetl run ../ops/automation/infrastructure/kind.yaml --set action=status  # Check cluster status
 
 # Playbooks
 noetl register playbooks/                           # Register all playbooks
@@ -226,7 +226,7 @@ kubectl logs -n noetl deployment/noetl-server       # NoETL server logs
 kubectl logs -n noetl deployment/noetl-worker       # Worker logs
 
 # Cleanup
-noetl run automation/setup/destroy.yaml             # Destroy infrastructure
+noetl run ../ops/automation/setup/destroy.yaml             # Destroy infrastructure
 ```
 
 ## Next Steps
@@ -421,8 +421,8 @@ sudo netstat -tulpn | grep 8083  # Linux
 docker info
 
 # Delete and recreate
-noetl run automation/infrastructure/kind.yaml --set action=delete
-noetl run automation/infrastructure/kind.yaml --set action=create
+noetl run ../ops/automation/infrastructure/kind.yaml --set action=delete
+noetl run ../ops/automation/infrastructure/kind.yaml --set action=create
 ```
 
 ## Support

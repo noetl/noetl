@@ -41,7 +41,7 @@ The Gateway uses a K/V bucket named `sessions` to cache authenticated sessions:
 nats -s nats://noetl:noetl@localhost:30422
 
 # Via port-forward
-noetl run automation/infrastructure/nats.yaml --set action=port-forward
+noetl run ../ops/automation/infrastructure/nats.yaml --set action=port-forward
 nats -s nats://noetl:noetl@localhost:4222
 ```
 
@@ -51,7 +51,7 @@ nats -s nats://noetl:noetl@localhost:4222
 curl http://localhost:30822/varz
 
 # Via port-forward
-noetl run automation/infrastructure/nats.yaml --set action=port-forward
+noetl run ../ops/automation/infrastructure/nats.yaml --set action=port-forward
 open http://localhost:8222
 ```
 
@@ -59,27 +59,27 @@ open http://localhost:8222
 
 Deploy:
 ```bash
-noetl run automation/infrastructure/nats.yaml --set action=deploy
+noetl run ../ops/automation/infrastructure/nats.yaml --set action=deploy
 ```
 
 Check status:
 ```bash
-noetl run automation/infrastructure/nats.yaml --set action=status
+noetl run ../ops/automation/infrastructure/nats.yaml --set action=status
 ```
 
 Health check:
 ```bash
-noetl run automation/infrastructure/nats.yaml --set action=health
+noetl run ../ops/automation/infrastructure/nats.yaml --set action=health
 ```
 
 View streams:
 ```bash
-noetl run automation/infrastructure/nats.yaml --set action=streams
+noetl run ../ops/automation/infrastructure/nats.yaml --set action=streams
 ```
 
 View logs:
 ```bash
-noetl run automation/infrastructure/nats.yaml --set action=logs
+noetl run ../ops/automation/infrastructure/nats.yaml --set action=logs
 ```
 
 ## Configuration

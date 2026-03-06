@@ -165,4 +165,4 @@ echo -e "  2. Update the deployment YAML files to use these images"
 echo -e "  3. Apply deployments: kubectl apply -f ci/manifests/noetl/"
 echo
 echo -e "${YELLOW}Example workflow:${NC}"
-echo -e "  noetl run automation/boot.yaml"
+echo -e "  noetl run ../ops/automation/boot.yaml"
