@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.10.3](https://github.com/noetl/noetl/compare/v2.10.2...v2.10.3) (2026-03-06)
+
+### Bug Fixes
+
+* add agent runtime bridge and catalog agent discovery endpoints ([896864b](https://github.com/noetl/noetl/commit/896864b06e733adae1fc25613a37472f15f93a58))
+* remove in-repo automation and switch operational references to ops ([cac24c7](https://github.com/noetl/noetl/commit/cac24c7de9502e8d08c61d5c2e6ffe7f6595b10c))
+
 ## [2.10.2](https://github.com/noetl/noetl/compare/v2.10.1...v2.10.2) (2026-03-05)
 
 ### Bug Fixes
