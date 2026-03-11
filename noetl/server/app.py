@@ -27,6 +27,7 @@ from noetl.server.auto_resume import (
     resume_interrupted_executions,
     get_auto_resume_metrics_snapshot,
 )
+from noetl.server.command_reaper import run_command_reaper
 
 logger = setup_logger(__name__, include_location=True)
 
@@ -252,6 +253,20 @@ def _create_app(settings: Settings, enable_ui: Optional[bool] = None) -> FastAPI
             except Exception as e:
                 logger.exception(f"Failed to start runtime sweeper: {e}")
 
+            # --------------------------------------------------
+            # Command reaper: recovers commands orphaned by OOMKill/SIGKILL
+            # --------------------------------------------------
+            reaper_task: Optional[asyncio.Task] = None
+            try:
+                logger.info("Starting command reaper background task...")
+                reaper_task = asyncio.create_task(
+                    run_command_reaper(stop_event, server_url),
+                    name="command-reaper",
+                )
+                logger.info("Command reaper background task started successfully")
+            except Exception as e:
+                logger.exception(f"Failed to start command reaper: {e}")
+
             yield
             # Shutdown
             stop_event.set()
@@ -262,6 +277,13 @@ def _create_app(settings: Settings, enable_ui: Optional[bool] = None) -> FastAPI
                         await sweeper_task
                 except Exception as e:
                     logger.exception(f"Critical error during sweeper task shutdown: {e}")
+            if reaper_task:
+                try:
+                    reaper_task.cancel()
+                    with contextlib.suppress(Exception):
+                        await reaper_task
+                except Exception as e:
+                    logger.exception(f"Critical error during command reaper shutdown: {e}")
             if auto_resume_task:
                 try:
                     auto_resume_task.cancel()
