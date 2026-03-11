@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.10.4](https://github.com/noetl/noetl/compare/v2.10.3...v2.10.4) (2026-03-11)
+
+### Bug Fixes
+
+* add amadeus ai token smoke fixture playbook ([582ca10](https://github.com/noetl/noetl/commit/582ca102ed6dfb7771cb717986d71c6e20a9028a))
+* add command reaper to recover commands orphaned by OOMKill/SIGKILL ([b7dbe6e](https://github.com/noetl/noetl/commit/b7dbe6e9f80feaf837abdd272156dc475ffaf114))
+
 ## [2.10.3](https://github.com/noetl/noetl/compare/v2.10.2...v2.10.3) (2026-03-06)
 
 ### Bug Fixes
