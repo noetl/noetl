@@ -1,13 +1,14 @@
     ip2loc: "US"
     proxyRemoteSsl: true
-    proxyRemoteHost: "https://ndcdyn.interactivebrokers.com"
+    proxyRemoteHost: "https://api.ibkr.com"
     listenPort: 5000
     listenSsl: true
+    ccp: false
     svcEnvironment: "v1"
     sslCert: "vertx.jks"
     sslPwd: "mywebapi"
     authDelay: 3000
-    portalBaseURL: "/portal.proxy"
+    portalBaseURL: ""
     serverOptions:
         blockedThreadCheckInterval: 1000000
         eventLoopPoolSize: 20
@@ -22,8 +23,6 @@
           index: "index.html"
     ips:
       allow:
-        - 10.*
-        - 172.*
         - 192.*
         - 131.216.*
         - 127.0.0.1
