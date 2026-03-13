@@ -1,0 +1,397 @@
+apiVersion: noetl.io/v2
+kind: Playbook
+
+metadata:
+  name: quantum_cudaq_ai_pipeline
+  path: tests/quantum/cudaq_ai_pipeline
+  description: NVIDIA CUDA-Q simulation orchestrated through NoETL with AI summarization and Postgres persistence
+  version: "10.1"
+  labels:
+    domain: quantum
+    integration: cudaq_ai_meta
+    tier: showcase
+
+executor:
+  profile: auto
+  version: noetl-runtime/1
+  requires:
+    tools: [python, http, postgres]
+    features: [result_storage, ai_meta]
+  spec:
+    entry_step: start
+    no_next_is_error: false
+    policy:
+      defaults:
+        timeout_s: 120
+      results:
+        reference_first: true
+
+workload:
+  problem_catalog_url: "https://quantum-demo.example.com/problems"
+  problem_id: "maxcut-8-node"
+  cudaq_target: "cudaq:sim"
+  sweeps:
+    - circuit_depth: 2
+      angle: 0.35
+      shots: 1024
+    - circuit_depth: 3
+      angle: 0.75
+      shots: 2048
+  enable_ai_review: true
+  ai_review_prompt: "Explain how the observed bitstrings support the MaxCut objective and flag drifts."
+  analysis_agent: "ai-meta/quantum-scout"
+  postgres_auth: pg_test
+  postgres_table: "public.quantum_results"
+  http_endpoint: "https://noetl-mesh.example.com/quantum/results"
+  http_auth: service_mesh
+  retention_days: 7
+  tags: ["cudaq", "ai-meta", "quantum-sim"]
+
+workflow:
+  - step: start
+    desc: Validate workload and seed execution context
+    spec:
+      policy:
+        admit:
+          mode: exclusive
+          rules:
+            - when: "{{ sweeps and (sweeps | length) <= 64 }}"
+              then: { allow: true }
+            - else:
+                then: { allow: false }
+    tool:
+      kind: python
+      args:
+        sweeps: "{{ sweeps }}"
+        tags: "{{ tags }}"
+      code: |
+        import datetime as dt
+        accepted = {
+            "status": "ok",
+            "received": len(sweeps or []),
+            "labels": tags or [],
+            "accepted_at": dt.datetime.utcnow().isoformat()
+        }
+        result = accepted
+      spec:
+        policy:
+          rules:
+            - else:
+                then:
+                  do: continue
+                  set_ctx:
+                    simulations: []
+                    ai_notes: []
+    next:
+      spec:
+        mode: exclusive
+      arcs:
+        - step: fetch_problem
+          when: "{{ event.name == 'call.done' }}"
+
+  - step: fetch_problem
+    desc: Retrieve quantum problem metadata for CUDA-Q kernel generation
+    tool:
+      kind: http
+      method: GET
+      url: "{{ problem_catalog_url }}/{{ problem_id }}"
+      headers:
+        Accept: application/json
+      spec:
+        policy:
+          rules:
+            - when: "{{ outcome.status == 'error' and outcome.http.status in [429, 500, 502, 503] }}"
+              then:
+                do: retry
+                attempts: 3
+                delay: 1.5
+                backoff: exponential
+            - when: "{{ outcome.status == 'error' }}"
+              then:
+                do: fail
+            - else:
+                then:
+                  do: continue
+                  set_ctx:
+                    problem_spec: "{{ outcome.data }}"
+    next:
+      spec:
+        mode: exclusive
+      arcs:
+        - step: prepare_kernel
+          when: "{{ event.name == 'call.done' }}"
+
+  - step: prepare_kernel
+    desc: Build CUDA-Q kernel template and parameter sweep plan
+    tool:
+      kind: python
+      args:
+        problem: "{{ ctx.problem_spec or {} }}"
+        sweeps: "{{ sweeps }}"
+      code: |
+        import datetime as dt
+        import textwrap
+        metadata = problem or {}
+        default_qubits = metadata.get("qubits", 2)
+        kernel_source = metadata.get("kernel_source") or textwrap.dedent(
+            f"""
+            import cudaq
+
+            @cudaq.kernel
+            def maxcut_kernel(theta: float, depth: int, angle: float):
+                q = cudaq.qvector({default_qubits})
+                for layer in range(depth):
+                    i = layer % {default_qubits}
+                    j = (layer + 1) % {default_qubits}
+                    cudaq.x(q[i])
+                    cudaq.cz(q[i], q[j])
+                    cudaq.rx(angle, q[j])
+                    cudaq.rz(theta, q[i])
+            """
+        ).strip()
+
+        plan = []
+        for idx, sweep in enumerate(sweeps or []):
+            plan.append({
+                "run_id": f"run-{idx}",
+                "shots": sweep.get("shots", 1024),
+                "angle": sweep.get("angle", 0.5),
+                "depth": sweep.get("circuit_depth", metadata.get("default_depth", 2)),
+                "metadata": {
+                    "problem_id": metadata.get("id", "synthetic"),
+                    "generated_at": dt.datetime.utcnow().isoformat()
+                }
+            })
+
+        result = {
+            "kernel_source": kernel_source,
+            "run_plan": plan,
+            "qubits": default_qubits,
+            "problem": metadata
+        }
+    spec:
+      policy:
+        rules:
+          - else:
+              then:
+                do: continue
+                set_ctx:
+                  kernel_source: "{{ outcome.result.kernel_source }}"
+                  run_plan: "{{ outcome.result.run_plan }}"
+                  qubits: "{{ outcome.result.qubits }}"
+    next:
+      spec:
+        mode: exclusive
+      arcs:
+        - step: run_simulations
+          when: "{{ event.name == 'call.done' }}"
+
+  - step: run_simulations
+    desc: Execute CUDA-Q sweeps and capture counts per run
+    loop:
+      in: "{{ ctx.run_plan }}"
+      iterator: run
+      spec:
+        mode: parallel
+        max_in_flight: 3
+        policy:
+          exec: auto
+          results:
+            preserve_order: true
+    tool:
+      kind: python
+      args:
+        kernel_source: "{{ ctx.kernel_source }}"
+        run_config: "{{ iter.run }}"
+        cudaq_target: "{{ cudaq_target }}"
+      code: |
+        import datetime as dt
+        import math
+        import random
+        run = run_config or {}
+        shots = int(run.get("shots", 1024))
+        theta = float(run.get("angle", 0.5))
+        depth = int(run.get("depth", 2))
+        backend_name = cudaq_target
+        counts = {}
+        expectation = 0.0
+        try:
+            import cudaq
+            exec(kernel_source, globals())
+            kernel = globals().get("maxcut_kernel") or list(cudaq.kernels())[0]
+            target = cudaq.get_target(cudaq_target)
+            target.shots = shots
+            measurement = cudaq.sample(kernel, theta, depth, theta, shots=shots, target=target)
+            counts = dict(measurement)
+            expectation = measurement.expectation_z()
+            backend_name = getattr(target, "name", cudaq_target)
+        except Exception as exc:
+            # Fallback synthetic counts keep downstream steps deterministic during tests
+            backend_name = f"simulated::{type(exc).__name__}"
+            zero = shots // 2
+            counts = {"00": zero, "11": shots - zero}
+            expectation = 0.0
+
+        result = {
+            "run_id": run.get("run_id"),
+            "shots": shots,
+            "angle": theta,
+            "depth": depth,
+            "counts": counts,
+            "expectation": expectation,
+            "backend": backend_name,
+            "finished_at": dt.datetime.utcnow().isoformat()
+        }
+    spec:
+      policy:
+        rules:
+          - when: "{{ outcome.status == 'error' }}"
+            then:
+              do: retry
+              attempts: 2
+              delay: 2
+              backoff: linear
+          - else:
+              then:
+                do: continue
+                set_ctx:
+                  simulations: "{{ (ctx.simulations or []) + [outcome.result] }}"
+    next:
+      spec:
+        mode: exclusive
+      arcs:
+        - step: ai_analysis
+          when: "{{ event.name == 'loop.done' }}"
+
+  - step: ai_analysis
+    desc: Summarize quantum outcomes with AI Meta agent context
+    tool:
+      kind: python
+      args:
+        simulations: "{{ ctx.simulations }}"
+        ai_review_prompt: "{{ ai_review_prompt }}"
+        enable_ai_review: "{{ enable_ai_review }}"
+        analysis_agent: "{{ analysis_agent }}"
+      code: |
+        from statistics import mean
+        sims = simulations or []
+        aggregates = {
+            "runs": len(sims),
+            "average_expectation": mean([s.get("expectation", 0.0) for s in sims]) if sims else 0.0,
+            "best_run": max(sims, key=lambda s: s.get("expectation", 0.0), default={})
+        }
+        summary = {
+            "agent": analysis_agent,
+            "prompt": ai_review_prompt,
+            "insights": [],
+            "actions": ["Persist payload to Postgres", "POST inference summary to HTTP endpoint"]
+        }
+        summary["insights"].append(
+            f"Best expectation {aggregates['best_run'].get('expectation', 0.0):.4f} from {aggregates['best_run'].get('run_id', 'n/a')}"
+        )
+        summary["insights"].append(
+            f"Average expectation {aggregates['average_expectation']:.4f} across {aggregates['runs']} runs"
+        )
+        if not enable_ai_review:
+            summary["insights"].append("AI review disabled; using statistical summary only.")
+        result = {
+            "summary": summary,
+            "aggregates": aggregates
+        }
+    next:
+      spec:
+        mode: exclusive
+      arcs:
+        - step: persist_results
+          when: "{{ event.name == 'call.done' }}"
+
+  - step: persist_results
+    desc: Store simulation aggregates inside Postgres for governance and replay
+    tool:
+      kind: postgres
+      auth: "{{ postgres_auth }}"
+      command: |
+        CREATE TABLE IF NOT EXISTS {{ postgres_table }} (
+          problem_id TEXT,
+          target TEXT,
+          runs INTEGER,
+          payload JSONB,
+          ai_summary JSONB,
+          recorded_at TIMESTAMPTZ DEFAULT NOW(),
+          PRIMARY KEY (problem_id, target)
+        );
+
+        INSERT INTO {{ postgres_table }} (problem_id, target, runs, payload, ai_summary, recorded_at)
+        VALUES (
+          '{{ problem_id }}',
+          '{{ cudaq_target }}',
+          {{ ai_analysis.result.aggregates.runs }},
+          '{{ ctx.simulations | tojson | replace("'", "''") }}'::jsonb,
+          '{{ ai_analysis.result.summary | tojson | replace("'", "''") }}'::jsonb,
+          NOW()
+        )
+        ON CONFLICT (problem_id, target) DO UPDATE SET
+          runs = EXCLUDED.runs,
+          payload = EXCLUDED.payload,
+          ai_summary = EXCLUDED.ai_summary,
+          recorded_at = NOW();
+    next:
+      spec:
+        mode: exclusive
+      arcs:
+        - step: publish_results
+          when: "{{ event.name == 'call.done' }}"
+
+  - step: publish_results
+    desc: Send AI summary and metadata back to HTTP collaborator services
+    tool:
+      kind: http
+      method: POST
+      url: "{{ http_endpoint }}"
+      auth: "{{ http_auth }}"
+      headers:
+        Content-Type: application/json
+      body:
+        problem_id: "{{ problem_id }}"
+        target: "{{ cudaq_target }}"
+        ai_summary: "{{ ai_analysis.result.summary }}"
+        aggregates: "{{ ai_analysis.result.aggregates }}"
+        simulations: "{{ ctx.simulations }}"
+      spec:
+        policy:
+          rules:
+            - when: "{{ outcome.status == 'error' and outcome.http.status in [408, 500, 503] }}"
+              then:
+                do: retry
+                attempts: 2
+                delay: 2
+            - when: "{{ outcome.status == 'error' }}"
+              then:
+                do: continue
+                set_ctx:
+                  ai_notes: "{{ (ctx.ai_notes or []) + ['HTTP dispatch failed'] }}"
+            - else:
+                then:
+                  do: continue
+                  set_ctx:
+                    ai_notes: "{{ (ctx.ai_notes or []) + ['Dispatch accepted'] }}"
+    next:
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
+          when: "{{ event.name == 'call.done' }}"
+
+  - step: end
+    desc: Finalize orchestration and emit execution digest
+    tool:
+      kind: python
+      args:
+        simulations: "{{ ctx.simulations }}"
+        ai_notes: "{{ ctx.ai_notes }}"
+      code: |
+        result = {
+            "status": "completed",
+            "runs": len(simulations or []),
+            "notes": ai_notes or []
+        }
