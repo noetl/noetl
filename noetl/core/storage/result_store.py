@@ -26,7 +26,9 @@ import asyncio
 import hashlib
 import json
 import gzip
-from typing import Any, Dict, List, Optional, Union
+import os
+from collections import OrderedDict
+from typing import Any, Dict, List, Optional, Union, TYPE_CHECKING
 from datetime import datetime, timedelta, timezone
 
 from noetl.core.storage.models import (
@@ -41,6 +43,9 @@ from noetl.core.storage.extractor import create_preview
 from noetl.core.logger import setup_logger
 
 logger = setup_logger(__name__, include_location=True)
+
+if TYPE_CHECKING:
+    from noetl.core.storage.scope_tracker import ScopeTracker
 
 
 class TempStore:
@@ -63,6 +68,9 @@ class TempStore:
         inline_max_bytes: int = 65536,    # 64KB
         preview_max_bytes: int = 1024,    # 1KB
         nats_client=None,
+        scope_tracker: Optional["ScopeTracker"] = None,
+        max_ref_cache_entries: Optional[int] = None,
+        max_memory_cache_entries: Optional[int] = None,
     ):
         """
         Initialize TempStore.
@@ -73,6 +81,9 @@ class TempStore:
             inline_max_bytes: Max bytes to store inline
             preview_max_bytes: Max bytes for preview
             nats_client: Optional NATS client (lazy initialized if None)
+            scope_tracker: Optional ScopeTracker for lifecycle tracking
+            max_ref_cache_entries: Max TempRef metadata entries to retain in-memory
+            max_memory_cache_entries: Max payload entries to retain in-memory
         """
         self.router = router or default_router
         self.default_ttl_seconds = default_ttl_seconds
@@ -80,11 +91,109 @@ class TempStore:
         self.preview_max_bytes = preview_max_bytes
         self._nats_client = nats_client
 
-        # In-memory cache for step-scoped refs
-        self._memory_cache: Dict[str, bytes] = {}
+        # In-memory caches are LRU and size-bounded to avoid unbounded process growth.
+        self.max_ref_cache_entries = self._resolve_cache_limit(
+            max_ref_cache_entries,
+            env_name="NOETL_TEMPSTORE_MAX_REF_CACHE_ENTRIES",
+            default=50000,
+        )
+        self.max_memory_cache_entries = self._resolve_cache_limit(
+            max_memory_cache_entries,
+            env_name="NOETL_TEMPSTORE_MAX_MEMORY_CACHE_ENTRIES",
+            default=20000,
+        )
 
-        # Projection table cache (TempRef metadata)
-        self._ref_cache: Dict[str, TempRef] = {}
+        self._memory_cache: "OrderedDict[str, bytes]" = OrderedDict()
+        self._ref_cache: "OrderedDict[str, TempRef]" = OrderedDict()
+
+        if scope_tracker is not None:
+            self._scope_tracker = scope_tracker
+        else:
+            try:
+                from noetl.core.storage.scope_tracker import default_tracker
+                self._scope_tracker = default_tracker
+            except Exception:
+                self._scope_tracker = None
+
+    @staticmethod
+    def _resolve_cache_limit(value: Optional[int], env_name: str, default: int) -> int:
+        """Resolve non-negative cache limit from explicit value or environment."""
+        if value is not None:
+            try:
+                return max(0, int(value))
+            except (TypeError, ValueError):
+                return default
+
+        raw_value = os.getenv(env_name)
+        if raw_value in (None, ""):
+            return default
+        try:
+            return max(0, int(raw_value))
+        except ValueError:
+            logger.warning("TEMP: Invalid %s=%r, using default=%s", env_name, raw_value, default)
+            return default
+
+    def _untrack_ref(self, ref_str: str) -> None:
+        """Best-effort scope tracking cleanup for a removed ref."""
+        tracker = getattr(self, "_scope_tracker", None)
+        if not tracker:
+            return
+        try:
+            tracker.unregister_ref(ref_str)
+        except Exception:
+            logger.debug("TEMP: Failed to unregister ref from scope tracker: %s", ref_str)
+
+    def _set_memory_cache(self, ref_str: str, data_bytes: bytes) -> None:
+        """Insert payload in LRU memory cache with bounded capacity."""
+        self._memory_cache[ref_str] = data_bytes
+        self._memory_cache.move_to_end(ref_str)
+
+        if self.max_memory_cache_entries <= 0:
+            return
+
+        while len(self._memory_cache) > self.max_memory_cache_entries:
+            evicted_ref, _ = self._memory_cache.popitem(last=False)
+            self._ref_cache.pop(evicted_ref, None)
+            self._untrack_ref(evicted_ref)
+            logger.debug("TEMP: Evicted memory cache entry %s due to capacity", evicted_ref)
+
+    def _set_ref_cache(
+        self,
+        temp_ref: TempRef,
+        execution_id: str,
+        source_step: Optional[str],
+        parent_execution_id: Optional[str],
+    ) -> None:
+        """Insert TempRef metadata into bounded LRU cache and scope tracker."""
+        self._ref_cache[temp_ref.ref] = temp_ref
+        self._ref_cache.move_to_end(temp_ref.ref)
+
+        tracker = getattr(self, "_scope_tracker", None)
+        if tracker:
+            try:
+                tracker.register_ref(
+                    temp_ref,
+                    execution_id=execution_id,
+                    step_name=source_step,
+                    parent_execution_id=parent_execution_id,
+                )
+            except ValueError:
+                logger.debug(
+                    "TEMP: Skipping scope registration for %s (scope=%s, missing step context)",
+                    temp_ref.ref,
+                    temp_ref.scope.value,
+                )
+            except Exception:
+                logger.debug("TEMP: Failed to register scope for %s", temp_ref.ref)
+
+        if self.max_ref_cache_entries <= 0:
+            return
+
+        while len(self._ref_cache) > self.max_ref_cache_entries:
+            evicted_ref, _ = self._ref_cache.popitem(last=False)
+            self._memory_cache.pop(evicted_ref, None)
+            self._untrack_ref(evicted_ref)
+            logger.debug("TEMP: Evicted ref cache entry %s due to capacity", evicted_ref)
 
     async def _get_nats(self):
         """Get or initialize NATS client."""
@@ -106,6 +215,7 @@ class TempStore:
         store: Optional[StoreTier] = None,
         ttl_seconds: Optional[int] = None,
         source_step: Optional[str] = None,
+        parent_execution_id: Optional[str] = None,
         correlation: Optional[Dict[str, Any]] = None,
         compress: bool = False
     ) -> TempRef:
@@ -171,8 +281,13 @@ class TempStore:
         # Store data in appropriate backend
         await self._store_data(temp_ref, data_bytes)
 
-        # Cache ref metadata
-        self._ref_cache[temp_ref.ref] = temp_ref
+        # Cache ref metadata + register scope tracking consistently for all callers.
+        self._set_ref_cache(
+            temp_ref=temp_ref,
+            execution_id=execution_id,
+            source_step=source_step,
+            parent_execution_id=parent_execution_id,
+        )
 
         logger.info(
             f"TEMP: Stored {name} -> {temp_ref.ref} "
@@ -280,6 +395,7 @@ class TempStore:
 
         # Remove from cache
         self._ref_cache.pop(ref_str, None)
+        self._untrack_ref(ref_str)
 
         logger.debug(f"TEMP: Deleted {ref_str}")
         return True
@@ -347,6 +463,7 @@ class TempStore:
         """Look up TempRef metadata."""
         # Check cache first
         if ref_str in self._ref_cache:
+            self._ref_cache.move_to_end(ref_str)
             return self._ref_cache[ref_str]
 
         # TODO: Query projection table
@@ -429,6 +546,7 @@ class TempStore:
 
         # Try local memory as last resort
         if ref_str in self._memory_cache:
+            self._memory_cache.move_to_end(ref_str)
             data_bytes = self._memory_cache[ref_str]
             if data_bytes[:2] == b'\x1f\x8b':
                 data_bytes = gzip.decompress(data_bytes)
@@ -442,7 +560,7 @@ class TempStore:
         key = temp_ref.to_key()
 
         if store == StoreTier.MEMORY:
-            self._memory_cache[temp_ref.ref] = data_bytes
+            self._set_memory_cache(temp_ref.ref, data_bytes)
             return f"memory://{temp_ref.ref}"
 
         elif store == StoreTier.KV:
@@ -454,7 +572,7 @@ class TempStore:
                 return uri
             except Exception as e:
                 logger.warning(f"TEMP: KV store failed, falling back to memory: {e}")
-                self._memory_cache[temp_ref.ref] = data_bytes
+                self._set_memory_cache(temp_ref.ref, data_bytes)
                 temp_ref.store = StoreTier.MEMORY
                 return f"memory://{temp_ref.ref}"
 
@@ -499,7 +617,7 @@ class TempStore:
 
         else:
             # Default to memory
-            self._memory_cache[temp_ref.ref] = data_bytes
+            self._set_memory_cache(temp_ref.ref, data_bytes)
             return f"memory://{temp_ref.ref}"
 
     async def _store_data_fallback(self, temp_ref: TempRef, data_bytes: bytes, fallback_tier: StoreTier) -> str:
@@ -516,6 +634,7 @@ class TempStore:
             data_bytes = self._memory_cache.get(temp_ref.ref)
             if data_bytes is None:
                 raise KeyError(f"TempRef not found in memory: {temp_ref.ref}")
+            self._memory_cache.move_to_end(temp_ref.ref)
 
         elif store == StoreTier.KV:
             try:

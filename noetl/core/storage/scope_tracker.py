@@ -160,6 +160,34 @@ class ScopeTracker:
             return refs
         return []
 
+    def unregister_ref(self, ref: str) -> None:
+        """
+        Remove a ref from all tracked scopes.
+
+        This is used when TempStore evicts cache entries to keep scope tracking
+        bounded and avoid stale tracker-only references.
+        """
+        removed = False
+
+        for key in list(self._step_scopes.keys()):
+            ctx = self._step_scopes[key]
+            if ref in ctx.refs:
+                ctx.refs.discard(ref)
+                removed = True
+                if not ctx.refs:
+                    del self._step_scopes[key]
+
+        for key in list(self._execution_scopes.keys()):
+            ctx = self._execution_scopes[key]
+            if ref in ctx.refs:
+                ctx.refs.discard(ref)
+                removed = True
+                if not ctx.refs:
+                    del self._execution_scopes[key]
+
+        if removed:
+            logger.debug("SCOPE: Unregistered ref %s", ref)
+
     def get_refs_for_execution_cleanup(self, execution_id: str) -> List[str]:
         """
         Get refs to clean up when execution completes.
