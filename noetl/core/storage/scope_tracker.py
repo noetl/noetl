@@ -66,6 +66,33 @@ class ScopeTracker:
         # root execution for workflow scope
         self._workflow_roots: Dict[str, str] = {}  # execution_id -> root_execution_id
 
+        # ref -> scope keys index for O(1) unregistration on cache eviction
+        self._ref_index: Dict[str, Set[str]] = {}
+
+    @staticmethod
+    def _step_scope_key(execution_id: str, step_name: str) -> str:
+        return f"{execution_id}:{step_name}"
+
+    @staticmethod
+    def _step_ref_index_key(scope_key: str) -> str:
+        return f"step:{scope_key}"
+
+    @staticmethod
+    def _execution_ref_index_key(execution_id: str) -> str:
+        return f"exec:{execution_id}"
+
+    def _index_ref(self, ref: str, ref_index_key: str) -> None:
+        self._ref_index.setdefault(ref, set()).add(ref_index_key)
+
+    def _drop_scope_refs_from_index(self, ref_index_key: str, refs: List[str]) -> None:
+        for ref in refs:
+            scope_keys = self._ref_index.get(ref)
+            if not scope_keys:
+                continue
+            scope_keys.discard(ref_index_key)
+            if not scope_keys:
+                self._ref_index.pop(ref, None)
+
     def register_ref(
         self,
         ref: TempRef,
@@ -88,15 +115,16 @@ class ScopeTracker:
         if scope == Scope.STEP:
             if not step_name:
                 raise ValueError("step_name required for step-scoped refs")
-            key = f"{execution_id}:{step_name}"
-            if key not in self._step_scopes:
-                self._step_scopes[key] = ScopeContext(
+            scope_key = self._step_scope_key(execution_id, step_name)
+            if scope_key not in self._step_scopes:
+                self._step_scopes[scope_key] = ScopeContext(
                     execution_id=execution_id,
                     scope=scope,
                     step_name=step_name
                 )
-            self._step_scopes[key].refs.add(ref_str)
-            logger.debug(f"SCOPE: Registered step-scoped ref {ref_str} for {key}")
+            self._step_scopes[scope_key].refs.add(ref_str)
+            self._index_ref(ref_str, self._step_ref_index_key(scope_key))
+            logger.debug(f"SCOPE: Registered step-scoped ref {ref_str} for {scope_key}")
 
         elif scope == Scope.EXECUTION:
             if execution_id not in self._execution_scopes:
@@ -106,6 +134,7 @@ class ScopeTracker:
                     parent_execution_id=parent_execution_id
                 )
             self._execution_scopes[execution_id].refs.add(ref_str)
+            self._index_ref(ref_str, self._execution_ref_index_key(execution_id))
             logger.debug(f"SCOPE: Registered execution-scoped ref {ref_str}")
 
         elif scope == Scope.WORKFLOW:
@@ -118,6 +147,7 @@ class ScopeTracker:
                     scope=Scope.WORKFLOW
                 )
             self._execution_scopes[root_id].refs.add(ref_str)
+            self._index_ref(ref_str, self._execution_ref_index_key(root_id))
             logger.debug(f"SCOPE: Registered workflow-scoped ref {ref_str} (root={root_id})")
 
             # Track workflow tree
@@ -152,13 +182,47 @@ class ScopeTracker:
         Returns:
             List of ref URIs to clean up
         """
-        key = f"{execution_id}:{step_name}"
-        if key in self._step_scopes:
-            refs = list(self._step_scopes[key].refs)
-            del self._step_scopes[key]
-            logger.debug(f"SCOPE: Step cleanup for {key}: {len(refs)} refs")
+        scope_key = self._step_scope_key(execution_id, step_name)
+        if scope_key in self._step_scopes:
+            refs = list(self._step_scopes[scope_key].refs)
+            del self._step_scopes[scope_key]
+            self._drop_scope_refs_from_index(self._step_ref_index_key(scope_key), refs)
+            logger.debug(f"SCOPE: Step cleanup for {scope_key}: {len(refs)} refs")
             return refs
         return []
+
+    def unregister_ref(self, ref: str) -> None:
+        """
+        Remove a ref from all tracked scopes.
+
+        This is used when TempStore evicts cache entries to keep scope tracking
+        bounded and avoid stale tracker-only references.
+        """
+        removed = False
+        scope_keys = self._ref_index.pop(ref, set())
+        if not scope_keys:
+            return
+
+        for scope_key in scope_keys:
+            if scope_key.startswith("step:"):
+                step_scope_key = scope_key[len("step:"):]
+                ctx = self._step_scopes.get(step_scope_key)
+                if ctx and ref in ctx.refs:
+                    ctx.refs.discard(ref)
+                    removed = True
+                    if not ctx.refs:
+                        del self._step_scopes[step_scope_key]
+            elif scope_key.startswith("exec:"):
+                execution_id = scope_key[len("exec:"):]
+                ctx = self._execution_scopes.get(execution_id)
+                if ctx and ref in ctx.refs:
+                    ctx.refs.discard(ref)
+                    removed = True
+                    if not ctx.refs:
+                        del self._execution_scopes[execution_id]
+
+        if removed:
+            logger.debug("SCOPE: Unregistered ref %s", ref)
 
     def get_refs_for_execution_cleanup(self, execution_id: str) -> List[str]:
         """
@@ -177,14 +241,21 @@ class ScopeTracker:
             scope_ctx = self._execution_scopes[execution_id]
             # Only clean execution-scoped refs, not workflow-scoped
             if scope_ctx.scope == Scope.EXECUTION:
-                refs.extend(scope_ctx.refs)
+                execution_refs = list(scope_ctx.refs)
+                refs.extend(execution_refs)
                 del self._execution_scopes[execution_id]
+                self._drop_scope_refs_from_index(
+                    self._execution_ref_index_key(execution_id),
+                    execution_refs,
+                )
 
         # Get any remaining step refs
         step_keys = [k for k in self._step_scopes if k.startswith(f"{execution_id}:")]
         for key in step_keys:
-            refs.extend(self._step_scopes[key].refs)
+            step_refs = list(self._step_scopes[key].refs)
+            refs.extend(step_refs)
             del self._step_scopes[key]
+            self._drop_scope_refs_from_index(self._step_ref_index_key(key), step_refs)
 
         logger.debug(f"SCOPE: Execution cleanup for {execution_id}: {len(refs)} refs")
         return refs
@@ -220,8 +291,13 @@ class ScopeTracker:
         if root_execution_id in self._execution_scopes:
             scope_ctx = self._execution_scopes[root_execution_id]
             if scope_ctx.scope == Scope.WORKFLOW:
-                refs.extend(scope_ctx.refs)
+                workflow_refs = list(scope_ctx.refs)
+                refs.extend(workflow_refs)
                 del self._execution_scopes[root_execution_id]
+                self._drop_scope_refs_from_index(
+                    self._execution_ref_index_key(root_execution_id),
+                    workflow_refs,
+                )
 
         logger.info(f"SCOPE: Workflow cleanup for {root_execution_id}: {len(refs)} refs")
         return refs
@@ -232,6 +308,7 @@ class ScopeTracker:
             "execution_scopes": len(self._execution_scopes),
             "step_scopes": len(self._step_scopes),
             "workflow_trees": len(self._workflow_tree),
+            "indexed_refs": len(self._ref_index),
             "total_refs": sum(
                 len(ctx.refs) for ctx in self._execution_scopes.values()
             ) + sum(
