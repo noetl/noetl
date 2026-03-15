@@ -82,8 +82,10 @@ class TempStore:
             preview_max_bytes: Max bytes for preview
             nats_client: Optional NATS client (lazy initialized if None)
             scope_tracker: Optional ScopeTracker for lifecycle tracking
-            max_ref_cache_entries: Max TempRef metadata entries to retain in-memory
-            max_memory_cache_entries: Max payload entries to retain in-memory
+            max_ref_cache_entries: Max TempRef metadata entries to retain in-memory.
+                Values <= 0 are invalid and fall back to defaults.
+            max_memory_cache_entries: Max payload entries to retain in-memory.
+                Values <= 0 are invalid and fall back to defaults.
         """
         self.router = router or default_router
         self.default_ttl_seconds = default_ttl_seconds
@@ -117,18 +119,42 @@ class TempStore:
 
     @staticmethod
     def _resolve_cache_limit(value: Optional[int], env_name: str, default: int) -> int:
-        """Resolve non-negative cache limit from explicit value or environment."""
+        """Resolve positive cache limit from explicit value or environment."""
         if value is not None:
             try:
-                return max(0, int(value))
+                limit = int(value)
+                if limit <= 0:
+                    logger.warning(
+                        "TEMP: invalid cache limit %s=%r (must be >0), using default=%s",
+                        env_name,
+                        value,
+                        default,
+                    )
+                    return default
+                return limit
             except (TypeError, ValueError):
+                logger.warning(
+                    "TEMP: invalid cache limit %s=%r, using default=%s",
+                    env_name,
+                    value,
+                    default,
+                )
                 return default
 
         raw_value = os.getenv(env_name)
         if raw_value in (None, ""):
             return default
         try:
-            return max(0, int(raw_value))
+            limit = int(raw_value)
+            if limit <= 0:
+                logger.warning(
+                    "TEMP: invalid cache limit %s=%r (must be >0), using default=%s",
+                    env_name,
+                    raw_value,
+                    default,
+                )
+                return default
+            return limit
         except ValueError:
             logger.warning("TEMP: Invalid %s=%r, using default=%s", env_name, raw_value, default)
             return default
@@ -147,9 +173,6 @@ class TempStore:
         """Insert payload in LRU memory cache with bounded capacity."""
         self._memory_cache[ref_str] = data_bytes
         self._memory_cache.move_to_end(ref_str)
-
-        if self.max_memory_cache_entries <= 0:
-            return
 
         while len(self._memory_cache) > self.max_memory_cache_entries:
             evicted_ref, _ = self._memory_cache.popitem(last=False)
@@ -185,9 +208,6 @@ class TempStore:
                 )
             except Exception:
                 logger.debug("TEMP: Failed to register scope for %s", temp_ref.ref)
-
-        if self.max_ref_cache_entries <= 0:
-            return
 
         while len(self._ref_cache) > self.max_ref_cache_entries:
             evicted_ref, _ = self._ref_cache.popitem(last=False)
@@ -230,6 +250,7 @@ class TempStore:
             store: Storage tier (auto-selected if None)
             ttl_seconds: TTL override
             source_step: Step that created this temp
+            parent_execution_id: Parent execution ID for workflow-scope tracking
             correlation: Loop/pagination tracking
             compress: Whether to compress data
 
