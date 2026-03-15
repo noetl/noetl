@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.10.5](https://github.com/noetl/noetl/compare/v2.10.4...v2.10.5) (2026-03-15)
+
+### Bug Fixes
+
+* address copilot review on cache limits and tracker index ([de48f43](https://github.com/noetl/noetl/commit/de48f43ce88d1851de721fd0daeda03d8be162d1))
+* address follow-up copilot cleanup and tracker concerns ([212565e](https://github.com/noetl/noetl/commit/212565edaef8ac0416657416f78cf59ead2cf5dd))
+* bound temp store caches and track worker refs ([0e283dd](https://github.com/noetl/noetl/commit/0e283ddfa1cbcbe4c39ebd9f4b01bc78733e1a42))
+
 ## [2.10.4](https://github.com/noetl/noetl/compare/v2.10.3...v2.10.4) (2026-03-11)
 
 ### Bug Fixes
