@@ -114,7 +114,7 @@ class TempStore:
             try:
                 from noetl.core.storage.scope_tracker import default_tracker
                 self._scope_tracker = default_tracker
-            except Exception:
+            except (ImportError, ModuleNotFoundError):
                 self._scope_tracker = None
 
     @staticmethod
@@ -176,8 +176,6 @@ class TempStore:
 
         while len(self._memory_cache) > self.max_memory_cache_entries:
             evicted_ref, _ = self._memory_cache.popitem(last=False)
-            self._ref_cache.pop(evicted_ref, None)
-            self._untrack_ref(evicted_ref)
             logger.debug("TEMP: Evicted memory cache entry %s due to capacity", evicted_ref)
 
     def _set_ref_cache(
@@ -212,7 +210,6 @@ class TempStore:
         while len(self._ref_cache) > self.max_ref_cache_entries:
             evicted_ref, _ = self._ref_cache.popitem(last=False)
             self._memory_cache.pop(evicted_ref, None)
-            self._untrack_ref(evicted_ref)
             logger.debug("TEMP: Evicted ref cache entry %s due to capacity", evicted_ref)
 
     async def _get_nats(self):
@@ -409,7 +406,13 @@ class TempStore:
         temp_ref = await self._lookup_ref(ref_str)
 
         if not temp_ref:
-            return False
+            # Metadata may have been evicted from cache while external payload still exists.
+            deleted = await self._delete_data_by_ref(ref_str)
+            if deleted:
+                self._ref_cache.pop(ref_str, None)
+                self._memory_cache.pop(ref_str, None)
+                self._untrack_ref(ref_str)
+            return deleted
 
         # Delete from storage backend
         await self._delete_data(temp_ref)
@@ -716,21 +719,96 @@ class TempStore:
     async def _delete_data(self, temp_ref: TempRef):
         """Delete data from storage backend."""
         store = temp_ref.store
+        key = temp_ref.to_key()
 
         if store == StoreTier.MEMORY:
             self._memory_cache.pop(temp_ref.ref, None)
 
         elif store == StoreTier.KV:
-            nats = await self._get_nats()
-            if nats:
-                key = temp_ref.to_key()
-                try:
-                    await nats.delete_execution_state(temp_ref.ref.split("/")[2])
-                except Exception as e:
-                    logger.warning(f"TEMP: Failed to delete from KV: {e}")
+            try:
+                from noetl.core.storage.backends import NATSKVBackend
+                if not hasattr(self, '_kv_backend'):
+                    self._kv_backend = NATSKVBackend()
+                await self._kv_backend.delete(key)
+            except Exception as e:
+                logger.warning(f"TEMP: Failed to delete from KV: {e}")
+
+        elif store == StoreTier.OBJECT:
+            try:
+                from noetl.core.storage.backends import NATSObjectBackend
+                if not hasattr(self, '_object_backend'):
+                    self._object_backend = NATSObjectBackend()
+                await self._object_backend.delete(key)
+            except Exception as e:
+                logger.warning(f"TEMP: Failed to delete from Object Store: {e}")
+
+        elif store == StoreTier.S3:
+            try:
+                from noetl.core.storage.backends import S3Backend
+                if not hasattr(self, '_s3_backend'):
+                    self._s3_backend = S3Backend()
+                await self._s3_backend.delete(key)
+            except Exception as e:
+                logger.warning(f"TEMP: Failed to delete from S3: {e}")
+
+        elif store == StoreTier.GCS:
+            try:
+                from noetl.core.storage.backends import GCSBackend
+                if not hasattr(self, '_gcs_backend'):
+                    self._gcs_backend = GCSBackend()
+                await self._gcs_backend.delete(key)
+            except Exception as e:
+                logger.warning(f"TEMP: Failed to delete from GCS: {e}")
 
         # Also remove from memory cache in case of fallback
         self._memory_cache.pop(temp_ref.ref, None)
+
+    async def _delete_data_by_ref(self, ref_str: str) -> bool:
+        """
+        Best-effort delete by URI when TempRef metadata is unavailable.
+
+        This preserves cleanup behavior for refs evicted from _ref_cache.
+        """
+        self._memory_cache.pop(ref_str, None)
+        if not ref_str.startswith("noetl://"):
+            return False
+
+        key = ref_str.replace("noetl://", "").replace("/", "_")
+        deleted = False
+
+        try:
+            from noetl.core.storage.backends import NATSKVBackend
+            if not hasattr(self, '_kv_backend'):
+                self._kv_backend = NATSKVBackend()
+            deleted = await self._kv_backend.delete(key) or deleted
+        except Exception:
+            pass
+
+        try:
+            from noetl.core.storage.backends import NATSObjectBackend
+            if not hasattr(self, '_object_backend'):
+                self._object_backend = NATSObjectBackend()
+            deleted = await self._object_backend.delete(key) or deleted
+        except Exception:
+            pass
+
+        try:
+            from noetl.core.storage.backends import S3Backend
+            if not hasattr(self, '_s3_backend'):
+                self._s3_backend = S3Backend()
+            deleted = await self._s3_backend.delete(key) or deleted
+        except Exception:
+            pass
+
+        try:
+            from noetl.core.storage.backends import GCSBackend
+            if not hasattr(self, '_gcs_backend'):
+                self._gcs_backend = GCSBackend()
+            deleted = await self._gcs_backend.delete(key) or deleted
+        except Exception:
+            pass
+
+        return deleted
 
     async def _resolve_result_ref(self, ref: Dict[str, Any]) -> Any:
         """Resolve a ResultRef to its data."""

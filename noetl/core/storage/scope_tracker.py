@@ -200,6 +200,9 @@ class ScopeTracker:
         """
         removed = False
         scope_keys = self._ref_index.pop(ref, set())
+        if not scope_keys:
+            return
+
         for scope_key in scope_keys:
             if scope_key.startswith("step:"):
                 step_scope_key = scope_key[len("step:"):]
@@ -217,24 +220,6 @@ class ScopeTracker:
                     removed = True
                     if not ctx.refs:
                         del self._execution_scopes[execution_id]
-
-        if not removed:
-            # Safety fallback for refs indexed before reverse-index support.
-            for key in list(self._step_scopes.keys()):
-                ctx = self._step_scopes[key]
-                if ref in ctx.refs:
-                    ctx.refs.discard(ref)
-                    removed = True
-                    if not ctx.refs:
-                        del self._step_scopes[key]
-
-            for key in list(self._execution_scopes.keys()):
-                ctx = self._execution_scopes[key]
-                if ref in ctx.refs:
-                    ctx.refs.discard(ref)
-                    removed = True
-                    if not ctx.refs:
-                        del self._execution_scopes[key]
 
         if removed:
             logger.debug("SCOPE: Unregistered ref %s", ref)
