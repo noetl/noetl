@@ -168,3 +168,16 @@ def test_active_claim_cache_get_drops_expired_entry_even_between_prune_cycles(mo
     assert 44 not in v2_api._active_claim_cache_by_event
     assert "cmd-44" not in v2_api._active_claim_cache_by_command
     _clear_cache()
+
+
+def test_active_claim_cache_set_clamps_ttl_to_claim_lease(monkeypatch):
+    _clear_cache()
+    monkeypatch.setattr(v2_api, "_ACTIVE_CLAIMS_CACHE_TTL_SECONDS", 90.0)
+    monkeypatch.setattr(v2_api, "_CLAIM_LEASE_SECONDS", 30.0)
+    monkeypatch.setattr(v2_api.time, "monotonic", lambda: 100.0)
+
+    v2_api._active_claim_cache_set(55, "cmd-55", "worker-a")
+    cached = v2_api._active_claim_cache_by_event[55]
+
+    assert cached.expires_at_monotonic == pytest.approx(130.0)
+    _clear_cache()

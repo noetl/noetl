@@ -480,10 +480,18 @@ class WorkerSettings(BaseModel):
         'deregister_backoff',
         'worker_metrics_interval',
         'worker_heartbeat_interval',
+        'keychain_refresh_threshold',
+        'http_client_timeout',
+        'http_event_timeout',
         'nats_ack_wait_seconds',
         'nats_ack_wait_buffer_seconds',
         'nats_fetch_timeout_seconds',
         'nats_fetch_heartbeat_seconds',
+        'nats_max_ack_pending',
+        'nats_max_deliver',
+        'max_inflight_commands',
+        'max_inflight_db_commands',
+        'postgres_pool_waiting_threshold',
         'throttle_poll_interval',
         'command_timeout_seconds',
         mode='before'
@@ -673,7 +681,7 @@ def get_settings(reload: bool = False) -> Settings:
                 NATS_PASSWORD=os.environ.get('NATS_PASSWORD', 'noetl'),
                 NATS_STREAM=os.environ.get('NATS_STREAM', 'NOETL_COMMANDS'),
                 NATS_CONSUMER=os.environ.get('NATS_CONSUMER', 'noetl_worker_pool'),
-                NOETL_SUBJECT=os.environ.get('NOETL_SUBJECT', 'noetl.commands'),
+                NATS_SUBJECT=os.environ.get('NATS_SUBJECT', 'noetl.commands'),
             )
         except Exception as e:
             logger.critical(f"Failed to initialize settings: {e}")

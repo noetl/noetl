@@ -13,6 +13,7 @@ Performance tuning:
 """
 
 import asyncio
+import math
 from typing import Optional, Callable, Awaitable
 import nats
 from nats.js import JetStreamContext
@@ -22,6 +23,7 @@ from nats.aio.client import Client as NATSClient
 from noetl.core.logger import setup_logger
 
 logger = setup_logger(__name__, include_location=True)
+_MAX_CALLBACK_NAK_DELAY_SECONDS = 3600.0
 
 
 class NATSCommandPublisher:
@@ -195,7 +197,20 @@ class NATSCommandSubscriber:
                     action,
                 )
                 return "nak", None
+            if not math.isfinite(delay_seconds):
+                logger.warning(
+                    "Callback returned non-finite delayed NAK '%s'; defaulting to immediate NAK",
+                    action,
+                )
+                return "nak", None
             if delay_seconds > 0:
+                if delay_seconds > _MAX_CALLBACK_NAK_DELAY_SECONDS:
+                    logger.warning(
+                        "Callback returned delayed NAK '%s' above %.1fs cap; clamping",
+                        action,
+                        _MAX_CALLBACK_NAK_DELAY_SECONDS,
+                    )
+                    return "nak", _MAX_CALLBACK_NAK_DELAY_SECONDS
                 return "nak", delay_seconds
             logger.warning(
                 "Callback returned non-positive delayed NAK '%s'; defaulting to immediate NAK",

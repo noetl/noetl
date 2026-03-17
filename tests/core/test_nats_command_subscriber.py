@@ -131,3 +131,17 @@ def test_parse_callback_action_invalid_delayed_nak_defaults_to_immediate_nak():
 
     assert action == "nak"
     assert delay is None
+
+
+def test_parse_callback_action_non_finite_delayed_nak_defaults_to_immediate_nak():
+    action, delay = NATSCommandSubscriber._parse_callback_action("nak:inf")
+
+    assert action == "nak"
+    assert delay is None
+
+
+def test_parse_callback_action_caps_large_delayed_nak():
+    action, delay = NATSCommandSubscriber._parse_callback_action("nak:999999")
+
+    assert action == "nak"
+    assert delay == pytest.approx(3600.0)

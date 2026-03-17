@@ -249,11 +249,15 @@ def _active_claim_cache_set(event_id: int, command_id: str, worker_id: str) -> N
         if _active_claim_cache_by_event.get(existing_for_command.event_id) is existing_for_command:
             _active_claim_cache_by_event.pop(existing_for_command.event_id, None)
 
+    effective_ttl_seconds = max(
+        1.0,
+        min(_ACTIVE_CLAIMS_CACHE_TTL_SECONDS, _CLAIM_LEASE_SECONDS),
+    )
     entry = _ActiveClaimCacheEntry(
         event_id=normalized_event_id,
         command_id=normalized_command_id,
         worker_id=normalized_worker_id,
-        expires_at_monotonic=now + _ACTIVE_CLAIMS_CACHE_TTL_SECONDS,
+        expires_at_monotonic=now + effective_ttl_seconds,
         updated_at_monotonic=now,
     )
     _active_claim_cache_by_event[entry.event_id] = entry
