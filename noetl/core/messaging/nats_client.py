@@ -154,6 +154,7 @@ class NATSCommandSubscriber:
             if callback_timeout_seconds is not None
             else ws.command_timeout_seconds
         )
+        self.ack_wait_seconds = float(ws.nats_ack_wait_seconds)
         self._nc: Optional[NATSClient] = None
         self._js: Optional[JetStreamContext] = None
         self._subscription = None
@@ -179,7 +180,7 @@ class NATSCommandSubscriber:
             durable_name=self.consumer_name,
             ack_policy="explicit",
             max_deliver=max(1, int(ws.nats_max_deliver)),
-            ack_wait=30,
+            ack_wait=int(self.ack_wait_seconds),
             deliver_policy="new",
             replay_policy="instant",
             max_ack_pending=self.max_ack_pending,
