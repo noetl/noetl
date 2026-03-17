@@ -136,7 +136,7 @@ async def run_command_reaper(stop_event: asyncio.Event, server_url: str) -> None
 
     # Reaper notifications must carry base server URL because workers append '/api/...'.
     server_url = (server_url or "").strip().rstrip("/")
-    if server_url.endswith("/api"):
+    while server_url.endswith("/api"):
         server_url = server_url[:-4]
 
     logger.info(

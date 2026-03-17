@@ -42,7 +42,7 @@ def _normalize_server_base_url(server_url: Optional[str]) -> str:
     Normalize server URL to host base without trailing slash or duplicate /api.
     """
     base = (server_url or "").strip().rstrip("/")
-    if base.endswith("/api"):
+    while base.endswith("/api"):
         base = base[:-4]
     return base
 

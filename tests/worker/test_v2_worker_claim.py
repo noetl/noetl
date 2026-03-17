@@ -148,3 +148,23 @@ async def test_emit_command_failed_normalizes_server_url_with_api_suffix():
     method, args, _kwargs = fake_client.calls[0]
     assert method == "post"
     assert args[0] == "http://server/api/events"
+
+
+@pytest.mark.asyncio
+async def test_claim_url_normalizes_server_url_with_duplicate_api_suffix():
+    worker = V2Worker(worker_id="test-worker")
+    fake_client = _FakeHttpClient(
+        _FakeResponse(
+            409,
+            payload={"detail": {"code": "active_claim", "message": "claimed elsewhere"}},
+            headers={"Retry-After": "2"},
+        )
+    )
+    worker._http_client = fake_client
+
+    await worker._claim_and_fetch_command("http://server/api/api", 42)
+
+    assert fake_client.calls
+    method, args, _kwargs = fake_client.calls[0]
+    assert method == "post"
+    assert args[0] == "http://server/api/commands/42/claim"

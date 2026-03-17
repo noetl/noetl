@@ -170,7 +170,7 @@ def _create_app(settings: Settings, enable_ui: Optional[bool] = None) -> FastAPI
             server_url = settings.server_api_url
             hostname = settings.hostname
             command_server_url = settings.server_url.rstrip("/")
-            if command_server_url.endswith("/api"):
+            while command_server_url.endswith("/api"):
                 command_server_url = command_server_url[:-4]
 
             async def _runtime_sweeper():
