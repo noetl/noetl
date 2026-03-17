@@ -9,6 +9,7 @@ import datetime
 import httpx
 import os
 import threading
+import math
 from urllib.parse import urlparse
 from typing import Dict, Any, Optional, Callable
 from jinja2 import Environment
@@ -75,7 +76,10 @@ def _read_float_env(name: str, default: float, min_value: float = 0.1) -> float:
     if not raw:
         return default
     try:
-        return max(min_value, float(raw))
+        parsed = float(raw)
+        if not math.isfinite(parsed):
+            return default
+        return max(min_value, parsed)
     except (TypeError, ValueError):
         return default
 
@@ -106,6 +110,8 @@ def _resolve_http_timeout_seconds(task_timeout_value: Any) -> float:
     try:
         parsed = float(task_timeout_value)
     except (TypeError, ValueError):
+        return min(default_timeout, max_timeout)
+    if not math.isfinite(parsed):
         return min(default_timeout, max_timeout)
 
     # Never allow non-positive values or unbounded semantics through.

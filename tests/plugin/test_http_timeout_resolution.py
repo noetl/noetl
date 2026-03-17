@@ -16,5 +16,15 @@ def test_resolve_http_timeout_rejects_unbounded_or_invalid_values(monkeypatch):
 
     assert _resolve_http_timeout_seconds("") == 45.0
     assert _resolve_http_timeout_seconds("invalid") == 45.0
+    assert _resolve_http_timeout_seconds("nan") == 45.0
+    assert _resolve_http_timeout_seconds("inf") == 45.0
     assert _resolve_http_timeout_seconds(0) == 0.1
     assert _resolve_http_timeout_seconds(-10) == 0.1
+
+
+def test_resolve_http_timeout_rejects_non_finite_env_defaults(monkeypatch):
+    monkeypatch.setenv("NOETL_HTTP_REQUEST_TIMEOUT_SECONDS", "inf")
+    monkeypatch.setenv("NOETL_WORKER_COMMAND_TIMEOUT_SECONDS", "nan")
+
+    # Falls back to hardcoded defaults (60s and 180s) when env values are non-finite.
+    assert _resolve_http_timeout_seconds(None) == 60.0

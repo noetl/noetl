@@ -526,6 +526,8 @@ class V2Worker:
                     retry_after_seconds = max(0.0, float(retry_after_seconds))
                     nak_action = "nak"
                     if retry_after_seconds > 0:
+                        # Contract: NATSCommandSubscriber interprets "nak:<seconds>"
+                        # and calls JetStream `msg.nak(delay=<seconds>)`.
                         nak_action = f"nak:{retry_after_seconds:.3f}"
                     logger.info(
                         "[CLAIM] Deferring command %s (event_id=%s) back to queue for later retry (action=%s)",

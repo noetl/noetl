@@ -249,6 +249,8 @@ def _active_claim_cache_set(event_id: int, command_id: str, worker_id: str) -> N
         if _active_claim_cache_by_event.get(existing_for_command.event_id) is existing_for_command:
             _active_claim_cache_by_event.pop(existing_for_command.event_id, None)
 
+    # Cache fast-path must never outlive reclaim eligibility; otherwise a stale
+    # entry could return 409 before DB lease/heartbeat checks can reclaim.
     effective_ttl_seconds = max(
         1.0,
         min(_ACTIVE_CLAIMS_CACHE_TTL_SECONDS, _CLAIM_LEASE_SECONDS),
