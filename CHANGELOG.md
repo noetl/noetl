@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.10.6](https://github.com/noetl/noetl/compare/v2.10.5...v2.10.6) (2026-03-17)
+
+### Bug Fixes
+
+* address copilot review findings for pr266 ([15e9466](https://github.com/noetl/noetl/commit/15e946690e2f32f3a0dcc032dc982425ffd25136))
+* address latest copilot validation findings ([722d514](https://github.com/noetl/noetl/commit/722d5148bddea37169cb0944c776b9cdd9099b8f))
+* clamp claim cache ttl and harden config parsing ([7821978](https://github.com/noetl/noetl/commit/782197831bc68e835c05710510c5846b5efb5023))
+* desynchronize active-claim retries and clarify retry logs ([acf9a65](https://github.com/noetl/noetl/commit/acf9a65da62b4ebb8fe29ac5bfd49cf1ea60ca07))
+* **runtime:** harden claim retries, timeouts, and active-claim caching ([8b3e28e](https://github.com/noetl/noetl/commit/8b3e28e96b2f5d2c3dd46183bdd1da8fa3d00b9d))
+
 ## [2.10.5](https://github.com/noetl/noetl/compare/v2.10.4...v2.10.5) (2026-03-15)
 
 ### Bug Fixes
