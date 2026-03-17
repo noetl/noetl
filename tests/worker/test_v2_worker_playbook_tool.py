@@ -410,6 +410,7 @@ async def test_handle_command_notification_applies_db_semaphore_for_postgres(mon
                 "meta": {},
             },
             "claimed",
+            0.0,
         )
 
     async def fake_wait(*_args, **_kwargs):
@@ -464,6 +465,7 @@ async def test_handle_command_notification_skips_db_semaphore_for_non_db_tool(mo
                 "meta": {},
             },
             "claimed",
+            0.0,
         )
 
     async def fake_execute(*_args, **_kwargs):
@@ -486,3 +488,31 @@ async def test_handle_command_notification_skips_db_semaphore_for_non_db_tool(mo
     assert calls["execute"] == 1
     assert calls["acquire"] == 0
     assert calls["release"] == 0
+
+
+@pytest.mark.asyncio
+async def test_handle_command_notification_returns_delayed_nak_action_without_sleep(monkeypatch):
+    worker = V2Worker(worker_id="test-worker")
+    worker._running = True
+
+    async def fake_claim(_server_url, _event_id):
+        return None, "retry_later", 2.5
+
+    async def fail_sleep(_seconds):
+        raise AssertionError("callback path should not sleep before returning delayed NAK")
+
+    monkeypatch.setattr(worker, "_claim_and_fetch_command", fake_claim)
+    monkeypatch.setattr(worker_module.asyncio, "sleep", fail_sleep)
+
+    action = await worker._handle_command_notification(
+        {
+            "execution_id": 1,
+            "event_id": 12,
+            "command_id": "1:retry_later:12",
+            "step": "retry_later",
+            "server_url": "http://noetl.test",
+        }
+    )
+
+    assert action.startswith("nak:")
+    assert float(action.split(":", 1)[1]) == pytest.approx(2.5)

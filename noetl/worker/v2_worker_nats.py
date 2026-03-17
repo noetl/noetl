@@ -492,7 +492,7 @@ class V2Worker:
             logger.warning(f"[CANCEL] Could not check cancellation status for {execution_id}: {e}")
             return False
     
-    async def _handle_command_notification(self, notification: dict) -> Literal["ack", "nak", "term"]:
+    async def _handle_command_notification(self, notification: dict) -> str:
         """
         Handle command notification from NATS (Event-Driven).
 
@@ -523,20 +523,17 @@ class V2Worker:
                 logger.info(f"[PERF] claim_and_fetch took {(t_claim_end - t_claim_start)*1000:.1f}ms")
 
                 if claim_decision == "retry_later":
+                    retry_after_seconds = max(0.0, float(retry_after_seconds))
+                    nak_action = "nak"
                     if retry_after_seconds > 0:
-                        logger.info(
-                            "[CLAIM] Backing off %.2fs before NAK for command %s (event_id=%s)",
-                            retry_after_seconds,
-                            command_id,
-                            event_id,
-                        )
-                        await asyncio.sleep(retry_after_seconds)
+                        nak_action = f"nak:{retry_after_seconds:.3f}"
                     logger.info(
-                        "[CLAIM] Deferring command %s (event_id=%s) back to queue for later retry",
+                        "[CLAIM] Deferring command %s (event_id=%s) back to queue for later retry (action=%s)",
                         command_id,
                         event_id,
+                        nak_action,
                     )
-                    return "nak"
+                    return nak_action
 
                 if command is None:
                     # Terminally skipped (already completed/cancelled)

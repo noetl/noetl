@@ -117,3 +117,17 @@ def test_consumer_config_enforces_ack_wait_budget(monkeypatch):
         assert config.ack_wait == pytest.approx(200.0)
     finally:
         config_module._worker_settings = None
+
+
+def test_parse_callback_action_supports_delayed_nak():
+    action, delay = NATSCommandSubscriber._parse_callback_action("nak:2.5")
+
+    assert action == "nak"
+    assert delay == pytest.approx(2.5)
+
+
+def test_parse_callback_action_invalid_delayed_nak_defaults_to_immediate_nak():
+    action, delay = NATSCommandSubscriber._parse_callback_action("nak:not-a-number")
+
+    assert action == "nak"
+    assert delay is None

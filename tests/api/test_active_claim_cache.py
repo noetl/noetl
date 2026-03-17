@@ -9,6 +9,7 @@ import noetl.server.api.v2 as v2_api
 def _clear_cache() -> None:
     v2_api._active_claim_cache_by_event.clear()
     v2_api._active_claim_cache_by_command.clear()
+    v2_api._active_claim_cache_last_prune_monotonic = 0.0
 
 
 @pytest.mark.asyncio
@@ -120,4 +121,50 @@ def test_active_claim_cache_set_replaces_old_links():
     v2_api._active_claim_cache_set(2, "cmd-2", "worker-c")
     assert 1 not in v2_api._active_claim_cache_by_event
     assert v2_api._active_claim_cache_by_command["cmd-2"].event_id == 2
+    _clear_cache()
+
+
+def test_active_claim_cache_invalidate_command_id_preserves_remapped_event_entry():
+    _clear_cache()
+    now = 100.0
+    old_entry = v2_api._ActiveClaimCacheEntry(
+        event_id=33,
+        command_id="cmd-old",
+        worker_id="worker-a",
+        expires_at_monotonic=now + 30.0,
+        updated_at_monotonic=now,
+    )
+    new_entry = v2_api._ActiveClaimCacheEntry(
+        event_id=33,
+        command_id="cmd-new",
+        worker_id="worker-b",
+        expires_at_monotonic=now + 30.0,
+        updated_at_monotonic=now + 1.0,
+    )
+    v2_api._active_claim_cache_by_event[33] = new_entry
+    v2_api._active_claim_cache_by_command["cmd-old"] = old_entry
+    v2_api._active_claim_cache_by_command["cmd-new"] = new_entry
+
+    v2_api._active_claim_cache_invalidate(command_id="cmd-old")
+
+    assert 33 in v2_api._active_claim_cache_by_event
+    assert v2_api._active_claim_cache_by_event[33] is new_entry
+    assert "cmd-old" not in v2_api._active_claim_cache_by_command
+    assert v2_api._active_claim_cache_by_command["cmd-new"] is new_entry
+    _clear_cache()
+
+
+def test_active_claim_cache_get_drops_expired_entry_even_between_prune_cycles(monkeypatch):
+    _clear_cache()
+    v2_api._active_claim_cache_set(44, "cmd-44", "worker-a")
+    cached = v2_api._active_claim_cache_by_event[44]
+
+    # Simulate entry expiry while prune cadence would otherwise defer a full scan.
+    monkeypatch.setattr(v2_api, "_ACTIVE_CLAIMS_CACHE_PRUNE_INTERVAL_SECONDS", 600.0)
+    cached.expires_at_monotonic = 1.0
+    monkeypatch.setattr(v2_api.time, "monotonic", lambda: 5.0)
+
+    assert v2_api._active_claim_cache_get(44) is None
+    assert 44 not in v2_api._active_claim_cache_by_event
+    assert "cmd-44" not in v2_api._active_claim_cache_by_command
     _clear_cache()

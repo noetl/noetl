@@ -12,6 +12,7 @@ import os
 import json
 import time
 import asyncio
+import heapq
 from dataclasses import dataclass
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
@@ -157,6 +158,10 @@ _ACTIVE_CLAIMS_CACHE_MAX_ENTRIES = max(
     128,
     int(os.getenv("NOETL_ACTIVE_CLAIMS_CACHE_MAX_ENTRIES", "20000")),
 )
+_ACTIVE_CLAIMS_CACHE_PRUNE_INTERVAL_SECONDS = max(
+    0.1,
+    float(os.getenv("NOETL_ACTIVE_CLAIMS_CACHE_PRUNE_INTERVAL_SECONDS", "1.0")),
+)
 
 
 @dataclass(slots=True)
@@ -170,10 +175,22 @@ class _ActiveClaimCacheEntry:
 
 _active_claim_cache_by_event: dict[int, _ActiveClaimCacheEntry] = {}
 _active_claim_cache_by_command: dict[str, _ActiveClaimCacheEntry] = {}
+_active_claim_cache_last_prune_monotonic: float = 0.0
 
 
-def _active_claim_cache_prune(now_monotonic: Optional[float] = None) -> None:
+def _active_claim_cache_prune(
+    now_monotonic: Optional[float] = None,
+    *,
+    force: bool = False,
+) -> None:
+    global _active_claim_cache_last_prune_monotonic
     now = now_monotonic if now_monotonic is not None else time.monotonic()
+    if not force:
+        if len(_active_claim_cache_by_event) <= _ACTIVE_CLAIMS_CACHE_MAX_ENTRIES and (
+            now - _active_claim_cache_last_prune_monotonic
+        ) < _ACTIVE_CLAIMS_CACHE_PRUNE_INTERVAL_SECONDS:
+            return
+    _active_claim_cache_last_prune_monotonic = now
 
     expired_event_ids = [
         event_id
@@ -190,10 +207,11 @@ def _active_claim_cache_prune(now_monotonic: Optional[float] = None) -> None:
 
     # Evict oldest entries by update time to bound memory.
     overflow = len(_active_claim_cache_by_event) - _ACTIVE_CLAIMS_CACHE_MAX_ENTRIES
-    oldest_entries = sorted(
+    oldest_entries = heapq.nsmallest(
+        overflow,
         _active_claim_cache_by_event.values(),
         key=lambda item: item.updated_at_monotonic,
-    )[:overflow]
+    )
     for entry in oldest_entries:
         _active_claim_cache_by_event.pop(entry.event_id, None)
         if _active_claim_cache_by_command.get(entry.command_id) is entry:
@@ -201,8 +219,18 @@ def _active_claim_cache_prune(now_monotonic: Optional[float] = None) -> None:
 
 
 def _active_claim_cache_get(event_id: int) -> Optional[_ActiveClaimCacheEntry]:
-    _active_claim_cache_prune()
-    return _active_claim_cache_by_event.get(int(event_id))
+    now = time.monotonic()
+    _active_claim_cache_prune(now)
+    entry = _active_claim_cache_by_event.get(int(event_id))
+    if entry is None:
+        return None
+    # Fast-path stale guard: avoid returning expired entries between prune intervals.
+    if entry.expires_at_monotonic <= now:
+        _active_claim_cache_by_event.pop(entry.event_id, None)
+        if _active_claim_cache_by_command.get(entry.command_id) is entry:
+            _active_claim_cache_by_command.pop(entry.command_id, None)
+        return None
+    return entry
 
 
 def _active_claim_cache_set(event_id: int, command_id: str, worker_id: str) -> None:
@@ -230,7 +258,10 @@ def _active_claim_cache_set(event_id: int, command_id: str, worker_id: str) -> N
     )
     _active_claim_cache_by_event[entry.event_id] = entry
     _active_claim_cache_by_command[entry.command_id] = entry
-    _active_claim_cache_prune(now)
+    _active_claim_cache_prune(
+        now,
+        force=len(_active_claim_cache_by_event) > _ACTIVE_CLAIMS_CACHE_MAX_ENTRIES,
+    )
 
 
 def _active_claim_cache_invalidate(
@@ -240,7 +271,7 @@ def _active_claim_cache_invalidate(
 ) -> None:
     if command_id:
         cached = _active_claim_cache_by_command.pop(str(command_id), None)
-        if cached is not None:
+        if cached is not None and _active_claim_cache_by_event.get(cached.event_id) is cached:
             _active_claim_cache_by_event.pop(cached.event_id, None)
     if event_id is not None:
         cached = _active_claim_cache_by_event.pop(int(event_id), None)
