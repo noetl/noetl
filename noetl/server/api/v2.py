@@ -12,6 +12,7 @@ import os
 import json
 import time
 import asyncio
+import heapq
 from dataclasses import dataclass
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
@@ -144,6 +145,162 @@ _STATUS_PREVIEW_ITEMS = max(
     1,
     int(os.getenv("NOETL_STATUS_PREVIEW_ITEMS", "5")),
 )
+_ACTIVE_CLAIMS_CACHE_TTL_SECONDS = max(
+    1.0,
+    float(
+        os.getenv(
+            "NOETL_ACTIVE_CLAIMS_CACHE_TTL_SECONDS",
+            str(_CLAIM_WORKER_HEARTBEAT_STALE_SECONDS),
+        )
+    ),
+)
+_ACTIVE_CLAIMS_CACHE_MAX_ENTRIES = max(
+    128,
+    int(os.getenv("NOETL_ACTIVE_CLAIMS_CACHE_MAX_ENTRIES", "20000")),
+)
+_ACTIVE_CLAIMS_CACHE_PRUNE_INTERVAL_SECONDS = max(
+    0.1,
+    float(os.getenv("NOETL_ACTIVE_CLAIMS_CACHE_PRUNE_INTERVAL_SECONDS", "1.0")),
+)
+
+
+@dataclass(slots=True)
+class _ActiveClaimCacheEntry:
+    event_id: int
+    command_id: str
+    worker_id: str
+    expires_at_monotonic: float
+    updated_at_monotonic: float
+
+
+_active_claim_cache_by_event: dict[int, _ActiveClaimCacheEntry] = {}
+_active_claim_cache_by_command: dict[str, _ActiveClaimCacheEntry] = {}
+_active_claim_cache_last_prune_monotonic: float = 0.0
+
+
+def _active_claim_cache_prune(
+    now_monotonic: Optional[float] = None,
+    *,
+    force: bool = False,
+) -> None:
+    global _active_claim_cache_last_prune_monotonic
+    now = now_monotonic if now_monotonic is not None else time.monotonic()
+    if not force:
+        if len(_active_claim_cache_by_event) <= _ACTIVE_CLAIMS_CACHE_MAX_ENTRIES and (
+            now - _active_claim_cache_last_prune_monotonic
+        ) < _ACTIVE_CLAIMS_CACHE_PRUNE_INTERVAL_SECONDS:
+            return
+    _active_claim_cache_last_prune_monotonic = now
+
+    expired_event_ids = [
+        event_id
+        for event_id, entry in _active_claim_cache_by_event.items()
+        if entry.expires_at_monotonic <= now
+    ]
+    for event_id in expired_event_ids:
+        entry = _active_claim_cache_by_event.pop(event_id, None)
+        if entry and _active_claim_cache_by_command.get(entry.command_id) is entry:
+            _active_claim_cache_by_command.pop(entry.command_id, None)
+
+    if len(_active_claim_cache_by_event) <= _ACTIVE_CLAIMS_CACHE_MAX_ENTRIES:
+        return
+
+    # Evict oldest entries by update time to bound memory.
+    overflow = len(_active_claim_cache_by_event) - _ACTIVE_CLAIMS_CACHE_MAX_ENTRIES
+    oldest_entries = heapq.nsmallest(
+        overflow,
+        _active_claim_cache_by_event.values(),
+        key=lambda item: item.updated_at_monotonic,
+    )
+    for entry in oldest_entries:
+        _active_claim_cache_by_event.pop(entry.event_id, None)
+        if _active_claim_cache_by_command.get(entry.command_id) is entry:
+            _active_claim_cache_by_command.pop(entry.command_id, None)
+
+
+def _active_claim_cache_get(event_id: int) -> Optional[_ActiveClaimCacheEntry]:
+    now = time.monotonic()
+    _active_claim_cache_prune(now)
+    entry = _active_claim_cache_by_event.get(int(event_id))
+    if entry is None:
+        return None
+    # Fast-path stale guard: avoid returning expired entries between prune intervals.
+    if entry.expires_at_monotonic <= now:
+        _active_claim_cache_by_event.pop(entry.event_id, None)
+        if _active_claim_cache_by_command.get(entry.command_id) is entry:
+            _active_claim_cache_by_command.pop(entry.command_id, None)
+        return None
+    return entry
+
+
+def _active_claim_cache_set(event_id: int, command_id: str, worker_id: str) -> None:
+    now = time.monotonic()
+    normalized_event_id = int(event_id)
+    normalized_command_id = str(command_id)
+    normalized_worker_id = str(worker_id)
+
+    existing_for_event = _active_claim_cache_by_event.get(normalized_event_id)
+    if existing_for_event is not None and existing_for_event.command_id != normalized_command_id:
+        if _active_claim_cache_by_command.get(existing_for_event.command_id) is existing_for_event:
+            _active_claim_cache_by_command.pop(existing_for_event.command_id, None)
+
+    existing_for_command = _active_claim_cache_by_command.get(normalized_command_id)
+    if existing_for_command is not None and existing_for_command.event_id != normalized_event_id:
+        if _active_claim_cache_by_event.get(existing_for_command.event_id) is existing_for_command:
+            _active_claim_cache_by_event.pop(existing_for_command.event_id, None)
+
+    # Cache fast-path must never outlive reclaim eligibility; otherwise a stale
+    # entry could return 409 before DB lease/heartbeat checks can reclaim.
+    effective_ttl_seconds = max(
+        1.0,
+        min(_ACTIVE_CLAIMS_CACHE_TTL_SECONDS, _CLAIM_LEASE_SECONDS),
+    )
+    entry = _ActiveClaimCacheEntry(
+        event_id=normalized_event_id,
+        command_id=normalized_command_id,
+        worker_id=normalized_worker_id,
+        expires_at_monotonic=now + effective_ttl_seconds,
+        updated_at_monotonic=now,
+    )
+    _active_claim_cache_by_event[entry.event_id] = entry
+    _active_claim_cache_by_command[entry.command_id] = entry
+    _active_claim_cache_prune(
+        now,
+        force=len(_active_claim_cache_by_event) > _ACTIVE_CLAIMS_CACHE_MAX_ENTRIES,
+    )
+
+
+def _active_claim_cache_invalidate(
+    *,
+    command_id: Optional[str] = None,
+    event_id: Optional[int] = None,
+) -> None:
+    if command_id:
+        cached = _active_claim_cache_by_command.pop(str(command_id), None)
+        if cached is not None and _active_claim_cache_by_event.get(cached.event_id) is cached:
+            _active_claim_cache_by_event.pop(cached.event_id, None)
+    if event_id is not None:
+        cached = _active_claim_cache_by_event.pop(int(event_id), None)
+        if cached is not None and _active_claim_cache_by_command.get(cached.command_id) is cached:
+            _active_claim_cache_by_command.pop(cached.command_id, None)
+
+
+def _extract_event_command_id(req: "EventRequest") -> Optional[str]:
+    payload = req.payload or {}
+    meta = req.meta or {}
+
+    candidates = [
+        payload.get("command_id"),
+        meta.get("command_id"),
+    ]
+    data_payload = payload.get("data")
+    if isinstance(data_payload, dict):
+        candidates.append(data_payload.get("command_id"))
+
+    for value in candidates:
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return None
 
 
 @dataclass(slots=True)
@@ -759,6 +916,19 @@ async def claim_command(event_id: int, req: ClaimRequest):
     Returns 404 if command.issued event not found.
     """
     try:
+        cached_claim = _active_claim_cache_get(event_id)
+        if cached_claim and cached_claim.worker_id != req.worker_id:
+            raise HTTPException(
+                409,
+                detail={
+                    "code": "active_claim",
+                    "message": f"Command already claimed by {cached_claim.worker_id}",
+                    "worker_id": cached_claim.worker_id,
+                    "claim_policy": "cache_fast_path",
+                },
+                headers={"Retry-After": str(max(1, _CLAIM_ACTIVE_RETRY_AFTER_SECONDS))},
+            )
+
         # Fail fast under DB saturation so workers can retry without long hangs.
         async with get_pool_connection(timeout=_CLAIM_DB_ACQUIRE_TIMEOUT_SECONDS) as conn:
             async with conn.cursor(row_factory=dict_row) as cur:
@@ -794,6 +964,7 @@ async def claim_command(event_id: int, req: ClaimRequest):
                 """, (execution_id, command_id, command_id))
                 terminal_row = await cur.fetchone()
                 if terminal_row:
+                    _active_claim_cache_invalidate(command_id=command_id, event_id=event_id)
                     raise HTTPException(
                         409,
                         detail={
@@ -810,6 +981,7 @@ async def claim_command(event_id: int, req: ClaimRequest):
                     LIMIT 1
                 """, (execution_id,))
                 if await cur.fetchone():
+                    _active_claim_cache_invalidate(command_id=command_id, event_id=event_id)
                     raise HTTPException(
                         409,
                         detail={
@@ -936,6 +1108,7 @@ async def claim_command(event_id: int, req: ClaimRequest):
                                         int(max(1.0, _CLAIM_LEASE_SECONDS - claim_age_seconds)),
                                     ),
                                 )
+                            _active_claim_cache_set(event_id, command_id, existing_worker)
                             raise HTTPException(
                                 409,
                                 detail={
@@ -971,6 +1144,7 @@ async def claim_command(event_id: int, req: ClaimRequest):
                         same_worker_latest = await cur.fetchone()
                         latest_event_type = (same_worker_latest or {}).get("event_type")
                         if latest_event_type == "command.started":
+                            _active_claim_cache_set(event_id, command_id, existing_worker)
                             raise HTTPException(
                                 409,
                                 detail={
@@ -988,6 +1162,7 @@ async def claim_command(event_id: int, req: ClaimRequest):
                             )
                     # Already claimed by same worker - idempotent, return command details
                     if not stale_reclaim:
+                        _active_claim_cache_set(event_id, command_id, req.worker_id)
                         return ClaimResponse(
                             status="ok",
                             event_id=event_id,
@@ -1025,6 +1200,7 @@ async def claim_command(event_id: int, req: ClaimRequest):
                     Json(result_obj), Json(claim_meta), req.worker_id, datetime.now(timezone.utc)
                 ))
                 await conn.commit()
+                _active_claim_cache_set(event_id, command_id, req.worker_id)
 
                 logger.info(f"[CLAIM] Command {command_id} claimed by {req.worker_id} (event_id={claim_evt_id})")
 
@@ -1222,6 +1398,11 @@ async def handle_event(req: EventRequest) -> EventResponse:
                     Json(result_obj), Json(meta_obj), datetime.now(timezone.utc)
                 ))
                 await conn.commit()
+
+        if req.name in {"command.completed", "command.failed"}:
+            command_id = _extract_event_command_id(req)
+            if command_id:
+                _active_claim_cache_invalidate(command_id=command_id)
         
         # Process through engine
         event = Event(

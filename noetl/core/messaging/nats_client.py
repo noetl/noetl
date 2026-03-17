@@ -13,6 +13,7 @@ Performance tuning:
 """
 
 import asyncio
+import math
 from typing import Optional, Callable, Awaitable
 import nats
 from nats.js import JetStreamContext
@@ -22,6 +23,7 @@ from nats.aio.client import Client as NATSClient
 from noetl.core.logger import setup_logger
 
 logger = setup_logger(__name__, include_location=True)
+_MAX_CALLBACK_NAK_DELAY_SECONDS = 3600.0
 
 
 class NATSCommandPublisher:
@@ -172,14 +174,74 @@ class NATSCommandSubscriber:
             or "consumer not found" in message
         )
 
+    @staticmethod
+    def _parse_callback_action(action: object) -> tuple[str, Optional[float]]:
+        if not isinstance(action, str):
+            logger.warning(
+                "Callback returned non-string action (%s); defaulting to NAK",
+                type(action).__name__,
+            )
+            return "nak", None
+
+        normalized = action.strip().lower()
+        if normalized in {"ack", "nak", "term"}:
+            return normalized, None
+
+        if normalized.startswith("nak:"):
+            _, _, raw_delay = normalized.partition(":")
+            try:
+                delay_seconds = float(raw_delay.strip())
+            except (TypeError, ValueError):
+                logger.warning(
+                    "Callback returned invalid delayed NAK action '%s'; defaulting to immediate NAK",
+                    action,
+                )
+                return "nak", None
+            if not math.isfinite(delay_seconds):
+                logger.warning(
+                    "Callback returned non-finite delayed NAK '%s'; defaulting to immediate NAK",
+                    action,
+                )
+                return "nak", None
+            if delay_seconds > 0:
+                if delay_seconds > _MAX_CALLBACK_NAK_DELAY_SECONDS:
+                    logger.warning(
+                        "Callback returned delayed NAK '%s' above %.1fs cap; clamping",
+                        action,
+                        _MAX_CALLBACK_NAK_DELAY_SECONDS,
+                    )
+                    return "nak", _MAX_CALLBACK_NAK_DELAY_SECONDS
+                return "nak", delay_seconds
+            logger.warning(
+                "Callback returned non-positive delayed NAK '%s'; defaulting to immediate NAK",
+                action,
+            )
+            return "nak", None
+
+        logger.warning(
+            "Callback returned unsupported action '%s'; defaulting to NAK",
+            action,
+        )
+        return "nak", None
+
     def _consumer_config(self) -> ConsumerConfig:
         from noetl.core.config import get_worker_settings
         ws = get_worker_settings()
+        minimum_ack_wait_seconds = float(ws.command_timeout_seconds) + float(ws.nats_ack_wait_buffer_seconds)
+        ack_wait_seconds = max(float(ws.nats_ack_wait_seconds), minimum_ack_wait_seconds)
+        if ack_wait_seconds > float(ws.nats_ack_wait_seconds):
+            logger.warning(
+                "Configured NOETL_WORKER_NATS_ACK_WAIT_SECONDS=%.1fs is below minimum %.1fs "
+                "(command_timeout + buffer). Using %.1fs.",
+                float(ws.nats_ack_wait_seconds),
+                minimum_ack_wait_seconds,
+                ack_wait_seconds,
+            )
         return ConsumerConfig(
             durable_name=self.consumer_name,
             ack_policy="explicit",
             max_deliver=max(1, int(ws.nats_max_deliver)),
-            ack_wait=30,
+            ack_wait=ack_wait_seconds,
             deliver_policy="new",
             replay_policy="instant",
             max_ack_pending=self.max_ack_pending,
@@ -317,25 +379,13 @@ class NATSCommandSubscriber:
         async def process_message(data: dict, msg):
             """Process message in background - don't block fetch loop."""
             callback_action = "nak"
+            callback_nak_delay_seconds: Optional[float] = None
             try:
                 action = await asyncio.wait_for(
                     callback(data),
                     timeout=self.callback_timeout_seconds,
                 )
-                if isinstance(action, str):
-                    normalized = action.strip().lower()
-                    if normalized in {"ack", "nak", "term"}:
-                        callback_action = normalized
-                    else:
-                        logger.warning(
-                            "Callback returned unsupported action '%s'; defaulting to NAK",
-                            action,
-                        )
-                else:
-                    logger.warning(
-                        "Callback returned non-string action (%s); defaulting to NAK",
-                        type(action).__name__,
-                    )
+                callback_action, callback_nak_delay_seconds = self._parse_callback_action(action)
             except asyncio.TimeoutError:
                 logger.error(
                     "Command callback timed out after %.1fs; issuing NAK for redelivery",
@@ -348,7 +398,10 @@ class NATSCommandSubscriber:
             finally:
                 try:
                     if callback_action == "nak":
-                        await msg.nak()
+                        if callback_nak_delay_seconds is not None and callback_nak_delay_seconds > 0:
+                            await msg.nak(delay=callback_nak_delay_seconds)
+                        else:
+                            await msg.nak()
                     elif callback_action == "term":
                         await msg.term()
                     else:
