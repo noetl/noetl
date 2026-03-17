@@ -169,6 +169,9 @@ def _create_app(settings: Settings, enable_ui: Optional[bool] = None) -> FastAPI
             auto_recreate_runtime = getattr(settings, 'auto_recreate_runtime', False)
             server_url = settings.server_api_url
             hostname = settings.hostname
+            command_server_url = settings.server_url.rstrip("/")
+            if command_server_url.endswith("/api"):
+                command_server_url = command_server_url[:-4]
 
             async def _runtime_sweeper():
                 while not stop_event.is_set():
@@ -260,7 +263,7 @@ def _create_app(settings: Settings, enable_ui: Optional[bool] = None) -> FastAPI
             try:
                 logger.info("Starting command reaper background task...")
                 reaper_task = asyncio.create_task(
-                    run_command_reaper(stop_event, server_url),
+                    run_command_reaper(stop_event, command_server_url),
                     name="command-reaper",
                 )
                 logger.info("Command reaper background task started successfully")
