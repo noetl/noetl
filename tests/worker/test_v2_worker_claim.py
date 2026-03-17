@@ -20,8 +20,10 @@ class _FakeResponse:
 class _FakeHttpClient:
     def __init__(self, response: _FakeResponse):
         self._response = response
+        self.calls = []
 
     async def post(self, *_args, **_kwargs):
+        self.calls.append(("post", _args, _kwargs))
         return self._response
 
 
@@ -112,3 +114,37 @@ async def test_claim_conflict_active_claim_uses_jittered_delay_above_floor(monke
     assert decision == "retry_later"
     assert retry_after > worker._active_claim_retry_floor_seconds
     assert retry_after <= (worker._active_claim_retry_floor_seconds * 1.5) + 1e-6
+
+
+@pytest.mark.asyncio
+async def test_claim_url_normalizes_server_url_with_api_suffix():
+    worker = V2Worker(worker_id="test-worker")
+    fake_client = _FakeHttpClient(
+        _FakeResponse(
+            409,
+            payload={"detail": {"code": "active_claim", "message": "claimed elsewhere"}},
+            headers={"Retry-After": "2"},
+        )
+    )
+    worker._http_client = fake_client
+
+    await worker._claim_and_fetch_command("http://server/api", 42)
+
+    assert fake_client.calls
+    method, args, _kwargs = fake_client.calls[0]
+    assert method == "post"
+    assert args[0] == "http://server/api/commands/42/claim"
+
+
+@pytest.mark.asyncio
+async def test_emit_command_failed_normalizes_server_url_with_api_suffix():
+    worker = V2Worker(worker_id="test-worker")
+    fake_client = _FakeHttpClient(_FakeResponse(200, payload={"status": "ok"}))
+    worker._http_client = fake_client
+
+    await worker._emit_command_failed("http://server/api", 100, "cmd-1", "step-a", "boom")
+
+    assert fake_client.calls
+    method, args, _kwargs = fake_client.calls[0]
+    assert method == "post"
+    assert args[0] == "http://server/api/events"

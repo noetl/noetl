@@ -36,6 +36,25 @@ def _safe_keys(value: Any, max_items: int = 10) -> list[str]:
         return [str(v) for v in list(value)[:max_items]]
     return []
 
+
+def _normalize_server_base_url(server_url: Optional[str]) -> str:
+    """
+    Normalize server URL to host base without trailing slash or duplicate /api.
+    """
+    base = (server_url or "").strip().rstrip("/")
+    if base.endswith("/api"):
+        base = base[:-4]
+    return base
+
+
+def _api_url(server_url: Optional[str], path: str) -> str:
+    """Build an API endpoint URL with exactly one '/api' segment."""
+    base = _normalize_server_base_url(server_url)
+    normalized_path = path.lstrip("/")
+    if normalized_path.startswith("api/"):
+        normalized_path = normalized_path[4:]
+    return f"{base}/api/{normalized_path}"
+
 # Pre-import tool executors at module level to avoid 5s cold-start delay
 # These were previously imported inside _execute_tool() causing slow first execution
 from noetl.tools import http, postgres, duckdb, python
@@ -230,7 +249,7 @@ class V2Worker:
         """Register this worker in the runtime table via API."""
         try:
             hostname = os.environ.get("HOSTNAME", os.environ.get("POD_NAME", "unknown"))
-            register_url = f"{server_url.rstrip('/')}/api/worker/pool/register"
+            register_url = _api_url(server_url, "worker/pool/register")
             
             payload = {
                 "name": self.worker_id,
@@ -264,7 +283,7 @@ class V2Worker:
     async def _deregister_worker(self, server_url: str) -> bool:
         """Deregister this worker from the runtime table via API."""
         try:
-            deregister_url = f"{server_url.rstrip('/')}/api/worker/pool/deregister"
+            deregister_url = _api_url(server_url, "worker/pool/deregister")
             
             payload = {
                 "name": self.worker_id,
@@ -345,7 +364,7 @@ class V2Worker:
         logger.info("Connected to NATS and subscribing to command notifications")
         
         # Register worker in runtime table
-        server_url = self.server_url or worker_settings.server_url
+        server_url = _normalize_server_base_url(self.server_url or worker_settings.server_url)
         if server_url:
             await self._register_worker(server_url)
             # Start heartbeat background task
@@ -378,7 +397,7 @@ class V2Worker:
         # Deregister from runtime table
         from noetl.core.config import get_worker_settings
         worker_settings = get_worker_settings()
-        server_url = self.server_url or worker_settings.server_url
+        server_url = _normalize_server_base_url(self.server_url or worker_settings.server_url)
         if server_url and self._http_client and self._registered:
             await self._deregister_worker(server_url)
         
@@ -478,7 +497,7 @@ class V2Worker:
         try:
             # Query execution cancellation status via API
             response = await self._http_client.get(
-                f"{server_url.rstrip('/')}/api/executions/{execution_id}/cancellation-check",
+                _api_url(server_url, f"executions/{execution_id}/cancellation-check"),
                 timeout=5.0
             )
             if response.status_code == 200:
@@ -512,7 +531,7 @@ class V2Worker:
                 event_id = notification["event_id"]
                 command_id = notification["command_id"]
                 step = notification["step"]
-                server_url = notification["server_url"]
+                server_url = _normalize_server_base_url(notification["server_url"])
 
                 logger.info(f"[EVENT] Worker {self.worker_id} received notification: exec={execution_id}, command={command_id}, step={step}")
 
@@ -641,7 +660,7 @@ class V2Worker:
             _released = False
             try:
                 response = await self._http_client.post(
-                    f"{server_url.rstrip('/')}/api/commands/{event_id}/claim",
+                    _api_url(server_url, f"commands/{event_id}/claim"),
                     json={"worker_id": self.worker_id},
                 )
 
@@ -814,7 +833,7 @@ class V2Worker:
         """
         try:
             response = await self._http_client.post(
-                    f"{server_url.rstrip('/')}/api/events",
+                    _api_url(server_url, "events"),
                 json={
                     "execution_id": str(execution_id),
                     "step": command_id.split(":")[1] if ":" in command_id else "unknown",  # Extract step from command_id
@@ -855,7 +874,7 @@ class V2Worker:
         """
         try:
             response = await self._http_client.get(
-                f"{server_url.rstrip('/')}/api/commands/{event_id}"
+                _api_url(server_url, f"commands/{event_id}")
             )
             
             if response.status_code == 404:
@@ -878,7 +897,7 @@ class V2Worker:
         """Emit command.failed event."""
         try:
             await self._http_client.post(
-                f"{server_url.rstrip('/')}/api/events",
+                _api_url(server_url, "events"),
                 json={
                     "execution_id": str(execution_id),
                     "step": step,
@@ -913,7 +932,7 @@ class V2Worker:
         try:
             async with httpx.AsyncClient(timeout=10.0) as client:
                 response = await client.get(
-                    f"{server_url}/api/vars/{execution_id}",
+                    _api_url(server_url, f"vars/{execution_id}"),
                     headers={"Content-Type": "application/json"}
                 )
                 
@@ -2405,7 +2424,7 @@ class V2Worker:
 
         response = await _request_with_transient_retry(
             lambda: self._http_client.post(
-                f"{server_url}/api/execute",
+                _api_url(server_url, "execute"),
                 json=payload,
                 timeout=30.0,
             ),
@@ -2432,7 +2451,7 @@ class V2Worker:
                 # command.completed events, which is not a terminal playbook state.
                 status_response = await _request_with_transient_retry(
                     lambda: self._http_client.get(
-                        f"{server_url}/api/executions/{execution_id}/status",
+                        _api_url(server_url, f"executions/{execution_id}/status"),
                         timeout=10.0,
                     ),
                     f"status polling for execution {execution_id}",
@@ -2449,7 +2468,7 @@ class V2Worker:
                     # Backward-compatible fallback for older servers without /status.
                     fallback_response = await _request_with_transient_retry(
                         lambda: self._http_client.get(
-                            f"{server_url}/api/executions/{execution_id}",
+                            _api_url(server_url, f"executions/{execution_id}"),
                             timeout=10.0,
                         ),
                         f"fallback status polling for execution {execution_id}",
@@ -2549,7 +2568,7 @@ class V2Worker:
         if not self._http_client:
             raise RuntimeError("HTTP client not initialized")
 
-        batch_url = f"{server_url.rstrip('/')}/api/events/batch"
+        batch_url = _api_url(server_url, "events/batch")
         batch_data = {
             "execution_id": str(execution_id),
             "worker_id": self.worker_id,
@@ -2716,7 +2735,7 @@ class V2Worker:
         if not self._http_client:
             raise RuntimeError("HTTP client not initialized")
         
-        event_url = f"{server_url.rstrip('/')}/api/events"
+        event_url = _api_url(server_url, "events")
         
         # Build event data - server handles result storage (kind: data|ref|refs)
         event_data = {

@@ -134,6 +134,11 @@ async def run_command_reaper(stop_event: asyncio.Event, server_url: str) -> None
         logger.info("[REAPER] Disabled via NOETL_COMMAND_REAPER_ENABLED=false")
         return
 
+    # Reaper notifications must carry base server URL because workers append '/api/...'.
+    server_url = (server_url or "").strip().rstrip("/")
+    if server_url.endswith("/api"):
+        server_url = server_url[:-4]
+
     logger.info(
         "[REAPER] Started (interval=%.0fs, stale_threshold=%.0fs, lookback=%dh)",
         _REAPER_INTERVAL_SECONDS,
