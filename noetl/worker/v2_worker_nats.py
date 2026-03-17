@@ -662,7 +662,7 @@ class V2Worker:
                     _released = True
                     code, message = _claim_detail(response)
                     if code == "active_claim" or "being claimed" in message or "another worker" in message:
-                        retry_after_seconds = _parse_retry_after_seconds(
+                        retry_after_header_seconds = _parse_retry_after_seconds(
                             response.headers.get("Retry-After"),
                             default=1.0,
                         )
@@ -670,14 +670,20 @@ class V2Worker:
                         # Under load claim_and_fetch can take >10s, so floor to a larger
                         # delay than historic 1-2s retry loops.
                         floor_seconds = self._active_claim_retry_floor_seconds
-                        base_delay = max(retry_after_seconds, floor_seconds)
-                        jitter_multiplier = 1.0 + random.uniform(-0.15, 0.15)
-                        deferred_seconds = max(floor_seconds, min(base_delay * jitter_multiplier, 30.0))
+                        base_delay = max(retry_after_header_seconds, floor_seconds)
+                        # Apply positive jitter above the floor so retries stay desynchronized
+                        # even when floor_seconds reaches its upper bound.
+                        jitter_multiplier = 1.0 + random.uniform(0.0, 0.30)
+                        retry_cap_seconds = max(30.0, floor_seconds * 1.5)
+                        deferred_seconds = min(base_delay * jitter_multiplier, retry_cap_seconds)
                         logger.info(
-                            "[CLAIM] Command for event_id=%s is actively claimed; deferring (retry-after=%.2fs, floor=%.2fs, code=%s)",
+                            "[CLAIM] Command for event_id=%s is actively claimed; deferring "
+                            "(retry_after_header=%.2fs, deferred=%.2fs, floor=%.2fs, cap=%.2fs, code=%s)",
                             event_id,
+                            retry_after_header_seconds,
                             deferred_seconds,
                             floor_seconds,
+                            retry_cap_seconds,
                             code or "unknown",
                         )
                         return None, "retry_later", deferred_seconds
