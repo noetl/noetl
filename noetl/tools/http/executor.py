@@ -88,6 +88,31 @@ def _read_bool_env(name: str, default: bool) -> bool:
     return str(raw).strip().lower() not in {"0", "false", "no", "off"}
 
 
+def _resolve_http_timeout_seconds(task_timeout_value: Any) -> float:
+    """
+    Resolve per-request timeout with strict guardrails.
+
+    - Default: NOETL_HTTP_REQUEST_TIMEOUT_SECONDS (60s fallback)
+    - Null/invalid values fall back to default (never disable timeout)
+    - Clamped to worker command timeout budget
+    """
+    default_timeout = _read_float_env("NOETL_HTTP_REQUEST_TIMEOUT_SECONDS", 60.0, min_value=0.1)
+    command_timeout_budget = _read_float_env("NOETL_WORKER_COMMAND_TIMEOUT_SECONDS", 180.0, min_value=1.0)
+    max_timeout = max(1.0, command_timeout_budget)
+
+    if task_timeout_value is None or (isinstance(task_timeout_value, str) and not task_timeout_value.strip()):
+        return min(default_timeout, max_timeout)
+
+    try:
+        parsed = float(task_timeout_value)
+    except (TypeError, ValueError):
+        return min(default_timeout, max_timeout)
+
+    # Never allow non-positive values or unbounded semantics through.
+    bounded = max(0.1, parsed)
+    return min(bounded, max_timeout)
+
+
 _HTTP_CLIENT_LOCK = threading.Lock()
 _HTTP_CLIENTS: Dict[tuple[bool, bool], httpx.Client] = {}
 
@@ -266,13 +291,18 @@ async def execute_http_task(
             redacted_headers,
         )
 
-        timeout = task_config.get('timeout', 30)
+        raw_timeout = task_with.get("timeout") if isinstance(task_with, dict) and "timeout" in task_with else task_config.get("timeout")
+        timeout = _resolve_http_timeout_seconds(raw_timeout)
         verify_ssl = task_config.get('verify_ssl')
         if verify_ssl is None:
             verify_ssl = task_config.get('verify', True)
         follow_redirects = bool(task_config.get('follow_redirects', False))
         logger.debug(
-            f"HTTP.EXECUTE_HTTP_TASK: Timeout={timeout} | verify_ssl={verify_ssl} | follow_redirects={follow_redirects}"
+            "HTTP.EXECUTE_HTTP_TASK: Timeout=%s (raw=%s) | verify_ssl=%s | follow_redirects=%s",
+            timeout,
+            raw_timeout,
+            verify_ssl,
+            follow_redirects,
         )
 
         try:

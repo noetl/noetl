@@ -439,6 +439,8 @@ class WorkerSettings(BaseModel):
     nats_subject: str = Field(default="noetl.commands", alias="NATS_SUBJECT")
     nats_fetch_timeout_seconds: float = Field(30.0, alias="NOETL_WORKER_NATS_FETCH_TIMEOUT_SECONDS")
     nats_fetch_heartbeat_seconds: float = Field(5.0, alias="NOETL_WORKER_NATS_FETCH_HEARTBEAT_SECONDS")
+    nats_ack_wait_seconds: float = Field(300.0, alias="NOETL_WORKER_NATS_ACK_WAIT_SECONDS")
+    nats_ack_wait_buffer_seconds: float = Field(30.0, alias="NOETL_WORKER_NATS_ACK_WAIT_BUFFER_SECONDS")
     nats_max_ack_pending: int = Field(64, alias="NOETL_WORKER_NATS_MAX_ACK_PENDING")
     nats_max_deliver: int = Field(1000, alias="NOETL_WORKER_NATS_MAX_DELIVER")
 
@@ -478,6 +480,12 @@ class WorkerSettings(BaseModel):
         'deregister_backoff',
         'worker_metrics_interval',
         'worker_heartbeat_interval',
+        'nats_ack_wait_seconds',
+        'nats_ack_wait_buffer_seconds',
+        'nats_fetch_timeout_seconds',
+        'nats_fetch_heartbeat_seconds',
+        'throttle_poll_interval',
+        'command_timeout_seconds',
         mode='before'
     )
     def coerce_numeric(cls, v, info):
@@ -523,6 +531,10 @@ class WorkerSettings(BaseModel):
             raise ValueError("NOETL_WORKER_NATS_FETCH_TIMEOUT_SECONDS must be > 0")
         if self.nats_fetch_heartbeat_seconds <= 0:
             raise ValueError("NOETL_WORKER_NATS_FETCH_HEARTBEAT_SECONDS must be > 0")
+        if self.nats_ack_wait_seconds <= 0:
+            raise ValueError("NOETL_WORKER_NATS_ACK_WAIT_SECONDS must be > 0")
+        if self.nats_ack_wait_buffer_seconds < 0:
+            raise ValueError("NOETL_WORKER_NATS_ACK_WAIT_BUFFER_SECONDS must be >= 0")
         if self.throttle_poll_interval <= 0:
             raise ValueError("NOETL_WORKER_THROTTLE_POLL_INTERVAL_SECONDS must be > 0")
         if self.postgres_pool_waiting_threshold < 0:
@@ -713,10 +725,14 @@ def get_worker_settings(reload: bool = False) -> WorkerSettings:
             NATS_SUBJECT=env.get('NATS_SUBJECT', 'noetl.commands'),
             NOETL_WORKER_NATS_FETCH_TIMEOUT_SECONDS=env.get('NOETL_WORKER_NATS_FETCH_TIMEOUT_SECONDS', '30'),
             NOETL_WORKER_NATS_FETCH_HEARTBEAT_SECONDS=env.get('NOETL_WORKER_NATS_FETCH_HEARTBEAT_SECONDS', '5'),
+            NOETL_WORKER_NATS_ACK_WAIT_SECONDS=env.get('NOETL_WORKER_NATS_ACK_WAIT_SECONDS', '300'),
+            NOETL_WORKER_NATS_ACK_WAIT_BUFFER_SECONDS=env.get('NOETL_WORKER_NATS_ACK_WAIT_BUFFER_SECONDS', '30'),
             NOETL_WORKER_NATS_MAX_ACK_PENDING=env.get('NOETL_WORKER_NATS_MAX_ACK_PENDING', '64'),
+            NOETL_WORKER_NATS_MAX_DELIVER=env.get('NOETL_WORKER_NATS_MAX_DELIVER', '1000'),
             NOETL_KEYCHAIN_REFRESH_THRESHOLD=env.get('NOETL_KEYCHAIN_REFRESH_THRESHOLD', '300'),
             NOETL_WORKER_HTTP_TIMEOUT=env.get('NOETL_WORKER_HTTP_TIMEOUT', '120'),
             NOETL_WORKER_EVENT_TIMEOUT=env.get('NOETL_WORKER_EVENT_TIMEOUT', '60'),
+            NOETL_WORKER_COMMAND_TIMEOUT_SECONDS=env.get('NOETL_WORKER_COMMAND_TIMEOUT_SECONDS', '180'),
             NOETL_WORKER_MAX_INFLIGHT_COMMANDS=env.get('NOETL_WORKER_MAX_INFLIGHT_COMMANDS', '8'),
             NOETL_WORKER_MAX_INFLIGHT_DB_COMMANDS=env.get('NOETL_WORKER_MAX_INFLIGHT_DB_COMMANDS', '4'),
             NOETL_WORKER_THROTTLE_POLL_INTERVAL_SECONDS=env.get(

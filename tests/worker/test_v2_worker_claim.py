@@ -35,10 +35,11 @@ async def test_claim_conflict_active_claim_returns_retry_later():
         )
     )
 
-    command, decision = await worker._claim_and_fetch_command("http://server", 1)
+    command, decision, retry_after = await worker._claim_and_fetch_command("http://server", 1)
 
     assert command is None
     assert decision == "retry_later"
+    assert retry_after >= worker._active_claim_retry_floor_seconds
 
 
 @pytest.mark.asyncio
@@ -51,10 +52,11 @@ async def test_claim_conflict_plain_message_returns_retry_later():
         )
     )
 
-    command, decision = await worker._claim_and_fetch_command("http://server", 2)
+    command, decision, retry_after = await worker._claim_and_fetch_command("http://server", 2)
 
     assert command is None
     assert decision == "retry_later"
+    assert retry_after >= 1.0
 
 
 @pytest.mark.asyncio
@@ -67,10 +69,11 @@ async def test_claim_conflict_terminal_code_returns_skip_ack():
         )
     )
 
-    command, decision = await worker._claim_and_fetch_command("http://server", 3)
+    command, decision, retry_after = await worker._claim_and_fetch_command("http://server", 3)
 
     assert command is None
     assert decision == "skip_ack"
+    assert retry_after == 0.0
 
 
 @pytest.mark.asyncio
@@ -83,7 +86,8 @@ async def test_claim_conflict_unknown_code_defaults_retry_later():
         )
     )
 
-    command, decision = await worker._claim_and_fetch_command("http://server", 4)
+    command, decision, retry_after = await worker._claim_and_fetch_command("http://server", 4)
 
     assert command is None
     assert decision == "retry_later"
+    assert retry_after >= 1.0

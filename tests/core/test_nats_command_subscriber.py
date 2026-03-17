@@ -2,6 +2,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from noetl.core import config as config_module
 from noetl.core.messaging.nats_client import NATSCommandSubscriber
 
 
@@ -96,3 +97,23 @@ async def test_add_consumer_tolerates_race_when_existing_consumer_matches_config
     _, config = fake_js.add_consumer_calls[0]
     assert config.max_ack_pending == 64
     assert fake_js.delete_consumer_calls == []
+
+
+def test_consumer_config_enforces_ack_wait_budget(monkeypatch):
+    monkeypatch.setenv("NOETL_WORKER_COMMAND_TIMEOUT_SECONDS", "180")
+    monkeypatch.setenv("NOETL_WORKER_NATS_ACK_WAIT_SECONDS", "30")
+    monkeypatch.setenv("NOETL_WORKER_NATS_ACK_WAIT_BUFFER_SECONDS", "20")
+    config_module._worker_settings = None
+    try:
+        subscriber = NATSCommandSubscriber(
+            consumer_name="test-consumer",
+            stream_name="NOETL_COMMANDS",
+            max_ack_pending=64,
+            max_inflight=1,
+        )
+
+        config = subscriber._consumer_config()
+
+        assert config.ack_wait == pytest.approx(200.0)
+    finally:
+        config_module._worker_settings = None

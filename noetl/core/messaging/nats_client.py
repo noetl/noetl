@@ -175,11 +175,21 @@ class NATSCommandSubscriber:
     def _consumer_config(self) -> ConsumerConfig:
         from noetl.core.config import get_worker_settings
         ws = get_worker_settings()
+        minimum_ack_wait_seconds = float(ws.command_timeout_seconds) + float(ws.nats_ack_wait_buffer_seconds)
+        ack_wait_seconds = max(float(ws.nats_ack_wait_seconds), minimum_ack_wait_seconds)
+        if ack_wait_seconds > float(ws.nats_ack_wait_seconds):
+            logger.warning(
+                "Configured NOETL_WORKER_NATS_ACK_WAIT_SECONDS=%.1fs is below minimum %.1fs "
+                "(command_timeout + buffer). Using %.1fs.",
+                float(ws.nats_ack_wait_seconds),
+                minimum_ack_wait_seconds,
+                ack_wait_seconds,
+            )
         return ConsumerConfig(
             durable_name=self.consumer_name,
             ack_policy="explicit",
             max_deliver=max(1, int(ws.nats_max_deliver)),
-            ack_wait=30,
+            ack_wait=ack_wait_seconds,
             deliver_policy="new",
             replay_policy="instant",
             max_ack_pending=self.max_ack_pending,

@@ -162,6 +162,10 @@ class V2Worker:
         self._postgres_pool_waiting_threshold = max(0, int(worker_settings.postgres_pool_waiting_threshold))
         self._db_command_semaphore = asyncio.Semaphore(self._max_inflight_db_commands)
         self._last_db_throttle_log_at = 0.0
+        self._active_claim_retry_floor_seconds = max(
+            1.0,
+            min(30.0, float(worker_settings.command_timeout_seconds) / 4.0),
+        )
         # Adaptive AIMD concurrency controller: limits simultaneous claim/event
         # requests from this worker process, backing off when the server pool
         # is saturated (503) and recovering as it clears.
@@ -178,6 +182,7 @@ class V2Worker:
             "transfer",
             "snowflake",
             "snowflake_transfer",
+            "task_sequence",
         }
 
     def _is_postgres_pool_saturated(self) -> bool:
@@ -513,11 +518,19 @@ class V2Worker:
 
                 # Single atomic call: claim + cancel check + fetch command details
                 t_claim_start = time.perf_counter()
-                command, claim_decision = await self._claim_and_fetch_command(server_url, event_id)
+                command, claim_decision, retry_after_seconds = await self._claim_and_fetch_command(server_url, event_id)
                 t_claim_end = time.perf_counter()
                 logger.info(f"[PERF] claim_and_fetch took {(t_claim_end - t_claim_start)*1000:.1f}ms")
 
                 if claim_decision == "retry_later":
+                    if retry_after_seconds > 0:
+                        logger.info(
+                            "[CLAIM] Backing off %.2fs before NAK for command %s (event_id=%s)",
+                            retry_after_seconds,
+                            command_id,
+                            event_id,
+                        )
+                        await asyncio.sleep(retry_after_seconds)
                     logger.info(
                         "[CLAIM] Deferring command %s (event_id=%s) back to queue for later retry",
                         command_id,
@@ -576,7 +589,7 @@ class V2Worker:
     
     async def _claim_and_fetch_command(
         self, server_url: str, event_id: int
-    ) -> tuple[Optional[dict], Literal["claimed", "skip_ack", "retry_later"]]:
+    ) -> tuple[Optional[dict], Literal["claimed", "skip_ack", "retry_later"], float]:
         """
         Atomically claim a command and fetch its details in a single call.
 
@@ -588,9 +601,9 @@ class V2Worker:
         5. Returns command details
 
         Returns:
-            - (command, "claimed") on successful claim
-            - (None, "skip_ack") for terminal no-op outcomes (already completed/cancelled)
-            - (None, "retry_later") for transient overload/claim contention
+            - (command, "claimed", 0.0) on successful claim
+            - (None, "skip_ack", 0.0) for terminal no-op outcomes (already completed/cancelled)
+            - (None, "retry_later", seconds) for transient overload/claim contention
         """
         max_attempts = 5
         delay_seconds = 0.25
@@ -613,6 +626,14 @@ class V2Worker:
             if isinstance(detail, str):
                 return "", detail.strip().lower()
             return "", ""
+
+        def _parse_retry_after_seconds(raw_value: Optional[str], default: float = 1.0) -> float:
+            if raw_value is None:
+                return default
+            try:
+                return max(0.0, float(raw_value))
+            except (TypeError, ValueError):
+                return default
 
         for attempt in range(1, max_attempts + 1):
             # Wait for a concurrency slot; respects any global backoff set by
@@ -637,28 +658,39 @@ class V2Worker:
                         "action": data["action"],
                         "context": data["context"],
                         "meta": data["meta"]
-                    }, "claimed")
+                    }, "claimed", 0.0)
                 if response.status_code == 409:
                     # 409 is not a pool overload — release as success (doesn't penalise limit)
                     await self._concurrency.release_success()
                     _released = True
                     code, message = _claim_detail(response)
                     if code == "active_claim" or "being claimed" in message or "another worker" in message:
-                        retry_after = response.headers.get("Retry-After", "1")
+                        retry_after_seconds = _parse_retry_after_seconds(
+                            response.headers.get("Retry-After"),
+                            default=1.0,
+                        )
+                        # Keep active-claim retries aligned with real claim latency.
+                        # Under load claim_and_fetch can take >10s, so floor to a larger
+                        # delay than historic 1-2s retry loops.
+                        floor_seconds = self._active_claim_retry_floor_seconds
+                        base_delay = max(retry_after_seconds, floor_seconds)
+                        jitter_multiplier = 1.0 + random.uniform(-0.15, 0.15)
+                        deferred_seconds = max(floor_seconds, min(base_delay * jitter_multiplier, 30.0))
                         logger.info(
-                            "[CLAIM] Command for event_id=%s is actively claimed; deferring (retry-after=%s, code=%s)",
+                            "[CLAIM] Command for event_id=%s is actively claimed; deferring (retry-after=%.2fs, floor=%.2fs, code=%s)",
                             event_id,
-                            retry_after,
+                            deferred_seconds,
+                            floor_seconds,
                             code or "unknown",
                         )
-                        return None, "retry_later"
+                        return None, "retry_later", deferred_seconds
                     if code in {"already_terminal", "execution_cancelled"}:
                         logger.info(
                             "[CLAIM] Command for event_id=%s is terminal/cancelled (code=%s), skipping",
                             event_id,
                             code,
                         )
-                        return None, "skip_ack"
+                        return None, "skip_ack", 0.0
                     # Safety: unknown 409 conflicts are treated as transient to prevent
                     # ACK-dropping commands that never reached terminal lifecycle.
                     logger.warning(
@@ -667,7 +699,7 @@ class V2Worker:
                         code or "unknown",
                         message[:160] if message else "",
                     )
-                    return None, "retry_later"
+                    return None, "retry_later", 1.0
                 if response.status_code == 404:
                     await self._concurrency.release_error()
                     _released = True
@@ -677,13 +709,10 @@ class V2Worker:
                         retryable=False,
                     )
                 if response.status_code in retryable_statuses and attempt < max_attempts:
-                    retry_after_header = response.headers.get("Retry-After")
-                    retry_after_seconds = 1.0
-                    if retry_after_header:
-                        try:
-                            retry_after_seconds = max(0.0, float(retry_after_header))
-                        except (TypeError, ValueError):
-                            retry_after_seconds = 1.0
+                    retry_after_seconds = _parse_retry_after_seconds(
+                        response.headers.get("Retry-After"),
+                        default=1.0,
+                    )
                     # Notify controller: server pool saturated.
                     # This applies a global backoff and reduces concurrency limit.
                     # The next acquire() in the next iteration will wait it out.
@@ -713,7 +742,7 @@ class V2Worker:
                         response.status_code,
                         attempt,
                     )
-                    return None, "retry_later"
+                    return None, "retry_later", 1.0
 
                 await self._concurrency.release_error()
                 _released = True
@@ -764,9 +793,9 @@ class V2Worker:
                     attempt,
                     e,
                 )
-                return None, "retry_later"
+                return None, "retry_later", 1.0
 
-        return None, "retry_later"
+        return None, "retry_later", 1.0
 
     async def _claim_command(self, server_url: str, execution_id: int, command_id: str) -> bool:
         """
