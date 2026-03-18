@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.10.9](https://github.com/noetl/noetl/compare/v2.10.8...v2.10.9) (2026-03-18)
+
+### Bug Fixes
+
+* resolve stale execution status from terminal event precedence ([4abbaa5](https://github.com/noetl/noetl/commit/4abbaa5efe48e277ea5ca06ee6fe1dd174facfe5))
+
 ## [2.10.8](https://github.com/noetl/noetl/compare/v2.10.7...v2.10.8) (2026-03-18)
 
 ### Bug Fixes
