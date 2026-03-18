@@ -376,7 +376,9 @@ class ExecutionState:
             event_id: Event ID that initiated this loop instance (for uniqueness)
         """
         self.loop_state[step_name] = {
-            "collection": collection,
+            # Keep a local snapshot so downstream in-place list mutations outside loop_state
+            # do not alter continuation/retry scheduling.
+            "collection": list(collection),
             "iterator": iterator,
             "index": 0,
             "mode": mode,
@@ -2296,7 +2298,7 @@ class ControlFlowEngine:
                     name="loop_continue",
                     payload={}
                 ))
-                collection = existing_loop_state.get("collection", [])
+                collection = list(existing_loop_state.get("collection", []))
                 logger.debug(
                     "[LOOP] Reusing cached collection for %s continuation/retry (size=%s)",
                     step.step,
@@ -2392,7 +2394,7 @@ class ControlFlowEngine:
                         loop_event_id,
                     )
                 else:
-                    existing_loop_state["collection"] = collection
+                    existing_loop_state["collection"] = list(collection)
             loop_state = existing_loop_state
             loop_event_id_for_metadata = (
                 str(loop_state.get("event_id"))
@@ -3045,7 +3047,7 @@ class ControlFlowEngine:
                             context = state.get_render_context(event)
                             rendered_collection = self._render_template(parent_step_def.loop.in_, context)
                             rendered_collection = self._normalize_loop_collection(rendered_collection, parent_step)
-                            loop_state["collection"] = rendered_collection
+                            loop_state["collection"] = list(rendered_collection)
                             collection_size = len(rendered_collection)
                             logger.info(f"[TASK_SEQ-LOOP] Re-rendered collection for {parent_step}: {collection_size} items")
 
@@ -3377,7 +3379,7 @@ class ControlFlowEngine:
                         loop_context = state.get_render_context(event)
                         rendered_collection = self._render_template(step_def.loop.in_, loop_context)
                         rendered_collection = self._normalize_loop_collection(rendered_collection, event.step)
-                        loop_state["collection"] = rendered_collection
+                        loop_state["collection"] = list(rendered_collection)
                         collection_size = len(rendered_collection)
                         logger.info(f"[LOOP-CALL.DONE] Re-rendered collection for {event.step}: {collection_size} items")
 
@@ -3640,7 +3642,7 @@ class ControlFlowEngine:
                         context = state.get_render_context(event)
                         collection = self._render_template(step_def.loop.in_, context)
                         collection = self._normalize_loop_collection(collection, event.step)
-                        loop_state["collection"] = collection
+                        loop_state["collection"] = list(collection)
                         logger.info(f"[LOOP-SETUP] Rendered collection for {event.step}: {len(collection)} items")
                         
                         # Store initial loop state in NATS K/V with event_id

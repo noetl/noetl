@@ -131,15 +131,16 @@ async def test_loop_continue_reuses_cached_collection_when_ctx_key_missing(monke
     engine = ControlFlowEngine(playbook_repo, state_store)
 
     execution_id = "9302"
+    source_patients = [
+        {"patient_id": 101},
+        {"patient_id": 102},
+    ]
     state = ExecutionState(
         execution_id,
         parsed_playbook,
         payload={
             "ctx": {
-                "patients_needing_demographics": [
-                    {"patient_id": 101},
-                    {"patient_id": 102},
-                ]
+                "patients_needing_demographics": source_patients
             }
         },
     )
@@ -159,7 +160,11 @@ async def test_loop_continue_reuses_cached_collection_when_ctx_key_missing(monke
     assert first.args.get("claimed_patient_id") == 101
     assert first.args.get("claimed_index") == 0
 
-    # Simulate context mutation after loop init; continuation must use cached snapshot.
+    # Simulate in-place mutation of original source list after loop init.
+    source_patients.clear()
+    source_patients.append({"patient_id": 999})
+
+    # Also remove ctx key; continuation must still use cached snapshot.
     state.variables.pop("patients_needing_demographics", None)
 
     second = await engine._create_command_for_step(
