@@ -41,6 +41,10 @@ _LOOP_RESULT_PREVIEW_ITEMS = max(
     1,
     int(os.getenv("NOETL_LOOP_RESULT_PREVIEW_ITEMS", "3")),
 )
+_LOOP_RESULT_MAX_ITEMS = max(
+    1,
+    int(os.getenv("NOETL_LOOP_RESULT_MAX_ITEMS", "128")),
+)
 _TASKSEQ_LOOP_REPAIR_THRESHOLD = max(
     0,
     int(os.getenv("NOETL_TASKSEQ_LOOP_REPAIR_THRESHOLD", "3")),
@@ -116,6 +120,29 @@ def _compact_loop_result(result: Any) -> Any:
         "_type": type(result).__name__,
         "_preview": _preview_large_value(result),
     }
+
+
+def _retain_recent_loop_results(
+    results: list[Any],
+    omitted_count: int = 0,
+    max_items: Optional[int] = None,
+) -> tuple[list[Any], int]:
+    """Keep only a bounded tail of loop results to cap in-memory state growth."""
+    if max_items is None:
+        max_items = _LOOP_RESULT_MAX_ITEMS
+    if max_items <= 0 or len(results) <= max_items:
+        return results, omitted_count
+    overflow = len(results) - max_items
+    return results[overflow:], omitted_count + overflow
+
+
+def _loop_results_total(loop_state: dict[str, Any]) -> int:
+    """Return authoritative local loop completion count."""
+    buffered_results = loop_state.get("results", [])
+    if not isinstance(buffered_results, list):
+        buffered_results = []
+    omitted = int(loop_state.get("omitted_results_count", 0) or 0)
+    return len(buffered_results) + max(0, omitted)
 
 
 def _pending_step_key(step_name: Optional[str]) -> str:
@@ -386,7 +413,8 @@ class ExecutionState:
             "results": [],  # Track iteration results for aggregation
             "failed_count": 0,  # Track failed iterations
             "scheduled_count": 0,  # Track issued iterations for max_in_flight gating
-            "event_id": event_id  # Track which event initiated this loop instance
+            "event_id": event_id,  # Track which event initiated this loop instance
+            "omitted_results_count": 0,  # Number of older results evicted from memory buffer
         }
         logger.debug(f"Initialized loop for step {step_name}: {len(collection)} items, mode={mode}, event_id={event_id}")
     
@@ -422,16 +450,32 @@ class ExecutionState:
             return
 
         stored_result = _compact_loop_result(result)
-        self.loop_state[step_name]["results"].append(stored_result)
+        loop_state = self.loop_state[step_name]
+        results_buffer = loop_state.get("results", [])
+        if not isinstance(results_buffer, list):
+            results_buffer = []
+        results_buffer.append(stored_result)
+        retained_results, omitted_count = _retain_recent_loop_results(
+            results_buffer,
+            int(loop_state.get("omitted_results_count", 0) or 0),
+        )
+        loop_state["results"] = retained_results
+        loop_state["omitted_results_count"] = omitted_count
         if failed:
-            self.loop_state[step_name]["failed_count"] += 1
+            loop_state["failed_count"] += 1
         if stored_result is not result:
             logger.info(
                 "[LOOP] Compacted large iteration result for %s (max=%s bytes)",
                 step_name,
                 _LOOP_RESULT_MAX_BYTES,
             )
-        logger.debug(f"Added iteration result to loop {step_name}: {len(self.loop_state[step_name]['results'])} total")
+        logger.debug(
+            "Added iteration result to loop %s: total=%s buffered=%s omitted=%s",
+            step_name,
+            _loop_results_total(loop_state),
+            len(loop_state.get("results", [])),
+            loop_state.get("omitted_results_count", 0),
+        )
         
         # Note: Distributed sync to NATS K/V happens in engine.handle_event()
     
@@ -441,18 +485,29 @@ class ExecutionState:
             return {"results": [], "stats": {"total": 0, "success": 0, "failed": 0}}
         
         loop_state = self.loop_state[step_name]
-        total = len(loop_state["results"])
+        omitted_results = int(loop_state.get("omitted_results_count", 0) or 0)
+        buffered_results = loop_state.get("results", [])
+        if not isinstance(buffered_results, list):
+            buffered_results = []
+        total = _loop_results_total(loop_state)
         failed = loop_state["failed_count"]
         success = total - failed
         
         return {
-            "results": loop_state["results"],
+            "results": buffered_results,
             "stats": {
                 "total": total,
                 "success": success,
                 "failed": failed
-            }
+            },
+            "omitted_results_count": omitted_results,
         }
+
+    def get_loop_completed_count(self, step_name: str) -> int:
+        """Get local loop completion count including omitted buffered entries."""
+        if step_name not in self.loop_state:
+            return 0
+        return _loop_results_total(self.loop_state[step_name])
     
     def get_render_context(self, event: Event) -> dict[str, Any]:
         """Get context for Jinja2 rendering.
@@ -744,10 +799,12 @@ class StateStore:
                 
                 # Identify loop steps from playbook for initialization
                 loop_steps = set()
+                loop_step_defs: dict[str, Step] = {}
                 if hasattr(playbook, 'workflow') and playbook.workflow:
                     for step in playbook.workflow:
                         if hasattr(step, 'loop') and step.loop:
                             loop_steps.add(step.step)
+                            loop_step_defs[step.step] = step
                 
                 # Replay events to rebuild state (event sourcing)
                 await cur.execute("""
@@ -759,8 +816,10 @@ class StateStore:
                 
                 rows = await cur.fetchall()
                 
-                # Track loop iteration results during event replay
-                loop_iteration_results = {}  # {step_name: [result1, result2, ...]}
+                # Track loop iteration results during event replay (bounded in-memory tail only)
+                # while preserving authoritative counts for completion math.
+                loop_iteration_state: dict[str, dict[str, Any]] = {}
+                loop_iteration_counts: dict[str, int] = {}
                 loop_event_ids = {}  # {step_name: loop_event_id}
                 
                 for row in rows:
@@ -804,14 +863,38 @@ class StateStore:
 
                     # For loop steps, collect iteration results from step.exit events
                     if event_type == 'step.exit' and event_payload and node_name in loop_steps:
-                        if node_name not in loop_iteration_results:
-                            loop_iteration_results[node_name] = []
+                        if node_name not in loop_iteration_state:
+                            loop_iteration_state[node_name] = {
+                                "results": [],
+                                "omitted_results_count": 0,
+                                "failed_count": 0,
+                            }
+                        loop_iteration_counts[node_name] = int(
+                            loop_iteration_counts.get(node_name, 0) or 0
+                        ) + 1
+
+                        step_loop_state = loop_iteration_state[node_name]
                         iteration_result = (
                             event_payload.get("result", event_payload)
                             if isinstance(event_payload, dict)
                             else event_payload
                         )
-                        loop_iteration_results[node_name].append(iteration_result)
+                        step_results = step_loop_state.get("results", [])
+                        if not isinstance(step_results, list):
+                            step_results = []
+                        step_results.append(_compact_loop_result(iteration_result))
+                        retained_results, omitted_count = _retain_recent_loop_results(
+                            step_results,
+                            int(step_loop_state.get("omitted_results_count", 0) or 0),
+                        )
+                        step_loop_state["results"] = retained_results
+                        step_loop_state["omitted_results_count"] = omitted_count
+                        if isinstance(event_payload, dict):
+                            status = str(event_payload.get("status", "")).upper()
+                            if status in {"FAILED", "ERROR"}:
+                                step_loop_state["failed_count"] = int(
+                                    step_loop_state.get("failed_count", 0) or 0
+                                ) + 1
 
                     # Restore step results from step.exit events (final result only)
                     if event_type == 'step.exit' and event_payload:
@@ -836,27 +919,63 @@ class StateStore:
                 for step_name in loop_steps:
                     # Count iterations by counting step.exit events for this step
                     # This gives us the current loop index when reconstructing state
-                    iteration_count = len(loop_iteration_results.get(step_name, []))
+                    iteration_count = int(loop_iteration_counts.get(step_name, 0) or 0)
+                    replay_loop_state = loop_iteration_state.get(
+                        step_name,
+                        {
+                            "results": [],
+                            "omitted_results_count": 0,
+                            "failed_count": 0,
+                        },
+                    )
+                    loop_step_def = loop_step_defs.get(step_name)
+                    loop_iterator = (
+                        loop_step_def.loop.iterator
+                        if loop_step_def and loop_step_def.loop
+                        else "item"
+                    )
+                    loop_mode = (
+                        loop_step_def.loop.mode
+                        if loop_step_def and loop_step_def.loop
+                        else "sequential"
+                    )
                     
                     if step_name not in state.loop_state:
                         state.loop_state[step_name] = {
                             "collection": [],
+                            "iterator": loop_iterator,
                             "index": iteration_count,  # Start from number of completed iterations
+                            "mode": loop_mode,
                             "completed": False,
-                            "results": loop_iteration_results.get(step_name, []),
-                            "failed_count": 0,
+                            "results": replay_loop_state.get("results", []),
+                            "failed_count": int(replay_loop_state.get("failed_count", 0) or 0),
                             "scheduled_count": iteration_count,
                             "aggregation_finalized": False,
                             "event_id": loop_event_ids.get(step_name),
+                            "omitted_results_count": int(
+                                replay_loop_state.get("omitted_results_count", 0) or 0
+                            ),
                         }
                         logger.debug(f"[STATE-LOAD] Initialized loop_state for {step_name}: index={iteration_count}")
                     else:
                         # Restore collected results and update index
-                        state.loop_state[step_name]["results"] = loop_iteration_results.get(step_name, [])
+                        state.loop_state[step_name]["results"] = replay_loop_state.get("results", [])
+                        state.loop_state[step_name]["failed_count"] = int(
+                            replay_loop_state.get("failed_count", 0) or 0
+                        )
+                        state.loop_state[step_name]["omitted_results_count"] = int(
+                            replay_loop_state.get("omitted_results_count", 0) or 0
+                        )
                         state.loop_state[step_name]["index"] = iteration_count
                         state.loop_state[step_name]["scheduled_count"] = max(
                             int(state.loop_state[step_name].get("scheduled_count", 0) or 0),
                             iteration_count,
+                        )
+                        state.loop_state[step_name]["iterator"] = (
+                            state.loop_state[step_name].get("iterator") or loop_iterator
+                        )
+                        state.loop_state[step_name]["mode"] = (
+                            state.loop_state[step_name].get("mode") or loop_mode
                         )
                         loop_event_id = loop_event_ids.get(step_name)
                         if loop_event_id:
@@ -2348,7 +2467,7 @@ class ControlFlowEngine:
             else:
                 previous_collection = existing_loop_state.get("collection")
                 previous_size = len(previous_collection) if isinstance(previous_collection, list) else 0
-                previous_completed = len(existing_loop_state.get("results", []))
+                previous_completed = state.get_loop_completed_count(step.step)
                 previous_scheduled = int(
                     existing_loop_state.get("scheduled_count", previous_completed) or previous_completed
                 )
@@ -2470,7 +2589,7 @@ class ControlFlowEngine:
                         loop_event_id,
                     )
 
-            completed_count_local = len(loop_state.get("results", []))
+            completed_count_local = state.get_loop_completed_count(step.step)
             completed_count = completed_count_local
             if nats_loop_state:
                 completed_count = int(nats_loop_state.get("completed_count", completed_count_local) or completed_count_local)
@@ -2998,7 +3117,7 @@ class ControlFlowEngine:
                         if new_count < 0:
                             # Keep progress moving even if distributed cache increments fail.
                             # Prefer durable count from persisted call.done events over local in-memory counts.
-                            new_count = len(loop_state.get("results", []))
+                            new_count = state.get_loop_completed_count(parent_step)
                             persisted_count = await self._count_step_events(
                                 state.execution_id,
                                 event.step,
@@ -3351,7 +3470,7 @@ class ControlFlowEngine:
                             break
 
                     if new_count < 0:
-                        new_count = len(loop_state.get("results", []))
+                        new_count = state.get_loop_completed_count(event.step)
                         persisted_count = await self._count_step_events(
                             state.execution_id, event.step, "call.done"
                         )
@@ -3502,10 +3621,14 @@ class ControlFlowEngine:
                 # Check if loop aggregation already finalized (loop_done happened)
                 loop_state = state.loop_state[event.step]
                 logger.debug(
-                    "[LOOP_DEBUG] Loop state: completed=%s finalized=%s results_count=%s",
+                    "[LOOP_DEBUG] Loop state: completed=%s finalized=%s results_count=%s buffered=%s omitted=%s",
                     loop_state.get("completed"),
                     loop_state.get("aggregation_finalized"),
-                    len(loop_state.get("results", [])),
+                    _loop_results_total(loop_state),
+                    len(loop_state.get("results", []))
+                    if isinstance(loop_state.get("results"), list)
+                    else 0,
+                    int(loop_state.get("omitted_results_count", 0) or 0),
                 )
                 if not loop_state.get("aggregation_finalized", False):
                     failed = event.payload.get("status", "").upper() == "FAILED"
@@ -3632,7 +3755,7 @@ class ControlFlowEngine:
                         completed_count = nats_loop_state.get("completed_count", 0)
                         logger.debug(f"[LOOP-NATS] Got count from NATS K/V: {completed_count}")
                     elif loop_state:
-                        completed_count = len(loop_state.get("results", []))
+                        completed_count = _loop_results_total(loop_state)
                         logger.debug(f"[LOOP-LOCAL] Got count from local cache: {completed_count}")
                     else:
                         completed_count = 0
