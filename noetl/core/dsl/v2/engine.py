@@ -1346,6 +1346,19 @@ class ControlFlowEngine:
         step_def: Step,
         event: Event
     ) -> list[Command]:
+        commands, _matched = await self._evaluate_next_transitions_with_match(
+            state,
+            step_def,
+            event,
+        )
+        return commands
+
+    async def _evaluate_next_transitions_with_match(
+        self,
+        state: ExecutionState,
+        step_def: Step,
+        event: Event,
+    ) -> tuple[list[Command], bool]:
         """
         Evaluate next[].when conditions and return commands for matching transitions.
 
@@ -1465,7 +1478,7 @@ class ControlFlowEngine:
         if not any_matched:
             logger.debug(f"[NEXT-EVAL] No next targets matched for step {event.step}")
 
-        return commands
+        return commands, any_matched
 
     def _has_matching_next_transition(self, step_def: Step, context: dict[str, Any]) -> bool:
         """Return True when at least one next arc condition matches current context."""
@@ -3231,10 +3244,15 @@ class ControlFlowEngine:
         # CRITICAL: For loop steps, skip next evaluation on call.done - the next transition
         # will be evaluated on loop.done event after all iterations complete. This prevents
         # fan-out where each loop iteration triggers the next step independently.
-        next_commands = []
+        next_commands: list[Command] = []
+        next_any_matched: Optional[bool] = None
         is_loop_step = step_def.loop is not None and event.step in state.loop_state
         if event.name in ("call.done", "call.error") and not is_loop_step:
-            next_commands = await self._evaluate_next_transitions(state, step_def, event)
+            next_commands, next_any_matched = await self._evaluate_next_transitions_with_match(
+                state,
+                step_def,
+                event,
+            )
 
         # Handle loop iteration counting for non-task_sequence loop steps on call.done.
         # Task sequence steps handle loop counting in the :task_sequence block above.
@@ -3847,7 +3865,11 @@ class ControlFlowEngine:
         # If in-memory state shows no pending AND issued_steps is populated, trust it
 
         has_matching_next_transition = (
-            self._has_matching_next_transition(step_def, context)
+            (
+                next_any_matched
+                if next_any_matched is not None
+                else self._has_matching_next_transition(step_def, context)
+            )
             if (is_completion_trigger and step_def.next and not is_loop_step)
             else False
         )
