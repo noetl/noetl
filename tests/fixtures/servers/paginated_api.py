@@ -12,6 +12,7 @@ import sys
 import time
 import random
 import string
+import hashlib
 from collections import defaultdict
 import logging
 
@@ -23,6 +24,7 @@ app = FastAPI()
 ITEMS_PER_PAGE = 10
 TOTAL_ITEMS = 35  # 4 pages total
 HEAVY_TOTAL_ITEMS = 100  # More items for heavy payload tests
+REFERENCE_CHAIN_TOTAL_ITEMS = 382  # Neutral large-loop fixture
 
 # Track request attempts per page for flaky endpoint
 flaky_attempts = defaultdict(int)
@@ -245,6 +247,15 @@ def generate_heavy_item(item_id: int, payload_kb: int = 10) -> dict:
     }
 
 
+def _deterministic_payload(payload_kb: int, seed: str) -> str:
+    """Generate deterministic payload text for stable load tests."""
+    size_bytes = max(0, int(payload_kb)) * 1024
+    if size_bytes == 0:
+        return ""
+    block = hashlib.sha256(seed.encode("utf-8")).hexdigest()
+    return (block * ((size_bytes // len(block)) + 1))[:size_bytes]
+
+
 @app.get('/api/v1/heavy')
 def get_heavy_items(
     page: int = Query(default=1),
@@ -303,6 +314,143 @@ def get_heavy_stats():
             '/api/v1/heavy?page=1&pageSize=5&payload_kb=100',
             '/api/v1/heavy?page=1&pageSize=2&payload_kb=500',
         ]
+    }
+
+
+@app.get('/api/v1/reference-chain/items')
+def get_reference_chain_items(
+    page: int = Query(default=1),
+    pageSize: int = Query(default=25),
+    total: int = Query(default=REFERENCE_CHAIN_TOTAL_ITEMS),
+    payload_kb: int = Query(default=1),
+    ref_mode: str = Query(default='linked', description="linked|windowed|expanded"),
+    chain_window: int = Query(default=2, description="Window size for windowed mode"),
+):
+    """
+    Large neutral fixture for pagination + reference-chain tests.
+
+    - linked: returns only nearest page refs [prev, current]
+    - windowed: returns last N refs
+    - expanded: returns full ref chain (intentionally unbounded growth)
+    """
+    safe_page = max(1, int(page))
+    safe_page_size = max(1, min(int(pageSize), 200))
+    safe_total = max(1, min(int(total), 20000))
+    safe_payload_kb = max(0, min(int(payload_kb), 256))
+    safe_mode = str(ref_mode or "linked").lower()
+
+    start_idx = (safe_page - 1) * safe_page_size
+    end_idx = min(start_idx + safe_page_size, safe_total)
+    has_more = end_idx < safe_total
+
+    records = []
+    for record_id in range(start_idx + 1, end_idx + 1):
+        records.append(
+            {
+                "record_id": record_id,
+                "record_ref": f"record-{record_id:06d}",
+                "prev_ref": f"record-{record_id - 1:06d}" if record_id > 1 else None,
+                "batch": ((record_id - 1) // safe_page_size) + 1,
+                "payload": _deterministic_payload(safe_payload_kb, f"item-{record_id}"),
+            }
+        )
+
+    page_ref = f"page-{safe_page:06d}"
+    prev_page_ref = f"page-{safe_page - 1:06d}" if safe_page > 1 else None
+    next_page_ref = f"page-{safe_page + 1:06d}" if has_more else None
+
+    if safe_mode == "expanded":
+        chain = [f"page-{p:06d}" for p in range(1, safe_page + 1)]
+    elif safe_mode == "windowed":
+        safe_window = max(1, min(int(chain_window), 50))
+        start_page = max(1, safe_page - safe_window + 1)
+        chain = [f"page-{p:06d}" for p in range(start_page, safe_page + 1)]
+    else:
+        safe_mode = "linked"
+        chain = [ref for ref in (prev_page_ref, page_ref) if ref is not None]
+
+    approx_response_kb = len(str(records)) // 1024
+    logger.info(
+        "Reference chain items: page=%s size=%s total=%s has_more=%s mode=%s chain_len=%s",
+        safe_page,
+        len(records),
+        safe_total,
+        has_more,
+        safe_mode,
+        len(chain),
+    )
+
+    return {
+        "data": records,
+        "paging": {
+            "hasMore": has_more,
+            "page": safe_page,
+            "pageSize": safe_page_size,
+            "total": safe_total,
+            "nextPage": safe_page + 1 if has_more else None,
+        },
+        "refs": {
+            "mode": safe_mode,
+            "root_ref": "run-root-000001",
+            "page_ref": page_ref,
+            "prev_page_ref": prev_page_ref,
+            "next_page_ref": next_page_ref,
+            "chain": chain,
+            "chain_length": len(chain),
+        },
+        "meta": {
+            "payload_kb_per_record": safe_payload_kb,
+            "approx_response_kb": approx_response_kb,
+        },
+    }
+
+
+@app.get('/api/v1/reference-chain/detail/{record_id}')
+def get_reference_chain_detail(
+    record_id: int,
+    payload_kb: int = Query(default=2),
+    ref_mode: str = Query(default='linked', description="linked|windowed|expanded"),
+    chain_window: int = Query(default=2),
+    parent_ref: str = Query(default=''),
+):
+    """Detail endpoint to stress per-record loop processing with bounded refs."""
+    if record_id <= 0:
+        raise HTTPException(status_code=404, detail="record not found")
+
+    safe_payload_kb = max(0, min(int(payload_kb), 256))
+    safe_mode = str(ref_mode or "linked").lower()
+
+    detail_ref = f"detail-{record_id:06d}"
+    prev_detail_ref = f"detail-{record_id - 1:06d}" if record_id > 1 else None
+
+    if safe_mode == "expanded":
+        chain = [f"detail-{idx:06d}" for idx in range(1, record_id + 1)]
+    elif safe_mode == "windowed":
+        safe_window = max(1, min(int(chain_window), 100))
+        start_idx = max(1, record_id - safe_window + 1)
+        chain = [f"detail-{idx:06d}" for idx in range(start_idx, record_id + 1)]
+    else:
+        safe_mode = "linked"
+        chain = [ref for ref in (prev_detail_ref, detail_ref) if ref is not None]
+
+    payload = _deterministic_payload(safe_payload_kb, f"detail-{record_id}")
+    return {
+        "record_id": record_id,
+        "status": "ok",
+        "refs": {
+            "mode": safe_mode,
+            "detail_ref": detail_ref,
+            "prev_detail_ref": prev_detail_ref,
+            "parent_ref": parent_ref or None,
+            "chain": chain,
+            "chain_length": len(chain),
+        },
+        "summary": {
+            "classification": f"class-{record_id % 7}",
+            "score": 40 + (record_id % 60),
+            "payload_kb": safe_payload_kb,
+        },
+        "payload": payload,
     }
 
 
@@ -462,6 +610,8 @@ if __name__ == '__main__':
     print("  Load Testing:")
     print("    GET /api/v1/heavy?page=N&payload_kb=100       - Heavy payload (configurable KB per item)")
     print("    GET /api/v1/heavy/stats                       - Heavy endpoint configuration")
+    print("    GET /api/v1/reference-chain/items              - Large paginated neutral fixture")
+    print("    GET /api/v1/reference-chain/detail/{record_id} - Per-record detail with ref modes")
     print("  Error Simulation:")
     print("    GET /api/v1/flaky?page=N&fail_on=2,3          - Flaky endpoint (fails first attempt)")
     print("    GET /api/v1/errors?error_type=429|500|503     - Simulate specific errors")
