@@ -13,6 +13,7 @@ from fastapi import APIRouter
 from noetl.core.common import get_async_db_connection, get_pgdb_connection, get_snowflake_id
 from noetl.core.db.pool import init_pool, close_pool
 from noetl.core.logger import setup_logger
+from noetl.core.urls import normalize_server_base_url
 from noetl.server.api import router as api_router
 from noetl.server.middleware import catch_exceptions_middleware
 
@@ -169,9 +170,7 @@ def _create_app(settings: Settings, enable_ui: Optional[bool] = None) -> FastAPI
             auto_recreate_runtime = getattr(settings, 'auto_recreate_runtime', False)
             server_url = settings.server_api_url
             hostname = settings.hostname
-            command_server_url = settings.server_url.rstrip("/")
-            while command_server_url.endswith("/api"):
-                command_server_url = command_server_url[:-4]
+            command_server_url = normalize_server_base_url(settings.server_url)
 
             async def _runtime_sweeper():
                 while not stop_event.is_set():

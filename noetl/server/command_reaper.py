@@ -36,6 +36,7 @@ from psycopg.rows import dict_row
 
 from noetl.core.db.pool import get_pool_connection
 from noetl.core.logger import setup_logger
+from noetl.core.urls import normalize_server_base_url
 
 logger = setup_logger(__name__, include_location=True)
 
@@ -135,9 +136,7 @@ async def run_command_reaper(stop_event: asyncio.Event, server_url: str) -> None
         return
 
     # Reaper notifications must carry base server URL because workers append '/api/...'.
-    server_url = (server_url or "").strip().rstrip("/")
-    while server_url.endswith("/api"):
-        server_url = server_url[:-4]
+    server_url = normalize_server_base_url(server_url)
 
     logger.info(
         "[REAPER] Started (interval=%.0fs, stale_threshold=%.0fs, lookback=%dh)",

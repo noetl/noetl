@@ -26,6 +26,10 @@ from noetl.core.messaging import NATSCommandSubscriber
 from noetl.worker.adaptive_concurrency import AdaptiveConcurrencyController
 from noetl.core.logging_context import LoggingContext
 from noetl.core.logger import setup_logger
+from noetl.core.urls import (
+    build_api_url as _api_url,
+    normalize_server_base_url as _normalize_server_base_url,
+)
 logger = setup_logger(__name__, include_location=True)
 
 
@@ -36,24 +40,6 @@ def _safe_keys(value: Any, max_items: int = 10) -> list[str]:
         return [str(v) for v in list(value)[:max_items]]
     return []
 
-
-def _normalize_server_base_url(server_url: Optional[str]) -> str:
-    """
-    Normalize server URL to host base without trailing slash or duplicate /api.
-    """
-    base = (server_url or "").strip().rstrip("/")
-    while base.endswith("/api"):
-        base = base[:-4]
-    return base
-
-
-def _api_url(server_url: Optional[str], path: str) -> str:
-    """Build an API endpoint URL with exactly one '/api' segment."""
-    base = _normalize_server_base_url(server_url)
-    normalized_path = path.lstrip("/")
-    if normalized_path.startswith("api/"):
-        normalized_path = normalized_path[4:]
-    return f"{base}/api/{normalized_path}"
 
 # Pre-import tool executors at module level to avoid 5s cold-start delay
 # These were previously imported inside _execute_tool() causing slow first execution
