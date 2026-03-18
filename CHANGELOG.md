@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.10.11](https://github.com/noetl/noetl/compare/v2.10.10...v2.10.11) (2026-03-18)
+
+### Bug Fixes
+
+* guard loop continuation from mutable ctx and add regression test ([238d3a4](https://github.com/noetl/noetl/commit/238d3a490a111469f118846cae9b2420dff712ca))
+* snapshot loop collections to prevent in-place mutation bleed ([f0ca292](https://github.com/noetl/noetl/commit/f0ca292a2caa3011c3e4c4a1b3d49c32e5724fd2))
+
 ## [2.10.10](https://github.com/noetl/noetl/compare/v2.10.9...v2.10.10) (2026-03-18)
 
 ### Bug Fixes
