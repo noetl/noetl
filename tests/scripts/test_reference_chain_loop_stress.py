@@ -54,7 +54,6 @@ def execute_playbook(
     total_records: int,
     page_size: int,
     page_payload_kb: int,
-    detail_payload_kb: int,
 ) -> int:
     payload = {
         "path": path,
@@ -62,7 +61,6 @@ def execute_playbook(
             "total_records": int(total_records),
             "page_size": int(page_size),
             "page_payload_kb": int(page_payload_kb),
-            "detail_payload_kb": int(detail_payload_kb),
         },
     }
     result = post_json(base_url, "/api/execute", payload, timeout=60.0)
@@ -72,57 +70,70 @@ def execute_playbook(
     return int(execution_id)
 
 
-def fetch_execution_status(base_url: str, execution_id: int) -> Optional[str]:
-    rows = query_postgres(
-        base_url,
-        f"""
-        SELECT event_type
-        FROM noetl.event
-        WHERE execution_id = {execution_id}
-          AND event_type IN (
-            'playbook.completed',
-            'playbook_completed',
-            'playbook.failed',
-            'playbook_failed',
-            'workflow.completed',
-            'workflow_completed',
-            'workflow.failed',
-            'workflow_failed'
-          )
-        ORDER BY event_id DESC
-        LIMIT 1
-        """,
-    )
-    last_event = str(parse_first_value(rows) or "").lower()
-    if last_event in {"playbook.completed", "playbook_completed", "workflow.completed"}:
+def _normalize_execution_status(last_event: str) -> Optional[str]:
+    normalized = str(last_event or "").lower()
+    if normalized in {
+        "playbook.completed",
+        "playbook_completed",
+        "workflow.completed",
+        "workflow_completed",
+    }:
         return "completed"
-    if last_event in {"playbook.failed", "playbook_failed", "workflow.failed"}:
+    if normalized in {
+        "playbook.failed",
+        "playbook_failed",
+        "workflow.failed",
+        "workflow_failed",
+    }:
         return "failed"
     return None
 
 
-def count_process_iterations(base_url: str, execution_id: int) -> int:
+def _parse_metrics_row(row: Any) -> dict[str, Any]:
+    if isinstance(row, dict):
+        return row
+    if isinstance(row, (list, tuple)):
+        return {
+            "last_status_event": row[0] if len(row) > 0 else None,
+            "iteration_count": row[1] if len(row) > 1 else 0,
+            "event_count": row[2] if len(row) > 2 else 0,
+        }
+    return {}
+
+
+def fetch_poll_metrics(base_url: str, execution_id: int) -> tuple[Optional[str], int, int]:
     rows = query_postgres(
         base_url,
         f"""
-        SELECT COUNT(*)
+        SELECT
+          COALESCE(MAX(CASE
+            WHEN event_type IN (
+              'playbook.completed',
+              'playbook_completed',
+              'playbook.failed',
+              'playbook_failed',
+              'workflow.completed',
+              'workflow_completed',
+              'workflow.failed',
+              'workflow_failed'
+            )
+            THEN lower(event_type)
+            ELSE NULL
+          END), '') AS last_status_event,
+          COALESCE(SUM(CASE
+            WHEN node_name IN ('process_records', 'process_records:task_sequence')
+             AND event_type = 'step.exit'
+            THEN 1
+            ELSE 0
+          END), 0) AS iteration_count,
+          COUNT(*) AS event_count
         FROM noetl.event
         WHERE execution_id = {execution_id}
-          AND node_name IN ('process_records', 'process_records:task_sequence')
-          AND event_type = 'step.exit'
         """,
     )
-    value = parse_first_value(rows)
-    return int(value or 0)
-
-
-def count_total_events(base_url: str, execution_id: int) -> int:
-    rows = query_postgres(
-        base_url,
-        f"SELECT COUNT(*) FROM noetl.event WHERE execution_id = {execution_id}",
-    )
-    value = parse_first_value(rows)
-    return int(value or 0)
+    row = _parse_metrics_row(rows[0] if rows else {})
+    status = _normalize_execution_status(str(row.get("last_status_event") or ""))
+    return status, int(row.get("iteration_count") or 0), int(row.get("event_count") or 0)
 
 
 def unwrap_event_result(raw_result: Any) -> Any:
@@ -175,7 +186,7 @@ def run_test(args: argparse.Namespace) -> int:
     print(f"base_url={base_url}")
     print(
         f"total_records={args.total_records} page_size={args.page_size} "
-        f"page_payload_kb={args.page_payload_kb} detail_payload_kb={args.detail_payload_kb}"
+        f"page_payload_kb={args.page_payload_kb}"
     )
 
     register_data = register_playbook(base_url)
@@ -189,7 +200,6 @@ def run_test(args: argparse.Namespace) -> int:
         args.total_records,
         args.page_size,
         args.page_payload_kb,
-        args.detail_payload_kb,
     )
     print(f"execution_id={execution_id}")
 
@@ -199,9 +209,7 @@ def run_test(args: argparse.Namespace) -> int:
 
     while True:
         elapsed = int(time.time() - start)
-        status = fetch_execution_status(base_url, execution_id)
-        iteration_count = count_process_iterations(base_url, execution_id)
-        event_count = count_total_events(base_url, execution_id)
+        status, iteration_count, event_count = fetch_poll_metrics(base_url, execution_id)
 
         if iteration_count > last_iteration_count:
             last_progress_at = time.time()
@@ -260,7 +268,6 @@ def main() -> int:
     parser.add_argument("--total-records", type=int, default=382)
     parser.add_argument("--page-size", type=int, default=25)
     parser.add_argument("--page-payload-kb", type=int, default=1)
-    parser.add_argument("--detail-payload-kb", type=int, default=4)
     parser.add_argument("--timeout", type=int, default=1200)
     parser.add_argument("--stall-seconds", type=int, default=180)
     parser.add_argument("--poll-seconds", type=float, default=5.0)

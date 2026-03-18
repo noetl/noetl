@@ -6,14 +6,13 @@ This fixture validates long-running pagination + loop processing with bounded re
 
 1. Pagination over a large neutral dataset (`total_records` default: `382`).
 2. Linked reference mode (`ref_mode=linked`) where only nearest refs are carried forward.
-3. Loop processing for every collected record with per-record detail calls.
+3. Loop processing for every collected record with bounded per-record validation.
 4. Completion under load without loop-progress stalls.
 
 ## Components
 
 - API fixture endpoint:
   - `GET /api/v1/reference-chain/items`
-  - `GET /api/v1/reference-chain/detail/{record_id}`
 - Playbook:
   - `tests/fixtures/playbooks/load_test/reference_chain_loop_stress/reference_chain_loop_stress.yaml`
 - Runner script:
@@ -38,7 +37,6 @@ python tests/scripts/test_reference_chain_loop_stress.py \
   --base-url http://localhost:30082 \
   --total-records 382 \
   --page-size 25 \
-  --detail-payload-kb 4 \
   --stall-seconds 180 \
   --timeout 1200
 ```

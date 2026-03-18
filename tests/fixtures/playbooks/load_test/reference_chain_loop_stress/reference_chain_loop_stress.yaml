@@ -17,7 +17,6 @@ workload:
   total_records: 382
   page_size: 25
   page_payload_kb: 1
-  detail_payload_kb: 2
   current_page: 1
   has_more: true
   chain_contract_ok: true

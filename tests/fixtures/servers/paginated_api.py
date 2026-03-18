@@ -25,6 +25,7 @@ ITEMS_PER_PAGE = 10
 TOTAL_ITEMS = 35  # 4 pages total
 HEAVY_TOTAL_ITEMS = 100  # More items for heavy payload tests
 REFERENCE_CHAIN_TOTAL_ITEMS = 382  # Neutral large-loop fixture
+REFERENCE_CHAIN_MAX_DETAIL_ID = 20000
 
 # Track request attempts per page for flaky endpoint
 flaky_attempts = defaultdict(int)
@@ -369,7 +370,7 @@ def get_reference_chain_items(
         safe_mode = "linked"
         chain = [ref for ref in (prev_page_ref, page_ref) if ref is not None]
 
-    approx_response_kb = len(str(records)) // 1024
+    approx_response_kb = (len(records) * safe_payload_kb) + 1
     logger.info(
         "Reference chain items: page=%s size=%s total=%s has_more=%s mode=%s chain_len=%s",
         safe_page,
@@ -416,6 +417,11 @@ def get_reference_chain_detail(
     """Detail endpoint to stress per-record loop processing with bounded refs."""
     if record_id <= 0:
         raise HTTPException(status_code=404, detail="record not found")
+    if record_id > REFERENCE_CHAIN_MAX_DETAIL_ID:
+        raise HTTPException(
+            status_code=400,
+            detail=f"record_id exceeds max supported value ({REFERENCE_CHAIN_MAX_DETAIL_ID})",
+        )
 
     safe_payload_kb = max(0, min(int(payload_kb), 256))
     safe_mode = str(ref_mode or "linked").lower()
