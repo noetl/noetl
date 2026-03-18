@@ -513,6 +513,7 @@ async def test_call_done_with_unmatched_next_arcs_emits_terminal_completion(monk
 
     execution_id = "9016"
     state = ExecutionState(execution_id, playbook, payload={})
+    state.variables["route"] = "not_follow_up"
     # Keep completion check purely in-memory (skip DB pending fallback query).
     state.issued_steps.add("events.batch")
     state.completed_steps.add("events.batch")

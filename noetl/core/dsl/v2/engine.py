@@ -1388,7 +1388,7 @@ class ControlFlowEngine:
                     next_mode = next_spec.get("mode", "exclusive")
 
         if not step_def.next:
-            return commands
+            return commands, False
 
         # Normalize next to list of dicts (arcs)
         next_items = step_def.next
