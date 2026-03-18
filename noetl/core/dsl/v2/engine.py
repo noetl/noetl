@@ -1346,7 +1346,7 @@ class ControlFlowEngine:
         step_def: Step,
         event: Event
     ) -> list[Command]:
-        commands, _matched = await self._evaluate_next_transitions_with_match(
+        commands, _actionable_match = await self._evaluate_next_transitions_with_match(
             state,
             step_def,
             event,
@@ -1360,7 +1360,7 @@ class ControlFlowEngine:
         event: Event,
     ) -> tuple[list[Command], bool]:
         """
-        Evaluate next[].when conditions and return commands for matching transitions.
+        Evaluate next[].when conditions and return commands plus actionable-match status.
 
         Canonical format routing using next[].when:
         - Each next entry has optional 'when' condition
@@ -1414,6 +1414,7 @@ class ControlFlowEngine:
         logger.info(f"[NEXT-EVAL] Step {event.step} has {len(next_items)} next targets, mode={next_mode}, evaluating for event {event.name}")
 
         any_matched = False
+        any_actionable_issued = False
 
         for idx, next_target in enumerate(next_items):
             target_step = next_target.get("step")
@@ -1460,6 +1461,7 @@ class ControlFlowEngine:
             issued_cmds = await self._issue_loop_commands(state, target_step_def, rendered_args)
             if issued_cmds:
                 commands.extend(issued_cmds)
+                any_actionable_issued = True
                 # Steps can be revisited in loopback workflows; clear old completion marker
                 # so pending tracking reflects the new in-flight invocation.
                 state.completed_steps.discard(target_step)
@@ -1478,10 +1480,15 @@ class ControlFlowEngine:
         if not any_matched:
             logger.debug(f"[NEXT-EVAL] No next targets matched for step {event.step}")
 
-        return commands, any_matched
+        return commands, any_actionable_issued
 
-    def _has_matching_next_transition(self, step_def: Step, context: dict[str, Any]) -> bool:
-        """Return True when at least one next arc condition matches current context."""
+    def _has_matching_next_transition(
+        self,
+        state: ExecutionState,
+        step_def: Step,
+        context: dict[str, Any],
+    ) -> bool:
+        """Return True when a next arc condition matches and target step exists."""
         if not step_def.next:
             return False
 
@@ -1506,6 +1513,9 @@ class ControlFlowEngine:
             if not target_step:
                 continue
             when_condition = next_target.get("when")
+            if state.get_step(target_step) is None:
+                logger.warning("[NEXT-EVAL] Skipping missing next target step: %s", target_step)
+                continue
             if not when_condition:
                 return True
             if self._evaluate_condition(when_condition, context):
@@ -2753,6 +2763,18 @@ class ControlFlowEngine:
         if not state:
             logger.error(f"Execution state not found: {event.execution_id}")
             return commands
+
+        if state.completed:
+            logger.info(
+                "[ENGINE] Execution %s already completed; skipping orchestration for event %s/%s",
+                event.execution_id,
+                event.name,
+                event.step,
+            )
+            if not already_persisted:
+                await self._persist_event(event, state)
+                await self.state_store.save_state(state)
+            return commands
         
         # Get current step
         if not event.step:
@@ -3868,7 +3890,7 @@ class ControlFlowEngine:
             (
                 next_any_matched
                 if next_any_matched is not None
-                else self._has_matching_next_transition(step_def, context)
+                else self._has_matching_next_transition(state, step_def, context)
             )
             if (is_completion_trigger and step_def.next and not is_loop_step)
             else False

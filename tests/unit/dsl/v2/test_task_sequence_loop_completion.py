@@ -531,7 +531,7 @@ async def test_call_done_with_unmatched_next_arcs_emits_terminal_completion(monk
         execution_id=execution_id,
         step="events.batch",
         name="call.done",
-        payload={"response": {"status": "completed", "result": {"row_count": 1}}},
+        payload={"status": "completed", "result": {"row_count": 1}},
     )
 
     commands = await engine.handle_event(event, already_persisted=True)
@@ -539,3 +539,52 @@ async def test_call_done_with_unmatched_next_arcs_emits_terminal_completion(monk
     assert commands == []
     assert state.completed is True
     assert persisted_events == ["workflow.completed", "playbook.completed"]
+
+
+@pytest.mark.asyncio
+async def test_completed_execution_short_circuits_late_events(monkeypatch):
+    playbook = Playbook(
+        **{
+            "apiVersion": "noetl.io/v2",
+            "kind": "Playbook",
+            "metadata": {"name": "completed-short-circuit", "path": "tests/completed-short-circuit"},
+            "workflow": [
+                {
+                    "step": "events.batch",
+                    "tool": {"kind": "noop"},
+                    "next": {
+                        "spec": {"mode": "exclusive"},
+                        "arcs": [{"step": "follow_up"}],
+                    },
+                },
+                {
+                    "step": "follow_up",
+                    "tool": {"kind": "noop"},
+                },
+            ],
+        }
+    )
+    playbook_repo = PlaybookRepo()
+    state_store = StateStore(playbook_repo)
+    engine = ControlFlowEngine(playbook_repo, state_store)
+
+    execution_id = "9017"
+    state = ExecutionState(execution_id, playbook, payload={})
+    state.completed = True
+    await state_store.save_state(state)
+
+    async def fail_if_called(*_args, **_kwargs):
+        raise AssertionError("routing should not run for completed execution")
+
+    monkeypatch.setattr(engine, "_evaluate_next_transitions_with_match", fail_if_called)
+
+    event = Event(
+        execution_id=execution_id,
+        step="events.batch",
+        name="call.done",
+        payload={"status": "completed", "result": {"row_count": 1}},
+    )
+
+    commands = await engine.handle_event(event, already_persisted=True)
+
+    assert commands == []
