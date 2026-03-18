@@ -18,11 +18,22 @@ class _CursorCtx:
 
 
 class _FakeCursor:
-    def __init__(self, start_time: datetime, latest_time: datetime, terminal_time: datetime):
+    def __init__(
+        self,
+        start_time: datetime,
+        latest_time: datetime,
+        terminal_time: datetime | None,
+        pending_count: int = 0,
+        latest_event_type: str = "batch.processing",
+        latest_status: str = "RUNNING",
+    ):
         self._query = ""
         self._start_time = start_time
         self._latest_time = latest_time
         self._terminal_time = terminal_time
+        self._pending_count = pending_count
+        self._latest_event_type = latest_event_type
+        self._latest_status = latest_status
 
     async def execute(self, query, _params):
         self._query = query
@@ -31,17 +42,21 @@ class _FakeCursor:
         if "ORDER BY event_id ASC" in self._query:
             return {"created_at": self._start_time}
         if "AND event_type IN (" in self._query:
+            if self._terminal_time is None:
+                return None
             return {
                 "event_type": "playbook.completed",
                 "node_name": "bhs/state_report_generation_prod_v10",
                 "status": "COMPLETED",
                 "created_at": self._terminal_time,
             }
+        if "SELECT COUNT(*) AS pending_count" in self._query:
+            return {"pending_count": self._pending_count}
         if "ORDER BY event_id DESC" in self._query:
             return {
-                "event_type": "batch.processing",
+                "event_type": self._latest_event_type,
                 "node_name": "events.batch",
-                "status": "RUNNING",
+                "status": self._latest_status,
                 "created_at": self._latest_time,
             }
         raise AssertionError(f"Unexpected query in test cursor: {self._query}")
@@ -80,7 +95,7 @@ async def test_status_prefers_terminal_event_when_latest_event_is_batch_processi
         variables={},
     )
     fake_engine = SimpleNamespace(state_store=SimpleNamespace(get_state=lambda _execution_id: fake_state))
-    fake_cursor = _FakeCursor(start_time, latest_batch_time, terminal_time)
+    fake_cursor = _FakeCursor(start_time, latest_batch_time, terminal_time, pending_count=0)
 
     monkeypatch.setattr(v2_api, "get_engine", lambda: fake_engine)
     monkeypatch.setattr(v2_api, "get_pool_connection", lambda: _ConnCtx(_FakeConn(fake_cursor)))
@@ -91,3 +106,36 @@ async def test_status_prefers_terminal_event_when_latest_event_is_batch_processi
     assert result["failed"] is False
     assert result["completion_inferred"] is True
     assert result["end_time"] == terminal_time.isoformat()
+
+
+@pytest.mark.asyncio
+async def test_status_infers_completion_from_batch_completed_without_pending_commands(monkeypatch):
+    start_time = datetime(2026, 3, 18, 3, 41, 55, tzinfo=timezone.utc)
+    latest_batch_time = datetime(2026, 3, 18, 3, 47, 41, tzinfo=timezone.utc)
+
+    fake_state = SimpleNamespace(
+        completed=False,
+        failed=False,
+        current_step="events.batch",
+        completed_steps={"start"},
+        variables={},
+    )
+    fake_engine = SimpleNamespace(state_store=SimpleNamespace(get_state=lambda _execution_id: fake_state))
+    fake_cursor = _FakeCursor(
+        start_time,
+        latest_batch_time,
+        terminal_time=None,
+        pending_count=0,
+        latest_event_type="batch.completed",
+        latest_status="COMPLETED",
+    )
+
+    monkeypatch.setattr(v2_api, "get_engine", lambda: fake_engine)
+    monkeypatch.setattr(v2_api, "get_pool_connection", lambda: _ConnCtx(_FakeConn(fake_cursor)))
+
+    result = await v2_api.get_execution_status("585005709285130319")
+
+    assert result["completed"] is True
+    assert result["failed"] is False
+    assert result["completion_inferred"] is True
+    assert result["end_time"] == latest_batch_time.isoformat()
