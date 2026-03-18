@@ -81,9 +81,13 @@ def fetch_execution_status(base_url: str, execution_id: int) -> Optional[str]:
         WHERE execution_id = {execution_id}
           AND event_type IN (
             'playbook.completed',
+            'playbook_completed',
             'playbook.failed',
+            'playbook_failed',
             'workflow.completed',
-            'workflow.failed'
+            'workflow_completed',
+            'workflow.failed',
+            'workflow_failed'
           )
         ORDER BY event_id DESC
         LIMIT 1
