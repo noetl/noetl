@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.10.10](https://github.com/noetl/noetl/compare/v2.10.9...v2.10.10) (2026-03-18)
+
+### Bug Fixes
+
+* infer terminal status from batch completion with no pending commands ([123e2dc](https://github.com/noetl/noetl/commit/123e2dcbed49653646744a98c3f1196863d7fabf))
+
 ## [2.10.9](https://github.com/noetl/noetl/compare/v2.10.8...v2.10.9) (2026-03-18)
 
 ### Bug Fixes
