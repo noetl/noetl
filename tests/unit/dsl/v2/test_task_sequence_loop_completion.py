@@ -441,3 +441,100 @@ async def test_command_failed_emits_terminal_failure_events(monkeypatch):
     assert state.failed is True
     assert state.completed is True
     assert persisted_events == ["workflow.failed", "playbook.failed"]
+
+
+@pytest.mark.asyncio
+async def test_finalize_abandoned_execution_emits_terminal_failure_events(monkeypatch):
+    playbook = Playbook(
+        **{
+            "apiVersion": "noetl.io/v2",
+            "kind": "Playbook",
+            "metadata": {"name": "finalize-test", "path": "tests/finalize-test"},
+            "workflow": [
+                {
+                    "step": "events.batch",
+                    "tool": {"kind": "noop"},
+                }
+            ],
+        }
+    )
+    playbook_repo = PlaybookRepo()
+    state_store = StateStore(playbook_repo)
+    engine = ControlFlowEngine(playbook_repo, state_store)
+
+    execution_id = "9015"
+    state = ExecutionState(execution_id, playbook, payload={})
+    state.current_step = "events.batch"
+    await state_store.save_state(state)
+
+    persisted_events = []
+
+    async def fake_persist_event(event, state_obj):
+        persisted_events.append(event.name)
+        state_obj.last_event_id = (state_obj.last_event_id or 0) + 1
+
+    monkeypatch.setattr(engine, "_persist_event", fake_persist_event)
+
+    await engine.finalize_abandoned_execution(execution_id, reason="stuck in production")
+
+    assert state.completed is True
+    assert state.failed is True
+    assert persisted_events == ["workflow.failed", "playbook.failed"]
+
+
+@pytest.mark.asyncio
+async def test_call_done_with_unmatched_next_arcs_emits_terminal_completion(monkeypatch):
+    playbook = Playbook(
+        **{
+            "apiVersion": "noetl.io/v2",
+            "kind": "Playbook",
+            "metadata": {"name": "dead-end-next", "path": "tests/dead-end-next"},
+            "workflow": [
+                {
+                    "step": "events.batch",
+                    "tool": {"kind": "noop"},
+                    "next": {
+                        "spec": {"mode": "exclusive"},
+                        "arcs": [
+                            {"step": "follow_up", "when": "{{ ctx.route == 'follow_up' }}"},
+                        ],
+                    },
+                },
+                {
+                    "step": "follow_up",
+                    "tool": {"kind": "noop"},
+                },
+            ],
+        }
+    )
+    playbook_repo = PlaybookRepo()
+    state_store = StateStore(playbook_repo)
+    engine = ControlFlowEngine(playbook_repo, state_store)
+
+    execution_id = "9016"
+    state = ExecutionState(execution_id, playbook, payload={})
+    # Keep completion check purely in-memory (skip DB pending fallback query).
+    state.issued_steps.add("events.batch")
+    state.completed_steps.add("events.batch")
+    await state_store.save_state(state)
+
+    persisted_events = []
+
+    async def fake_persist_event(event, state_obj):
+        persisted_events.append(event.name)
+        state_obj.last_event_id = (state_obj.last_event_id or 0) + 1
+
+    monkeypatch.setattr(engine, "_persist_event", fake_persist_event)
+
+    event = Event(
+        execution_id=execution_id,
+        step="events.batch",
+        name="call.done",
+        payload={"response": {"status": "completed", "result": {"row_count": 1}}},
+    )
+
+    commands = await engine.handle_event(event, already_persisted=True)
+
+    assert commands == []
+    assert state.completed is True
+    assert persisted_events == ["workflow.completed", "playbook.completed"]

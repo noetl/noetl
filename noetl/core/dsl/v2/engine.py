@@ -1,59 +1,3 @@
-async def finalize_abandoned_execution(self, execution_id: str, reason: str = "Abandoned or timed out"):
-    """
-    Forcibly finalize an execution by emitting workflow.failed and playbook.failed events if not already completed.
-    This should be called by a periodic task or admin action for stuck/running executions with no activity.
-    """
-    # Load state
-    state = await self.state_store.load_state(execution_id)
-    if not state:
-        logger.error(f"[FINALIZE] No state found for execution {execution_id}")
-        return
-    if state.completed:
-        logger.info(f"[FINALIZE] Execution {execution_id} already completed; skipping.")
-        return
-
-    # Find last step (if any)
-    last_step = state.current_step or (list(state.step_results.keys())[-1] if state.step_results else None)
-    logger.warning(f"[FINALIZE] Forcibly finalizing execution {execution_id} at step {last_step} due to: {reason}")
-
-    from noetl.core.dsl.v2.models import Event, LifecycleEventPayload
-    from datetime import datetime, timezone
-
-    # Emit workflow.failed event
-    workflow_failed_event = Event(
-        execution_id=execution_id,
-        step="workflow",
-        name="workflow.failed",
-        payload=LifecycleEventPayload(
-            status="failed",
-            final_step=last_step,
-            result=None,
-            error={"message": reason}
-        ).model_dump(),
-        timestamp=datetime.now(timezone.utc)
-    )
-    await self._persist_event(workflow_failed_event, state)
-
-    # Emit playbook.failed event
-    playbook_path = state.playbook.metadata.get("path", "playbook")
-    playbook_failed_event = Event(
-        execution_id=execution_id,
-        step=playbook_path,
-        name="playbook.failed",
-        payload=LifecycleEventPayload(
-            status="failed",
-            final_step=last_step,
-            result=None,
-            error={"message": reason}
-        ).model_dump(),
-        timestamp=datetime.now(timezone.utc)
-    )
-    await self._persist_event(playbook_failed_event, state)
-
-    # Mark state as completed
-    state.completed = True
-    await self.state_store.save_state(state)
-    logger.info(f"[FINALIZE] Emitted terminal events for execution {execution_id}")
 """
 NoETL V2 Execution Engine - Canonical Format
 
@@ -1054,6 +998,67 @@ class ControlFlowEngine:
         # Initialize shared template cache (singleton pattern)
         if ControlFlowEngine._template_cache is None:
             ControlFlowEngine._template_cache = TemplateCache(max_size=500)
+
+    async def finalize_abandoned_execution(
+        self,
+        execution_id: str,
+        reason: str = "Abandoned or timed out",
+    ) -> None:
+        """Forcibly finalize a stuck execution with terminal failure lifecycle events."""
+        state = await self.state_store.load_state(execution_id)
+        if not state:
+            logger.error("[FINALIZE] No state found for execution %s", execution_id)
+            return
+        if state.completed:
+            logger.info("[FINALIZE] Execution %s already completed; skipping", execution_id)
+            return
+
+        last_step = state.current_step or (list(state.step_results.keys())[-1] if state.step_results else None)
+        logger.warning(
+            "[FINALIZE] Forcibly finalizing execution %s at step %s due to: %s",
+            execution_id,
+            last_step,
+            reason,
+        )
+
+        from noetl.core.dsl.v2.models import LifecycleEventPayload
+
+        current_event_id = state.last_event_id
+        workflow_failed_event = Event(
+            execution_id=execution_id,
+            step="workflow",
+            name="workflow.failed",
+            payload=LifecycleEventPayload(
+                status="failed",
+                final_step=last_step,
+                result=None,
+                error={"message": reason},
+            ).model_dump(),
+            timestamp=datetime.now(timezone.utc),
+            parent_event_id=current_event_id,
+        )
+        await self._persist_event(workflow_failed_event, state)
+
+        playbook_path = state.playbook.metadata.get("path", "playbook")
+        playbook_failed_event = Event(
+            execution_id=execution_id,
+            step=playbook_path,
+            name="playbook.failed",
+            payload=LifecycleEventPayload(
+                status="failed",
+                final_step=last_step,
+                result=None,
+                error={"message": reason},
+            ).model_dump(),
+            timestamp=datetime.now(timezone.utc),
+            parent_event_id=state.last_event_id,
+        )
+        await self._persist_event(playbook_failed_event, state)
+
+        state.failed = True
+        state.completed = True
+        await self.state_store.save_state(state)
+        logger.info("[FINALIZE] Emitted terminal failure lifecycle events for execution %s", execution_id)
     
     def _render_value_recursive(self, value: Any, context: dict[str, Any]) -> Any:
         """Recursively render templates in nested data structures."""
@@ -1461,6 +1466,38 @@ class ControlFlowEngine:
             logger.debug(f"[NEXT-EVAL] No next targets matched for step {event.step}")
 
         return commands
+
+    def _has_matching_next_transition(self, step_def: Step, context: dict[str, Any]) -> bool:
+        """Return True when at least one next arc condition matches current context."""
+        if not step_def.next:
+            return False
+
+        next_items = step_def.next
+        if isinstance(next_items, str):
+            next_items = [{"step": next_items}]
+        elif isinstance(next_items, dict):
+            if "arcs" in next_items:
+                next_items = next_items.get("arcs", [])
+            elif "step" in next_items:
+                next_items = [next_items]
+            else:
+                next_items = []
+        elif isinstance(next_items, list):
+            next_items = [
+                item if isinstance(item, dict) else {"step": item}
+                for item in next_items
+            ]
+
+        for next_target in next_items:
+            target_step = next_target.get("step")
+            if not target_step:
+                continue
+            when_condition = next_target.get("when")
+            if not when_condition:
+                return True
+            if self._evaluate_condition(when_condition, context):
+                return True
+        return False
 
     async def _process_then_actions_with_break(
         self,
@@ -3724,10 +3761,8 @@ class ControlFlowEngine:
                     logger.info(f"[PAGINATION] Finalized pagination for {event.step}: {len(flattened_items)} total items collected over {pagination_data['iteration_count']} pages")
         
         # Check for completion (only emit once) - prepare completion events but persist after current event
-        # Completion triggers on call.done/call.error with no commands generated AND step has no routing.
-        # IMPORTANT: step.exit is sent by workers as an informational (non-actionable) batch event,
-        # so it never reaches the engine. call.done is the actionable event that drives routing
-        # and is the correct trigger for workflow completion detection.
+        # Completion primarily triggers on call.done/call.error, with step.exit kept as a
+        # resilience fallback for replay/legacy paths that surface terminal boundaries via step.exit.
         completion_events = []
         logger.debug(
             "COMPLETION CHECK: event=%s step=%s commands=%s completed=%s has_next=%s has_error=%s",
@@ -3743,14 +3778,14 @@ class ControlFlowEngine:
         has_error = event.payload.get("error") is not None
 
         # Only trigger completion if:
-        # 1. call.done or call.error event (these are the actionable events that reach the engine)
+        # 1. call.done/call.error (primary) or step.exit (fallback)
         # 2. No commands generated (no next transitions matched)
         # 3. EITHER: Step has NO next (true terminal step)
         #    OR: Step failed with no error handling (has error but no commands)
         # 4. Not already completed
         is_terminal_step = step_def and not step_def.next
         is_failed_with_no_handler = has_error and not commands
-        is_completion_trigger = event.name in ("call.done", "call.error")
+        is_completion_trigger = event.name in ("call.done", "call.error", "step.exit")
 
         # Check for pending commands using multiple methods:
         # 1. In-memory state tracking (issued_steps vs completed_steps)
@@ -3811,7 +3846,33 @@ class ControlFlowEngine:
                         logger.debug(f"[COMPLETION] execution={event.execution_id} pending_in_db={pending_count}")
         # If in-memory state shows no pending AND issued_steps is populated, trust it
 
-        if is_completion_trigger and not commands and not has_pending_commands and (is_terminal_step or is_failed_with_no_handler) and not state.completed:
+        has_matching_next_transition = (
+            self._has_matching_next_transition(step_def, context)
+            if (is_completion_trigger and step_def.next and not is_loop_step)
+            else False
+        )
+        is_dead_end_no_match = (
+            is_completion_trigger
+            and bool(step_def.next)
+            and not is_loop_step
+            and not has_matching_next_transition
+            and not commands
+            and not has_pending_commands
+        )
+        if is_dead_end_no_match:
+            logger.info(
+                "[COMPLETION] Dead-end transition with no matching next arcs: execution=%s step=%s",
+                event.execution_id,
+                event.step,
+            )
+
+        if (
+            is_completion_trigger
+            and not commands
+            and not has_pending_commands
+            and (is_terminal_step or is_failed_with_no_handler or is_dead_end_no_match)
+            and not state.completed
+        ):
             # No more commands to execute - workflow and playbook are complete (or failed)
             state.completed = True
             # Check if ANY step failed during execution (state.failed) OR if this final step has error
