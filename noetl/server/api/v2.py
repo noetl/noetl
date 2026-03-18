@@ -2267,8 +2267,32 @@ async def get_execution_status(execution_id: str, full: bool = False):
                     """, (exec_id_int,))
                     step_rows = await cur.fetchall()
 
+                    await cur.execute(
+                        """
+                        SELECT COUNT(*) AS pending_count
+                        FROM (
+                            SELECT node_name
+                            FROM noetl.event
+                            WHERE execution_id = %(execution_id)s
+                              AND event_type = 'command.issued'
+                            EXCEPT
+                            SELECT node_name
+                            FROM noetl.event
+                            WHERE execution_id = %(execution_id)s
+                              AND event_type IN (
+                                  'call.done',
+                                  'command.completed',
+                                  'command.failed'
+                              )
+                        ) AS pending
+                        """,
+                        {"execution_id": exec_id_int},
+                    )
+                    pending_row = await cur.fetchone()
+
             terminal_complete_events = {"playbook.completed", "workflow.completed"}
             terminal_failed_events = {"playbook.failed", "workflow.failed", "execution.cancelled"}
+            pending_count = int((pending_row or {}).get("pending_count", 0))
 
             completed = False
             failed = False
@@ -2285,6 +2309,13 @@ async def get_execution_status(execution_id: str, full: bool = False):
                 latest_event["node_name"] == "end"
                 and latest_event["status"] == "COMPLETED"
                 and latest_event["event_type"] in {"command.completed", "call.done", "step.exit"}
+            ):
+                completed = True
+                failed = False
+            elif (
+                latest_event["event_type"] == "batch.completed"
+                and latest_event["status"] == "COMPLETED"
+                and pending_count == 0
             ):
                 completed = True
                 failed = False
@@ -2356,6 +2387,29 @@ async def get_execution_status(execution_id: str, full: bool = False):
                 """, (int(execution_id),))
                 terminal_event = await cur.fetchone()
 
+                await cur.execute(
+                    """
+                    SELECT COUNT(*) AS pending_count
+                    FROM (
+                        SELECT node_name
+                        FROM noetl.event
+                        WHERE execution_id = %(execution_id)s
+                          AND event_type = 'command.issued'
+                        EXCEPT
+                        SELECT node_name
+                        FROM noetl.event
+                        WHERE execution_id = %(execution_id)s
+                          AND event_type IN (
+                              'call.done',
+                              'command.completed',
+                              'command.failed'
+                          )
+                    ) AS pending
+                    """,
+                    {"execution_id": int(execution_id)},
+                )
+                pending_row = await cur.fetchone()
+
         # Fallback completion inference:
         # Some runs reach terminal step completion in events but may miss
         # playbook/workflow terminal flags in engine state.
@@ -2367,6 +2421,7 @@ async def get_execution_status(execution_id: str, full: bool = False):
                 terminal_complete_events = {"playbook.completed", "workflow.completed"}
                 terminal_failed_events = {"playbook.failed", "workflow.failed", "execution.cancelled"}
                 terminal_type = terminal_event["event_type"] if terminal_event else None
+                pending_count = int((pending_row or {}).get("pending_count", 0))
 
                 if terminal_type in terminal_complete_events:
                     completed = True
@@ -2379,6 +2434,13 @@ async def get_execution_status(execution_id: str, full: bool = False):
                     latest_event["node_name"] == "end"
                     and latest_event["status"] == "COMPLETED"
                     and latest_event["event_type"] in {"command.completed", "call.done", "step.exit"}
+                ):
+                    completed = True
+                    completion_inferred = True
+                elif latest_event and (
+                    latest_event["event_type"] == "batch.completed"
+                    and latest_event["status"] == "COMPLETED"
+                    and pending_count == 0
                 ):
                     completed = True
                     completion_inferred = True
