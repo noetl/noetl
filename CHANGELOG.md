@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.10.8](https://github.com/noetl/noetl/compare/v2.10.7...v2.10.8) (2026-03-18)
+
+### Bug Fixes
+
+* address latest copilot review findings on pr271 ([bd2bd97](https://github.com/noetl/noetl/commit/bd2bd971573dcb3acf22a779bab72187785c2c8d))
+* finalize stuck executions and close dead-end next routes ([cb5ee38](https://github.com/noetl/noetl/commit/cb5ee382eb6790407cc5faf4031a277c8e28d004))
+* resolve latest copilot findings on pr271 ([032d1af](https://github.com/noetl/noetl/commit/032d1af71b301ff95b8f6338997331282fd1d7ad))
+* reuse next routing match result in completion check ([aedb883](https://github.com/noetl/noetl/commit/aedb8834dc1bcda9a18e392d3e10a5407f28409f))
+* trigger release for finalize dead-end patch ([29e056d](https://github.com/noetl/noetl/commit/29e056d0729cfa12c9c04e11b9322dde1e7a28b6))
+
 ## [2.10.7](https://github.com/noetl/noetl/compare/v2.10.6...v2.10.7) (2026-03-18)
 
 ### Bug Fixes
