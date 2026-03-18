@@ -2282,18 +2282,49 @@ class ControlFlowEngine:
                 step.loop.iterator,
                 step.loop.mode,
             )
-            # Get collection to iterate
-            context = state.get_render_context(Event(
-                execution_id=state.execution_id,
-                step=step.step,
-                name="loop_init",
-                payload={}
-            ))
-            
-            # Render collection expression
-            collection_expr = step.loop.in_
-            collection = self._render_template(collection_expr, context)
-            collection = self._normalize_loop_collection(collection, step.step)
+            existing_loop_state = state.loop_state.get(step.step)
+            reuse_cached_collection = (
+                existing_loop_state is not None
+                and (loop_continue_requested or loop_retry_requested)
+                and isinstance(existing_loop_state.get("collection"), list)
+            )
+
+            if reuse_cached_collection:
+                context = state.get_render_context(Event(
+                    execution_id=state.execution_id,
+                    step=step.step,
+                    name="loop_continue",
+                    payload={}
+                ))
+                collection = existing_loop_state.get("collection", [])
+                logger.debug(
+                    "[LOOP] Reusing cached collection for %s continuation/retry (size=%s)",
+                    step.step,
+                    len(collection),
+                )
+            else:
+                if (
+                    existing_loop_state is not None
+                    and (loop_continue_requested or loop_retry_requested)
+                ):
+                    logger.warning(
+                        "[LOOP] Missing/invalid cached collection for %s continuation/retry; "
+                        "re-rendering loop expression",
+                        step.step,
+                    )
+
+                # Get collection to iterate
+                context = state.get_render_context(Event(
+                    execution_id=state.execution_id,
+                    step=step.step,
+                    name="loop_init",
+                    payload={}
+                ))
+
+                # Render collection expression
+                collection_expr = step.loop.in_
+                collection = self._render_template(collection_expr, context)
+                collection = self._normalize_loop_collection(collection, step.step)
 
             # Initialize local loop state if needed and refresh collection snapshot.
             # IMPORTANT: A loop step can be re-entered multiple times in the same execution
@@ -2301,10 +2332,9 @@ class ControlFlowEngine:
             # invocation is already finalized, reset counters/results and use a fresh
             # distributed loop key so claim slots are not stuck at old scheduled/completed
             # counts (e.g., 100/100 from the previous batch).
-            existing_loop_state = state.loop_state.get(step.step)
             force_new_loop_instance = False
             if existing_loop_state is None:
-                loop_event_id = f"loop_{state.last_event_id or get_snowflake_id()}"
+                loop_event_id = f"loop_{state.last_event_id or time.time_ns()}"
                 state.init_loop(
                     step.step,
                     collection,
@@ -2336,7 +2366,7 @@ class ControlFlowEngine:
                 )
 
                 if should_reset_existing_loop:
-                    loop_event_id = f"loop_{state.last_event_id or get_snowflake_id()}"
+                    loop_event_id = f"loop_{state.last_event_id or time.time_ns()}"
                     state.init_loop(
                         step.step,
                         collection,
@@ -2410,7 +2440,7 @@ class ControlFlowEngine:
                 )
                 nats_size = int(nats_loop_state.get("collection_size", len(collection)) or len(collection))
                 if nats_size > 0 and nats_completed >= nats_size and nats_scheduled >= nats_size:
-                    loop_event_id = f"loop_{state.last_event_id or get_snowflake_id()}"
+                    loop_event_id = f"loop_{state.last_event_id or time.time_ns()}"
                     state.init_loop(
                         step.step,
                         collection,

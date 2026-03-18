@@ -106,3 +106,67 @@ async def test_parallel_loop_issues_up_to_max_in_flight(monkeypatch):
     # The 4th command should not be claimable until one in-flight iteration completes.
     no_slot_command = await engine._create_command_for_step(state, step_def, {})
     assert no_slot_command is None
+
+
+@pytest.mark.asyncio
+async def test_loop_continue_reuses_cached_collection_when_ctx_key_missing(monkeypatch):
+    fixture = Path(
+        "tests/fixtures/playbooks/batch_execution/heavy_payload_pipeline_in_step_parallel/"
+        "heavy_payload_pipeline_in_step_parallel.yaml"
+    )
+    playbook = yaml.safe_load(fixture.read_text(encoding="utf-8"))
+
+    run_batch_workers = next(
+        step for step in playbook["workflow"] if step.get("step") == "run_batch_workers"
+    )
+    run_batch_workers["loop"]["in"] = "{{ ctx.patients_needing_demographics }}"
+    run_batch_workers["args"] = {
+        "claimed_patient_id": "{{ iter.batch.patient_id }}",
+        "claimed_index": "{{ loop_index }}",
+    }
+
+    parsed_playbook = engine_module.Playbook(**playbook)
+    playbook_repo = PlaybookRepo()
+    state_store = StateStore(playbook_repo)
+    engine = ControlFlowEngine(playbook_repo, state_store)
+
+    execution_id = "9302"
+    state = ExecutionState(
+        execution_id,
+        parsed_playbook,
+        payload={
+            "ctx": {
+                "patients_needing_demographics": [
+                    {"patient_id": 101},
+                    {"patient_id": 102},
+                ]
+            }
+        },
+    )
+    state.last_event_id = 9302001
+
+    fake_cache = ClaimingNATSCache()
+
+    async def fake_get_nats_cache():
+        return fake_cache
+
+    monkeypatch.setattr(engine_module, "get_nats_cache", fake_get_nats_cache)
+
+    step_def = state.get_step("run_batch_workers")
+
+    first = await engine._create_command_for_step(state, step_def, {})
+    assert first is not None
+    assert first.args.get("claimed_patient_id") == 101
+    assert first.args.get("claimed_index") == 0
+
+    # Simulate context mutation after loop init; continuation must use cached snapshot.
+    state.variables.pop("patients_needing_demographics", None)
+
+    second = await engine._create_command_for_step(
+        state,
+        step_def,
+        {"__loop_continue": True},
+    )
+    assert second is not None
+    assert second.args.get("claimed_patient_id") == 102
+    assert second.args.get("claimed_index") == 1
