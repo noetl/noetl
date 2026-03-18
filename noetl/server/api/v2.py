@@ -2340,6 +2340,22 @@ async def get_execution_status(execution_id: str, full: bool = False):
                 """, (int(execution_id),))
                 latest_event = await cur.fetchone()
 
+                await cur.execute("""
+                    SELECT event_type, node_name, status, created_at
+                    FROM noetl.event
+                    WHERE execution_id = %s
+                      AND event_type IN (
+                        'playbook.completed',
+                        'workflow.completed',
+                        'playbook.failed',
+                        'workflow.failed',
+                        'execution.cancelled'
+                      )
+                    ORDER BY event_id DESC
+                    LIMIT 1
+                """, (int(execution_id),))
+                terminal_event = await cur.fetchone()
+
         # Fallback completion inference:
         # Some runs reach terminal step completion in events but may miss
         # playbook/workflow terminal flags in engine state.
@@ -2347,28 +2363,31 @@ async def get_execution_status(execution_id: str, full: bool = False):
             if state.current_step == "end" and "end" in state.completed_steps and not failed:
                 completed = True
                 completion_inferred = True
-            elif latest_event:
+            else:
                 terminal_complete_events = {"playbook.completed", "workflow.completed"}
                 terminal_failed_events = {"playbook.failed", "workflow.failed", "execution.cancelled"}
+                terminal_type = terminal_event["event_type"] if terminal_event else None
 
-                if latest_event["event_type"] in terminal_complete_events:
+                if terminal_type in terminal_complete_events:
                     completed = True
                     completion_inferred = True
-                elif latest_event["event_type"] in terminal_failed_events:
+                elif terminal_type in terminal_failed_events:
                     completed = True
-                    failed = latest_event["event_type"] != "execution.cancelled"
+                    failed = terminal_type != "execution.cancelled"
                     completion_inferred = True
-                elif (
+                elif latest_event and (
                     latest_event["node_name"] == "end"
                     and latest_event["status"] == "COMPLETED"
-                        and latest_event["event_type"] in {"command.completed", "call.done", "step.exit"}
+                    and latest_event["event_type"] in {"command.completed", "call.done", "step.exit"}
                 ):
                     completed = True
                     completion_inferred = True
 
+        duration_anchor = terminal_event or latest_event
+
         duration = _duration_fields(
             first_event.get("created_at") if first_event else None,
-            latest_event.get("created_at") if latest_event else None,
+            duration_anchor.get("created_at") if duration_anchor else None,
             completed,
         )
 
