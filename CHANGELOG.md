@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.10.7](https://github.com/noetl/noetl/compare/v2.10.6...v2.10.7) (2026-03-18)
+
+### Bug Fixes
+
+* centralize server URL normalization helpers ([62a6830](https://github.com/noetl/noetl/commit/62a6830929dbf9c7df1c60e5c13be974b657b21b))
+* normalize repeated /api suffixes in server URL handling ([10552aa](https://github.com/noetl/noetl/commit/10552aa67f47db8c9cdb430a15ba0b48096e10c2))
+* normalize server URL handling to prevent /api/api worker calls ([f70d397](https://github.com/noetl/noetl/commit/f70d3971cefb8433e99f287e51095ea634da445a))
+
 ## [2.10.6](https://github.com/noetl/noetl/compare/v2.10.5...v2.10.6) (2026-03-17)
 
 ### Bug Fixes
