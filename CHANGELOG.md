@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.10.14](https://github.com/noetl/noetl/compare/v2.10.13...v2.10.14) (2026-03-19)
+
+### Bug Fixes
+
+* stabilize reference-chain stress harness and page reduction flow ([de4f2aa](https://github.com/noetl/noetl/commit/de4f2aa43dd0bf63c2f9b1bc5d039149367d626b))
+
 ## [2.10.13](https://github.com/noetl/noetl/compare/v2.10.12...v2.10.13) (2026-03-19)
 
 ### Bug Fixes
