@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.10.15](https://github.com/noetl/noetl/compare/v2.10.14...v2.10.15) (2026-03-19)
+
+### Bug Fixes
+
+* address copilot feedback for PR 285 loop watchdog and postgres retry ([7de6e8c](https://github.com/noetl/noetl/commit/7de6e8c9803671fcf170219ba9bca2d99e3661f4))
+* recover stalled loops and retry transient postgres connection drops ([f9b47fc](https://github.com/noetl/noetl/commit/f9b47fc1415ff2d63aa0f2ba777d5809d60e6ac8))
+
 ## [2.10.14](https://github.com/noetl/noetl/compare/v2.10.13...v2.10.14) (2026-03-19)
 
 ### Bug Fixes
