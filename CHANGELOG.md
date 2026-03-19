@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.10.12](https://github.com/noetl/noetl/compare/v2.10.11...v2.10.12) (2026-03-19)
+
+### Bug Fixes
+
+* bound loop replay state and completion counters ([fa604fe](https://github.com/noetl/noetl/commit/fa604fe5ff98c484f67acc017db42a1e050eef45))
+
 ## [2.10.11](https://github.com/noetl/noetl/compare/v2.10.10...v2.10.11) (2026-03-18)
 
 ### Bug Fixes
