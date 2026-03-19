@@ -45,82 +45,85 @@ workflow:
   - step: fetch_page
     desc: Fetch one page with bounded linked references
     tool:
-      kind: http
-      method: GET
-      url: "{{ api_url }}/api/v1/reference-chain/items"
-      params:
-        page: "{{ ctx.current_page }}"
-        pageSize: "{{ page_size }}"
-        total: "{{ total_records }}"
-        payload_kb: "{{ page_payload_kb }}"
-        ref_mode: linked
-      spec:
-        policy:
-          rules:
-            - when: "{{ outcome.status == 'error' and (outcome.error.retryable or (outcome.error.message is defined and ('Connection reset' in outcome.error.message or 'timed out' in outcome.error.message))) }}"
-              then:
-                do: retry
-                attempts: 6
-                backoff: exponential
-                delay: 0.8
-            - when: "{{ outcome.status == 'error' }}"
-              then:
-                do: fail
-            - else:
+      - name: fetch
+        kind: http
+        method: GET
+        url: "{{ api_url }}/api/v1/reference-chain/items"
+        params:
+          page: "{{ ctx.current_page }}"
+          pageSize: "{{ page_size }}"
+          total: "{{ total_records }}"
+          payload_kb: "{{ page_payload_kb }}"
+          ref_mode: linked
+        spec:
+          policy:
+            rules:
+              - when: "{{ outcome.status == 'error' and (outcome.error.retryable or (outcome.error.message is defined and ('Connection reset' in outcome.error.message or 'timed out' in outcome.error.message))) }}"
                 then:
-                  do: continue
-    next:
-      spec:
-        mode: exclusive
-      arcs:
-        - step: merge_page
+                  do: retry
+                  attempts: 6
+                  backoff: exponential
+                  delay: 0.8
+              - when: "{{ outcome.status == 'error' }}"
+                then:
+                  do: fail
+              - else:
+                  then:
+                    do: continue
+      - name: reduce_page
+        kind: python
+        args:
+          response: "{{ _prev.data }}"
+          current_chain_ok: "{{ ctx.chain_contract_ok }}"
+          pages_fetched: "{{ ctx.pages_fetched }}"
+        code: |
+          payload = response if isinstance(response, dict) else {}
+          records = payload.get("data", []) if isinstance(payload, dict) else []
+          paging = payload.get("paging", {}) if isinstance(payload, dict) else {}
+          refs = payload.get("refs", {}) if isinstance(payload, dict) else {}
 
-  - step: merge_page
-    desc: Derive page-local workset and validate linked-chain behavior
-    tool:
-      kind: python
-      args:
-        response: "{{ fetch_page }}"
-        current_chain_ok: "{{ ctx.chain_contract_ok }}"
-        pages_fetched: "{{ ctx.pages_fetched }}"
-      code: |
-        payload = response.get("data", response if isinstance(response, dict) else {})
-        records = payload.get("data", []) if isinstance(payload, dict) else []
-        paging = payload.get("paging", {}) if isinstance(payload, dict) else {}
-        refs = payload.get("refs", {}) if isinstance(payload, dict) else {}
+          stubs = [
+            {
+              "record_id": item.get("record_id"),
+              "record_ref": item.get("record_ref"),
+            }
+            for item in records
+            if item.get("record_id") is not None and item.get("record_ref")
+          ]
 
-        stubs = [
-          {
-            "record_id": item.get("record_id"),
-            "record_ref": item.get("record_ref"),
+          mode = refs.get("mode", "unknown")
+          chain = refs.get("chain", []) if isinstance(refs.get("chain", []), list) else []
+          linked_ok = (mode != "linked") or (len(chain) <= 2)
+          chain_ok = bool(current_chain_ok) and linked_ok
+
+          current_page = int(paging.get("page", 1) or 1)
+          has_more = bool(paging.get("hasMore", False))
+
+          result = {
+            "page_records": stubs,
+            "page_record_count": len(stubs),
+            "has_more": has_more,
+            "next_page": current_page + 1,
+            "chain_contract_ok": chain_ok,
+            "linked_chain_length": len(chain),
+            "mode": mode,
+            "pages_fetched": int(pages_fetched or 0) + 1,
           }
-          for item in records
-          if item.get("record_id") is not None and item.get("record_ref")
-        ]
-
-        mode = refs.get("mode", "unknown")
-        chain = refs.get("chain", []) if isinstance(refs.get("chain", []), list) else []
-        linked_ok = (mode != "linked") or (len(chain) <= 2)
-        chain_ok = bool(current_chain_ok) and linked_ok
-
-        current_page = int(paging.get("page", 1) or 1)
-        has_more = bool(paging.get("hasMore", False))
-
-        result = {
-          "page_records": stubs,
-          "page_record_count": len(stubs),
-          "has_more": has_more,
-          "next_page": current_page + 1,
-          "chain_contract_ok": chain_ok,
-          "linked_chain_length": len(chain),
-          "mode": mode,
-          "pages_fetched": int(pages_fetched or 0) + 1,
-        }
+    result:
+      output_select:
+        - page_records
+        - page_record_count
+        - has_more
+        - next_page
+        - chain_contract_ok
+        - linked_chain_length
+        - mode
+        - pages_fetched
     set_ctx:
-      has_more: "{{ merge_page.has_more }}"
-      current_page: "{{ merge_page.next_page }}"
-      chain_contract_ok: "{{ merge_page.chain_contract_ok }}"
-      pages_fetched: "{{ merge_page.pages_fetched }}"
+      has_more: "{{ fetch_page.has_more }}"
+      current_page: "{{ fetch_page.next_page }}"
+      chain_contract_ok: "{{ fetch_page.chain_contract_ok }}"
+      pages_fetched: "{{ fetch_page.pages_fetched }}"
     next:
       spec:
         mode: exclusive
@@ -133,7 +136,7 @@ workflow:
       spec:
         mode: parallel
         max_in_flight: 200
-      in: "{{ merge_page.page_records }}"
+      in: "{{ fetch_page.page_records }}"
       iterator: record
     tool:
       kind: python
@@ -161,7 +164,7 @@ workflow:
       kind: python
       args:
         loop_summary: "{{ process_records }}"
-        merge_result: "{{ merge_page }}"
+        merge_result: "{{ fetch_page }}"
         processed_total: "{{ ctx.processed_total }}"
         chain_contract_ok: "{{ ctx.chain_contract_ok }}"
       code: |
