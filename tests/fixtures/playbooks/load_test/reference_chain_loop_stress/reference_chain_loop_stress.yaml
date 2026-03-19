@@ -1,0 +1,254 @@
+apiVersion: noetl.io/v2
+kind: Playbook
+metadata:
+  name: reference_chain_loop_stress
+  path: load_test/reference_chain_loop_stress
+  description: |
+    Neutral end-to-end stress test for pagination + loop execution.
+
+    Streaming design goals:
+    1. Exercise high-volume paginated fetch (hundreds/thousands of records).
+    2. Keep only bounded linked references in API responses/context.
+    3. Process each page independently to avoid unbounded context growth.
+    4. Validate completion counts and linked-chain contract.
+
+workload:
+  api_url: http://paginated-api.test-server.svc.cluster.local:5555
+  total_records: 382
+  page_size: 25
+  page_payload_kb: 1
+  current_page: 1
+  has_more: true
+  chain_contract_ok: true
+  pages_fetched: 0
+  processed_total: 0
+
+workflow:
+  - step: start
+    desc: Initialize neutral stress context
+    tool:
+      kind: python
+      code: |
+        result = {"status": "initialized"}
+    set_ctx:
+      current_page: "{{ workload.current_page }}"
+      has_more: "{{ workload.has_more }}"
+      chain_contract_ok: "{{ workload.chain_contract_ok }}"
+      pages_fetched: "{{ workload.pages_fetched }}"
+      processed_total: "{{ workload.processed_total }}"
+    next:
+      spec:
+        mode: exclusive
+      arcs:
+        - step: fetch_page
+
+  - step: fetch_page
+    desc: Fetch one page with bounded linked references
+    tool:
+      kind: http
+      method: GET
+      url: "{{ api_url }}/api/v1/reference-chain/items"
+      params:
+        page: "{{ ctx.current_page }}"
+        pageSize: "{{ page_size }}"
+        total: "{{ total_records }}"
+        payload_kb: "{{ page_payload_kb }}"
+        ref_mode: linked
+      spec:
+        policy:
+          rules:
+            - when: "{{ outcome.status == 'error' and (outcome.error.retryable or (outcome.error.message is defined and ('Connection reset' in outcome.error.message or 'timed out' in outcome.error.message))) }}"
+              then:
+                do: retry
+                attempts: 6
+                backoff: exponential
+                delay: 0.8
+            - when: "{{ outcome.status == 'error' }}"
+              then:
+                do: fail
+            - else:
+                then:
+                  do: continue
+    next:
+      spec:
+        mode: exclusive
+      arcs:
+        - step: merge_page
+
+  - step: merge_page
+    desc: Derive page-local workset and validate linked-chain behavior
+    tool:
+      kind: python
+      args:
+        response: "{{ fetch_page }}"
+        current_chain_ok: "{{ ctx.chain_contract_ok }}"
+        pages_fetched: "{{ ctx.pages_fetched }}"
+      code: |
+        payload = response.get("data", response if isinstance(response, dict) else {})
+        records = payload.get("data", []) if isinstance(payload, dict) else []
+        paging = payload.get("paging", {}) if isinstance(payload, dict) else {}
+        refs = payload.get("refs", {}) if isinstance(payload, dict) else {}
+
+        stubs = [
+          {
+            "record_id": item.get("record_id"),
+            "record_ref": item.get("record_ref"),
+          }
+          for item in records
+          if item.get("record_id") is not None and item.get("record_ref")
+        ]
+
+        mode = refs.get("mode", "unknown")
+        chain = refs.get("chain", []) if isinstance(refs.get("chain", []), list) else []
+        linked_ok = (mode != "linked") or (len(chain) <= 2)
+        chain_ok = bool(current_chain_ok) and linked_ok
+
+        current_page = int(paging.get("page", 1) or 1)
+        has_more = bool(paging.get("hasMore", False))
+
+        result = {
+          "page_records": stubs,
+          "page_record_count": len(stubs),
+          "has_more": has_more,
+          "next_page": current_page + 1,
+          "chain_contract_ok": chain_ok,
+          "linked_chain_length": len(chain),
+          "mode": mode,
+          "pages_fetched": int(pages_fetched or 0) + 1,
+        }
+    set_ctx:
+      has_more: "{{ merge_page.has_more }}"
+      current_page: "{{ merge_page.next_page }}"
+      chain_contract_ok: "{{ merge_page.chain_contract_ok }}"
+      pages_fetched: "{{ merge_page.pages_fetched }}"
+    next:
+      spec:
+        mode: exclusive
+      arcs:
+        - step: process_records
+
+  - step: process_records
+    desc: Process each record for the current page
+    loop:
+      spec:
+        mode: parallel
+        max_in_flight: 200
+      in: "{{ merge_page.page_records }}"
+      iterator: record
+    tool:
+      kind: python
+      args:
+        record: "{{ iter.record }}"
+      code: |
+        record_id = int(record.get("record_id", 0))
+        record_ref = str(record.get("record_ref", ""))
+        chain_ok = record_ref.startswith("record-") and record_id > 0
+
+        result = {
+          "record_id": record_id,
+          "record_ref": record_ref,
+          "chain_ok": chain_ok,
+        }
+    next:
+      spec:
+        mode: exclusive
+      arcs:
+        - step: update_progress
+
+  - step: update_progress
+    desc: Aggregate page progress and decide next page
+    tool:
+      kind: python
+      args:
+        loop_summary: "{{ process_records }}"
+        merge_result: "{{ merge_page }}"
+        processed_total: "{{ ctx.processed_total }}"
+        chain_contract_ok: "{{ ctx.chain_contract_ok }}"
+      code: |
+        summary = loop_summary if isinstance(loop_summary, dict) else {}
+        merge = merge_result if isinstance(merge_result, dict) else {}
+
+        stats = summary.get("stats", {}) if isinstance(summary.get("stats", {}), dict) else {}
+        page_total = int(stats.get("total", 0) or 0)
+        page_failed = int(stats.get("failed", 0) or 0)
+        expected_page_total = int(merge.get("page_record_count", 0) or 0)
+
+        if page_total < expected_page_total:
+          raise AssertionError(f"page loop undercount: expected {expected_page_total}, got {page_total}")
+        duplicate_margin = page_total - expected_page_total
+        if duplicate_margin > 10:
+          raise AssertionError(
+            f"page loop duplicate overflow: expected {expected_page_total}, got {page_total}"
+          )
+        if page_failed != 0:
+          raise AssertionError(f"page loop reported {page_failed} failed iteration(s)")
+
+        # Count logical records processed once per page workset; tolerate a small
+        # duplicate completion margin from at-least-once delivery semantics.
+        new_processed_total = int(processed_total or 0) + expected_page_total
+
+        result = {
+          "processed_total": new_processed_total,
+          "has_more": bool(merge.get("has_more", False)),
+          "next_page": int(merge.get("next_page", 1) or 1),
+          "pages_fetched": int(merge.get("pages_fetched", 0) or 0),
+          "chain_contract_ok": bool(chain_contract_ok) and bool(merge.get("chain_contract_ok", False)),
+          "page_total": page_total,
+          "expected_page_total": expected_page_total,
+          "duplicate_margin": duplicate_margin,
+        }
+    set_ctx:
+      processed_total: "{{ update_progress.processed_total }}"
+      has_more: "{{ update_progress.has_more }}"
+      current_page: "{{ update_progress.next_page }}"
+      pages_fetched: "{{ update_progress.pages_fetched }}"
+      chain_contract_ok: "{{ update_progress.chain_contract_ok }}"
+    next:
+      spec:
+        mode: exclusive
+      arcs:
+        - step: fetch_page
+          when: "{{ ctx.has_more == true }}"
+        - step: finalize
+          when: "{{ ctx.has_more != true }}"
+
+  - step: finalize
+    desc: Validate full run counters
+    tool:
+      kind: python
+      args:
+        expected_total: "{{ total_records }}"
+        processed_total: "{{ ctx.processed_total }}"
+        chain_contract_ok: "{{ ctx.chain_contract_ok }}"
+        pages_fetched: "{{ ctx.pages_fetched }}"
+      code: |
+        expected = int(expected_total)
+        processed = int(processed_total)
+        pages = int(pages_fetched)
+        chain_ok = bool(chain_contract_ok)
+
+        if processed != expected:
+          raise AssertionError(f"expected {expected} processed records, got {processed}")
+        if pages <= 0:
+          raise AssertionError("expected at least one page to be fetched")
+        if not chain_ok:
+          raise AssertionError("linked-chain contract violated")
+
+        result = {
+          "status": "ok",
+          "expected_total": expected,
+          "processed_total": processed,
+          "pages_fetched": pages,
+          "chain_contract_ok": chain_ok,
+          "message": "reference chain loop stress completed",
+        }
+    next:
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
+
+  - step: end
+    desc: End of neutral stress test
+    tool:
+      kind: noop
