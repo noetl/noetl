@@ -17,10 +17,31 @@ PLAYBOOK_FILE = Path(
 )
 
 
-def post_json(base_url: str, path: str, payload: dict[str, Any], timeout: float = 30.0) -> dict[str, Any]:
-    resp = requests.post(f"{base_url}{path}", json=payload, timeout=timeout)
-    resp.raise_for_status()
-    return resp.json()
+def post_json(
+    base_url: str,
+    path: str,
+    payload: dict[str, Any],
+    timeout: float = 30.0,
+    attempts: int = 1,
+    retry_delay_seconds: float = 1.0,
+) -> dict[str, Any]:
+    last_error: Exception | None = None
+    for attempt in range(1, max(1, attempts) + 1):
+        try:
+            resp = requests.post(f"{base_url}{path}", json=payload, timeout=timeout)
+            resp.raise_for_status()
+            return resp.json()
+        except requests.HTTPError as exc:
+            status_code = exc.response.status_code if exc.response is not None else None
+            if attempt >= attempts or status_code is None or status_code < 500:
+                raise
+            last_error = exc
+        except requests.RequestException as exc:
+            if attempt >= attempts:
+                raise
+            last_error = exc
+        time.sleep(retry_delay_seconds * attempt)
+    raise RuntimeError(f"request failed after retries: {last_error}")
 
 
 def parse_first_value(rows: Any) -> Any:
@@ -36,7 +57,40 @@ def parse_first_value(rows: Any) -> Any:
 
 def query_postgres(base_url: str, query: str) -> Any:
     payload = {"query": query, "schema": "noetl"}
-    data = post_json(base_url, "/api/postgres/execute", payload, timeout=60.0)
+    data = post_json(
+        base_url,
+        "/api/postgres/execute",
+        payload,
+        timeout=60.0,
+        attempts=6,
+        retry_delay_seconds=1.0,
+    )
+    if str(data.get("status", "")).lower() == "error":
+        error_text = str(data.get("error") or "")
+        retryable_markers = (
+            "connection refused",
+            "connection is lost",
+            "server closed the connection unexpectedly",
+            "database system is in recovery mode",
+            "couldn't get a connection",
+        )
+        if any(marker in error_text.lower() for marker in retryable_markers):
+            for attempt in range(1, 6):
+                time.sleep(float(attempt))
+                data = post_json(
+                    base_url,
+                    "/api/postgres/execute",
+                    payload,
+                    timeout=60.0,
+                    attempts=3,
+                    retry_delay_seconds=1.0,
+                )
+                if str(data.get("status", "")).lower() != "error":
+                    return data.get("result", [])
+                error_text = str(data.get("error") or "")
+                if not any(marker in error_text.lower() for marker in retryable_markers):
+                    break
+        raise RuntimeError(f"postgres query failed: {data.get('error')}")
     return data.get("result", [])
 
 
@@ -44,7 +98,14 @@ def register_playbook(base_url: str) -> dict[str, Any]:
     with PLAYBOOK_FILE.open("r", encoding="utf-8") as fh:
         playbook = yaml.safe_load(fh)
     payload = {"content": json.dumps(playbook)}
-    result = post_json(base_url, "/api/catalog/register", payload, timeout=60.0)
+    result = post_json(
+        base_url,
+        "/api/catalog/register",
+        payload,
+        timeout=60.0,
+        attempts=6,
+        retry_delay_seconds=1.0,
+    )
     return {"playbook": playbook, "result": result}
 
 
@@ -102,41 +163,76 @@ def _parse_metrics_row(row: Any) -> dict[str, Any]:
 
 
 def fetch_poll_metrics(base_url: str, execution_id: int) -> tuple[Optional[str], int, int]:
-    rows = query_postgres(
-        base_url,
-        f"""
-        WITH ev AS (
-          SELECT event_id, event_type, loop_name
-          FROM noetl.event
-          WHERE execution_id = {execution_id}
-        ),
-        status_event AS (
-          SELECT lower(event_type) AS event_type
-          FROM ev
-          WHERE event_type IN (
-            'playbook.completed',
-            'playbook_completed',
-            'playbook.failed',
-            'playbook_failed',
-            'workflow.completed',
-            'workflow_completed',
-            'workflow.failed',
-            'workflow_failed'
-          )
-          ORDER BY event_id DESC
-          LIMIT 1
-        )
-        SELECT
-          COALESCE((SELECT event_type FROM status_event), '') AS last_status_event,
-          COALESCE(SUM(CASE
-            WHEN loop_name = 'process_records' AND event_type = 'step.exit'
-            THEN 1
-            ELSE 0
-          END), 0) AS iteration_count,
-          COUNT(*) AS event_count
-        FROM ev
-        """,
+    metrics_query_node_name = f"""
+    WITH ev AS (
+      SELECT event_id, event_type, node_name
+      FROM noetl.event
+      WHERE execution_id = {execution_id}
+    ),
+    status_event AS (
+      SELECT lower(event_type) AS event_type
+      FROM ev
+      WHERE event_type IN (
+        'playbook.completed',
+        'playbook_completed',
+        'playbook.failed',
+        'playbook_failed',
+        'workflow.completed',
+        'workflow_completed',
+        'workflow.failed',
+        'workflow_failed'
+      )
+      ORDER BY event_id DESC
+      LIMIT 1
     )
+    SELECT
+      COALESCE((SELECT event_type FROM status_event), '') AS last_status_event,
+      COALESCE(SUM(CASE
+        WHEN node_name = 'process_records' AND event_type = 'step.exit'
+        THEN 1
+        ELSE 0
+      END), 0) AS iteration_count,
+      COUNT(*) AS event_count
+    FROM ev
+    """
+    metrics_query_loop_name = f"""
+    WITH ev AS (
+      SELECT event_id, event_type, loop_name
+      FROM noetl.event
+      WHERE execution_id = {execution_id}
+    ),
+    status_event AS (
+      SELECT lower(event_type) AS event_type
+      FROM ev
+      WHERE event_type IN (
+        'playbook.completed',
+        'playbook_completed',
+        'playbook.failed',
+        'playbook_failed',
+        'workflow.completed',
+        'workflow_completed',
+        'workflow.failed',
+        'workflow_failed'
+      )
+      ORDER BY event_id DESC
+      LIMIT 1
+    )
+    SELECT
+      COALESCE((SELECT event_type FROM status_event), '') AS last_status_event,
+      COALESCE(SUM(CASE
+        WHEN loop_name = 'process_records' AND event_type = 'step.exit'
+        THEN 1
+        ELSE 0
+      END), 0) AS iteration_count,
+      COUNT(*) AS event_count
+    FROM ev
+    """
+    try:
+        rows = query_postgres(base_url, metrics_query_node_name)
+    except RuntimeError as exc:
+        if "column \"node_name\" does not exist" not in str(exc).lower():
+            raise
+        rows = query_postgres(base_url, metrics_query_loop_name)
     row = _parse_metrics_row(rows[0] if rows else {})
     status = _normalize_execution_status(str(row.get("last_status_event") or ""))
     return status, int(row.get("iteration_count") or 0), int(row.get("event_count") or 0)
