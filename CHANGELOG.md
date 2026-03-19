@@ -2,6 +2,15 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.10.13](https://github.com/noetl/noetl/compare/v2.10.12...v2.10.13) (2026-03-19)
+
+### Bug Fixes
+
+* add neutral paginated loop stress harness ([1aa7c4e](https://github.com/noetl/noetl/commit/1aa7c4ead7445a935ed46b04a7974f16a549aa3a))
+* address copilot feedback for stress harness polling and guards ([475428a](https://github.com/noetl/noetl/commit/475428ae13fc3f3e7597748cff465b4db7dcb0f7))
+* harden stress harness status polling and chain bounds ([8a7a9de](https://github.com/noetl/noetl/commit/8a7a9de5a18669aeb2a284e75060757693dcdaea))
+* include underscore lifecycle events in stress status query ([155d2fa](https://github.com/noetl/noetl/commit/155d2fa0d2d48209b569aca7e0b947e762788752))
+
 ## [2.10.12](https://github.com/noetl/noetl/compare/v2.10.11...v2.10.12) (2026-03-19)
 
 ### Bug Fixes
