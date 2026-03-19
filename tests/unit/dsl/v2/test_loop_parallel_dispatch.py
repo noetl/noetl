@@ -1,4 +1,5 @@
 from pathlib import Path
+from datetime import datetime, timedelta, timezone
 
 import pytest
 import yaml
@@ -51,6 +52,53 @@ class ClaimingNATSCache:
         state["scheduled_count"] = scheduled_count + 1
         state["collection_size"] = int(collection_size)
         self._state[key] = state
+        return claim_index
+
+
+class RepairingNATSCache:
+    def __init__(self, initial_state):
+        self.state = dict(initial_state)
+        self.set_calls = []
+
+    async def get_loop_state(self, _execution_id, _step_name, event_id=None):
+        payload = dict(self.state)
+        payload.setdefault("event_id", event_id)
+        return payload
+
+    async def set_loop_state(self, _execution_id, _step_name, state, event_id=None):
+        payload = dict(state)
+        payload.setdefault("completed_count", 0)
+        payload.setdefault("scheduled_count", payload.get("completed_count", 0))
+        payload.setdefault("event_id", event_id)
+        self.state = payload
+        self.set_calls.append(dict(payload))
+        return True
+
+    async def claim_next_loop_index(
+        self,
+        _execution_id,
+        _step_name,
+        collection_size,
+        max_in_flight,
+        event_id=None,
+    ):
+        completed_count = int(self.state.get("completed_count", 0) or 0)
+        scheduled_count = int(self.state.get("scheduled_count", completed_count) or completed_count)
+        effective_size = int(collection_size or 0)
+        if effective_size <= 0:
+            effective_size = int(self.state.get("collection_size", 0) or 0)
+        if effective_size <= 0:
+            return None
+        if scheduled_count >= effective_size:
+            return None
+        in_flight = max(0, scheduled_count - completed_count)
+        if in_flight >= int(max_in_flight):
+            return None
+
+        claim_index = scheduled_count
+        self.state["scheduled_count"] = scheduled_count + 1
+        self.state["collection_size"] = effective_size
+        self.state["event_id"] = event_id
         return claim_index
 
 
@@ -175,3 +223,119 @@ async def test_loop_continue_reuses_cached_collection_when_ctx_key_missing(monke
     assert second is not None
     assert second.args.get("claimed_patient_id") == 102
     assert second.args.get("claimed_index") == 1
+
+
+@pytest.mark.asyncio
+async def test_loop_claim_repairs_zero_collection_size_metadata(monkeypatch):
+    fixture = Path(
+        "tests/fixtures/playbooks/batch_execution/heavy_payload_pipeline_in_step_parallel/"
+        "heavy_payload_pipeline_in_step_parallel.yaml"
+    )
+    playbook = yaml.safe_load(fixture.read_text(encoding="utf-8"))
+    run_batch_workers = next(
+        step for step in playbook["workflow"] if step.get("step") == "run_batch_workers"
+    )
+    run_batch_workers["args"] = {
+        "claimed_batch": "{{ iter.batch.batch_number }}",
+        "claimed_index": "{{ loop_index }}",
+    }
+
+    parsed_playbook = engine_module.Playbook(**playbook)
+    playbook_repo = PlaybookRepo()
+    state_store = StateStore(playbook_repo)
+    engine = ControlFlowEngine(playbook_repo, state_store)
+    state = ExecutionState(
+        "9402",
+        parsed_playbook,
+        payload={
+            "build_batch_plan": {
+                "batches": [
+                    {"batch_number": 1},
+                    {"batch_number": 2},
+                    {"batch_number": 3},
+                ]
+            }
+        },
+    )
+
+    fake_cache = RepairingNATSCache(
+        {
+            "collection_size": 0,
+            "completed_count": 0,
+            "scheduled_count": 0,
+        }
+    )
+
+    async def fake_get_nats_cache():
+        return fake_cache
+
+    monkeypatch.setattr(engine_module, "get_nats_cache", fake_get_nats_cache)
+
+    step_def = state.get_step("run_batch_workers")
+    command = await engine._create_command_for_step(state, step_def, {})
+
+    assert command is not None
+    assert command.args.get("claimed_batch") == 1
+    assert command.args.get("claimed_index") == 0
+    assert int(fake_cache.state.get("collection_size", 0)) == 3
+
+
+@pytest.mark.asyncio
+async def test_loop_watchdog_recovers_stalled_scheduled_counts(monkeypatch):
+    fixture = Path(
+        "tests/fixtures/playbooks/batch_execution/heavy_payload_pipeline_in_step_parallel/"
+        "heavy_payload_pipeline_in_step_parallel.yaml"
+    )
+    playbook = yaml.safe_load(fixture.read_text(encoding="utf-8"))
+    run_batch_workers = next(
+        step for step in playbook["workflow"] if step.get("step") == "run_batch_workers"
+    )
+    run_batch_workers["args"] = {
+        "claimed_batch": "{{ iter.batch.batch_number }}",
+        "claimed_index": "{{ loop_index }}",
+    }
+
+    parsed_playbook = engine_module.Playbook(**playbook)
+    playbook_repo = PlaybookRepo()
+    state_store = StateStore(playbook_repo)
+    engine = ControlFlowEngine(playbook_repo, state_store)
+    state = ExecutionState(
+        "9403",
+        parsed_playbook,
+        payload={
+            "build_batch_plan": {
+                "batches": [
+                    {"batch_number": 1},
+                    {"batch_number": 2},
+                    {"batch_number": 3},
+                    {"batch_number": 4},
+                ]
+            }
+        },
+    )
+
+    stale_progress_at = (datetime.now(timezone.utc) - timedelta(seconds=300)).isoformat()
+    fake_cache = RepairingNATSCache(
+        {
+            "collection_size": 4,
+            "completed_count": 1,
+            "scheduled_count": 4,
+            "last_progress_at": stale_progress_at,
+        }
+    )
+
+    async def fake_get_nats_cache():
+        return fake_cache
+
+    monkeypatch.setattr(engine_module, "get_nats_cache", fake_get_nats_cache)
+    monkeypatch.setattr(engine_module, "_LOOP_STALL_WATCHDOG_SECONDS", 1.0)
+    monkeypatch.setattr(engine_module, "_LOOP_STALL_RECOVERY_COOLDOWN_SECONDS", 0.0)
+
+    step_def = state.get_step("run_batch_workers")
+    command = await engine._create_command_for_step(state, step_def, {})
+
+    assert command is not None
+    assert command.args.get("claimed_batch") == 2
+    assert command.args.get("claimed_index") == 1
+    assert int(fake_cache.state.get("scheduled_count", 0)) == 2
+    assert int(fake_cache.state.get("watchdog_repair_count", 0)) >= 1
