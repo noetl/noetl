@@ -40,7 +40,7 @@ workload:
   enable_ai_review: true
   ai_review_prompt: "Explain how the observed bitstrings support the MaxCut objective and flag drifts."
   analysis_agent: "ai-meta/quantum-scout"
-  postgres_auth: pg_test
+  postgres_auth: pg_k8s
   postgres_table: "public.quantum_results"
   http_endpoint: "https://noetl-mesh.example.com/quantum/results"
   http_auth: service_mesh
@@ -108,7 +108,13 @@ workflow:
                 backoff: exponential
             - when: "{{ outcome.status == 'error' }}"
               then:
-                do: fail
+                do: continue
+                set_ctx:
+                  problem_spec:
+                    id: "fallback-maxcut"
+                    qubits: 2
+                    default_depth: 2
+                  ai_notes: "{{ (ctx.ai_notes or []) + ['Problem catalog unavailable; using fallback problem spec'] }}"
             - else:
                 then:
                   do: continue
@@ -169,16 +175,16 @@ workflow:
             "qubits": default_qubits,
             "problem": metadata
         }
-    spec:
-      policy:
-        rules:
-          - else:
-              then:
-                do: continue
-                set_ctx:
-                  kernel_source: "{{ outcome.result.kernel_source }}"
-                  run_plan: "{{ outcome.result.run_plan }}"
-                  qubits: "{{ outcome.result.qubits }}"
+      spec:
+        policy:
+          rules:
+            - else:
+                then:
+                  do: continue
+                  set_ctx:
+                    kernel_source: "{{ outcome.result.kernel_source }}"
+                    run_plan: "{{ outcome.result.run_plan }}"
+                    qubits: "{{ outcome.result.qubits }}"
     next:
       spec:
         mode: exclusive
@@ -192,10 +198,10 @@ workflow:
       in: "{{ ctx.run_plan }}"
       iterator: run
       spec:
-        mode: parallel
-        max_in_flight: 3
+        mode: sequential
+        max_in_flight: 1
         policy:
-          exec: auto
+          exec: distributed
           results:
             preserve_order: true
     tool:
@@ -242,20 +248,20 @@ workflow:
             "backend": backend_name,
             "finished_at": dt.datetime.utcnow().isoformat()
         }
-    spec:
-      policy:
-        rules:
-          - when: "{{ outcome.status == 'error' }}"
-            then:
-              do: retry
-              attempts: 2
-              delay: 2
-              backoff: linear
-          - else:
+      spec:
+        policy:
+          rules:
+            - when: "{{ outcome.status == 'error' }}"
               then:
-                do: continue
-                set_ctx:
-                  simulations: "{{ (ctx.simulations or []) + [outcome.result] }}"
+                do: retry
+                attempts: 2
+                delay: 2
+                backoff: linear
+            - else:
+                then:
+                  do: continue
+                  set_ctx:
+                    simulations: "{{ (ctx.simulations or []) + [outcome.result] }}"
     next:
       spec:
         mode: exclusive
@@ -326,8 +332,15 @@ workflow:
           '{{ problem_id }}',
           '{{ cudaq_target }}',
           {{ ai_analysis.result.aggregates.runs }},
-          '{{ ctx.simulations | tojson | replace("'", "''") }}'::jsonb,
-          '{{ ai_analysis.result.summary | tojson | replace("'", "''") }}'::jsonb,
+          jsonb_build_object(
+            'run_count', {{ ai_analysis.result.aggregates.runs }},
+            'average_expectation', {{ ai_analysis.result.aggregates.average_expectation }},
+            'best_run_id', '{{ ai_analysis.result.aggregates.best_run.run_id }}'
+          ),
+          jsonb_build_object(
+            'agent', '{{ analysis_agent }}',
+            'insights', '{{ ai_analysis.result.summary.insights | tojson | replace("'", "''") }}'::jsonb
+          ),
           NOW()
         )
         ON CONFLICT (problem_id, target) DO UPDATE SET
@@ -335,12 +348,27 @@ workflow:
           payload = EXCLUDED.payload,
           ai_summary = EXCLUDED.ai_summary,
           recorded_at = NOW();
+      spec:
+        policy:
+          rules:
+            - when: "{{ outcome.status == 'error' }}"
+              then:
+                do: continue
+                set_ctx:
+                  ai_notes: "{{ (ctx.ai_notes or []) + ['Postgres persistence failed'] }}"
+            - else:
+                then:
+                  do: continue
+                  set_ctx:
+                    ai_notes: "{{ (ctx.ai_notes or []) + ['Postgres persistence succeeded'] }}"
     next:
       spec:
         mode: exclusive
       arcs:
         - step: publish_results
           when: "{{ event.name == 'call.done' }}"
+        - step: publish_results
+          when: "{{ event.name == 'call.error' }}"
 
   - step: publish_results
     desc: Send AI summary and metadata back to HTTP collaborator services
@@ -381,6 +409,8 @@ workflow:
       arcs:
         - step: end
           when: "{{ event.name == 'call.done' }}"
+        - step: end
+          when: "{{ event.name == 'call.error' }}"
 
   - step: end
     desc: Finalize orchestration and emit execution digest
