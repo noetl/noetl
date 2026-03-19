@@ -334,9 +334,10 @@ def get_reference_chain_items(
     - windowed: returns last N refs
     - expanded: returns full ref chain (intentionally unbounded growth)
     """
-    safe_page = max(1, int(page))
     safe_page_size = max(1, min(int(pageSize), 200))
     safe_total = max(1, min(int(total), 20000))
+    max_page = max(1, (safe_total + safe_page_size - 1) // safe_page_size)
+    safe_page = min(max(1, int(page)), max_page)
     safe_payload_kb = max(0, min(int(payload_kb), 256))
     safe_mode = str(ref_mode or "linked").lower()
 

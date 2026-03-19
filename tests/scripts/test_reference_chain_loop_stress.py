@@ -105,30 +105,36 @@ def fetch_poll_metrics(base_url: str, execution_id: int) -> tuple[Optional[str],
     rows = query_postgres(
         base_url,
         f"""
+        WITH ev AS (
+          SELECT event_id, event_type, loop_name
+          FROM noetl.event
+          WHERE execution_id = {execution_id}
+        ),
+        status_event AS (
+          SELECT lower(event_type) AS event_type
+          FROM ev
+          WHERE event_type IN (
+            'playbook.completed',
+            'playbook_completed',
+            'playbook.failed',
+            'playbook_failed',
+            'workflow.completed',
+            'workflow_completed',
+            'workflow.failed',
+            'workflow_failed'
+          )
+          ORDER BY event_id DESC
+          LIMIT 1
+        )
         SELECT
-          COALESCE(MAX(CASE
-            WHEN event_type IN (
-              'playbook.completed',
-              'playbook_completed',
-              'playbook.failed',
-              'playbook_failed',
-              'workflow.completed',
-              'workflow_completed',
-              'workflow.failed',
-              'workflow_failed'
-            )
-            THEN lower(event_type)
-            ELSE NULL
-          END), '') AS last_status_event,
+          COALESCE((SELECT event_type FROM status_event), '') AS last_status_event,
           COALESCE(SUM(CASE
-            WHEN node_name IN ('process_records', 'process_records:task_sequence')
-             AND event_type = 'step.exit'
+            WHEN loop_name = 'process_records' AND event_type = 'step.exit'
             THEN 1
             ELSE 0
           END), 0) AS iteration_count,
           COUNT(*) AS event_count
-        FROM noetl.event
-        WHERE execution_id = {execution_id}
+        FROM ev
         """,
     )
     row = _parse_metrics_row(rows[0] if rows else {})
