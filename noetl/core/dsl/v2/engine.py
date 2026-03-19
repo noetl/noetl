@@ -49,6 +49,14 @@ _TASKSEQ_LOOP_REPAIR_THRESHOLD = max(
     0,
     int(os.getenv("NOETL_TASKSEQ_LOOP_REPAIR_THRESHOLD", "3")),
 )
+_LOOP_STALL_WATCHDOG_SECONDS = max(
+    0.0,
+    float(os.getenv("NOETL_LOOP_STALL_WATCHDOG_SECONDS", "60")),
+)
+_LOOP_STALL_RECOVERY_COOLDOWN_SECONDS = max(
+    0.0,
+    float(os.getenv("NOETL_LOOP_STALL_RECOVERY_COOLDOWN_SECONDS", "15")),
+)
 
 
 def _sample_keys(value: Any, max_items: int = 10) -> list[str]:
@@ -66,6 +74,21 @@ def _estimate_json_size(value: Any) -> int:
     """
     from noetl.core.storage.extractor import _estimate_size_fast
     return _estimate_size_fast(value)
+
+
+def _parse_iso_utc(value: Any) -> Optional[datetime]:
+    if not value or not isinstance(value, str):
+        return None
+    try:
+        normalized = value
+        if normalized.endswith("Z"):
+            normalized = f"{normalized[:-1]}+00:00"
+        parsed = datetime.fromisoformat(normalized)
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return parsed.astimezone(timezone.utc)
+    except Exception:
+        return None
 
 
 def _preview_large_value(value: Any, depth: int = 0) -> Any:
@@ -1402,6 +1425,89 @@ class ControlFlowEngine:
             )
             return []
 
+    async def _find_orphaned_loop_iteration_indices(
+        self,
+        execution_id: str,
+        node_name: str,
+        loop_event_id: Optional[str] = None,
+        limit: int = 10,
+    ) -> list[int]:
+        """Find issued loop indexes that never started and have no terminal event."""
+        if limit <= 0:
+            return []
+
+        try:
+            loop_filter = ""
+            issued_params: list[Any] = [int(execution_id), node_name]
+            if loop_event_id:
+                loop_filter = "AND meta->>'loop_event_id' = %s"
+                issued_params.append(str(loop_event_id))
+
+            params: list[Any] = [
+                *issued_params,
+                int(execution_id),
+                node_name,
+                int(execution_id),
+                node_name,
+                int(limit),
+            ]
+
+            async with get_pool_connection() as conn:
+                async with conn.cursor(row_factory=dict_row) as cur:
+                    await cur.execute(
+                        f"""
+                        WITH issued AS (
+                            SELECT
+                                meta->>'command_id' AS command_id,
+                                NULLIF(meta->>'loop_iteration_index', '')::int AS loop_iteration_index
+                            FROM noetl.event
+                            WHERE execution_id = %s
+                              AND node_name = %s
+                              AND event_type = 'command.issued'
+                              {loop_filter}
+                        ),
+                        started AS (
+                            SELECT DISTINCT result->'data'->>'command_id' AS command_id
+                            FROM noetl.event
+                            WHERE execution_id = %s
+                              AND node_name = %s
+                              AND event_type = 'command.started'
+                        ),
+                        terminal AS (
+                            SELECT DISTINCT result->'data'->>'command_id' AS command_id
+                            FROM noetl.event
+                            WHERE execution_id = %s
+                              AND node_name = %s
+                              AND event_type IN ('command.completed', 'command.failed')
+                        )
+                        SELECT i.loop_iteration_index
+                        FROM issued i
+                        LEFT JOIN started s ON s.command_id = i.command_id
+                        LEFT JOIN terminal t ON t.command_id = i.command_id
+                        WHERE i.loop_iteration_index IS NOT NULL
+                          AND s.command_id IS NULL
+                          AND t.command_id IS NULL
+                        ORDER BY i.loop_iteration_index
+                        LIMIT %s
+                        """,
+                        tuple(params),
+                    )
+                    rows = await cur.fetchall()
+
+            return [
+                int(row.get("loop_iteration_index"))
+                for row in rows or []
+                if row.get("loop_iteration_index") is not None
+            ]
+        except Exception as exc:
+            logger.warning(
+                "[TASK_SEQ-LOOP] Failed to detect orphaned loop iterations for %s/%s: %s",
+                execution_id,
+                node_name,
+                exc,
+            )
+            return []
+
     def _get_loop_max_in_flight(self, step: Step) -> int:
         """Resolve max in-flight limit for loop scheduling."""
         if not step.loop:
@@ -2596,6 +2702,39 @@ class ControlFlowEngine:
 
             max_in_flight = self._get_loop_max_in_flight(step)
 
+            # Repair invalid distributed metadata from older writes/restarts where
+            # collection_size regressed to 0 while local loop collection is valid.
+            if nats_loop_state and len(collection) > 0:
+                nats_collection_size = int(nats_loop_state.get("collection_size", 0) or 0)
+                if nats_collection_size <= 0:
+                    repaired_scheduled = int(
+                        nats_loop_state.get("scheduled_count", completed_count) or completed_count
+                    )
+                    if repaired_scheduled < completed_count:
+                        repaired_scheduled = completed_count
+                    nats_loop_state["collection_size"] = len(collection)
+                    nats_loop_state["completed_count"] = completed_count
+                    nats_loop_state["scheduled_count"] = repaired_scheduled
+                    await nats_cache.set_loop_state(
+                        str(state.execution_id),
+                        step.step,
+                        nats_loop_state,
+                        event_id=resolved_loop_event_id,
+                    )
+                    nats_loop_state = await nats_cache.get_loop_state(
+                        str(state.execution_id),
+                        step.step,
+                        event_id=resolved_loop_event_id,
+                    )
+                    logger.warning(
+                        "[LOOP-REPAIR] Restored collection_size for %s via %s (completed=%s scheduled=%s size=%s)",
+                        step.step,
+                        resolved_loop_event_id,
+                        completed_count,
+                        repaired_scheduled,
+                        len(collection),
+                    )
+
             # Ensure distributed loop metadata exists before claiming next slot.
             if not nats_loop_state:
                 scheduled_seed = max(
@@ -2656,17 +2795,98 @@ class ControlFlowEngine:
                     )
                     or completed_count
                 )
-                in_flight = max(0, scheduled_hint - completed_count)
-                logger.info(
-                    "[LOOP] No available iteration slot for %s (completed=%s scheduled=%s size=%s in_flight=%s max_in_flight=%s)",
-                    step.step,
-                    completed_count,
-                    scheduled_hint,
-                    len(collection),
-                    in_flight,
-                    max_in_flight,
+                collection_size_hint = int(
+                    (nats_loop_state or {}).get("collection_size", len(collection)) or len(collection)
                 )
-                return None
+                in_flight = max(0, scheduled_hint - completed_count)
+
+                # Runtime loop-stall watchdog:
+                # If there is pending work and all slots appear scheduled, but progress
+                # has been stale for too long (including ghost in-flight claims), reset
+                # scheduled_count back to completed_count and attempt to reclaim one slot.
+                if (
+                    nats_loop_state
+                    and collection_size_hint > completed_count
+                    and scheduled_hint >= collection_size_hint
+                ):
+                    now_utc = datetime.now(timezone.utc)
+                    last_progress = (
+                        _parse_iso_utc(nats_loop_state.get("last_progress_at"))
+                        or _parse_iso_utc(nats_loop_state.get("last_completed_at"))
+                        or _parse_iso_utc(nats_loop_state.get("last_claimed_at"))
+                        or _parse_iso_utc(nats_loop_state.get("updated_at"))
+                    )
+                    last_repair = _parse_iso_utc(nats_loop_state.get("last_watchdog_repair_at"))
+                    if last_repair is None:
+                        last_repair = _parse_iso_utc(loop_state.get("last_watchdog_repair_at"))
+
+                    stalled_seconds = (
+                        (now_utc - last_progress).total_seconds()
+                        if last_progress is not None
+                        else (_LOOP_STALL_WATCHDOG_SECONDS + 1.0)
+                    )
+                    repair_cooldown_elapsed = (
+                        last_repair is None
+                        or (now_utc - last_repair).total_seconds()
+                        >= _LOOP_STALL_RECOVERY_COOLDOWN_SECONDS
+                    )
+                    if (
+                        stalled_seconds >= _LOOP_STALL_WATCHDOG_SECONDS
+                        and repair_cooldown_elapsed
+                    ):
+                        orphaned_indexes = await self._find_orphaned_loop_iteration_indices(
+                            str(state.execution_id),
+                            step.step,
+                            loop_event_id=resolved_loop_event_id,
+                            limit=max(1, _TASKSEQ_LOOP_REPAIR_THRESHOLD),
+                        )
+                        issued_repairs_raw = loop_state.get("repair_issued_indexes", [])
+                        issued_repairs = {
+                            int(idx)
+                            for idx in issued_repairs_raw
+                            if isinstance(idx, int) or (isinstance(idx, str) and str(idx).isdigit())
+                        }
+                        recovered_index: Optional[int] = None
+                        for orphaned_idx in orphaned_indexes:
+                            if (
+                                orphaned_idx in issued_repairs
+                                or orphaned_idx < completed_count
+                                or orphaned_idx >= collection_size_hint
+                            ):
+                                continue
+                            recovered_index = orphaned_idx
+                            break
+                        if recovered_index is not None:
+                            claimed_index = recovered_index
+                            issued_repairs.add(recovered_index)
+                            loop_state["repair_issued_indexes"] = sorted(issued_repairs)
+                            loop_state["last_watchdog_repair_at"] = now_utc.isoformat()
+                            loop_state["watchdog_repair_count"] = int(
+                                loop_state.get("watchdog_repair_count", 0) or 0
+                            ) + 1
+                            logger.warning(
+                                "[LOOP-WATCHDOG] Recovered stalled loop for %s via orphaned index replay "
+                                "(event_id=%s completed=%s scheduled=%s size=%s claimed=%s stalled_for=%.1fs)",
+                                step.step,
+                                resolved_loop_event_id,
+                                completed_count,
+                                scheduled_hint,
+                                collection_size_hint,
+                                claimed_index,
+                                stalled_seconds,
+                            )
+
+                if claimed_index is None:
+                    logger.info(
+                        "[LOOP] No available iteration slot for %s (completed=%s scheduled=%s size=%s in_flight=%s max_in_flight=%s)",
+                        step.step,
+                        completed_count,
+                        scheduled_hint,
+                        len(collection),
+                        in_flight,
+                        max_in_flight,
+                    )
+                    return None
 
             if claimed_index >= len(collection):
                 logger.info(

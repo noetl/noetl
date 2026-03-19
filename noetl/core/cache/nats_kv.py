@@ -21,11 +21,17 @@ from datetime import datetime, timezone
 import nats
 from nats.js import JetStreamContext
 from nats.js.kv import KeyValue
+from nats.js.errors import KeyNotFoundError
 from noetl.core.logger import setup_logger
 from noetl.core.config import get_settings
 
 logger = setup_logger(__name__, include_location=True)
 settings = get_settings()
+
+
+def _utcnow_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
 
 class NATSKVCache:
     """NATS K/V cache client for execution state."""
@@ -114,6 +120,8 @@ class NATSKVCache:
             if entry and entry.value:
                 return json.loads(entry.value.decode('utf-8'))
             return None
+        except KeyNotFoundError:
+            return None
         except Exception as e:
             logger.warning(f"Failed to get loop state from NATS K/V: {e}")
             return None
@@ -150,6 +158,30 @@ class NATSKVCache:
             state["completed_count"] = 0
         if "scheduled_count" not in state:
             state["scheduled_count"] = state.get("completed_count", 0)
+        state["completed_count"] = int(state.get("completed_count", 0) or 0)
+        state["scheduled_count"] = int(state.get("scheduled_count", state["completed_count"]) or state["completed_count"])
+        if state["scheduled_count"] < state["completed_count"]:
+            state["scheduled_count"] = state["completed_count"]
+
+        # Guardrail: never overwrite a known non-zero collection size with zero/empty.
+        # This prevents loop metadata regression during restart/replay windows where the
+        # caller may temporarily render an empty local collection.
+        incoming_collection_size = int(state.get("collection_size", 0) or 0)
+        existing_collection_size = 0
+        if incoming_collection_size <= 0:
+            existing_state = await self.get_loop_state(
+                execution_id,
+                step_name,
+                event_id=event_id,
+            )
+            if isinstance(existing_state, dict):
+                existing_collection_size = int(existing_state.get("collection_size", 0) or 0)
+        if incoming_collection_size <= 0 and existing_collection_size > 0:
+            state["collection_size"] = existing_collection_size
+        else:
+            state["collection_size"] = incoming_collection_size
+
+        state["updated_at"] = _utcnow_iso()
 
         key_suffix = f"loop:{step_name}:{event_id}" if event_id else f"loop:{step_name}"
         key = self._make_key(execution_id, key_suffix)
@@ -204,6 +236,10 @@ class NATSKVCache:
                 if scheduled_count < state["completed_count"]:
                     scheduled_count = state["completed_count"]
                 state["scheduled_count"] = scheduled_count
+                now_iso = _utcnow_iso()
+                state["last_completed_at"] = now_iso
+                state["last_progress_at"] = now_iso
+                state["updated_at"] = now_iso
 
                 # Update with revision check (optimistic locking)
                 value = json.dumps(state).encode('utf-8')
@@ -275,8 +311,13 @@ class NATSKVCache:
                 state["completed_count"] = completed_count
                 state["scheduled_count"] = scheduled_count
 
+                existing_collection_size = int(state.get("collection_size", 0) or 0)
+                if safe_collection_size <= 0 and existing_collection_size > 0:
+                    safe_collection_size = existing_collection_size
+
                 if safe_collection_size <= 0:
-                    state["collection_size"] = safe_collection_size
+                    state["collection_size"] = 0
+                    state["updated_at"] = _utcnow_iso()
                     value = json.dumps(state).encode("utf-8")
                     await self._kv.update(key, value, last=entry.revision)
                     return None
@@ -291,6 +332,10 @@ class NATSKVCache:
                 claimed_index = scheduled_count
                 state["collection_size"] = safe_collection_size
                 state["scheduled_count"] = scheduled_count + 1
+                now_iso = _utcnow_iso()
+                state["last_claimed_at"] = now_iso
+                state["last_progress_at"] = now_iso
+                state["updated_at"] = now_iso
 
                 value = json.dumps(state).encode("utf-8")
                 await self._kv.update(key, value, last=entry.revision)

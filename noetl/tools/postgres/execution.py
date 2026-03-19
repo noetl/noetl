@@ -11,6 +11,7 @@ This module keeps database pressure predictable in distributed runs by:
 import asyncio
 import os
 import random
+import re
 import time as time_module
 from decimal import Decimal
 from datetime import date, datetime, time
@@ -66,12 +67,85 @@ def _is_retryable_connection_error(exc: Exception) -> bool:
     return any(marker in msg for marker in retry_markers)
 
 
+def _is_midstream_connection_drop_error(exc: Exception) -> bool:
+    """Detect abrupt connection loss while reading command results."""
+    msg = str(exc).lower()
+    retry_markers = (
+        "server closed the connection unexpectedly",
+        "terminating connection due to administrator command",
+        "connection is closed",
+        "connection already closed",
+        "consuming input failed",
+        "connection reset by peer",
+        "broken pipe",
+        "ssl syscall error",
+        "eof detected",
+    )
+    return any(marker in msg for marker in retry_markers)
+
+
+def _strip_leading_sql_comments(command: str) -> str:
+    text = (command or "").lstrip()
+    while text:
+        if text.startswith("/*"):
+            end = text.find("*/")
+            if end < 0:
+                return text
+            text = text[end + 2 :].lstrip()
+            continue
+        if text.startswith("--"):
+            newline = text.find("\n")
+            if newline < 0:
+                return ""
+            text = text[newline + 1 :].lstrip()
+            continue
+        break
+    return text
+
+
+def _sql_verb(command: str) -> str:
+    stripped = _strip_leading_sql_comments(command)
+    if not stripped:
+        return ""
+    match = re.match(r"([A-Za-z]+)", stripped)
+    return match.group(1).upper() if match else ""
+
+
+def _is_retry_safe_read_statement(command: str) -> bool:
+    """Allow mid-stream reconnect retry only for read-only statements."""
+    verb = _sql_verb(command)
+    if verb not in {"SELECT", "SHOW", "EXPLAIN", "VALUES", "DESCRIBE", "DESC"}:
+        return False
+    # Conservative guard: avoid replaying locking reads.
+    return "FOR UPDATE" not in (command or "").upper()
+
+
 _DIRECT_CONN_LIMIT = max(1, _env_int("NOETL_POSTGRES_MAX_DIRECT_CONNECTIONS", 4))
 _CONNECT_ATTEMPTS = max(1, _env_int("NOETL_POSTGRES_CONNECT_ATTEMPTS", 3))
 _RETRY_BASE_DELAY_SECONDS = max(
     0.05, _env_float("NOETL_POSTGRES_CONNECT_RETRY_BASE_SECONDS", 0.2)
 )
 _direct_conn_semaphore = asyncio.Semaphore(_DIRECT_CONN_LIMIT)
+
+
+class _TransientConnectionDrop(Exception):
+    """Raised when a retryable connection drop happens mid-command stream."""
+
+    def __init__(
+        self,
+        message: str,
+        failed_command_index: int,
+        partial_results: Dict[str, Dict],
+    ):
+        super().__init__(message)
+        self.failed_command_index = int(failed_command_index)
+        self.partial_results = dict(partial_results or {})
+
+
+def _get_plugin_connection_ctx(connection_string: str, pool_name: str, **pool_params):
+    from .pool import get_plugin_connection
+
+    return get_plugin_connection(connection_string, pool_name=pool_name, **pool_params)
 
 
 async def _execute_with_pooled_connection(
@@ -84,16 +158,54 @@ async def _execute_with_pooled_connection(
     pool_name: str,
     pool_params: dict,
 ) -> Dict[str, Dict]:
-    from .pool import get_plugin_connection
-
+    next_command_index = 0
+    aggregated_results: Dict[str, Dict] = {}
     for attempt in range(1, _CONNECT_ATTEMPTS + 1):
         try:
-            async with get_plugin_connection(
+            async with _get_plugin_connection_ctx(
                 connection_string, pool_name=pool_name, **pool_params
             ) as conn:
                 conn_pid = conn.info.backend_pid if conn and conn.info else "unknown"
                 logger.debug("[CONN-%s] Using pooled connection pid=%s", conn_id, conn_pid)
-                return await execute_sql_statements_async(conn, commands)
+                remaining_commands = commands[next_command_index:]
+                exec_results = await execute_sql_statements_async(
+                    conn,
+                    remaining_commands,
+                    start_index=next_command_index,
+                )
+                aggregated_results.update(exec_results)
+                return aggregated_results
+        except _TransientConnectionDrop as exc:
+            aggregated_results.update(exc.partial_results)
+            should_retry = attempt < _CONNECT_ATTEMPTS
+            if should_retry:
+                next_command_index = max(next_command_index, exc.failed_command_index)
+                delay = _RETRY_BASE_DELAY_SECONDS * attempt + random.uniform(0, 0.15)
+                logger.warning(
+                    "[CONN-%s] Pooled transient drop attempt %s/%s at command_%s for %s:%s/%s; "
+                    "retrying remaining commands in %.2fs (%s)",
+                    conn_id,
+                    attempt,
+                    _CONNECT_ATTEMPTS,
+                    exc.failed_command_index,
+                    host,
+                    port,
+                    database,
+                    delay,
+                    exc,
+                )
+                await asyncio.sleep(delay)
+                continue
+            logger.exception(
+                "[CONN-%s] Exhausted pooled retries after transient drop at command_%s on %s:%s/%s: %s",
+                conn_id,
+                exc.failed_command_index,
+                host,
+                port,
+                database,
+                exc,
+            )
+            raise
         except Exception as exc:
             should_retry = (
                 attempt < _CONNECT_ATTEMPTS and _is_retryable_connection_error(exc)
@@ -134,13 +246,53 @@ async def _execute_with_direct_connection(
     port: str,
     database: str,
 ) -> Dict[str, Dict]:
+    next_command_index = 0
+    aggregated_results: Dict[str, Dict] = {}
     for attempt in range(1, _CONNECT_ATTEMPTS + 1):
         conn = None
         try:
             conn = await AsyncConnection.connect(connection_string, row_factory=dict_row)
             conn_pid = conn.info.backend_pid if conn and conn.info else "unknown"
             logger.debug("[CONN-%s] Using direct connection pid=%s", conn_id, conn_pid)
-            return await execute_sql_statements_async(conn, commands)
+            remaining_commands = commands[next_command_index:]
+            exec_results = await execute_sql_statements_async(
+                conn,
+                remaining_commands,
+                start_index=next_command_index,
+            )
+            aggregated_results.update(exec_results)
+            return aggregated_results
+        except _TransientConnectionDrop as exc:
+            aggregated_results.update(exc.partial_results)
+            should_retry = attempt < _CONNECT_ATTEMPTS
+            if should_retry:
+                next_command_index = max(next_command_index, exc.failed_command_index)
+                delay = _RETRY_BASE_DELAY_SECONDS * attempt + random.uniform(0, 0.15)
+                logger.warning(
+                    "[CONN-%s] Direct transient drop attempt %s/%s at command_%s for %s:%s/%s; "
+                    "retrying remaining commands in %.2fs (%s)",
+                    conn_id,
+                    attempt,
+                    _CONNECT_ATTEMPTS,
+                    exc.failed_command_index,
+                    host,
+                    port,
+                    database,
+                    delay,
+                    exc,
+                )
+                await asyncio.sleep(delay)
+                continue
+            logger.exception(
+                "[CONN-%s] Exhausted direct retries after transient drop at command_%s on %s:%s/%s: %s",
+                conn_id,
+                exc.failed_command_index,
+                host,
+                port,
+                database,
+                exc,
+            )
+            raise
         except Exception as exc:
             should_retry = (
                 attempt < _CONNECT_ATTEMPTS and _is_retryable_connection_error(exc)
@@ -240,6 +392,7 @@ async def execute_sql_with_connection(
 async def execute_sql_statements_async(
     conn: AsyncConnection,
     commands: List[str],
+    start_index: int = 0,
 ) -> Dict[str, Dict]:
     """
     Execute multiple SQL statements asynchronously and collect results.
@@ -249,9 +402,14 @@ async def execute_sql_statements_async(
     results = {}
 
     for i, cmd in enumerate(commands):
+        command_index = int(start_index) + int(i)
         cmd_summary = _sql_summary(cmd)
         logger.debug(
-            "[PID-%s] SQL command %s/%s %s", conn_pid, i + 1, len(commands), cmd_summary
+            "[PID-%s] SQL command %s/%s %s",
+            conn_pid,
+            command_index + 1,
+            int(start_index) + len(commands),
+            cmd_summary,
         )
         normalized = cmd.strip().upper()
         is_call = normalized.startswith("CALL")
@@ -272,14 +430,14 @@ async def execute_sql_statements_async(
                     if has_results:
                         result_data = await _fetch_result_rows_async(cursor)
                         column_names = [desc[0] for desc in cursor.description]
-                        results[f"command_{i}"] = {
+                        results[f"command_{command_index}"] = {
                             "status": "success",
                             "rows": result_data,
                             "row_count": len(result_data),
                             "columns": column_names,
                         }
                     else:
-                        results[f"command_{i}"] = {
+                        results[f"command_{command_index}"] = {
                             "status": "success",
                             "message": "Procedure executed successfully.",
                         }
@@ -292,27 +450,42 @@ async def execute_sql_statements_async(
                         if has_results:
                             result_data = await _fetch_result_rows_async(cursor)
                             column_names = [desc[0] for desc in cursor.description]
-                            results[f"command_{i}"] = {
+                            results[f"command_{command_index}"] = {
                                 "status": "success",
                                 "rows": result_data,
                                 "row_count": len(result_data),
                                 "columns": column_names,
                             }
                         else:
-                            results[f"command_{i}"] = {
+                            results[f"command_{command_index}"] = {
                                 "status": "success",
                                 "row_count": cursor.rowcount,
                                 "message": f"Command executed. {cursor.rowcount} rows affected.",
                             }
         except Exception as cmd_error:
+            is_transient_drop = _is_midstream_connection_drop_error(cmd_error)
+            retryable_command = _is_retry_safe_read_statement(cmd)
+            if is_transient_drop and retryable_command:
+                logger.warning(
+                    "[PID-%s] SQL command_%s transient drop detected (%s); "
+                    "will reconnect and retry remaining commands",
+                    conn_pid,
+                    command_index,
+                    cmd_error,
+                )
+                raise _TransientConnectionDrop(
+                    str(cmd_error),
+                    failed_command_index=command_index,
+                    partial_results=results,
+                )
             logger.error(
                 "[PID-%s] SQL command %s failed (%s): %s",
                 conn_pid,
-                i,
+                command_index,
                 cmd_summary,
                 cmd_error,
             )
-            results[f"command_{i}"] = {
+            results[f"command_{command_index}"] = {
                 "status": "error",
                 "message": str(cmd_error),
             }
@@ -324,7 +497,7 @@ async def execute_sql_statements_async(
                 logger.debug(
                     "[PID-%s] Failed to restore autocommit for command %s: %s",
                     conn_pid,
-                    i,
+                    command_index,
                     restore_error,
                 )
 
