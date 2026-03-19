@@ -21,6 +21,7 @@ from datetime import datetime, timezone
 import nats
 from nats.js import JetStreamContext
 from nats.js.kv import KeyValue
+from nats.js.errors import KeyNotFoundError
 from noetl.core.logger import setup_logger
 from noetl.core.config import get_settings
 
@@ -119,6 +120,8 @@ class NATSKVCache:
             if entry and entry.value:
                 return json.loads(entry.value.decode('utf-8'))
             return None
+        except KeyNotFoundError:
+            return None
         except Exception as e:
             logger.warning(f"Failed to get loop state from NATS K/V: {e}")
             return None
@@ -165,9 +168,14 @@ class NATSKVCache:
         # caller may temporarily render an empty local collection.
         incoming_collection_size = int(state.get("collection_size", 0) or 0)
         existing_collection_size = 0
-        existing_state = await self.get_loop_state(execution_id, step_name, event_id=event_id)
-        if isinstance(existing_state, dict):
-            existing_collection_size = int(existing_state.get("collection_size", 0) or 0)
+        if incoming_collection_size <= 0:
+            existing_state = await self.get_loop_state(
+                execution_id,
+                step_name,
+                event_id=event_id,
+            )
+            if isinstance(existing_state, dict):
+                existing_collection_size = int(existing_state.get("collection_size", 0) or 0)
         if incoming_collection_size <= 0 and existing_collection_size > 0:
             state["collection_size"] = existing_collection_size
         else:

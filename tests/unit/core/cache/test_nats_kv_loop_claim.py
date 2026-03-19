@@ -25,6 +25,11 @@ class _FakeKV:
         self.revision += 1
         return self.revision
 
+    async def put(self, _key: str, value: bytes):
+        self.payload = json.loads(value.decode("utf-8"))
+        self.revision += 1
+        return self.revision
+
 
 @pytest.mark.asyncio
 async def test_claim_next_loop_index_preserves_existing_nonzero_collection_size():
@@ -74,3 +79,55 @@ async def test_claim_next_loop_index_keeps_zero_when_no_existing_size():
     assert claimed is None
     assert fake_kv.payload["collection_size"] == 0
     assert fake_kv.payload["scheduled_count"] == 0
+
+
+@pytest.mark.asyncio
+async def test_set_loop_state_skips_existing_lookup_for_positive_collection_size(monkeypatch):
+    cache = NATSKVCache()
+    fake_kv = _FakeKV({"collection_size": 1, "completed_count": 0, "scheduled_count": 0})
+    cache._kv = fake_kv
+    lookup_calls = 0
+
+    async def fake_get_loop_state(*_args, **_kwargs):
+        nonlocal lookup_calls
+        lookup_calls += 1
+        return {"collection_size": 99}
+
+    monkeypatch.setattr(cache, "get_loop_state", fake_get_loop_state)
+
+    ok = await cache.set_loop_state(
+        execution_id="e3",
+        step_name="loop_step",
+        state={"collection_size": 4, "completed_count": 0, "scheduled_count": 0},
+        event_id="loop_3",
+    )
+
+    assert ok is True
+    assert lookup_calls == 0
+    assert fake_kv.payload["collection_size"] == 4
+
+
+@pytest.mark.asyncio
+async def test_set_loop_state_preserves_existing_collection_size_when_incoming_zero(monkeypatch):
+    cache = NATSKVCache()
+    fake_kv = _FakeKV({"collection_size": 1, "completed_count": 0, "scheduled_count": 0})
+    cache._kv = fake_kv
+    lookup_calls = 0
+
+    async def fake_get_loop_state(*_args, **_kwargs):
+        nonlocal lookup_calls
+        lookup_calls += 1
+        return {"collection_size": 8}
+
+    monkeypatch.setattr(cache, "get_loop_state", fake_get_loop_state)
+
+    ok = await cache.set_loop_state(
+        execution_id="e4",
+        step_name="loop_step",
+        state={"collection_size": 0, "completed_count": 1, "scheduled_count": 1},
+        event_id="loop_4",
+    )
+
+    assert ok is True
+    assert lookup_calls == 1
+    assert fake_kv.payload["collection_size"] == 8

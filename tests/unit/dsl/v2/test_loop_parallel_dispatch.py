@@ -327,7 +327,11 @@ async def test_loop_watchdog_recovers_stalled_scheduled_counts(monkeypatch):
     async def fake_get_nats_cache():
         return fake_cache
 
+    async def fake_find_orphaned(*_args, **_kwargs):
+        return [1]
+
     monkeypatch.setattr(engine_module, "get_nats_cache", fake_get_nats_cache)
+    monkeypatch.setattr(engine, "_find_orphaned_loop_iteration_indices", fake_find_orphaned)
     monkeypatch.setattr(engine_module, "_LOOP_STALL_WATCHDOG_SECONDS", 1.0)
     monkeypatch.setattr(engine_module, "_LOOP_STALL_RECOVERY_COOLDOWN_SECONDS", 0.0)
 
@@ -337,5 +341,5 @@ async def test_loop_watchdog_recovers_stalled_scheduled_counts(monkeypatch):
     assert command is not None
     assert command.args.get("claimed_batch") == 2
     assert command.args.get("claimed_index") == 1
-    assert int(fake_cache.state.get("scheduled_count", 0)) == 2
-    assert int(fake_cache.state.get("watchdog_repair_count", 0)) >= 1
+    assert int(fake_cache.state.get("scheduled_count", 0)) == 4
+    assert int(state.loop_state["run_batch_workers"].get("watchdog_repair_count", 0)) >= 1

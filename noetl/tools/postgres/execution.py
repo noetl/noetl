@@ -11,6 +11,7 @@ This module keeps database pressure predictable in distributed runs by:
 import asyncio
 import os
 import random
+import re
 import time as time_module
 from decimal import Decimal
 from datetime import date, datetime, time
@@ -66,6 +67,59 @@ def _is_retryable_connection_error(exc: Exception) -> bool:
     return any(marker in msg for marker in retry_markers)
 
 
+def _is_midstream_connection_drop_error(exc: Exception) -> bool:
+    """Detect abrupt connection loss while reading command results."""
+    msg = str(exc).lower()
+    retry_markers = (
+        "server closed the connection unexpectedly",
+        "terminating connection due to administrator command",
+        "connection is closed",
+        "connection already closed",
+        "consuming input failed",
+        "connection reset by peer",
+        "broken pipe",
+        "ssl syscall error",
+        "eof detected",
+    )
+    return any(marker in msg for marker in retry_markers)
+
+
+def _strip_leading_sql_comments(command: str) -> str:
+    text = (command or "").lstrip()
+    while text:
+        if text.startswith("/*"):
+            end = text.find("*/")
+            if end < 0:
+                return text
+            text = text[end + 2 :].lstrip()
+            continue
+        if text.startswith("--"):
+            newline = text.find("\n")
+            if newline < 0:
+                return ""
+            text = text[newline + 1 :].lstrip()
+            continue
+        break
+    return text
+
+
+def _sql_verb(command: str) -> str:
+    stripped = _strip_leading_sql_comments(command)
+    if not stripped:
+        return ""
+    match = re.match(r"([A-Za-z]+)", stripped)
+    return match.group(1).upper() if match else ""
+
+
+def _is_retry_safe_read_statement(command: str) -> bool:
+    """Allow mid-stream reconnect retry only for read-only statements."""
+    verb = _sql_verb(command)
+    if verb not in {"SELECT", "SHOW", "EXPLAIN", "VALUES", "DESCRIBE", "DESC"}:
+        return False
+    # Conservative guard: avoid replaying locking reads.
+    return "FOR UPDATE" not in (command or "").upper()
+
+
 _DIRECT_CONN_LIMIT = max(1, _env_int("NOETL_POSTGRES_MAX_DIRECT_CONNECTIONS", 4))
 _CONNECT_ATTEMPTS = max(1, _env_int("NOETL_POSTGRES_CONNECT_ATTEMPTS", 3))
 _RETRY_BASE_DELAY_SECONDS = max(
@@ -88,6 +142,12 @@ class _TransientConnectionDrop(Exception):
         self.partial_results = dict(partial_results or {})
 
 
+def _get_plugin_connection_ctx(connection_string: str, pool_name: str, **pool_params):
+    from .pool import get_plugin_connection
+
+    return get_plugin_connection(connection_string, pool_name=pool_name, **pool_params)
+
+
 async def _execute_with_pooled_connection(
     connection_string: str,
     commands: List[str],
@@ -98,13 +158,11 @@ async def _execute_with_pooled_connection(
     pool_name: str,
     pool_params: dict,
 ) -> Dict[str, Dict]:
-    from .pool import get_plugin_connection
-
     next_command_index = 0
     aggregated_results: Dict[str, Dict] = {}
     for attempt in range(1, _CONNECT_ATTEMPTS + 1):
         try:
-            async with get_plugin_connection(
+            async with _get_plugin_connection_ctx(
                 connection_string, pool_name=pool_name, **pool_params
             ) as conn:
                 conn_pid = conn.info.backend_pid if conn and conn.info else "unknown"
@@ -405,8 +463,8 @@ async def execute_sql_statements_async(
                                 "message": f"Command executed. {cursor.rowcount} rows affected.",
                             }
         except Exception as cmd_error:
-            is_transient_drop = _is_retryable_connection_error(cmd_error)
-            retryable_command = not is_call and not is_autocommit_ddl
+            is_transient_drop = _is_midstream_connection_drop_error(cmd_error)
+            retryable_command = _is_retry_safe_read_statement(cmd)
             if is_transient_drop and retryable_command:
                 logger.warning(
                     "[PID-%s] SQL command_%s transient drop detected (%s); "

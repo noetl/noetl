@@ -1425,6 +1425,89 @@ class ControlFlowEngine:
             )
             return []
 
+    async def _find_orphaned_loop_iteration_indices(
+        self,
+        execution_id: str,
+        node_name: str,
+        loop_event_id: Optional[str] = None,
+        limit: int = 10,
+    ) -> list[int]:
+        """Find issued loop indexes that never started and have no terminal event."""
+        if limit <= 0:
+            return []
+
+        try:
+            loop_filter = ""
+            issued_params: list[Any] = [int(execution_id), node_name]
+            if loop_event_id:
+                loop_filter = "AND meta->>'loop_event_id' = %s"
+                issued_params.append(str(loop_event_id))
+
+            params: list[Any] = [
+                *issued_params,
+                int(execution_id),
+                node_name,
+                int(execution_id),
+                node_name,
+                int(limit),
+            ]
+
+            async with get_pool_connection() as conn:
+                async with conn.cursor(row_factory=dict_row) as cur:
+                    await cur.execute(
+                        f"""
+                        WITH issued AS (
+                            SELECT
+                                meta->>'command_id' AS command_id,
+                                NULLIF(meta->>'loop_iteration_index', '')::int AS loop_iteration_index
+                            FROM noetl.event
+                            WHERE execution_id = %s
+                              AND node_name = %s
+                              AND event_type = 'command.issued'
+                              {loop_filter}
+                        ),
+                        started AS (
+                            SELECT DISTINCT result->'data'->>'command_id' AS command_id
+                            FROM noetl.event
+                            WHERE execution_id = %s
+                              AND node_name = %s
+                              AND event_type = 'command.started'
+                        ),
+                        terminal AS (
+                            SELECT DISTINCT result->'data'->>'command_id' AS command_id
+                            FROM noetl.event
+                            WHERE execution_id = %s
+                              AND node_name = %s
+                              AND event_type IN ('command.completed', 'command.failed')
+                        )
+                        SELECT i.loop_iteration_index
+                        FROM issued i
+                        LEFT JOIN started s ON s.command_id = i.command_id
+                        LEFT JOIN terminal t ON t.command_id = i.command_id
+                        WHERE i.loop_iteration_index IS NOT NULL
+                          AND s.command_id IS NULL
+                          AND t.command_id IS NULL
+                        ORDER BY i.loop_iteration_index
+                        LIMIT %s
+                        """,
+                        tuple(params),
+                    )
+                    rows = await cur.fetchall()
+
+            return [
+                int(row.get("loop_iteration_index"))
+                for row in rows or []
+                if row.get("loop_iteration_index") is not None
+            ]
+        except Exception as exc:
+            logger.warning(
+                "[TASK_SEQ-LOOP] Failed to detect orphaned loop iterations for %s/%s: %s",
+                execution_id,
+                node_name,
+                exc,
+            )
+            return []
+
     def _get_loop_max_in_flight(self, step: Step) -> int:
         """Resolve max in-flight limit for loop scheduling."""
         if not step.loop:
@@ -2734,6 +2817,8 @@ class ControlFlowEngine:
                         or _parse_iso_utc(nats_loop_state.get("updated_at"))
                     )
                     last_repair = _parse_iso_utc(nats_loop_state.get("last_watchdog_repair_at"))
+                    if last_repair is None:
+                        last_repair = _parse_iso_utc(loop_state.get("last_watchdog_repair_at"))
 
                     stalled_seconds = (
                         (now_utc - last_progress).total_seconds()
@@ -2749,41 +2834,39 @@ class ControlFlowEngine:
                         stalled_seconds >= _LOOP_STALL_WATCHDOG_SECONDS
                         and repair_cooldown_elapsed
                     ):
-                        nats_loop_state["scheduled_count"] = completed_count
-                        nats_loop_state["completed_count"] = completed_count
-                        nats_loop_state["last_watchdog_repair_at"] = now_utc.isoformat()
-                        nats_loop_state["watchdog_repair_count"] = int(
-                            nats_loop_state.get("watchdog_repair_count", 0) or 0
-                        ) + 1
-
-                        await nats_cache.set_loop_state(
+                        orphaned_indexes = await self._find_orphaned_loop_iteration_indices(
                             str(state.execution_id),
                             step.step,
-                            nats_loop_state,
-                            event_id=resolved_loop_event_id,
+                            loop_event_id=resolved_loop_event_id,
+                            limit=max(1, _TASKSEQ_LOOP_REPAIR_THRESHOLD),
                         )
-                        nats_loop_state = await nats_cache.get_loop_state(
-                            str(state.execution_id),
-                            step.step,
-                            event_id=resolved_loop_event_id,
-                        )
-
-                        claimed_index = await nats_cache.claim_next_loop_index(
-                            str(state.execution_id),
-                            step.step,
-                            collection_size=len(collection),
-                            max_in_flight=max_in_flight,
-                            event_id=resolved_loop_event_id,
-                        )
-                        if claimed_index is not None:
-                            scheduled_hint = int(
-                                (nats_loop_state or {}).get("scheduled_count", completed_count + 1)
-                                or (completed_count + 1)
-                            )
-                            in_flight = max(0, scheduled_hint - completed_count)
+                        issued_repairs_raw = loop_state.get("repair_issued_indexes", [])
+                        issued_repairs = {
+                            int(idx)
+                            for idx in issued_repairs_raw
+                            if isinstance(idx, int) or (isinstance(idx, str) and str(idx).isdigit())
+                        }
+                        recovered_index: Optional[int] = None
+                        for orphaned_idx in orphaned_indexes:
+                            if (
+                                orphaned_idx in issued_repairs
+                                or orphaned_idx < completed_count
+                                or orphaned_idx >= collection_size_hint
+                            ):
+                                continue
+                            recovered_index = orphaned_idx
+                            break
+                        if recovered_index is not None:
+                            claimed_index = recovered_index
+                            issued_repairs.add(recovered_index)
+                            loop_state["repair_issued_indexes"] = sorted(issued_repairs)
+                            loop_state["last_watchdog_repair_at"] = now_utc.isoformat()
+                            loop_state["watchdog_repair_count"] = int(
+                                loop_state.get("watchdog_repair_count", 0) or 0
+                            ) + 1
                             logger.warning(
-                                "[LOOP-WATCHDOG] Recovered stalled loop for %s via %s "
-                                "(completed=%s scheduled_before=%s size=%s claimed=%s stalled_for=%.1fs)",
+                                "[LOOP-WATCHDOG] Recovered stalled loop for %s via orphaned index replay "
+                                "(event_id=%s completed=%s scheduled=%s size=%s claimed=%s stalled_for=%.1fs)",
                                 step.step,
                                 resolved_loop_event_id,
                                 completed_count,
