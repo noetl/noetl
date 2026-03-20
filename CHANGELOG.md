@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.10.16](https://github.com/noetl/noetl/compare/v2.10.15...v2.10.16) (2026-03-20)
+
+### Bug Fixes
+
+* address copilot feedback for regression event paging and mock config ([f6dbde9](https://github.com/noetl/noetl/commit/f6dbde9740d833e15070af043d24ce2c3da5ab25))
+* harden command reaper matching and stabilize kind regression harness ([62342d2](https://github.com/noetl/noetl/commit/62342d254427b52bbc4053e8c0ec53cf5dc9ba72))
+
 ## [2.10.15](https://github.com/noetl/noetl/compare/v2.10.14...v2.10.15) (2026-03-19)
 
 ### Bug Fixes
