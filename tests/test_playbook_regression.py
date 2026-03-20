@@ -193,19 +193,46 @@ class NoETLClient:
     
     async def get_execution_events(self, execution_id: int) -> List[Dict[str, Any]]:
         """Get all events for an execution."""
+        # Prefer paginated v2 endpoint and fetch all pages.
+        page = 1
+        page_size = 500
+        collected: List[Dict[str, Any]] = []
+
+        while True:
+            response = await self.client.get(
+                f"{self.base_url}/api/executions/{execution_id}",
+                params={"page": page, "page_size": page_size},
+            )
+
+            if response.status_code in (404, 405):
+                break
+            response.raise_for_status()
+
+            payload = response.json()
+            if not isinstance(payload, dict) or "events" not in payload:
+                break
+
+            page_events = payload.get("events", [])
+            if isinstance(page_events, list):
+                collected.extend(page_events)
+
+            pagination = payload.get("pagination", {})
+            if not isinstance(pagination, dict) or not pagination.get("has_next", False):
+                return collected
+
+            page += 1
+
+        # Fallback to legacy events endpoint shape.
         response = await self._request_with_fallback(
             "GET",
-            [
-                f"{self.base_url}/api/executions/{execution_id}",
-                f"{self.base_url}/api/execution/{execution_id}/events",
-            ],
+            [f"{self.base_url}/api/execution/{execution_id}/events"],
         )
         response.raise_for_status()
         payload = response.json()
-        if isinstance(payload, dict) and "events" in payload:
-            return payload["events"]
         if isinstance(payload, list):
             return payload
+        if isinstance(payload, dict) and "events" in payload:
+            return payload["events"]
         return []
 
     @staticmethod
@@ -612,7 +639,9 @@ async def run_single_playbook_test(playbook_name: str):
         class MockRequest:
             class MockConfig:
                 @staticmethod
-                def getoption(name):
+                def getoption(name, default=None):
+                    if default is not None:
+                        return default
                     return False
             config = MockConfig()
         
