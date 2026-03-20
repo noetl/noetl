@@ -107,7 +107,11 @@ playbooks:
       execution_status: completed
       required_steps:
         - start
-        - test_postgres_save
+        - create_tables
+        - truncate_tables
+        - event_test
+        - postgres_flat_test
+        - postgres_nested_test
         - end
 
   - name: save_edge_cases
@@ -254,7 +258,7 @@ playbooks:
 
   # === Pagination Tests ===
   - name: test_pagination_basic
-    path: tests/fixtures/playbooks/pagination/test_pagination_basic
+    path: tests/fixtures/playbooks/pagination/basic/test_pagination_basic
     category: api_integration
     enabled: true
     requires_credentials: []
@@ -263,7 +267,7 @@ playbooks:
       execution_status: completed
 
   - name: test_pagination_offset
-    path: tests/fixtures/playbooks/pagination/test_pagination_offset
+    path: tests/fixtures/playbooks/pagination/offset/test_pagination_offset
     category: api_integration
     enabled: true
     requires_credentials: []
@@ -272,7 +276,7 @@ playbooks:
       execution_status: completed
 
   - name: test_pagination_cursor
-    path: tests/fixtures/playbooks/pagination/test_pagination_cursor
+    path: tests/fixtures/playbooks/pagination/cursor/test_pagination_cursor
     category: api_integration
     enabled: true
     requires_credentials: []
@@ -281,7 +285,7 @@ playbooks:
       execution_status: completed
 
   - name: test_pagination_max_iterations
-    path: tests/fixtures/playbooks/pagination/test_pagination_max_iterations
+    path: tests/fixtures/playbooks/pagination/max_iterations/test_pagination_max_iterations
     category: api_integration
     enabled: true
     requires_credentials: []
@@ -290,7 +294,7 @@ playbooks:
       execution_status: completed
 
   - name: test_pagination_retry
-    path: tests/fixtures/playbooks/pagination/test_pagination_retry
+    path: tests/fixtures/playbooks/pagination/retry/test_pagination_retry
     category: api_integration
     enabled: true
     requires_credentials: []
@@ -385,7 +389,7 @@ playbooks:
     validation:
       execution_status: failed
       expect_error: true
-      error_pattern: "tool.*required"
+      error_pattern: "(tool.*required|no sql command provided)"
 
 # Setup tasks required before certain tests
 setup_tasks:

@@ -24,6 +24,7 @@ from typing import Any, Dict, List, Optional
 
 import httpx
 import pytest
+import pytest_asyncio
 import yaml
 
 
@@ -85,15 +86,71 @@ class NoETLClient:
             return response.status_code == 200
         except Exception:
             return False
+
+    @staticmethod
+    def _resolve_playbook_file(playbook_path: str) -> Path:
+        """Resolve playbook config path to a local YAML file."""
+        base = Path(playbook_path)
+        if not base.is_absolute():
+            base = PROJECT_ROOT / playbook_path
+
+        candidates = [base]
+        if base.suffix:
+            candidates.append(base.with_suffix(".yaml"))
+            candidates.append(base.with_suffix(".yml"))
+        else:
+            candidates.append(base.with_suffix(".yaml"))
+            candidates.append(base.with_suffix(".yml"))
+
+        for candidate in candidates:
+            if candidate.is_file():
+                return candidate
+
+        # Support fixture layouts that nest by subtype, e.g. pagination/basic/*.yaml
+        search_root = base.parent if base.parent.exists() else PROJECT_ROOT
+        for ext in ("yaml", "yml"):
+            matches = sorted(search_root.rglob(f"{base.name}.{ext}"))
+            if matches:
+                return matches[0]
+
+        raise FileNotFoundError(
+            f"Playbook file not found for path '{playbook_path}'. Tried: "
+            + ", ".join(str(c) for c in candidates)
+        )
     
     async def register_playbook(self, playbook_path: str) -> Dict[str, Any]:
         """Register a playbook in the catalog."""
+        playbook_file = self._resolve_playbook_file(playbook_path)
+        content = playbook_file.read_text(encoding="utf-8")
+
         response = await self.client.post(
             f"{self.base_url}/api/catalog/register",
-            json={"path": playbook_path}
+            json={"content": content, "resource_type": "Playbook"}
         )
         response.raise_for_status()
         return response.json()
+
+    async def _request_with_fallback(
+        self,
+        method: str,
+        urls: list[str],
+        **kwargs: Any,
+    ) -> httpx.Response:
+        """Try multiple URLs and return the first successful response."""
+        last_response: Optional[httpx.Response] = None
+
+        for url in urls:
+            response = await self.client.request(method, url, **kwargs)
+            if response.status_code < 400:
+                return response
+
+            last_response = response
+            if response.status_code not in (404, 405):
+                response.raise_for_status()
+
+        assert last_response is not None, "No request attempts executed"
+        last_response.raise_for_status()
+        return last_response
     
     async def execute_playbook(
         self,
@@ -110,28 +167,60 @@ class NoETLClient:
         if payload:
             request_data["payload"] = payload
         
-        response = await self.client.post(
-            f"{self.base_url}/api/execution/execute",
-            json=request_data
+        response = await self._request_with_fallback(
+            "POST",
+            [
+                f"{self.base_url}/api/execute",
+                f"{self.base_url}/api/execution/execute",
+                f"{self.base_url}/api/run/playbook",
+            ],
+            json=request_data,
         )
         response.raise_for_status()
         return response.json()
     
     async def get_execution_status(self, execution_id: int) -> Dict[str, Any]:
         """Get execution status and events."""
-        response = await self.client.get(
-            f"{self.base_url}/api/execution/{execution_id}/status"
+        response = await self._request_with_fallback(
+            "GET",
+            [
+                f"{self.base_url}/api/executions/{execution_id}/status",
+                f"{self.base_url}/api/execution/{execution_id}/status",
+            ],
         )
         response.raise_for_status()
         return response.json()
     
     async def get_execution_events(self, execution_id: int) -> List[Dict[str, Any]]:
         """Get all events for an execution."""
-        response = await self.client.get(
-            f"{self.base_url}/api/execution/{execution_id}/events"
+        response = await self._request_with_fallback(
+            "GET",
+            [
+                f"{self.base_url}/api/executions/{execution_id}",
+                f"{self.base_url}/api/execution/{execution_id}/events",
+            ],
         )
         response.raise_for_status()
-        return response.json()
+        payload = response.json()
+        if isinstance(payload, dict) and "events" in payload:
+            return payload["events"]
+        if isinstance(payload, list):
+            return payload
+        return []
+
+    @staticmethod
+    def normalized_status(payload: Dict[str, Any]) -> Optional[str]:
+        """Normalize status shape across old and new status endpoints."""
+        status = str(payload.get("status", "")).lower().strip()
+        if status in {"completed", "failed", "error", "cancelled"}:
+            return status
+        if payload.get("completed") is True:
+            return "completed"
+        if payload.get("failed") is True:
+            return "failed"
+        if payload.get("cancelled") is True:
+            return "cancelled"
+        return None
     
     async def wait_for_completion(
         self,
@@ -144,9 +233,9 @@ class NoETLClient:
         
         while time.time() - start_time < timeout:
             status = await self.get_execution_status(execution_id)
-            
-            execution_status = status.get("status")
-            if execution_status in ["completed", "failed", "error"]:
+
+            execution_status = self.normalized_status(status)
+            if execution_status is not None:
                 return status
             
             await asyncio.sleep(poll_interval)
@@ -161,6 +250,48 @@ class NoETLClient:
 # === Test Result Validator ===
 class PlaybookValidator:
     """Validates playbook execution results against expected outputs."""
+
+    COMPLETION_EVENT_TYPES = {"action_completed", "step.exit", "command.completed"}
+    FAILURE_EVENT_TYPES = {
+        "action_failed",
+        "step.failed",
+        "command.failed",
+        "playbook.failed",
+        "workflow.failed",
+    }
+
+    @staticmethod
+    def _step_name(event: Dict[str, Any]) -> Optional[str]:
+        raw_name = (
+            event.get("step_name")
+            or event.get("node_name")
+            or event.get("node_id")
+        )
+        if isinstance(raw_name, str) and raw_name.endswith(":task_sequence"):
+            return raw_name[: -len(":task_sequence")]
+        return raw_name
+
+    @staticmethod
+    def _is_completed_event(event: Dict[str, Any]) -> bool:
+        event_type = event.get("event_type")
+        if event_type not in PlaybookValidator.COMPLETION_EVENT_TYPES:
+            return False
+        status = str(event.get("status", "")).upper()
+        if event_type == "step.exit" and status and status != "COMPLETED":
+            return False
+        return True
+
+    @staticmethod
+    def _completed_steps(events: List[Dict[str, Any]]) -> set[str]:
+        completed: set[str] = set()
+        for event in events:
+            if not PlaybookValidator._is_completed_event(event):
+                continue
+
+            step_name = PlaybookValidator._step_name(event)
+            if step_name:
+                completed.add(step_name)
+        return completed
     
     @staticmethod
     def normalize_result(result: Any) -> Any:
@@ -186,7 +317,7 @@ class PlaybookValidator:
         expected_status: str
     ) -> tuple[bool, str]:
         """Validate execution status matches expected."""
-        if actual_status == expected_status:
+        if str(actual_status).lower() == str(expected_status).lower():
             return True, ""
         return False, f"Expected status '{expected_status}', got '{actual_status}'"
     
@@ -196,8 +327,7 @@ class PlaybookValidator:
         min_steps: int
     ) -> tuple[bool, str]:
         """Validate minimum number of steps were executed."""
-        step_events = [e for e in events if e.get("event_type") == "action_completed"]
-        actual_count = len(step_events)
+        actual_count = sum(1 for event in events if PlaybookValidator._is_completed_event(event))
         
         if actual_count >= min_steps:
             return True, ""
@@ -209,10 +339,7 @@ class PlaybookValidator:
         required_steps: List[str]
     ) -> tuple[bool, str]:
         """Validate all required steps were executed."""
-        executed_steps = {
-            e.get("step_name") for e in events
-            if e.get("event_type") == "action_completed"
-        }
+        executed_steps = PlaybookValidator._completed_steps(events)
         
         missing_steps = set(required_steps) - executed_steps
         if not missing_steps:
@@ -225,7 +352,12 @@ class PlaybookValidator:
         error_pattern: str
     ) -> tuple[bool, str]:
         """Validate error message matches expected pattern."""
-        error_events = [e for e in events if e.get("event_type") == "action_failed"]
+        error_events = [
+            e
+            for e in events
+            if e.get("event_type") in PlaybookValidator.FAILURE_EVENT_TYPES
+            or str(e.get("status", "")).upper() == "FAILED"
+        ]
         
         if not error_events:
             return False, "Expected error but execution succeeded"
@@ -233,6 +365,16 @@ class PlaybookValidator:
         pattern = re.compile(error_pattern, re.IGNORECASE)
         for event in error_events:
             error_msg = event.get("error_message", "")
+            if not error_msg and isinstance(event.get("error"), dict):
+                error_msg = str(event["error"].get("message", ""))
+            if not error_msg and event.get("error") is not None:
+                error_msg = str(event.get("error"))
+            if not error_msg:
+                result = event.get("result")
+                if isinstance(result, dict):
+                    data = result.get("data")
+                    if isinstance(data, dict):
+                        error_msg = str(data.get("error", ""))
             if pattern.search(error_msg):
                 return True, ""
         
@@ -246,7 +388,7 @@ def test_config():
     return PlaybookTestConfig(TEST_CONFIG_FILE)
 
 
-@pytest.fixture(scope="session")
+@pytest_asyncio.fixture(scope="function")
 async def noetl_client():
     """Create NoETL API client."""
     client = NoETLClient(NOETL_BASE_URL)
@@ -260,7 +402,7 @@ async def noetl_client():
     await client.close()
 
 
-@pytest.fixture(scope="session", autouse=True)
+@pytest_asyncio.fixture(scope="session", autouse=True)
 async def setup_environment(test_config):
     """Setup test environment - register credentials, create tables, etc."""
     print("\n=== Setting up test environment ===")
@@ -279,18 +421,20 @@ async def setup_environment(test_config):
         playbook_path = task_config["playbook"]
         
         # Register and execute setup playbook
-        await client.register_playbook(playbook_path)
+        register_result = await client.register_playbook(playbook_path)
+        resolved_path = register_result.get("path") or playbook_path
         
         payload = {}
         if "pg_k8s" in task_config.get("credentials", []):
             payload["pg_auth"] = "pg_k8s"
         
-        result = await client.execute_playbook(playbook_path, payload)
+        result = await client.execute_playbook(resolved_path, payload)
         execution_id = result.get("execution_id")
         
         if execution_id:
-            status = await client.wait_for_completion(execution_id, timeout=60)
-            if status.get("status") != "completed":
+            setup_timeout = int(task_config.get("timeout", test_config.global_config.get("default_timeout", 300)))
+            status = await client.wait_for_completion(execution_id, timeout=setup_timeout)
+            if client.normalized_status(status) != "completed":
                 pytest.fail(f"Setup task {task_name} failed: {status}")
     
     await client.close()
@@ -319,7 +463,7 @@ def pytest_generate_tests(metafunc):
     """Generate test cases from configuration file."""
     if "playbook_config" in metafunc.fixturenames:
         config = PlaybookTestConfig(TEST_CONFIG_FILE)
-        category = metafunc.config.getoption("--category")
+        category = metafunc.config.getoption("--category", default=None)
         
         playbooks = config.get_enabled_playbooks(category)
         
@@ -353,7 +497,8 @@ async def test_playbook_execution(
     print(f"\n=== Testing playbook: {playbook_name} ===")
     
     # Step 1: Register playbook
-    await noetl_client.register_playbook(playbook_path)
+    register_result = await noetl_client.register_playbook(playbook_path)
+    resolved_path = register_result.get("path") or playbook_path
     
     # Step 2: Prepare execution payload with credentials
     payload = {}
@@ -365,7 +510,7 @@ async def test_playbook_execution(
         payload["gcs_auth"] = "gcs_hmac_local"
     
     # Step 3: Execute playbook
-    exec_result = await noetl_client.execute_playbook(playbook_path, payload)
+    exec_result = await noetl_client.execute_playbook(resolved_path, payload)
     execution_id = exec_result.get("execution_id")
     
     assert execution_id, f"Failed to get execution_id for {playbook_name}"
@@ -380,7 +525,7 @@ async def test_playbook_execution(
     
     # Step 6: Validate execution status
     expected_status = validation.get("execution_status", "completed")
-    actual_status = final_status.get("status")
+    actual_status = noetl_client.normalized_status(final_status) or "unknown"
     
     is_valid, error_msg = PlaybookValidator.validate_execution_status(
         actual_status, expected_status
@@ -417,7 +562,7 @@ async def test_playbook_execution(
     }
     
     # Update expected results if flag is set
-    if request.config.getoption("--update-expected"):
+    if request.config.getoption("--update-expected", default=False):
         expected_file.parent.mkdir(parents=True, exist_ok=True)
         with open(expected_file, "w") as f:
             json.dump(actual_result, f, indent=2)
