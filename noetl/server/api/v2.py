@@ -13,6 +13,7 @@ import json
 import time
 import asyncio
 import heapq
+import math
 from dataclasses import dataclass
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
@@ -70,6 +71,14 @@ _BATCH_STATUS_STREAM_POLL_SECONDS = max(
     0.1,
     float(os.getenv("NOETL_BATCH_STATUS_STREAM_POLL_SECONDS", "0.5")),
 )
+_BATCH_MAX_EVENTS_PER_REQUEST = max(
+    1,
+    int(os.getenv("NOETL_BATCH_MAX_EVENTS_PER_REQUEST", "256")),
+)
+_BATCH_MAX_PAYLOAD_BYTES = max(
+    1024,
+    int(os.getenv("NOETL_BATCH_MAX_PAYLOAD_BYTES", str(2 * 1024 * 1024))),
+)
 
 _BATCH_FAILURE_ENQUEUE_TIMEOUT = "ack_timeout"
 _BATCH_FAILURE_ENQUEUE_ERROR = "enqueue_error"
@@ -77,6 +86,35 @@ _BATCH_FAILURE_QUEUE_UNAVAILABLE = "queue_unavailable"
 _BATCH_FAILURE_WORKER_UNAVAILABLE = "worker_unavailable"
 _BATCH_FAILURE_PROCESSING_TIMEOUT = "processing_timeout"
 _BATCH_FAILURE_PROCESSING_ERROR = "processing_error"
+
+_DB_UNAVAILABLE_SHORT_CIRCUIT = (
+    os.getenv("NOETL_DB_UNAVAILABLE_SHORT_CIRCUIT", "true").strip().lower()
+    in {"1", "true", "yes", "on"}
+)
+_DB_UNAVAILABLE_BACKOFF_BASE_SECONDS = max(
+    0.1,
+    float(os.getenv("NOETL_DB_UNAVAILABLE_BACKOFF_BASE_SECONDS", "1.0")),
+)
+_DB_UNAVAILABLE_BACKOFF_MAX_SECONDS = max(
+    _DB_UNAVAILABLE_BACKOFF_BASE_SECONDS,
+    float(os.getenv("NOETL_DB_UNAVAILABLE_BACKOFF_MAX_SECONDS", "30.0")),
+)
+_DB_UNAVAILABLE_ERROR_MARKERS = (
+    "server conn crashed",
+    "server login has been failing",
+    "server_login_retry",
+    "the database system is in recovery mode",
+    "the database system is not yet accepting connections",
+    "could not connect to server",
+    "connection refused",
+    "connection reset by peer",
+    "terminating connection due to administrator command",
+    "admin shutdown",
+    "connection is closed",
+    "pool closed",
+)
+_db_unavailable_failure_streak: int = 0
+_db_unavailable_backoff_until_monotonic: float = 0.0
 
 
 def _compute_retry_after(min_seconds: float = 1.0, max_seconds: float = 15.0) -> str:
@@ -99,6 +137,78 @@ def _compute_retry_after(min_seconds: float = 1.0, max_seconds: float = 15.0) ->
         return str(int(min(max(estimated, min_seconds), max_seconds)))
     except Exception:
         return str(int(min_seconds))
+
+
+def _db_unavailable_retry_after() -> Optional[str]:
+    remaining = _db_unavailable_backoff_until_monotonic - time.monotonic()
+    if remaining <= 0:
+        return None
+    return str(max(1, int(math.ceil(remaining))))
+
+
+def _record_db_operation_success() -> None:
+    global _db_unavailable_failure_streak
+    global _db_unavailable_backoff_until_monotonic
+    if _db_unavailable_failure_streak > 0 or _db_unavailable_backoff_until_monotonic > time.monotonic():
+        logger.info(
+            "[DB-RECOVERY] Connectivity recovered; clearing outage backoff (previous_streak=%s)",
+            _db_unavailable_failure_streak,
+        )
+    _db_unavailable_failure_streak = 0
+    _db_unavailable_backoff_until_monotonic = 0.0
+
+
+def _is_db_unavailable_error(exc: Exception) -> bool:
+    message = str(exc).lower()
+    if not message:
+        return False
+    return any(marker in message for marker in _DB_UNAVAILABLE_ERROR_MARKERS)
+
+
+def _record_db_unavailable_failure(exc: Exception, *, operation: str) -> Optional[str]:
+    global _db_unavailable_failure_streak
+    global _db_unavailable_backoff_until_monotonic
+    if not _is_db_unavailable_error(exc):
+        return None
+
+    _db_unavailable_failure_streak = max(1, _db_unavailable_failure_streak + 1)
+    exponent = min(_db_unavailable_failure_streak - 1, 6)
+    next_backoff_seconds = min(
+        _DB_UNAVAILABLE_BACKOFF_BASE_SECONDS * (2 ** exponent),
+        _DB_UNAVAILABLE_BACKOFF_MAX_SECONDS,
+    )
+    now = time.monotonic()
+    _db_unavailable_backoff_until_monotonic = max(
+        _db_unavailable_backoff_until_monotonic,
+        now + next_backoff_seconds,
+    )
+    retry_after = _db_unavailable_retry_after() or str(
+        max(1, int(math.ceil(next_backoff_seconds)))
+    )
+    logger.warning(
+        "[DB-UNAVAILABLE] operation=%s streak=%s retry_after=%ss error=%s",
+        operation,
+        _db_unavailable_failure_streak,
+        retry_after,
+        exc,
+    )
+    return retry_after
+
+
+def _raise_if_db_short_circuit_enabled(*, operation: str) -> None:
+    if not _DB_UNAVAILABLE_SHORT_CIRCUIT:
+        return
+    retry_after = _db_unavailable_retry_after()
+    if retry_after is None:
+        return
+    raise HTTPException(
+        status_code=503,
+        detail={
+            "code": "db_unavailable",
+            "message": f"Database temporarily unavailable during {operation}; retry shortly",
+        },
+        headers={"Retry-After": retry_after},
+    )
 
 
 @router.get("/pool/status")
@@ -156,7 +266,7 @@ _ACTIVE_CLAIMS_CACHE_TTL_SECONDS = max(
 )
 _ACTIVE_CLAIMS_CACHE_MAX_ENTRIES = max(
     128,
-    int(os.getenv("NOETL_ACTIVE_CLAIMS_CACHE_MAX_ENTRIES", "20000")),
+    int(os.getenv("NOETL_ACTIVE_CLAIMS_CACHE_MAX_ENTRIES", "5000")),
 )
 _ACTIVE_CLAIMS_CACHE_PRUNE_INTERVAL_SECONDS = max(
     0.1,
@@ -671,6 +781,23 @@ class BatchEventRequest(BaseModel):
     events: list[BatchEventItem]
     worker_id: Optional[str] = None
 
+    @model_validator(mode="after")
+    def validate_batch_limits(self):
+        event_count = len(self.events or [])
+        if event_count > _BATCH_MAX_EVENTS_PER_REQUEST:
+            raise ValueError(
+                f"Batch contains {event_count} events; limit is {_BATCH_MAX_EVENTS_PER_REQUEST}"
+            )
+
+        if event_count > 0:
+            estimated_bytes = _estimate_json_size([evt.payload for evt in self.events])
+            if estimated_bytes > _BATCH_MAX_PAYLOAD_BYTES:
+                raise ValueError(
+                    "Batch payload exceeds configured limit "
+                    f"({_BATCH_MAX_PAYLOAD_BYTES} bytes)"
+                )
+        return self
+
 
 class BatchEventResponse(BaseModel):
     """Response for async batch event acceptance."""
@@ -916,6 +1043,7 @@ async def claim_command(event_id: int, req: ClaimRequest):
     Returns 404 if command.issued event not found.
     """
     try:
+        _raise_if_db_short_circuit_enabled(operation="claim_command")
         cached_claim = _active_claim_cache_get(event_id)
         if cached_claim and cached_claim.worker_id != req.worker_id:
             raise HTTPException(
@@ -940,6 +1068,7 @@ async def claim_command(event_id: int, req: ClaimRequest):
                     WHERE event_id = %s AND event_type = 'command.issued'
                 """, (event_id,))
                 cmd_row = await cur.fetchone()
+                _record_db_operation_success()
 
                 if not cmd_row:
                     raise HTTPException(404, f"command.issued event not found: {event_id}")
@@ -1231,6 +1360,16 @@ async def claim_command(event_id: int, req: ClaimRequest):
             headers={"Retry-After": retry_after},
         )
     except Exception as e:
+        retry_after = _record_db_unavailable_failure(e, operation="claim_command")
+        if retry_after is not None:
+            raise HTTPException(
+                status_code=503,
+                detail={
+                    "code": "db_unavailable",
+                    "message": "Database temporarily unavailable; retry shortly",
+                },
+                headers={"Retry-After": retry_after},
+            )
         logger.error(f"claim_command failed: {e}", exc_info=True)
         raise HTTPException(500, str(e))
 
@@ -1259,6 +1398,7 @@ async def handle_event(req: EventRequest) -> EventResponse:
     engine: Optional[ControlFlowEngine] = None
     commands_generated = False
     try:
+        _raise_if_db_short_circuit_enabled(operation="handle_event")
         engine = get_engine()
         
         # Events that should NOT trigger engine processing
@@ -1336,6 +1476,7 @@ async def handle_event(req: EventRequest) -> EventResponse:
                             Json(result_obj), Json(meta_obj), req.worker_id, datetime.now(timezone.utc)
                         ))
                         await conn.commit()
+                        _record_db_operation_success()
 
                         logger.info(f"[CLAIM-SUCCESS] Command {command_id} claimed by worker {req.worker_id}")
                         return EventResponse(status="ok", event_id=evt_id, commands_generated=0)
@@ -1398,6 +1539,7 @@ async def handle_event(req: EventRequest) -> EventResponse:
                     Json(result_obj), Json(meta_obj), datetime.now(timezone.utc)
                 ))
                 await conn.commit()
+                _record_db_operation_success()
 
         if req.name in {"command.completed", "command.failed"}:
             command_id = _extract_event_command_id(req)
@@ -1557,6 +1699,16 @@ async def handle_event(req: EventRequest) -> EventResponse:
                 req.execution_id,
                 reason=f"command_issue_failed:{type(e).__name__}",
                 engine=engine,
+            )
+        retry_after = _record_db_unavailable_failure(e, operation="handle_event")
+        if retry_after is not None:
+            raise HTTPException(
+                status_code=503,
+                detail={
+                    "code": "db_unavailable",
+                    "message": "Database temporarily unavailable; retry shortly",
+                },
+                headers={"Retry-After": retry_after},
             )
         logger.error(f"handle_event failed: {e}", exc_info=True)
         raise HTTPException(500, str(e))
@@ -2006,6 +2158,7 @@ async def handle_batch_events(req: BatchEventRequest, request: Request) -> Batch
     idempotency_key = request.headers.get("Idempotency-Key") or request.headers.get("X-Idempotency-Key")
 
     try:
+        _raise_if_db_short_circuit_enabled(operation="events_batch")
         workers_ready = await ensure_batch_acceptor_started()
         if _batch_accept_queue is None:
             _inc_batch_metric("queue_unavailable_total")
@@ -2027,6 +2180,7 @@ async def handle_batch_events(req: BatchEventRequest, request: Request) -> Batch
             )
 
         acceptance = await _persist_batch_acceptance(req, idempotency_key)
+        _record_db_operation_success()
         if acceptance.duplicate:
             return BatchEventResponse(
                 status="accepted",
@@ -2098,6 +2252,16 @@ async def handle_batch_events(req: BatchEventRequest, request: Request) -> Batch
     except HTTPException:
         raise
     except Exception as e:
+        retry_after = _record_db_unavailable_failure(e, operation="events_batch")
+        if retry_after is not None:
+            raise HTTPException(
+                status_code=503,
+                detail=_build_batch_error(
+                    "db_unavailable",
+                    "Database temporarily unavailable; retry shortly",
+                ),
+                headers={"Retry-After": retry_after},
+            )
         logger.error("handle_batch_events failed: %s", e, exc_info=True)
         raise HTTPException(
             status_code=500,

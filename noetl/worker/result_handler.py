@@ -140,6 +140,8 @@ class ResultHandler:
 
         # Large result - store externally
         logger.info(f"[RESULT] Step {step_name}: externalizing result ({size_bytes}b)")
+        select_paths = output_config.get("output_select")
+        extracted = extract_output_select(result, select_paths)
 
         # Determine storage tier
         store_config = output_config.get("store", {})
@@ -159,12 +161,39 @@ class ResultHandler:
             logger.info(f"[RESULT] Stored {step_name} -> {ref.ref} (tier={tier.value})")
         except Exception as e:
             logger.error(f"[RESULT] Failed to store {step_name}: {e}")
-            # Fallback to inline on storage failure
-            return result
+            # Keep response bounded even when external store is unavailable.
+            reserved_keys = {"_store_failed", "_store_error", "_size_bytes", "_preview"}
+            compact_extracted: Dict[str, Any] = {}
+            for key, value in extracted.items():
+                safe_key = str(key)
+                if safe_key in reserved_keys:
+                    safe_key = f"output_{safe_key.lstrip('_')}"
+                if safe_key.startswith("_"):
+                    safe_key = f"output_{safe_key.lstrip('_')}"
 
-        # Extract output_select fields
-        select_paths = output_config.get("output_select")
-        extracted = extract_output_select(result, select_paths)
+                try:
+                    if estimate_size(value) > PREVIEW_MAX_BYTES:
+                        compact_extracted[safe_key] = create_preview(value, PREVIEW_MAX_BYTES)
+                    else:
+                        compact_extracted[safe_key] = value
+                except Exception:
+                    # Keep a bounded placeholder instead of leaking raw value.
+                    compact_extracted[safe_key] = (
+                        f"<unavailable value of type {type(value).__name__}>"
+                    )
+
+            preview_value: Any
+            try:
+                preview_value = create_preview(result, PREVIEW_MAX_BYTES)
+            except Exception:
+                preview_value = "<preview unavailable>"
+            return {
+                **compact_extracted,
+                "_store_failed": True,
+                "_store_error": str(e)[:300],
+                "_size_bytes": size_bytes,
+                "_preview": preview_value,
+            }
 
         # Create preview
         preview = create_preview(result, PREVIEW_MAX_BYTES)

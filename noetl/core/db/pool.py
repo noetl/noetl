@@ -43,12 +43,34 @@ def _env_float(name: str, default: float) -> float:
         return default
 
 
-_DEFAULT_POOL_MIN_SIZE = max(1, _env_int("NOETL_POSTGRES_POOL_MIN_SIZE", 4))
-_DEFAULT_POOL_MAX_SIZE = max(_DEFAULT_POOL_MIN_SIZE, _env_int("NOETL_POSTGRES_POOL_MAX_SIZE", 48))
-_DEFAULT_POOL_TIMEOUT = max(1.0, _env_float("NOETL_POSTGRES_POOL_TIMEOUT_SECONDS", 90.0))
-_DEFAULT_POOL_MAX_WAITING = max(1, _env_int("NOETL_POSTGRES_POOL_MAX_WAITING", 2000))
+_DEFAULT_POOL_MIN_SIZE = max(1, _env_int("NOETL_POSTGRES_POOL_MIN_SIZE", 2))
+_DEFAULT_POOL_MAX_SIZE = max(_DEFAULT_POOL_MIN_SIZE, _env_int("NOETL_POSTGRES_POOL_MAX_SIZE", 16))
+_DEFAULT_POOL_TIMEOUT = max(1.0, _env_float("NOETL_POSTGRES_POOL_TIMEOUT_SECONDS", 30.0))
+_DEFAULT_POOL_MAX_WAITING = max(1, _env_int("NOETL_POSTGRES_POOL_MAX_WAITING", 256))
 _DEFAULT_POOL_MAX_LIFETIME = max(60.0, _env_float("NOETL_POSTGRES_POOL_MAX_LIFETIME_SECONDS", 1800.0))
 _DEFAULT_POOL_MAX_IDLE = max(30.0, _env_float("NOETL_POSTGRES_POOL_MAX_IDLE_SECONDS", 300.0))
+_DEFAULT_STATEMENT_TIMEOUT_MS = max(0, _env_int("NOETL_POSTGRES_STATEMENT_TIMEOUT_MS", 60000))
+_DEFAULT_IDLE_IN_TX_TIMEOUT_MS = max(
+    0,
+    _env_int("NOETL_POSTGRES_IDLE_IN_TRANSACTION_SESSION_TIMEOUT_MS", 45000),
+)
+
+
+def _build_pool_connect_kwargs() -> dict:
+    kwargs = {"row_factory": dict_row}
+    options: list[str] = []
+    if _DEFAULT_STATEMENT_TIMEOUT_MS > 0:
+        options.append(f"-c statement_timeout={_DEFAULT_STATEMENT_TIMEOUT_MS}")
+    if _DEFAULT_IDLE_IN_TX_TIMEOUT_MS > 0:
+        options.append(
+            f"-c idle_in_transaction_session_timeout={_DEFAULT_IDLE_IN_TX_TIMEOUT_MS}"
+        )
+    if options:
+        kwargs["options"] = " ".join(options)
+    return kwargs
+
+
+_POOL_CONNECT_KWARGS = _build_pool_connect_kwargs()
 
 
 async def init_pool(conninfo: str):
@@ -65,11 +87,13 @@ async def init_pool(conninfo: str):
     with _pool_lock:
         if _pool is None:
             logger.info(
-                "DB.POOL: init min=%d max=%d waiting=%d timeout=%.1fs",
+                "DB.POOL: init min=%d max=%d waiting=%d timeout=%.1fs stmt_timeout_ms=%d idle_tx_timeout_ms=%d",
                 _DEFAULT_POOL_MIN_SIZE,
                 _DEFAULT_POOL_MAX_SIZE,
                 _DEFAULT_POOL_MAX_WAITING,
                 _DEFAULT_POOL_TIMEOUT,
+                _DEFAULT_STATEMENT_TIMEOUT_MS,
+                _DEFAULT_IDLE_IN_TX_TIMEOUT_MS,
             )
             _pool = AsyncConnectionPool(
                 conninfo,
@@ -79,7 +103,7 @@ async def init_pool(conninfo: str):
                 timeout=_DEFAULT_POOL_TIMEOUT,
                 max_lifetime=_DEFAULT_POOL_MAX_LIFETIME,
                 max_idle=_DEFAULT_POOL_MAX_IDLE,
-                kwargs={"row_factory": dict_row},
+                kwargs=_POOL_CONNECT_KWARGS,
                 name=os.getenv("NOETL_POSTGRES_POOL_NAME", "noetl_server"),
                 open=False,
             )

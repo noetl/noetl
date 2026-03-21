@@ -12,6 +12,7 @@ import asyncio
 import os
 import random
 import re
+import json
 import time as time_module
 from decimal import Decimal
 from datetime import date, datetime, time
@@ -125,6 +126,14 @@ _CONNECT_ATTEMPTS = max(1, _env_int("NOETL_POSTGRES_CONNECT_ATTEMPTS", 3))
 _RETRY_BASE_DELAY_SECONDS = max(
     0.05, _env_float("NOETL_POSTGRES_CONNECT_RETRY_BASE_SECONDS", 0.2)
 )
+_RESULT_FETCH_BATCH_SIZE = max(1, _env_int("NOETL_POSTGRES_RESULT_FETCH_BATCH_SIZE", 200))
+_MAX_RESULT_ROWS = max(0, _env_int("NOETL_POSTGRES_MAX_RESULT_ROWS", 1000))
+_MAX_RESULT_BYTES = max(0, _env_int("NOETL_POSTGRES_MAX_RESULT_BYTES", 1024 * 1024))
+_STATEMENT_TIMEOUT_MS = max(0, _env_int("NOETL_POSTGRES_STATEMENT_TIMEOUT_MS", 60000))
+_IDLE_IN_TX_TIMEOUT_MS = max(
+    0,
+    _env_int("NOETL_POSTGRES_IDLE_IN_TRANSACTION_SESSION_TIMEOUT_MS", 45000),
+)
 _direct_conn_semaphore = asyncio.Semaphore(_DIRECT_CONN_LIMIT)
 
 
@@ -148,6 +157,39 @@ def _get_plugin_connection_ctx(connection_string: str, pool_name: str, **pool_pa
     return get_plugin_connection(connection_string, pool_name=pool_name, **pool_params)
 
 
+async def _apply_connection_session_guards(conn: AsyncConnection, conn_id: str) -> None:
+    """Apply per-session timeout guards to prevent runaway transactions/queries."""
+    if _STATEMENT_TIMEOUT_MS <= 0 and _IDLE_IN_TX_TIMEOUT_MS <= 0:
+        return
+
+    original_autocommit = conn.autocommit
+    try:
+        if not original_autocommit:
+            await conn.set_autocommit(True)
+        async with conn.cursor() as cursor:
+            if _STATEMENT_TIMEOUT_MS > 0:
+                await cursor.execute(
+                    f"SET SESSION statement_timeout = {_STATEMENT_TIMEOUT_MS}"
+                )
+            if _IDLE_IN_TX_TIMEOUT_MS > 0:
+                await cursor.execute(
+                    "SET SESSION idle_in_transaction_session_timeout = "
+                    f"{_IDLE_IN_TX_TIMEOUT_MS}"
+                )
+    except Exception as exc:
+        logger.warning(
+            "[CONN-%s] Failed to apply session timeout guards: %s",
+            conn_id,
+            exc,
+        )
+    finally:
+        try:
+            if conn.autocommit != original_autocommit:
+                await conn.set_autocommit(original_autocommit)
+        except Exception:
+            pass
+
+
 async def _execute_with_pooled_connection(
     connection_string: str,
     commands: List[str],
@@ -167,6 +209,7 @@ async def _execute_with_pooled_connection(
             ) as conn:
                 conn_pid = conn.info.backend_pid if conn and conn.info else "unknown"
                 logger.debug("[CONN-%s] Using pooled connection pid=%s", conn_id, conn_pid)
+                await _apply_connection_session_guards(conn, conn_id)
                 remaining_commands = commands[next_command_index:]
                 exec_results = await execute_sql_statements_async(
                     conn,
@@ -254,6 +297,7 @@ async def _execute_with_direct_connection(
             conn = await AsyncConnection.connect(connection_string, row_factory=dict_row)
             conn_pid = conn.info.backend_pid if conn and conn.info else "unknown"
             logger.debug("[CONN-%s] Using direct connection pid=%s", conn_id, conn_pid)
+            await _apply_connection_session_guards(conn, conn_id)
             remaining_commands = commands[next_command_index:]
             exec_results = await execute_sql_statements_async(
                 conn,
@@ -428,14 +472,23 @@ async def execute_sql_statements_async(
                     has_results = cursor.description is not None
 
                     if has_results:
-                        result_data = await _fetch_result_rows_async(cursor)
+                        result_data, fetch_meta = await _fetch_result_rows_async(cursor)
                         column_names = [desc[0] for desc in cursor.description]
-                        results[f"command_{command_index}"] = {
+                        command_result = {
                             "status": "success",
                             "rows": result_data,
                             "row_count": len(result_data),
                             "columns": column_names,
                         }
+                        if fetch_meta.get("truncated"):
+                            command_result["truncated"] = True
+                            command_result["truncation"] = {
+                                "reason": fetch_meta.get("reason"),
+                                "max_rows": fetch_meta.get("max_rows"),
+                                "max_bytes": fetch_meta.get("max_bytes"),
+                                "returned_bytes": fetch_meta.get("returned_bytes", 0),
+                            }
+                        results[f"command_{command_index}"] = command_result
                     else:
                         results[f"command_{command_index}"] = {
                             "status": "success",
@@ -448,14 +501,23 @@ async def execute_sql_statements_async(
                         has_results = cursor.description is not None
 
                         if has_results:
-                            result_data = await _fetch_result_rows_async(cursor)
+                            result_data, fetch_meta = await _fetch_result_rows_async(cursor)
                             column_names = [desc[0] for desc in cursor.description]
-                            results[f"command_{command_index}"] = {
+                            command_result = {
                                 "status": "success",
                                 "rows": result_data,
                                 "row_count": len(result_data),
                                 "columns": column_names,
                             }
+                            if fetch_meta.get("truncated"):
+                                command_result["truncated"] = True
+                                command_result["truncation"] = {
+                                    "reason": fetch_meta.get("reason"),
+                                    "max_rows": fetch_meta.get("max_rows"),
+                                    "max_bytes": fetch_meta.get("max_bytes"),
+                                    "returned_bytes": fetch_meta.get("returned_bytes", 0),
+                                }
+                            results[f"command_{command_index}"] = command_result
                         else:
                             results[f"command_{command_index}"] = {
                                 "status": "success",
@@ -504,28 +566,85 @@ async def execute_sql_statements_async(
     return results
 
 
-async def _fetch_result_rows_async(cursor) -> List[Dict]:
+async def _fetch_result_rows_async(cursor) -> tuple[List[Dict], Dict]:
     """
-    Fetch and format result rows from async cursor.
+    Fetch and format result rows from async cursor with bounded memory usage.
+
+    Returns:
+        tuple(rows, meta)
+        - rows: list of formatted row dictionaries.
+        - meta: truncation metadata:
+          {
+            "truncated": bool,
+            "reason": "max_rows" | "max_bytes" | None,
+            "max_rows": int | None,
+            "max_bytes": int | None,
+            "returned_bytes": int,
+          }
     """
-    rows = await cursor.fetchall()
-    logger.debug("Fetched %s rows from cursor", len(rows))
     result_data = []
+    returned_bytes = 0
+    truncated_reason = None
 
-    for row in rows:
-        row_dict = {}
-        for col_name, value in row.items():
-            if isinstance(value, dict) or (
-                isinstance(value, str) and (value.startswith("{") or value.startswith("["))
-            ):
-                row_dict[col_name] = value
-            elif isinstance(value, Decimal):
-                row_dict[col_name] = float(value)
-            elif isinstance(value, (datetime, date, time)):
-                row_dict[col_name] = value.isoformat()
-            else:
-                row_dict[col_name] = value
+    while True:
+        rows = await cursor.fetchmany(_RESULT_FETCH_BATCH_SIZE)
+        if not rows:
+            break
 
-        result_data.append(row_dict)
+        for row in rows:
+            row_dict = {}
+            for col_name, value in row.items():
+                if isinstance(value, dict) or (
+                    isinstance(value, str) and (value.startswith("{") or value.startswith("["))
+                ):
+                    row_dict[col_name] = value
+                elif isinstance(value, Decimal):
+                    row_dict[col_name] = float(value)
+                elif isinstance(value, (datetime, date, time)):
+                    row_dict[col_name] = value.isoformat()
+                else:
+                    row_dict[col_name] = value
 
-    return result_data
+            row_bytes = 0
+            try:
+                row_bytes = len(json.dumps(row_dict, default=str).encode("utf-8"))
+            except Exception:
+                row_bytes = len(str(row_dict).encode("utf-8"))
+
+            if _MAX_RESULT_BYTES > 0 and (returned_bytes + row_bytes) > _MAX_RESULT_BYTES:
+                truncated_reason = "max_bytes"
+                break
+
+            result_data.append(row_dict)
+            returned_bytes += row_bytes
+
+            if _MAX_RESULT_ROWS > 0 and len(result_data) >= _MAX_RESULT_ROWS:
+                truncated_reason = "max_rows"
+                break
+
+        if truncated_reason:
+            break
+
+    logger.debug(
+        "Fetched %s rows from cursor (bytes=%s truncated=%s)",
+        len(result_data),
+        returned_bytes,
+        bool(truncated_reason),
+    )
+    if truncated_reason:
+        logger.warning(
+            "Postgres result truncated due to %s (rows=%s max_rows=%s bytes=%s max_bytes=%s)",
+            truncated_reason,
+            len(result_data),
+            _MAX_RESULT_ROWS,
+            returned_bytes,
+            _MAX_RESULT_BYTES,
+        )
+
+    return result_data, {
+        "truncated": bool(truncated_reason),
+        "reason": truncated_reason,
+        "max_rows": _MAX_RESULT_ROWS if _MAX_RESULT_ROWS > 0 else None,
+        "max_bytes": _MAX_RESULT_BYTES if _MAX_RESULT_BYTES > 0 else None,
+        "returned_bytes": returned_bytes,
+    }

@@ -130,6 +130,19 @@ CREATE INDEX IF NOT EXISTS idx_event_exec_id_event_id_desc ON noetl.event (execu
 -- Composite index for filtering by event_type within execution
 CREATE INDEX IF NOT EXISTS idx_event_exec_type ON noetl.event (execution_id, event_type, event_id DESC);
 
+-- Command lifecycle lookups (claim/start/completed/failed) by command_id stored in meta/result
+CREATE INDEX IF NOT EXISTS idx_event_exec_type_meta_command_id_event_id_desc
+    ON noetl.event (execution_id, event_type, ((meta->>'command_id')), event_id DESC)
+    WHERE meta ? 'command_id';
+CREATE INDEX IF NOT EXISTS idx_event_exec_type_result_command_id_event_id_desc
+    ON noetl.event (execution_id, event_type, ((result->'data'->>'command_id')), event_id DESC)
+    WHERE (result->'data') ? 'command_id';
+
+-- Batch status polling by request id
+CREATE INDEX IF NOT EXISTS idx_event_batch_request_event_id_desc
+    ON noetl.event (((meta->>'batch_request_id')), event_id DESC)
+    WHERE meta ? 'batch_request_id';
+
 -- Fast seed for /api/executions polling (latest started executions)
 CREATE INDEX IF NOT EXISTS idx_event_playbook_init_event_id_desc
     ON noetl.event (event_id DESC)
