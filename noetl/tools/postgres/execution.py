@@ -568,7 +568,19 @@ async def execute_sql_statements_async(
 
 async def _fetch_result_rows_async(cursor) -> tuple[List[Dict], Dict]:
     """
-    Fetch and format result rows from async cursor.
+    Fetch and format result rows from async cursor with bounded memory usage.
+
+    Returns:
+        tuple(rows, meta)
+        - rows: list of formatted row dictionaries.
+        - meta: truncation metadata:
+          {
+            "truncated": bool,
+            "reason": "max_rows" | "max_bytes" | None,
+            "max_rows": int | None,
+            "max_bytes": int | None,
+            "returned_bytes": int,
+          }
     """
     result_data = []
     returned_bytes = 0

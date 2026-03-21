@@ -136,7 +136,7 @@ CREATE INDEX IF NOT EXISTS idx_event_exec_type_meta_command_id_event_id_desc
     WHERE meta ? 'command_id';
 CREATE INDEX IF NOT EXISTS idx_event_exec_type_result_command_id_event_id_desc
     ON noetl.event (execution_id, event_type, ((result->'data'->>'command_id')), event_id DESC)
-    WHERE result ? 'data';
+    WHERE (result->'data') ? 'command_id';
 
 -- Batch status polling by request id
 CREATE INDEX IF NOT EXISTS idx_event_batch_request_event_id_desc
