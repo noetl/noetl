@@ -413,6 +413,86 @@ def _extract_event_command_id(req: "EventRequest") -> Optional[str]:
     return None
 
 
+_EVENT_TYPE_TERMINAL_PREDICATE = "event_type IN ('command.completed', 'command.failed')"
+_EVENT_TYPE_CLAIMED_PREDICATE = "event_type = 'command.claimed'"
+_EVENT_TYPE_SAME_WORKER_LATEST_PREDICATE = (
+    "event_type IN ('command.started', 'command.completed', 'command.failed')"
+)
+
+
+def _build_command_id_latest_lookup_sql(
+    *,
+    inner_select_columns: str,
+    outer_select_columns: str,
+    event_type_predicate: str,
+    alias: str,
+) -> str:
+    """
+    Build latest-event lookup SQL with index-friendly command_id predicates.
+
+    The query intentionally uses two UNION ALL branches (meta + result.data)
+    so PostgreSQL can use the partial expression indexes on each JSON path.
+    """
+    return f"""
+        SELECT {outer_select_columns}
+        FROM (
+            (
+            SELECT {inner_select_columns}
+            FROM noetl.event
+            WHERE execution_id = %s
+              AND {event_type_predicate}
+              AND meta ? 'command_id'
+              AND meta->>'command_id' = %s
+            ORDER BY event_id DESC
+            LIMIT 1
+            )
+            UNION ALL
+            (
+            SELECT {inner_select_columns}
+            FROM noetl.event
+            WHERE execution_id = %s
+              AND {event_type_predicate}
+              AND (result->'data') ? 'command_id'
+              AND (result->'data'->>'command_id') = %s
+            ORDER BY event_id DESC
+            LIMIT 1
+            )
+        ) {alias}
+        ORDER BY event_id DESC
+        LIMIT 1
+    """
+
+
+def _command_id_lookup_params(execution_id: int, command_id: str) -> tuple[Any, ...]:
+    return (execution_id, command_id, execution_id, command_id)
+
+
+_CLAIM_TERMINAL_LOOKUP_SQL = _build_command_id_latest_lookup_sql(
+    inner_select_columns="event_type, event_id",
+    outer_select_columns="event_type",
+    event_type_predicate=_EVENT_TYPE_TERMINAL_PREDICATE,
+    alias="terminal_match",
+)
+_CLAIM_EXISTING_LOOKUP_SQL = _build_command_id_latest_lookup_sql(
+    inner_select_columns="event_id, worker_id, meta, created_at",
+    outer_select_columns="event_id, worker_id, meta, created_at",
+    event_type_predicate=_EVENT_TYPE_CLAIMED_PREDICATE,
+    alias="claimed_match",
+)
+_CLAIM_SAME_WORKER_LATEST_LOOKUP_SQL = _build_command_id_latest_lookup_sql(
+    inner_select_columns="event_type, event_id",
+    outer_select_columns="event_type",
+    event_type_predicate=_EVENT_TYPE_SAME_WORKER_LATEST_PREDICATE,
+    alias="same_worker_latest_match",
+)
+_HANDLE_EVENT_CLAIMED_LOOKUP_SQL = _build_command_id_latest_lookup_sql(
+    inner_select_columns="worker_id, meta, event_id",
+    outer_select_columns="worker_id, meta",
+    event_type_predicate=_EVENT_TYPE_CLAIMED_PREDICATE,
+    alias="claimed_event",
+)
+
+
 @dataclass(slots=True)
 class _BatchAcceptJob:
     request_id: str
@@ -1082,15 +1162,10 @@ async def claim_command(event_id: int, req: ClaimRequest):
                 command_id = meta.get('command_id', f"{execution_id}:{step}:{event_id}")
 
                 # If command is already terminal, no further claim attempts are needed.
-                await cur.execute("""
-                    SELECT event_type
-                    FROM noetl.event
-                    WHERE execution_id = %s
-                      AND event_type IN ('command.completed', 'command.failed')
-                      AND (meta->>'command_id' = %s OR (result->'data'->>'command_id' = %s))
-                    ORDER BY event_id DESC
-                    LIMIT 1
-                """, (execution_id, command_id, command_id))
+                await cur.execute(
+                    _CLAIM_TERMINAL_LOOKUP_SQL,
+                    _command_id_lookup_params(execution_id, command_id),
+                )
                 terminal_row = await cur.fetchone()
                 if terminal_row:
                     _active_claim_cache_invalidate(command_id=command_id, event_id=event_id)
@@ -1138,14 +1213,10 @@ async def claim_command(event_id: int, req: ClaimRequest):
                     )
 
                 # Check if already claimed
-                await cur.execute("""
-                    SELECT event_id, worker_id, meta, created_at FROM noetl.event
-                    WHERE execution_id = %s
-                      AND event_type = 'command.claimed'
-                      AND (meta->>'command_id' = %s OR (result->'data'->>'command_id' = %s))
-                    ORDER BY event_id DESC
-                    LIMIT 1
-                """, (execution_id, command_id, command_id))
+                await cur.execute(
+                    _CLAIM_EXISTING_LOOKUP_SQL,
+                    _command_id_lookup_params(execution_id, command_id),
+                )
                 existing = await cur.fetchone()
 
                 stale_reclaim = False
@@ -1260,15 +1331,8 @@ async def claim_command(event_id: int, req: ClaimRequest):
                             )
                     if existing_worker and existing_worker == req.worker_id:
                         await cur.execute(
-                            """
-                            SELECT event_type FROM noetl.event
-                            WHERE execution_id = %s
-                              AND event_type IN ('command.started', 'command.completed', 'command.failed')
-                              AND (meta->>'command_id' = %s OR (result->'data'->>'command_id' = %s))
-                            ORDER BY event_id DESC
-                            LIMIT 1
-                            """,
-                            (execution_id, command_id, command_id),
+                            _CLAIM_SAME_WORKER_LATEST_LOOKUP_SQL,
+                            _command_id_lookup_params(execution_id, command_id),
                         )
                         same_worker_latest = await cur.fetchone()
                         latest_event_type = (same_worker_latest or {}).get("event_type")
@@ -1428,13 +1492,10 @@ async def handle_event(req: EventRequest) -> EventResponse:
                             raise HTTPException(409, f"Command already being claimed by another worker")
 
                         # Lock acquired - now check if already claimed
-                        await cur.execute("""
-                            SELECT worker_id, meta FROM noetl.event
-                            WHERE execution_id = %s
-                              AND event_type = 'command.claimed'
-                              AND (meta->>'command_id' = %s OR (result->'data'->>'command_id' = %s))
-                            LIMIT 1
-                        """, (int(req.execution_id), command_id, command_id))
+                        await cur.execute(
+                            _HANDLE_EVENT_CLAIMED_LOOKUP_SQL,
+                            _command_id_lookup_params(int(req.execution_id), command_id),
+                        )
                         existing = await cur.fetchone()
 
                         if existing:
