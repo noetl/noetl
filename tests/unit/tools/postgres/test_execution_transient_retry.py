@@ -137,3 +137,48 @@ async def test_pooled_connection_retries_transient_drop_from_failed_index(monkey
     assert result["command_0"]["status"] == "success"
     assert result["command_1"]["status"] == "success"
     assert result["command_2"]["status"] == "success"
+
+
+class _FakeCursor:
+    def __init__(self, rows):
+        self._rows = list(rows)
+        self._index = 0
+
+    async def fetchmany(self, size):
+        if self._index >= len(self._rows):
+            return []
+        batch = self._rows[self._index : self._index + size]
+        self._index += size
+        return batch
+
+
+@pytest.mark.asyncio
+async def test_fetch_rows_truncates_when_row_limit_reached(monkeypatch):
+    rows = [{"id": i} for i in range(10)]
+    cursor = _FakeCursor(rows)
+
+    monkeypatch.setattr(execution_module, "_RESULT_FETCH_BATCH_SIZE", 3)
+    monkeypatch.setattr(execution_module, "_MAX_RESULT_ROWS", 4)
+    monkeypatch.setattr(execution_module, "_MAX_RESULT_BYTES", 0)
+
+    result_rows, meta = await execution_module._fetch_result_rows_async(cursor)
+
+    assert len(result_rows) == 4
+    assert meta["truncated"] is True
+    assert meta["reason"] == "max_rows"
+
+
+@pytest.mark.asyncio
+async def test_fetch_rows_truncates_when_byte_limit_reached(monkeypatch):
+    rows = [{"payload": "x" * 200}, {"payload": "y" * 200}, {"payload": "z" * 200}]
+    cursor = _FakeCursor(rows)
+
+    monkeypatch.setattr(execution_module, "_RESULT_FETCH_BATCH_SIZE", 2)
+    monkeypatch.setattr(execution_module, "_MAX_RESULT_ROWS", 0)
+    monkeypatch.setattr(execution_module, "_MAX_RESULT_BYTES", 350)
+
+    result_rows, meta = await execution_module._fetch_result_rows_async(cursor)
+
+    assert len(result_rows) == 1
+    assert meta["truncated"] is True
+    assert meta["reason"] == "max_bytes"

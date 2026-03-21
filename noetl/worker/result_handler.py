@@ -140,6 +140,8 @@ class ResultHandler:
 
         # Large result - store externally
         logger.info(f"[RESULT] Step {step_name}: externalizing result ({size_bytes}b)")
+        select_paths = output_config.get("output_select")
+        extracted = extract_output_select(result, select_paths)
 
         # Determine storage tier
         store_config = output_config.get("store", {})
@@ -159,12 +161,23 @@ class ResultHandler:
             logger.info(f"[RESULT] Stored {step_name} -> {ref.ref} (tier={tier.value})")
         except Exception as e:
             logger.error(f"[RESULT] Failed to store {step_name}: {e}")
-            # Fallback to inline on storage failure
-            return result
-
-        # Extract output_select fields
-        select_paths = output_config.get("output_select")
-        extracted = extract_output_select(result, select_paths)
+            # Keep response bounded even when external store is unavailable.
+            compact_extracted: Dict[str, Any] = {}
+            for key, value in extracted.items():
+                try:
+                    if estimate_size(value) > PREVIEW_MAX_BYTES:
+                        compact_extracted[key] = create_preview(value, PREVIEW_MAX_BYTES)
+                    else:
+                        compact_extracted[key] = value
+                except Exception:
+                    compact_extracted[key] = value
+            return {
+                "_store_failed": True,
+                "_store_error": str(e)[:300],
+                "_size_bytes": size_bytes,
+                "_preview": create_preview(result, PREVIEW_MAX_BYTES),
+                **compact_extracted,
+            }
 
         # Create preview
         preview = create_preview(result, PREVIEW_MAX_BYTES)

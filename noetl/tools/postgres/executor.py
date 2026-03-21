@@ -274,9 +274,9 @@ async def _execute_postgres_task_async(
             if not pool_name:
                 pool_name = _default_pool_name(pg_host, pg_port, pg_db, pg_user)
             pool_params.setdefault("min_size", _env_int("NOETL_POSTGRES_POOL_MIN_SIZE", 1))
-            pool_params.setdefault("max_size", _env_int("NOETL_POSTGRES_POOL_MAX_SIZE", 12))
-            pool_params.setdefault("max_waiting", _env_int("NOETL_POSTGRES_POOL_MAX_WAITING", 100))
-            pool_params.setdefault("timeout", _env_float("NOETL_POSTGRES_POOL_TIMEOUT_SECONDS", 60.0))
+            pool_params.setdefault("max_size", _env_int("NOETL_POSTGRES_POOL_MAX_SIZE", 6))
+            pool_params.setdefault("max_waiting", _env_int("NOETL_POSTGRES_POOL_MAX_WAITING", 50))
+            pool_params.setdefault("timeout", _env_float("NOETL_POSTGRES_POOL_TIMEOUT_SECONDS", 30.0))
             logger.info(
                 "POSTGRES: pooled mode pool=%s min=%s max=%s waiting=%s timeout=%ss commands=%s",
                 pool_name,

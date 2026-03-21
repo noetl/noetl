@@ -720,10 +720,23 @@ class StateStore:
     """Stores and retrieves execution state with bounded cache."""
 
     def __init__(self, playbook_repo: 'PlaybookRepo'):
-        # Bounded cache: max 1000 executions, 1 hour TTL
+        # Bounded cache: tune via env to avoid runaway server memory usage.
+        cache_max_size = max(
+            50,
+            int(os.getenv("NOETL_STATE_CACHE_MAX_EXECUTIONS", "500")),
+        )
+        cache_ttl_seconds = max(
+            60,
+            int(os.getenv("NOETL_STATE_CACHE_TTL_SECONDS", "1200")),
+        )
         self._memory_cache: BoundedCache[ExecutionState] = BoundedCache(
-            max_size=1000,
-            ttl_seconds=3600
+            max_size=cache_max_size,
+            ttl_seconds=cache_ttl_seconds,
+        )
+        logger.info(
+            "[STATE-CACHE] max_executions=%s ttl_seconds=%s",
+            cache_max_size,
+            cache_ttl_seconds,
         )
         self.playbook_repo = playbook_repo
 
