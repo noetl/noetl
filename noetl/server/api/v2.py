@@ -1084,13 +1084,32 @@ async def claim_command(event_id: int, req: ClaimRequest):
                 # If command is already terminal, no further claim attempts are needed.
                 await cur.execute("""
                     SELECT event_type
-                    FROM noetl.event
-                    WHERE execution_id = %s
-                      AND event_type IN ('command.completed', 'command.failed')
-                      AND (meta->>'command_id' = %s OR (result->'data'->>'command_id' = %s))
+                    FROM (
+                        (
+                        SELECT event_type, event_id
+                        FROM noetl.event
+                        WHERE execution_id = %s
+                          AND event_type IN ('command.completed', 'command.failed')
+                          AND meta ? 'command_id'
+                          AND meta->>'command_id' = %s
+                        ORDER BY event_id DESC
+                        LIMIT 1
+                        )
+                        UNION ALL
+                        (
+                        SELECT event_type, event_id
+                        FROM noetl.event
+                        WHERE execution_id = %s
+                          AND event_type IN ('command.completed', 'command.failed')
+                          AND (result->'data') ? 'command_id'
+                          AND (result->'data'->>'command_id') = %s
+                        ORDER BY event_id DESC
+                        LIMIT 1
+                        )
+                    ) terminal_match
                     ORDER BY event_id DESC
                     LIMIT 1
-                """, (execution_id, command_id, command_id))
+                """, (execution_id, command_id, execution_id, command_id))
                 terminal_row = await cur.fetchone()
                 if terminal_row:
                     _active_claim_cache_invalidate(command_id=command_id, event_id=event_id)
@@ -1139,13 +1158,33 @@ async def claim_command(event_id: int, req: ClaimRequest):
 
                 # Check if already claimed
                 await cur.execute("""
-                    SELECT event_id, worker_id, meta, created_at FROM noetl.event
-                    WHERE execution_id = %s
-                      AND event_type = 'command.claimed'
-                      AND (meta->>'command_id' = %s OR (result->'data'->>'command_id' = %s))
+                    SELECT event_id, worker_id, meta, created_at
+                    FROM (
+                        (
+                        SELECT event_id, worker_id, meta, created_at
+                        FROM noetl.event
+                        WHERE execution_id = %s
+                          AND event_type = 'command.claimed'
+                          AND meta ? 'command_id'
+                          AND meta->>'command_id' = %s
+                        ORDER BY event_id DESC
+                        LIMIT 1
+                        )
+                        UNION ALL
+                        (
+                        SELECT event_id, worker_id, meta, created_at
+                        FROM noetl.event
+                        WHERE execution_id = %s
+                          AND event_type = 'command.claimed'
+                          AND (result->'data') ? 'command_id'
+                          AND (result->'data'->>'command_id') = %s
+                        ORDER BY event_id DESC
+                        LIMIT 1
+                        )
+                    ) claimed_match
                     ORDER BY event_id DESC
                     LIMIT 1
-                """, (execution_id, command_id, command_id))
+                """, (execution_id, command_id, execution_id, command_id))
                 existing = await cur.fetchone()
 
                 stale_reclaim = False
@@ -1261,14 +1300,34 @@ async def claim_command(event_id: int, req: ClaimRequest):
                     if existing_worker and existing_worker == req.worker_id:
                         await cur.execute(
                             """
-                            SELECT event_type FROM noetl.event
-                            WHERE execution_id = %s
-                              AND event_type IN ('command.started', 'command.completed', 'command.failed')
-                              AND (meta->>'command_id' = %s OR (result->'data'->>'command_id' = %s))
+                            SELECT event_type
+                            FROM (
+                                (
+                                SELECT event_type, event_id
+                                FROM noetl.event
+                                WHERE execution_id = %s
+                                  AND event_type IN ('command.started', 'command.completed', 'command.failed')
+                                  AND meta ? 'command_id'
+                                  AND meta->>'command_id' = %s
+                                ORDER BY event_id DESC
+                                LIMIT 1
+                                )
+                                UNION ALL
+                                (
+                                SELECT event_type, event_id
+                                FROM noetl.event
+                                WHERE execution_id = %s
+                                  AND event_type IN ('command.started', 'command.completed', 'command.failed')
+                                  AND (result->'data') ? 'command_id'
+                                  AND (result->'data'->>'command_id') = %s
+                                ORDER BY event_id DESC
+                                LIMIT 1
+                                )
+                            ) same_worker_latest_match
                             ORDER BY event_id DESC
                             LIMIT 1
                             """,
-                            (execution_id, command_id, command_id),
+                            (execution_id, command_id, execution_id, command_id),
                         )
                         same_worker_latest = await cur.fetchone()
                         latest_event_type = (same_worker_latest or {}).get("event_type")
@@ -1429,12 +1488,33 @@ async def handle_event(req: EventRequest) -> EventResponse:
 
                         # Lock acquired - now check if already claimed
                         await cur.execute("""
-                            SELECT worker_id, meta FROM noetl.event
-                            WHERE execution_id = %s
-                              AND event_type = 'command.claimed'
-                              AND (meta->>'command_id' = %s OR (result->'data'->>'command_id' = %s))
+                            SELECT worker_id, meta
+                            FROM (
+                                (
+                                SELECT worker_id, meta, event_id
+                                FROM noetl.event
+                                WHERE execution_id = %s
+                                  AND event_type = 'command.claimed'
+                                  AND meta ? 'command_id'
+                                  AND meta->>'command_id' = %s
+                                ORDER BY event_id DESC
+                                LIMIT 1
+                                )
+                                UNION ALL
+                                (
+                                SELECT worker_id, meta, event_id
+                                FROM noetl.event
+                                WHERE execution_id = %s
+                                  AND event_type = 'command.claimed'
+                                  AND (result->'data') ? 'command_id'
+                                  AND (result->'data'->>'command_id') = %s
+                                ORDER BY event_id DESC
+                                LIMIT 1
+                                )
+                            ) claimed_event
+                            ORDER BY event_id DESC
                             LIMIT 1
-                        """, (int(req.execution_id), command_id, command_id))
+                        """, (int(req.execution_id), command_id, int(req.execution_id), command_id))
                         existing = await cur.fetchone()
 
                         if existing:
