@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.10.17](https://github.com/noetl/noetl/compare/v2.10.16...v2.10.17) (2026-03-21)
+
+### Bug Fixes
+
+* address copilot review feedback for PR 288 ([09de614](https://github.com/noetl/noetl/commit/09de614049daeffb8350c33b0c0920eda4437c22))
+* harden db outage recovery and bound postgres memory pressure ([9963552](https://github.com/noetl/noetl/commit/996355255e33cef7aa230e96e33979fdf4dd6970))
+
 ## [2.10.16](https://github.com/noetl/noetl/compare/v2.10.15...v2.10.16) (2026-03-20)
 
 ### Bug Fixes
