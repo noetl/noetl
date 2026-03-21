@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.10.18](https://github.com/noetl/noetl/compare/v2.10.17...v2.10.18) (2026-03-21)
+
+### Bug Fixes
+
+* make command_id claim lookups index-friendly ([6bab567](https://github.com/noetl/noetl/commit/6bab5676cc2abf35462c7ce7fce30564563fad0b))
+* normalize non-terminal completed events as running ([e75465f](https://github.com/noetl/noetl/commit/e75465f345ff0e998234de12e6cfbb7eb709cf60))
+* refactor command_id lookups and lock SQL regression shape ([a602824](https://github.com/noetl/noetl/commit/a602824416760508dac2f3b35bb3299e0213d210))
+
 ## [2.10.17](https://github.com/noetl/noetl/compare/v2.10.16...v2.10.17) (2026-03-21)
 
 ### Bug Fixes
