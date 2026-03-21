@@ -308,9 +308,9 @@ def _derive_execution_terminal_status(row: Optional[dict[str, Any]]) -> str:
         return terminal_by_type[event_type]
 
     status = str(row.get("status") or "").upper()
-    if status:
+    if status in {"FAILED", "CANCELLED"}:
         return status
-    return "UNKNOWN"
+    return "RUNNING"
 
 
 def _default_validation_commands(path: str, version: Any) -> tuple[list[str], list[str]]:
@@ -678,14 +678,23 @@ async def get_executions():
                 ) from exc
             resp = []
             for row_dict in rows:
+                derived_status = _derive_execution_terminal_status(
+                    {
+                        "event_type": row_dict.get("derived_event_type"),
+                        "status": row_dict.get("status"),
+                    }
+                )
+                # Non-terminal latest events can be status=COMPLETED (e.g. batch.completed)
+                # while the execution is still active; keep these as RUNNING.
+                response_end_time = row_dict["end_time"] if derived_status != "RUNNING" else None
                 resp.append(ExecutionEntryResponse(
                     execution_id=row_dict["execution_id"],
                     catalog_id=row_dict["catalog_id"],
                     path=row_dict["path"],
                     version=row_dict["version"],
-                    status=row_dict["status"],
+                    status=derived_status,
                     start_time=row_dict["start_time"],
-                    end_time=row_dict["end_time"],
+                    end_time=response_end_time,
                     progress=0,  # Not in query, needs to be computed
                     result=row_dict["result"],
                     error=row_dict["error"],
@@ -1093,8 +1102,9 @@ async def get_execution(
         final_status = "RUNNING"
 
     start_time = first_event.get("created_at") if first_event else None
-    end_time = latest_event.get("created_at") if latest_event else None
-    duration_seconds = _duration_seconds(start_time, end_time)
+    end_time = terminal_event.get("created_at") if terminal_event else None
+    duration_end = end_time or datetime.now(timezone.utc)
+    duration_seconds = _duration_seconds(start_time, duration_end)
 
     return {
         "execution_id": execution_id,
