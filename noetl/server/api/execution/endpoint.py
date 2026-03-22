@@ -313,6 +313,43 @@ def _derive_execution_terminal_status(row: Optional[dict[str, Any]]) -> str:
     return "RUNNING"
 
 
+def _infer_execution_completion_from_events(
+    latest_event: Optional[dict[str, Any]],
+    terminal_event: Optional[dict[str, Any]],
+    pending_count: int,
+) -> tuple[str, Optional[datetime]]:
+    terminal_event_types = {
+        "execution.cancelled": "CANCELLED",
+        "playbook.failed": "FAILED",
+        "workflow.failed": "FAILED",
+        "command.failed": "FAILED",
+        "playbook.completed": "COMPLETED",
+        "workflow.completed": "COMPLETED",
+    }
+
+    if terminal_event:
+        return (
+            terminal_event_types.get(terminal_event["event_type"], terminal_event.get("status", "RUNNING")),
+            terminal_event.get("created_at"),
+        )
+
+    if latest_event and (
+        latest_event.get("node_name") == "end"
+        and latest_event.get("status") == "COMPLETED"
+        and latest_event.get("event_type") in {"command.completed", "call.done", "step.exit"}
+    ):
+        return "COMPLETED", latest_event.get("created_at")
+
+    if latest_event and (
+        latest_event.get("event_type") == "batch.completed"
+        and latest_event.get("status") == "COMPLETED"
+        and pending_count == 0
+    ):
+        return "COMPLETED", latest_event.get("created_at")
+
+    return "RUNNING", None
+
+
 def _default_validation_commands(path: str, version: Any) -> tuple[list[str], list[str]]:
     version_suffix = f"@{version}" if version not in (None, "", "latest") else ""
     catalog_ref = f"catalog://{path}{version_suffix}" if path else "catalog://<playbook-path>"
@@ -1008,15 +1045,38 @@ async def get_execution(
             """, {"execution_id": execution_id})
             terminal_event = await cursor.fetchone()
 
-            # Get latest event for end_time and default status
+            # Get latest event for end_time and fallback completion inference
             await cursor.execute("""
-                SELECT created_at, status
+                SELECT event_type, node_name, created_at, status
                 FROM noetl.event
                 WHERE execution_id = %(execution_id)s
                 ORDER BY event_id DESC
                 LIMIT 1
             """, {"execution_id": execution_id})
             latest_event = await cursor.fetchone()
+
+            await cursor.execute(
+                """
+                SELECT COUNT(*) AS pending_count
+                FROM (
+                    SELECT node_name
+                    FROM noetl.event
+                    WHERE execution_id = %(execution_id)s
+                      AND event_type = 'command.issued'
+                    EXCEPT
+                    SELECT node_name
+                    FROM noetl.event
+                    WHERE execution_id = %(execution_id)s
+                      AND event_type IN (
+                          'call.done',
+                          'command.completed',
+                          'command.failed'
+                      )
+                ) AS pending
+                """,
+                {"execution_id": execution_id},
+            )
+            pending_row = await cursor.fetchone()
 
     if first_event is None:
         # No events found - check v2 engine fallback
@@ -1085,24 +1145,15 @@ async def get_execution(
             playbook_path = catalog_row["path"]
             playbook_version = catalog_row["version"]
 
-    # Determine final status
-    terminal_event_types = {
-        'execution.cancelled': 'CANCELLED',
-        'playbook.failed': 'FAILED',
-        'workflow.failed': 'FAILED',
-        'command.failed': 'FAILED',
-        'playbook.completed': 'COMPLETED',
-        'workflow.completed': 'COMPLETED',
-    }
-
-    if terminal_event:
-        final_status = terminal_event_types.get(terminal_event["event_type"], terminal_event["status"])
-    else:
-        # Non-terminal command/step events can have COMPLETED status while execution is still running.
-        final_status = "RUNNING"
+    pending_count = int((pending_row or {}).get("pending_count", 0))
+    final_status, inferred_end_time = _infer_execution_completion_from_events(
+        dict(latest_event) if latest_event else None,
+        dict(terminal_event) if terminal_event else None,
+        pending_count,
+    )
 
     start_time = first_event.get("created_at") if first_event else None
-    end_time = terminal_event.get("created_at") if terminal_event else None
+    end_time = inferred_end_time
     duration_end = end_time or datetime.now(timezone.utc)
     duration_seconds = _duration_seconds(start_time, duration_end)
 
