@@ -104,6 +104,13 @@ def test_derive_status_keeps_non_terminal_completed_running():
     assert execution_api._derive_execution_terminal_status(row) == "RUNNING"
 
 
+def test_pending_command_count_sql_tracks_command_ids():
+    sql = " ".join(execution_api._PENDING_COMMAND_COUNT_SQL.split())
+    assert "meta->>'command_id'" in sql
+    assert "result->'data'->>'command_id'" in sql
+    assert "SELECT node_name" not in sql
+
+
 @pytest.mark.asyncio
 async def test_get_executions_normalizes_non_terminal_completed_to_running(monkeypatch):
     now = datetime(2026, 3, 21, 7, 0, 0, tzinfo=timezone.utc)
@@ -233,6 +240,72 @@ async def test_get_execution_infers_completed_from_batch_done_without_pending_co
     assert result["status"] == "COMPLETED"
     assert result["end_time"] == latest.isoformat()
     assert result["duration_human"] == "1h 51m 2s"
+
+
+@pytest.mark.asyncio
+async def test_get_execution_keeps_running_when_batch_done_still_has_pending_commands(monkeypatch):
+    start = datetime(2026, 3, 22, 22, 12, 2, tzinfo=timezone.utc)
+    latest = datetime(2026, 3, 22, 22, 17, 1, tzinfo=timezone.utc)
+    event_rows = [
+        {
+            "event_id": 588466061222084806,
+            "event_type": "batch.completed",
+            "node_id": "events.batch",
+            "node_name": "events.batch",
+            "status": "COMPLETED",
+            "created_at": latest,
+            "context": None,
+            "result": None,
+            "error": None,
+            "catalog_id": 7,
+            "parent_execution_id": None,
+            "parent_event_id": None,
+            "duration": None,
+        }
+    ]
+    first_event = {
+        "event_id": 1,
+        "event_type": "playbook.initialized",
+        "catalog_id": 7,
+        "parent_execution_id": None,
+        "created_at": start,
+        "status": "INITIALIZED",
+    }
+    latest_event = {
+        "event_type": "batch.completed",
+        "node_name": "events.batch",
+        "created_at": latest,
+        "status": "COMPLETED",
+    }
+    catalog_row = {"path": "bhs/state_report_generation_prod_v10", "version": 7}
+
+    monkeypatch.setattr(
+        execution_api,
+        "get_pool_connection",
+        _ConnectionFactory(
+            _FakeConn(
+                _GetExecutionCursor(
+                    events=event_rows,
+                    first_event=first_event,
+                    terminal_event=None,
+                    latest_event=latest_event,
+                    pending_row={"pending_count": 1},
+                )
+            ),
+            _FakeConn(_CatalogCursor(catalog_row)),
+        ),
+    )
+
+    result = await execution_api.get_execution(
+        "588463546770392019",
+        page=1,
+        page_size=100,
+        since_event_id=None,
+        event_type=None,
+    )
+
+    assert result["status"] == "RUNNING"
+    assert result["end_time"] is None
 
 
 @pytest.mark.asyncio

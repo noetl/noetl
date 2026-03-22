@@ -491,6 +491,44 @@ _HANDLE_EVENT_CLAIMED_LOOKUP_SQL = _build_command_id_latest_lookup_sql(
     event_type_predicate=_EVENT_TYPE_CLAIMED_PREDICATE,
     alias="claimed_event",
 )
+_PENDING_COMMAND_COUNT_SQL = """
+    WITH issued_commands AS (
+        SELECT meta->>'command_id' AS command_id
+        FROM noetl.event
+        WHERE execution_id = %(execution_id)s
+          AND event_type = 'command.issued'
+          AND meta ? 'command_id'
+        UNION
+        SELECT result->'data'->>'command_id' AS command_id
+        FROM noetl.event
+        WHERE execution_id = %(execution_id)s
+          AND event_type = 'command.issued'
+          AND (result->'data') ? 'command_id'
+    ),
+    finished_commands AS (
+        SELECT meta->>'command_id' AS command_id
+        FROM noetl.event
+        WHERE execution_id = %(execution_id)s
+          AND event_type IN ('call.done', 'command.completed', 'command.failed')
+          AND meta ? 'command_id'
+        UNION
+        SELECT result->'data'->>'command_id' AS command_id
+        FROM noetl.event
+        WHERE execution_id = %(execution_id)s
+          AND event_type IN ('call.done', 'command.completed', 'command.failed')
+          AND (result->'data') ? 'command_id'
+    )
+    SELECT COUNT(*) AS pending_count
+    FROM (
+        SELECT command_id
+        FROM issued_commands
+        WHERE command_id IS NOT NULL
+        EXCEPT
+        SELECT command_id
+        FROM finished_commands
+        WHERE command_id IS NOT NULL
+    ) AS pending
+"""
 
 
 @dataclass(slots=True)
@@ -2492,28 +2530,18 @@ async def get_execution_status(execution_id: str, full: bool = False):
                     """, (exec_id_int,))
                     step_rows = await cur.fetchall()
 
-                    await cur.execute(
-                        """
-                        SELECT COUNT(*) AS pending_count
-                        FROM (
-                            SELECT node_name
-                            FROM noetl.event
-                            WHERE execution_id = %(execution_id)s
-                              AND event_type = 'command.issued'
-                            EXCEPT
-                            SELECT node_name
-                            FROM noetl.event
-                            WHERE execution_id = %(execution_id)s
-                              AND event_type IN (
-                                  'call.done',
-                                  'command.completed',
-                                  'command.failed'
-                              )
-                        ) AS pending
-                        """,
-                        {"execution_id": exec_id_int},
+                    pending_row = {"pending_count": 0}
+                    should_check_pending_commands = (
+                        terminal_event is None
+                        and latest_event["event_type"] == "batch.completed"
+                        and latest_event["status"] == "COMPLETED"
                     )
-                    pending_row = await cur.fetchone()
+                    if should_check_pending_commands:
+                        await cur.execute(
+                            _PENDING_COMMAND_COUNT_SQL,
+                            {"execution_id": exec_id_int},
+                        )
+                        pending_row = await cur.fetchone()
 
             terminal_complete_events = {"playbook.completed", "workflow.completed"}
             terminal_failed_events = {"playbook.failed", "workflow.failed", "execution.cancelled"}
@@ -2612,28 +2640,19 @@ async def get_execution_status(execution_id: str, full: bool = False):
                 """, (int(execution_id),))
                 terminal_event = await cur.fetchone()
 
-                await cur.execute(
-                    """
-                    SELECT COUNT(*) AS pending_count
-                    FROM (
-                        SELECT node_name
-                        FROM noetl.event
-                        WHERE execution_id = %(execution_id)s
-                          AND event_type = 'command.issued'
-                        EXCEPT
-                        SELECT node_name
-                        FROM noetl.event
-                        WHERE execution_id = %(execution_id)s
-                          AND event_type IN (
-                              'call.done',
-                              'command.completed',
-                              'command.failed'
-                          )
-                    ) AS pending
-                    """,
-                    {"execution_id": int(execution_id)},
+                pending_row = {"pending_count": 0}
+                should_check_pending_commands = (
+                    terminal_event is None
+                    and latest_event is not None
+                    and latest_event["event_type"] == "batch.completed"
+                    and latest_event["status"] == "COMPLETED"
                 )
-                pending_row = await cur.fetchone()
+                if should_check_pending_commands:
+                    await cur.execute(
+                        _PENDING_COMMAND_COUNT_SQL,
+                        {"execution_id": int(execution_id)},
+                    )
+                    pending_row = await cur.fetchone()
 
         # Fallback completion inference:
         # Some runs reach terminal step completion in events but may miss

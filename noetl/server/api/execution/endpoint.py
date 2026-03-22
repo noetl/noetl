@@ -313,6 +313,46 @@ def _derive_execution_terminal_status(row: Optional[dict[str, Any]]) -> str:
     return "RUNNING"
 
 
+_PENDING_COMMAND_COUNT_SQL = """
+    WITH issued_commands AS (
+        SELECT meta->>'command_id' AS command_id
+        FROM noetl.event
+        WHERE execution_id = %(execution_id)s
+          AND event_type = 'command.issued'
+          AND meta ? 'command_id'
+        UNION
+        SELECT result->'data'->>'command_id' AS command_id
+        FROM noetl.event
+        WHERE execution_id = %(execution_id)s
+          AND event_type = 'command.issued'
+          AND (result->'data') ? 'command_id'
+    ),
+    finished_commands AS (
+        SELECT meta->>'command_id' AS command_id
+        FROM noetl.event
+        WHERE execution_id = %(execution_id)s
+          AND event_type IN ('call.done', 'command.completed', 'command.failed')
+          AND meta ? 'command_id'
+        UNION
+        SELECT result->'data'->>'command_id' AS command_id
+        FROM noetl.event
+        WHERE execution_id = %(execution_id)s
+          AND event_type IN ('call.done', 'command.completed', 'command.failed')
+          AND (result->'data') ? 'command_id'
+    )
+    SELECT COUNT(*) AS pending_count
+    FROM (
+        SELECT command_id
+        FROM issued_commands
+        WHERE command_id IS NOT NULL
+        EXCEPT
+        SELECT command_id
+        FROM finished_commands
+        WHERE command_id IS NOT NULL
+    ) AS pending
+"""
+
+
 def _infer_execution_completion_from_events(
     latest_event: Optional[dict[str, Any]],
     terminal_event: Optional[dict[str, Any]],
@@ -1064,24 +1104,7 @@ async def get_execution(
             )
             if should_check_pending_commands:
                 await cursor.execute(
-                    """
-                    SELECT COUNT(*) AS pending_count
-                    FROM (
-                        SELECT node_name
-                        FROM noetl.event
-                        WHERE execution_id = %(execution_id)s
-                          AND event_type = 'command.issued'
-                        EXCEPT
-                        SELECT node_name
-                        FROM noetl.event
-                        WHERE execution_id = %(execution_id)s
-                          AND event_type IN (
-                              'call.done',
-                              'command.completed',
-                              'command.failed'
-                          )
-                    ) AS pending
-                    """,
+                    _PENDING_COMMAND_COUNT_SQL,
                     {"execution_id": execution_id},
                 )
                 pending_row = await cursor.fetchone()
