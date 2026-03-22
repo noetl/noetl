@@ -1055,28 +1055,36 @@ async def get_execution(
             """, {"execution_id": execution_id})
             latest_event = await cursor.fetchone()
 
-            await cursor.execute(
-                """
-                SELECT COUNT(*) AS pending_count
-                FROM (
-                    SELECT node_name
-                    FROM noetl.event
-                    WHERE execution_id = %(execution_id)s
-                      AND event_type = 'command.issued'
-                    EXCEPT
-                    SELECT node_name
-                    FROM noetl.event
-                    WHERE execution_id = %(execution_id)s
-                      AND event_type IN (
-                          'call.done',
-                          'command.completed',
-                          'command.failed'
-                      )
-                ) AS pending
-                """,
-                {"execution_id": execution_id},
+            pending_row = {"pending_count": 0}
+            should_check_pending_commands = (
+                terminal_event is None
+                and latest_event is not None
+                and latest_event.get("event_type") == "batch.completed"
+                and latest_event.get("status") == "COMPLETED"
             )
-            pending_row = await cursor.fetchone()
+            if should_check_pending_commands:
+                await cursor.execute(
+                    """
+                    SELECT COUNT(*) AS pending_count
+                    FROM (
+                        SELECT node_name
+                        FROM noetl.event
+                        WHERE execution_id = %(execution_id)s
+                          AND event_type = 'command.issued'
+                        EXCEPT
+                        SELECT node_name
+                        FROM noetl.event
+                        WHERE execution_id = %(execution_id)s
+                          AND event_type IN (
+                              'call.done',
+                              'command.completed',
+                              'command.failed'
+                          )
+                    ) AS pending
+                    """,
+                    {"execution_id": execution_id},
+                )
+                pending_row = await cursor.fetchone()
 
     if first_event is None:
         # No events found - check v2 engine fallback

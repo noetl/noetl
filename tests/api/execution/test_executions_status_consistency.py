@@ -233,3 +233,75 @@ async def test_get_execution_infers_completed_from_batch_done_without_pending_co
     assert result["status"] == "COMPLETED"
     assert result["end_time"] == latest.isoformat()
     assert result["duration_human"] == "1h 51m 2s"
+
+
+@pytest.mark.asyncio
+async def test_get_execution_prefers_terminal_failure_over_batch_completion_inference(monkeypatch):
+    start = datetime(2026, 3, 21, 8, 12, 52, tzinfo=timezone.utc)
+    latest = datetime(2026, 3, 21, 10, 3, 54, tzinfo=timezone.utc)
+    terminal = datetime(2026, 3, 21, 10, 3, 40, tzinfo=timezone.utc)
+    event_rows = [
+        {
+            "event_id": 587372302669448146,
+            "event_type": "batch.completed",
+            "node_id": "events.batch",
+            "node_name": "events.batch",
+            "status": "COMPLETED",
+            "created_at": latest,
+            "context": None,
+            "result": None,
+            "error": None,
+            "catalog_id": 7,
+            "parent_execution_id": None,
+            "parent_event_id": None,
+            "duration": None,
+        }
+    ]
+    first_event = {
+        "event_id": 1,
+        "event_type": "playbook.initialized",
+        "catalog_id": 7,
+        "parent_execution_id": None,
+        "created_at": start,
+        "status": "INITIALIZED",
+    }
+    latest_event = {
+        "event_type": "batch.completed",
+        "node_name": "events.batch",
+        "created_at": latest,
+        "status": "COMPLETED",
+    }
+    terminal_event = {
+        "event_type": "playbook.failed",
+        "status": "FAILED",
+        "created_at": terminal,
+    }
+    catalog_row = {"path": "bhs/state_report_generation_prod_v10", "version": 7}
+
+    monkeypatch.setattr(
+        execution_api,
+        "get_pool_connection",
+        _ConnectionFactory(
+            _FakeConn(
+                _GetExecutionCursor(
+                    events=event_rows,
+                    first_event=first_event,
+                    terminal_event=terminal_event,
+                    latest_event=latest_event,
+                    pending_row={"pending_count": 0},
+                )
+            ),
+            _FakeConn(_CatalogCursor(catalog_row)),
+        ),
+    )
+
+    result = await execution_api.get_execution(
+        "587316413618979403",
+        page=1,
+        page_size=100,
+        since_event_id=None,
+        event_type=None,
+    )
+
+    assert result["status"] == "FAILED"
+    assert result["end_time"] == terminal.isoformat()
