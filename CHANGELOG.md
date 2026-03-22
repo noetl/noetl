@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.10.19](https://github.com/noetl/noetl/compare/v2.10.18...v2.10.19) (2026-03-22)
+
+### Bug Fixes
+
+* align execution detail status with terminal inference ([a8808fe](https://github.com/noetl/noetl/commit/a8808fe0854e984a09c866561469c6eb3f302fdb))
+* scope execution pending inference and cover terminal precedence ([fac632d](https://github.com/noetl/noetl/commit/fac632db8ee689034b679b46ac4fbc158359d3a9))
+
 ## [2.10.18](https://github.com/noetl/noetl/compare/v2.10.17...v2.10.18) (2026-03-21)
 
 ### Bug Fixes
