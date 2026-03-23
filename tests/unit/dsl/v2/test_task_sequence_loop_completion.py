@@ -542,6 +542,65 @@ async def test_call_done_with_unmatched_next_arcs_emits_terminal_completion(monk
 
 
 @pytest.mark.asyncio
+async def test_call_error_with_explicit_end_step_without_tool_completes_failure(monkeypatch):
+    playbook = Playbook(
+        **{
+            "apiVersion": "noetl.io/v2",
+            "kind": "Playbook",
+            "metadata": {
+                "name": "explicit-end-no-tool",
+                "path": "tests/explicit-end-no-tool",
+            },
+            "workflow": [
+                {
+                    "step": "start",
+                    "tool": {"kind": "noop"},
+                    "next": {
+                        "spec": {"mode": "exclusive"},
+                        "arcs": [{"step": "end"}],
+                    },
+                },
+                {
+                    "step": "end",
+                    "desc": "Terminal end step without a tool",
+                },
+            ],
+        }
+    )
+    playbook_repo = PlaybookRepo()
+    state_store = StateStore(playbook_repo)
+    engine = ControlFlowEngine(playbook_repo, state_store)
+
+    execution_id = "9017"
+    state = ExecutionState(execution_id, playbook, payload={})
+    state.issued_steps.add("start")
+    state.completed_steps.add("start")
+    await state_store.save_state(state)
+
+    persisted_events = []
+
+    async def fake_persist_event(event, state_obj):
+        persisted_events.append(event.name)
+        state_obj.last_event_id = (state_obj.last_event_id or 0) + 1
+
+    monkeypatch.setattr(engine, "_persist_event", fake_persist_event)
+
+    event = Event(
+        execution_id=execution_id,
+        step="start",
+        name="call.error",
+        payload={"error": {"message": "boom"}},
+    )
+
+    commands = await engine.handle_event(event, already_persisted=True)
+
+    assert commands == []
+    assert state.completed is True
+    assert state.failed is True
+    assert persisted_events == ["workflow.failed", "playbook.failed"]
+
+
+@pytest.mark.asyncio
 async def test_completed_execution_short_circuits_late_events(monkeypatch):
     playbook = Playbook(
         **{

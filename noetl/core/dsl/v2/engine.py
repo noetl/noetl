@@ -3017,6 +3017,13 @@ class ControlFlowEngine:
         # Render Jinja2 templates in args
         rendered_args = recursive_render(self.jinja_env, step_args, context)
 
+        if step.tool is None:
+            logger.info(
+                "[CREATE-CMD] Step '%s' has no tool; treating as a terminal/non-actionable transition target",
+                step.step,
+            )
+            return None
+
         # Check if step.tool is a pipeline (list of labeled tasks) or single tool
         pipeline = None
         if isinstance(step.tool, list):

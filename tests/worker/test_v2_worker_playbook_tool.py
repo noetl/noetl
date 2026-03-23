@@ -333,8 +333,12 @@ async def test_execute_command_error_events_use_externalized_response(monkeypatc
     async def fake_emit_event(_server_url, _execution_id, _step, event_name, payload, **_kwargs):
         emitted.append((event_name, payload))
 
+    async def fake_emit_batch_events(*_args, **_kwargs):
+        return True
+
     monkeypatch.setattr(worker, "_execute_tool", fake_execute_tool)
     monkeypatch.setattr(worker, "_emit_event", fake_emit_event)
+    monkeypatch.setattr(worker, "_emit_batch_events", fake_emit_batch_events)
     monkeypatch.setattr(worker_module, "ResultHandler", FakeResultHandler)
     monkeypatch.setattr(worker_module, "is_result_ref", lambda value: isinstance(value, dict) and "_ref" in value)
 
@@ -359,6 +363,54 @@ async def test_execute_command_error_events_use_externalized_response(monkeypatc
     assert "_ref" in call_error["response"]
     assert "_ref" in step_exit["result"]
     assert "_ref" in command_failed["result"]
+
+
+@pytest.mark.asyncio
+async def test_execute_command_normalizes_stringified_context_sections(monkeypatch):
+    worker = V2Worker(worker_id="test-worker")
+    emitted = []
+    captured = {}
+
+    async def fake_execute_tool(tool_kind, tool_config, args, step, render_context, case_blocks=None):
+        captured["tool_kind"] = tool_kind
+        captured["tool_config"] = tool_config
+        captured["args"] = args
+        captured["render_context"] = render_context
+        captured["case_blocks"] = case_blocks
+        captured["step"] = step
+        return {"status": "ok"}
+
+    async def fake_emit_event(_server_url, _execution_id, _step, event_name, payload, **_kwargs):
+        emitted.append((event_name, payload))
+
+    async def fake_emit_batch_events(*_args, **_kwargs):
+        return True
+
+    monkeypatch.setattr(worker, "_execute_tool", fake_execute_tool)
+    monkeypatch.setattr(worker, "_emit_event", fake_emit_event)
+    monkeypatch.setattr(worker, "_emit_batch_events", fake_emit_batch_events)
+
+    command = {
+        "execution_id": "exec-2",
+        "step": "start",
+        "tool_kind": "python",
+        "context": {
+            "tool_config": '{"args": {"from_tool": 1}}',
+            "args": '{"from_context": 2}',
+            "render_context": '{"foo": "bar"}',
+            "case": '[{"when": "{{ true }}", "then": {"next": "end"}}]',
+            "spec": '{"case_mode": "parallel", "eval_mode": "continuous"}',
+        },
+    }
+
+    await worker._execute_command(command, server_url="http://noetl.test", command_id="cmd-2")
+
+    assert captured["tool_kind"] == "python"
+    assert captured["tool_config"] == {"args": {"from_tool": 1}}
+    assert captured["args"] == {"from_tool": 1, "from_context": 2}
+    assert captured["render_context"]["foo"] == "bar"
+    assert isinstance(captured["case_blocks"], list)
+    assert any(name == "call.done" for name, _payload in emitted)
 
 
 @pytest.mark.asyncio
