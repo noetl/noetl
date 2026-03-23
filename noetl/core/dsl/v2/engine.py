@@ -866,6 +866,8 @@ class StateStore:
                 loop_iteration_state: dict[str, dict[str, Any]] = {}
                 loop_iteration_counts: dict[str, int] = {}
                 loop_event_ids = {}  # {step_name: loop_event_id}
+                replay_render_env = Environment(undefined=StrictUndefined)
+                from noetl.core.dsl.render import render_template as recursive_render
                 
                 for row in rows:
                     if isinstance(row, dict):
@@ -905,6 +907,18 @@ class StateStore:
                     event_payload = result_data
                     if isinstance(result_data, dict) and "kind" in result_data and "data" in result_data:
                         event_payload = result_data.get("data")
+
+                    # Task-sequence policy rules can mutate ctx on the worker. Replay must
+                    # restore those execution-scoped variables from persisted call.done events
+                    # so a cache miss on another server does not lose them.
+                    if event_type == 'call.done' and isinstance(event_payload, dict) and isinstance(node_name, str) and node_name.endswith(":task_sequence"):
+                        response_data = event_payload.get("response", event_payload)
+                        if isinstance(response_data, dict):
+                            task_ctx = response_data.get("ctx", {})
+                            if isinstance(task_ctx, dict):
+                                for key, value in task_ctx.items():
+                                    state.variables[key] = value
+                                    logger.debug("[STATE-LOAD] Replayed task-sequence ctx: %s", key)
 
                     # For loop steps, collect iteration results from step.exit events
                     if event_type == 'step.exit' and event_payload and node_name in loop_steps:
@@ -959,6 +973,36 @@ class StateStore:
                             else event_payload
                         )
                         state.mark_step_completed(node_name, step_result)
+
+                        step_def = state.get_step(node_name)
+                        if step_def and step_def.set_ctx:
+                            replay_event = Event(
+                                execution_id=execution_id,
+                                step=node_name,
+                                name="step.exit",
+                                payload=event_payload if isinstance(event_payload, dict) else {"result": event_payload},
+                            )
+                            context = state.get_render_context(replay_event)
+                            for key, value_template in step_def.set_ctx.items():
+                                try:
+                                    if isinstance(value_template, str) and "{{" in value_template:
+                                        rendered_value = recursive_render(
+                                            replay_render_env,
+                                            value_template,
+                                            context,
+                                            strict_keys=True,
+                                        )
+                                    else:
+                                        rendered_value = value_template
+                                    state.variables[key] = rendered_value
+                                    logger.debug("[STATE-LOAD] Replayed set_ctx %s from %s", key, node_name)
+                                except Exception as exc:
+                                    logger.warning(
+                                        "[STATE-LOAD] Failed to replay set_ctx %s for %s: %s",
+                                        key,
+                                        node_name,
+                                        exc,
+                                    )
                 
                 # Initialize loop_state for loop steps with collected iteration results
                 for step_name in loop_steps:
