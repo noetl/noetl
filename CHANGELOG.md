@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.10.28](https://github.com/noetl/noetl/compare/v2.10.27...v2.10.28) (2026-03-23)
+
+### Bug Fixes
+
+* clarify empty replayed loop collection logging ([ed7f272](https://github.com/noetl/noetl/commit/ed7f272045ce35aba0ba7eba498342d6df2cd71b))
+* rerender loop collection when replay cache is empty ([596cad3](https://github.com/noetl/noetl/commit/596cad3e31ab89f28b662ecac0c22aeda35b2f7a))
+
 ## [2.10.27](https://github.com/noetl/noetl/compare/v2.10.26...v2.10.27) (2026-03-23)
 
 ### Bug Fixes
