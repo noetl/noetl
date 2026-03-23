@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.10.24](https://github.com/noetl/noetl/compare/v2.10.23...v2.10.24) (2026-03-23)
+
+### Bug Fixes
+
+* paginate execution list queries and bound ui fetches ([a965260](https://github.com/noetl/noetl/commit/a9652601ac7b3bf7d68b0c9806caeba5450aef02))
+* stabilize execution list pagination ordering ([5dfdc73](https://github.com/noetl/noetl/commit/5dfdc73fcb68767fe9bb8351ef3f7ea16db99e0c))
+
 ## [2.10.23](https://github.com/noetl/noetl/compare/v2.10.22...v2.10.23) (2026-03-23)
 
 ### Bug Fixes
