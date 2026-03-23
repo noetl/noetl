@@ -2,6 +2,15 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.10.31](https://github.com/noetl/noetl/compare/v2.10.30...v2.10.31) (2026-03-23)
+
+### Bug Fixes
+
+* fast recover stranded command notifications ([b327525](https://github.com/noetl/noetl/commit/b32752535719a2d63d7ae9948c42900c7e695a5b))
+* harden fast publish recovery lifecycle ([b072e03](https://github.com/noetl/noetl/commit/b072e0361064322be3307c19e482712964d8ffa8))
+* make initial command publish best effort ([c577cde](https://github.com/noetl/noetl/commit/c577cde466012587b266a9eedaab28c3499f434b))
+* smooth fast publish recovery fanout ([77af3fc](https://github.com/noetl/noetl/commit/77af3fcc0632fb9150e6bf66c30c4080fc453c29))
+
 ## [2.10.30](https://github.com/noetl/noetl/compare/v2.10.29...v2.10.30) (2026-03-23)
 
 ### Bug Fixes
