@@ -816,6 +816,16 @@ class TempStore:
         if "preview" in ref and ref.get("store") == "eventlog":
             return ref["preview"]
 
+        ref_uri = ref.get("ref")
+        if ref_uri:
+            try:
+                return await self.get(ref_uri)
+            except KeyError:
+                logger.warning(
+                    "TEMP: ResultRef payload not found for %s; falling back to preview if available",
+                    ref_uri,
+                )
+
         # TODO: Implement artifact resolution
         artifact = ref.get("artifact")
         if artifact:

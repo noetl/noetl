@@ -177,3 +177,33 @@ async def test_cleanup_deletes_evicted_non_memory_refs():
             deleted += 1
     assert deleted == 2
     assert len(fake_kv.deleted) == 2
+
+
+@pytest.mark.asyncio
+async def test_resolve_result_ref_returns_full_payload_not_preview():
+    store = TempStore(
+        max_ref_cache_entries=10,
+        max_memory_cache_entries=10,
+    )
+
+    payload = {
+        "tool_config": {
+            "kind": "python",
+            "code": "def main(): return {'status': 'ok'}",
+        },
+        "render_context": {"value": 1},
+    }
+
+    ref = await store.put(
+        execution_id="exec-result-ref",
+        name="command_context",
+        data=payload,
+        scope=Scope.EXECUTION,
+        store=StoreTier.MEMORY,
+        source_step="start",
+    )
+
+    resolved = await store.resolve(ref.model_dump())
+
+    assert resolved == payload
+    assert resolved["tool_config"]["code"].startswith("def main")
