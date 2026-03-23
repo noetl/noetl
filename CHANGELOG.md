@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.10.32](https://github.com/noetl/noetl/compare/v2.10.31...v2.10.32) (2026-03-23)
+
+### Bug Fixes
+
+* ack duplicate active-claim notifications ([1b7b621](https://github.com/noetl/noetl/commit/1b7b621a2cd7177c4eb8a3929a557fe0e35bf321))
+* clarify acked duplicate claim path ([f994c9b](https://github.com/noetl/noetl/commit/f994c9bb456c6c1708525f58ac986709ade57373))
+
 ## [2.10.31](https://github.com/noetl/noetl/compare/v2.10.30...v2.10.31) (2026-03-23)
 
 ### Bug Fixes
