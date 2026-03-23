@@ -16,13 +16,13 @@ PENDING_COMMAND_COUNT_SQL = """
         SELECT meta->>'command_id' AS command_id
         FROM noetl.event
         WHERE execution_id = %(execution_id)s
-          AND event_type IN ('command.completed', 'command.failed')
+          AND event_type IN ('command.completed', 'command.failed', 'command.cancelled')
           AND meta ? 'command_id'
         UNION ALL
         SELECT result->'data'->>'command_id' AS command_id
         FROM noetl.event
         WHERE execution_id = %(execution_id)s
-          AND event_type IN ('command.completed', 'command.failed')
+          AND event_type IN ('command.completed', 'command.failed', 'command.cancelled')
           AND (result->'data') ? 'command_id'
     )
     SELECT COUNT(*) AS pending_count
