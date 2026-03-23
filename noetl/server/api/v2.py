@@ -89,6 +89,14 @@ _COMMAND_PUBLISH_RECOVERY_DELAY_SECONDS = max(
     5.0,
     float(os.getenv("NOETL_COMMAND_PUBLISH_RECOVERY_DELAY_SECONDS", "20")),
 )
+_COMMAND_PUBLISH_RECOVERY_JITTER_SECONDS = max(
+    0.0,
+    float(os.getenv("NOETL_COMMAND_PUBLISH_RECOVERY_JITTER_SECONDS", "2")),
+)
+_COMMAND_PUBLISH_RECOVERY_MAX_CONCURRENCY = max(
+    1,
+    int(os.getenv("NOETL_COMMAND_PUBLISH_RECOVERY_MAX_CONCURRENCY", "16")),
+)
 _COMMAND_TERMINAL_EVENT_TYPES = [
     "command.completed",
     "command.failed",
@@ -131,6 +139,7 @@ _DB_UNAVAILABLE_ERROR_MARKERS = (
 _db_unavailable_failure_streak: int = 0
 _db_unavailable_backoff_until_monotonic: float = 0.0
 _publish_recovery_tasks: set[asyncio.Task] = set()
+_publish_recovery_semaphore = asyncio.Semaphore(_COMMAND_PUBLISH_RECOVERY_MAX_CONCURRENCY)
 
 
 def _compute_retry_after(min_seconds: float = 1.0, max_seconds: float = 15.0) -> str:
@@ -695,6 +704,14 @@ async def shutdown_publish_recovery_tasks() -> None:
     await asyncio.gather(*tasks, return_exceptions=True)
 
 
+def _compute_publish_recovery_delay(delay_seconds: float, event_id: int) -> float:
+    if _COMMAND_PUBLISH_RECOVERY_JITTER_SECONDS <= 0:
+        return delay_seconds
+    # Spread wakeups deterministically to avoid a large synchronized recovery burst.
+    jitter_ratio = (event_id % 1000) / 1000.0
+    return delay_seconds + (_COMMAND_PUBLISH_RECOVERY_JITTER_SECONDS * jitter_ratio)
+
+
 async def _command_has_claim_or_terminal(
     *,
     execution_id: int,
@@ -750,34 +767,35 @@ async def _recover_unclaimed_command_after_delay(
     delay_seconds: float,
 ) -> None:
     try:
-        await asyncio.sleep(delay_seconds)
-        if await _command_has_claim_or_terminal(
-            execution_id=execution_id,
-            command_id=command_id,
-        ):
-            logger.debug(
-                "[PUBLISH-RECOVERY] Skipping recovery for execution_id=%s command_id=%s; claim or terminal event already exists",
-                execution_id,
-                command_id,
-            )
-            return
+        await asyncio.sleep(_compute_publish_recovery_delay(delay_seconds, event_id))
+        async with _publish_recovery_semaphore:
+            if await _command_has_claim_or_terminal(
+                execution_id=execution_id,
+                command_id=command_id,
+            ):
+                logger.debug(
+                    "[PUBLISH-RECOVERY] Skipping recovery for execution_id=%s command_id=%s; claim or terminal event already exists",
+                    execution_id,
+                    command_id,
+                )
+                return
 
-        logger.warning(
-            "[PUBLISH-RECOVERY] Re-publishing unclaimed command after %.1fs: execution_id=%s event_id=%s command_id=%s step=%s",
-            delay_seconds,
-            execution_id,
-            event_id,
-            command_id,
-            step,
-        )
-        nats_pub = await get_nats_publisher()
-        await nats_pub.publish_command(
-            execution_id=execution_id,
-            event_id=event_id,
-            command_id=command_id,
-            step=step,
-            server_url=server_url,
-        )
+            logger.warning(
+                "[PUBLISH-RECOVERY] Re-publishing unclaimed command after %.1fs: execution_id=%s event_id=%s command_id=%s step=%s",
+                delay_seconds,
+                execution_id,
+                event_id,
+                command_id,
+                step,
+            )
+            nats_pub = await get_nats_publisher()
+            await nats_pub.publish_command(
+                execution_id=execution_id,
+                event_id=event_id,
+                command_id=command_id,
+                step=step,
+                server_url=server_url,
+            )
     except asyncio.CancelledError:
         raise
     except Exception as exc:
