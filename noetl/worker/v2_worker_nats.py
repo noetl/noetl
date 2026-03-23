@@ -263,7 +263,7 @@ class V2Worker:
                 return {}
             try:
                 parsed = json.loads(stripped)
-            except Exception:
+            except json.JSONDecodeError:
                 logger.warning(
                     "[COMMAND-CONTEXT] Expected object for %s but got non-JSON string | step=%s execution=%s",
                     field_name,
@@ -309,7 +309,7 @@ class V2Worker:
                 return []
             try:
                 parsed = json.loads(stripped)
-            except Exception:
+            except json.JSONDecodeError:
                 logger.warning(
                     "[COMMAND-CONTEXT] Expected list for %s but got non-JSON string | step=%s execution=%s",
                     field_name,

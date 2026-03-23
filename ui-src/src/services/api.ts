@@ -173,8 +173,10 @@ class APIService {
     return response.data;
   }
 
-  async getExecution(id: string): Promise<ExecutionData> {
-    const response = await apiClient.get(`/executions/${id}`);
+  async getExecution(id: string, params?: {
+    include_events?: boolean;
+  }): Promise<ExecutionData> {
+    const response = await apiClient.get(`/executions/${id}`, { params });
     return response.data;
   }
 

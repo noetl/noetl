@@ -310,6 +310,58 @@ async def test_get_execution_keeps_running_when_batch_done_still_has_pending_com
 
 
 @pytest.mark.asyncio
+async def test_get_execution_can_omit_events_payload(monkeypatch):
+    start = datetime(2026, 3, 21, 8, 12, 52, tzinfo=timezone.utc)
+    latest = datetime(2026, 3, 21, 10, 3, 54, tzinfo=timezone.utc)
+    first_event = {
+        "event_id": 1,
+        "event_type": "playbook.initialized",
+        "catalog_id": 7,
+        "parent_execution_id": None,
+        "created_at": start,
+        "status": "INITIALIZED",
+    }
+    latest_event = {
+        "event_type": "batch.completed",
+        "node_name": "events.batch",
+        "created_at": latest,
+        "status": "COMPLETED",
+    }
+    catalog_row = {"path": "bhs/state_report_generation_prod_v10", "version": 7}
+
+    monkeypatch.setattr(
+        execution_api,
+        "get_pool_connection",
+        _ConnectionFactory(
+            _FakeConn(
+                _GetExecutionCursor(
+                    events=[],
+                    first_event=first_event,
+                    terminal_event=None,
+                    latest_event=latest_event,
+                    pending_row={"pending_count": 0},
+                )
+            ),
+            _FakeConn(_CatalogCursor(catalog_row)),
+        ),
+    )
+
+    result = await execution_api.get_execution(
+        "587316413618979403",
+        page=1,
+        page_size=100,
+        since_event_id=None,
+        event_type=None,
+        include_events=False,
+    )
+
+    assert result["events"] == []
+    assert result["events_included"] is False
+    assert result["events_endpoint"] == "/api/executions/587316413618979403/events"
+    assert result["pagination"] is None
+
+
+@pytest.mark.asyncio
 async def test_get_execution_prefers_terminal_failure_over_batch_completion_inference(monkeypatch):
     start = datetime(2026, 3, 21, 8, 12, 52, tzinfo=timezone.utc)
     latest = datetime(2026, 3, 21, 10, 3, 54, tzinfo=timezone.utc)

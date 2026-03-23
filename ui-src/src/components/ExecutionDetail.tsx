@@ -46,7 +46,7 @@ const isTerminalStatus = (status?: string | null) => {
 };
 
 const deriveExecutionStatus = (
-  previousStatus: string | undefined,
+  previousStatus: string | null | undefined,
   statusData: ExecutionStatusData,
 ) => {
   if (previousStatus?.toLowerCase() === "cancelled") {
@@ -58,7 +58,13 @@ const deriveExecutionStatus = (
   if (statusData.completed) {
     return "COMPLETED";
   }
-  return "RUNNING";
+  if (previousStatus && !isTerminalStatus(previousStatus)) {
+    return previousStatus.toUpperCase();
+  }
+  if (statusData.current_step || statusData.start_time) {
+    return "RUNNING";
+  }
+  return "PENDING";
 };
 
 const deriveExecutionProgress = (execution: Partial<ExecutionData>) => {
@@ -120,7 +126,7 @@ const ExecutionDetail: React.FC = () => {
         setLoading(true);
         setError(null);
         const [detail, eventData] = await Promise.all([
-          apiService.getExecution(id!),
+          apiService.getExecution(id!, { include_events: false }),
           apiService.getExecutionEvents(id!, { page: 1, page_size: pageSize }),
         ]);
         const normalizedDetail = {

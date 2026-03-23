@@ -3702,7 +3702,10 @@ class ControlFlowEngine:
             )
             loop_state = state.loop_state[event.step]
             if not loop_state.get("aggregation_finalized", False):
-                failed = (response_data.get("status", "") or "").upper() in ("FAILED", "ERROR")
+                status_str = ""
+                if isinstance(response_data, dict):
+                    status_str = response_data.get("status", "") or ""
+                failed = status_str.upper() in ("FAILED", "ERROR")
                 state.add_loop_result(event.step, response_data, failed=failed)
                 logger.info(f"[LOOP-CALL.DONE] Added iteration result to loop aggregation for {event.step}")
 

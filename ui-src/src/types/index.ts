@@ -86,8 +86,8 @@ export interface ExecutionData {
   version?: string;
   status: "RUNNING" | "COMPLETED" | "FAILED" | "PENDING" | "CANCELLED" | "running" | "completed" | "failed" | "pending" | "cancelled";
   start_time?: string | null;
-  end_time?: string;
-  duration?: number;
+  end_time?: string | null;
+  duration?: number | null;
   duration_seconds?: number | null;
   duration_human?: string | null;
   progress?: number;
