@@ -13,6 +13,7 @@ Performance tuning:
 """
 
 import asyncio
+import json
 import math
 from typing import Optional, Callable, Awaitable
 import nats
@@ -72,7 +73,14 @@ class NATSCommandPublisher:
                 await self._reset_connection_state()
             elif self._is_connected():
                 return
+            elif self._nc is not None or self._js is not None:
+                await self._reset_connection_state()
             await self.connect()
+
+    async def _publish_payload(self, payload: bytes) -> None:
+        if not self._js:
+            raise RuntimeError("Not connected to NATS")
+        await self._js.publish(self.subject, payload)
 
     async def connect(self):
         """Connect to NATS and setup JetStream."""
@@ -123,13 +131,10 @@ class NATSCommandPublisher:
             "step": step,
             "server_url": server_url
         }
+        payload = json.dumps(message).encode()
 
         try:
-            import json
-            await self._js.publish(
-                self.subject,
-                json.dumps(message).encode()
-            )
+            await self._publish_payload(payload)
             logger.debug(f"Published command notification: event_id={event_id} command_id={command_id}")
 
         except Exception as e:
@@ -141,11 +146,7 @@ class NATSCommandPublisher:
             )
             await self.ensure_connected(force=True)
             try:
-                import json
-                await self._js.publish(
-                    self.subject,
-                    json.dumps(message).encode()
-                )
+                await self._publish_payload(payload)
                 logger.info(
                     "Published command notification after reconnect: event_id=%s command_id=%s",
                     event_id,

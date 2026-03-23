@@ -29,6 +29,10 @@ Environment variables:
                                           (default: 100)
   NOETL_COMMAND_REAPER_LOOKBACK_HOURS   - how far back to scan for issued commands
                                           (default: 24)
+  NOETL_COMMAND_REAPER_PENDING_RETRY_SECONDS
+                                        - how long an unclaimed pending command
+                                          may sit before being re-published
+                                          (default: 60)
 """
 
 from __future__ import annotations

@@ -58,3 +58,37 @@ async def test_publish_command_reconnects_and_retries_after_failure(monkeypatch)
 
     assert ensure_calls == [False, True]
     assert len(second_js.published) == 1
+
+
+@pytest.mark.asyncio
+async def test_ensure_connected_resets_stale_client_before_reconnect(monkeypatch):
+    publisher = NATSCommandPublisher(
+        nats_url="nats://example",
+        subject="commands",
+        stream_name="NOETL_COMMANDS",
+    )
+    stale_nc = _FakeNC()
+    stale_nc.is_connected = False
+    publisher._nc = stale_nc
+    publisher._js = _FakeJetStream(fail=False)
+
+    reset_calls = []
+    connect_calls = []
+
+    async def _fake_reset():
+        reset_calls.append(True)
+        publisher._nc = None
+        publisher._js = None
+
+    async def _fake_connect():
+        connect_calls.append(True)
+        publisher._nc = _FakeNC()
+        publisher._js = _FakeJetStream(fail=False)
+
+    monkeypatch.setattr(publisher, "_reset_connection_state", _fake_reset)
+    monkeypatch.setattr(publisher, "connect", _fake_connect)
+
+    await publisher.ensure_connected()
+
+    assert reset_calls == [True]
+    assert connect_calls == [True]
