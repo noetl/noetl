@@ -248,19 +248,23 @@ const Execution: React.FC = () => {
     }
   };
 
+  const normalizeStatus = (status?: string | null) => (status || "").toLowerCase();
+
   const getStatusColor = (status: string) => {
-    switch (status?.toLowerCase()) {
+    switch (normalizeStatus(status)) {
       case "completed":
         return "green";
       case "failed":
         return "red";
+      case "pending":
+        return "orange";
       default:
         return "blue";
     }
   };
 
   const getStatusText = (status: string) => {
-    switch (status) {
+    switch (normalizeStatus(status)) {
       case "running":
         return "Running";
       case "completed":
@@ -733,10 +737,10 @@ const Execution: React.FC = () => {
                 size="small"
               >
                 <TabPane tab="All Events" key="all" />
-                <TabPane tab={`Running (${executions.filter(e => e.status === "running").length})`} key="running" />
-                <TabPane tab={`Pending (${executions.filter(e => e.status === "pending").length})`} key="pending" />
-                <TabPane tab={`Completed (${executions.filter(e => e.status === "completed").length})`} key="completed" />
-                <TabPane tab={`Failed (${executions.filter(e => e.status === "failed").length})`} key="failed" />
+                <TabPane tab={`Running (${executions.filter(e => normalizeStatus(e.status) === "running").length})`} key="running" />
+                <TabPane tab={`Pending (${executions.filter(e => normalizeStatus(e.status) === "pending").length})`} key="pending" />
+                <TabPane tab={`Completed (${executions.filter(e => normalizeStatus(e.status) === "completed").length})`} key="completed" />
+                <TabPane tab={`Failed (${executions.filter(e => normalizeStatus(e.status) === "failed").length})`} key="failed" />
               </Tabs>
 
               {/* Additional Filters */}
