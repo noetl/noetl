@@ -100,6 +100,19 @@ class _ConnectionFactory:
         return _ConnCtx(self._connections.pop(0))
 
 
+class _FakeStateStore:
+    def __init__(self, state):
+        self._state = state
+
+    def get_state(self, _execution_id):
+        return self._state
+
+
+class _FakeEngine:
+    def __init__(self, state):
+        self.state_store = _FakeStateStore(state)
+
+
 def _request(query_string: str = "") -> Request:
     return Request(
         {
@@ -469,5 +482,60 @@ async def test_get_execution_omits_events_by_default(monkeypatch):
 
     assert result["events_included"] is False
     assert result["events"] == []
+    assert result["pagination"] is None
+    assert result["events_endpoint"] == "/api/executions/588587201076658363/events"
+
+
+@pytest.mark.asyncio
+async def test_get_execution_events_rejects_non_numeric_execution_id():
+    with pytest.raises(execution_api.HTTPException) as excinfo:
+        await execution_api.get_execution_events("not-a-number")
+    assert excinfo.value.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_get_execution_fallback_matches_summary_first_shape(monkeypatch):
+    state = type(
+        "State",
+        (),
+        {
+            "playbook": None,
+            "failed": False,
+            "completed": False,
+            "parent_execution_id": None,
+        },
+    )()
+
+    class _NoEventsCursor:
+        async def execute(self, _query, _params=None):
+            return None
+
+        async def fetchone(self):
+            return None
+
+    monkeypatch.setattr(execution_api, "get_v2_engine", lambda: _FakeEngine(state))
+    monkeypatch.setattr(
+        execution_api,
+        "get_pool_connection",
+        lambda: _ConnCtx(_FakeConn(_NoEventsCursor())),
+    )
+
+    result = await execution_api.get_execution(
+        _request(),
+        "588587201076658363",
+        page=1,
+        page_size=100,
+        since_event_id=None,
+        event_type=None,
+        node_name=None,
+        event_status=None,
+        search=None,
+        include_events=None,
+        include_payloads=False,
+        payload_max_chars=1024,
+    )
+
+    assert result["events"] == []
+    assert result["events_included"] is False
     assert result["pagination"] is None
     assert result["events_endpoint"] == "/api/executions/588587201076658363/events"

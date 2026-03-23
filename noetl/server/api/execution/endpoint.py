@@ -378,6 +378,13 @@ def _default_validation_commands(path: str, version: Any) -> tuple[list[str], li
     return dry_run_commands, test_commands
 
 
+def _parse_execution_id_or_404(execution_id: str) -> int:
+    try:
+        return int(execution_id)
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=404, detail=f"Execution {execution_id} not found")
+
+
 def _should_include_execution_events(request: Request, include_events: Optional[bool]) -> bool:
     if include_events is not None:
         return include_events
@@ -1137,11 +1144,12 @@ async def get_execution_events(
     include_payloads: bool = Query(default=False, description="Include full context/result payloads"),
     payload_max_chars: int = Query(default=1024, ge=128, le=20000, description="Excerpt size when payloads are omitted"),
 ):
+    execution_id_int = _parse_execution_id_or_404(execution_id)
     async with get_pool_connection() as conn:
         async with conn.cursor(row_factory=dict_row) as cursor:
             events, pagination = await _load_execution_event_page(
                 cursor,
-                execution_id=execution_id,
+                execution_id=execution_id_int,
                 page=page,
                 page_size=page_size,
                 since_event_id=since_event_id,
@@ -1182,6 +1190,7 @@ async def get_execution(
     Use `include_events=true` or the dedicated `/executions/{execution_id}/events`
     endpoint for paginated event history.
     """
+    execution_id_int = _parse_execution_id_or_404(execution_id)
     resolved_include_events = _should_include_execution_events(request, include_events)
     async with get_pool_connection() as conn:
         async with conn.cursor(row_factory=dict_row) as cursor:
@@ -1190,7 +1199,7 @@ async def get_execution(
             if resolved_include_events:
                 events, pagination = await _load_execution_event_page(
                     cursor,
-                    execution_id=execution_id,
+                    execution_id=execution_id_int,
                     page=page,
                     page_size=page_size,
                     since_event_id=since_event_id,
@@ -1269,14 +1278,19 @@ async def get_execution(
                         "duration_human": None,
                         "parent_execution_id": state.parent_execution_id,
                         "events": [],
+                        "events_included": resolved_include_events,
                         "pagination": {
                             "page": 1,
                             "page_size": page_size,
                             "total_events": 0,
                             "total_pages": 1,
                             "has_next": False,
-                            "has_prev": False
-                        }
+                            "has_prev": False,
+                            "since_event_id": since_event_id,
+                            "include_payloads": include_payloads,
+                            "payload_max_chars": payload_max_chars if not include_payloads else None,
+                        } if resolved_include_events else None,
+                        "events_endpoint": f"/api/executions/{execution_id}/events",
                     }
             except Exception as e:
                 logger.warning(f"V2 engine fallback failed for execution {execution_id}: {e}")

@@ -41,7 +41,7 @@ def _load_suppressed_access_paths() -> tuple[str, ...]:
 
 def _load_uvicorn_workers() -> int:
     raw = os.getenv("NOETL_SERVER_WORKERS", "").strip()
-    default_workers = 2 if (os.cpu_count() or 1) > 1 else 1
+    default_workers = 1
     if not raw:
         return default_workers
     try:
@@ -125,15 +125,16 @@ def main():
         }
 
         if workers > 1:
-            uvicorn.run(
-                "noetl.server.app:create_app",
-                factory=True,
-                workers=workers,
-                **uvicorn_kwargs,
+            logging.getLogger(__name__).warning(
+                "Configured uvicorn workers=%s, but NoETL server must run with a "
+                "single worker to avoid duplicating background tasks. Forcing workers=1.",
+                workers,
             )
-        else:
-            app = create_app()
-            uvicorn.run(app, **uvicorn_kwargs)
+            workers = 1
+
+        uvicorn_kwargs["workers"] = workers
+        app = create_app()
+        uvicorn.run(app, **uvicorn_kwargs)
     except KeyboardInterrupt:
         print("\nServer stopped by user")
         sys.exit(0)
