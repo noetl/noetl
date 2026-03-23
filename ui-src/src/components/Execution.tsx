@@ -274,10 +274,24 @@ const Execution: React.FC = () => {
     }
   };
 
-  const formatDuration = (startTime: string, endTime?: string) => {
-    const start = moment(startTime);
-    const end = endTime ? moment(endTime) : moment();
-    const duration = moment.duration(end.diff(start));
+  const formatDuration = (record: ExecutionData) => {
+    if (record.duration_human) {
+      return record.duration_human;
+    }
+
+    if (!record.start_time) {
+      return "-";
+    }
+
+    const start = moment(record.start_time);
+    const end = record.end_time ? moment(record.end_time) : moment();
+
+    if (!start.isValid() || !end.isValid()) {
+      return "-";
+    }
+
+    const diffMs = Math.max(0, end.diff(start));
+    const duration = moment.duration(diffMs);
 
     if (duration.asSeconds() < 1) {
       return `${Math.round(duration.asMilliseconds())}ms`;
@@ -589,8 +603,7 @@ const Execution: React.FC = () => {
     {
       title: "Duration",
       key: "duration",
-      render: (record: ExecutionData) =>
-        formatDuration(record.start_time, record.end_time),
+      render: (record: ExecutionData) => formatDuration(record),
     },
     {
       title: "Actions",
