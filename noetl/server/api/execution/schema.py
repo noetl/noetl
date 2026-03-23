@@ -28,6 +28,8 @@ class ExecutionEntryResponse(AppBaseModel):
     status: str = Field(..., description="Execution status (COMPLETED, RUNNING, FAILED, etc.)")
     start_time: datetime = Field(..., description="Execution start timestamp")
     end_time: Optional[datetime] = Field(None, description="Execution end timestamp (null if still running)")
+    duration_seconds: Optional[float] = Field(None, description="Execution duration in seconds")
+    duration_human: Optional[str] = Field(None, description="Human-readable execution duration")
     progress: int = Field(..., ge=0, le=100, description="Execution progress percentage (0-100)")
     result: Optional[Dict[str, Any]] = Field(None, description="Execution results with command outputs")
     error: Optional[str] = Field(None, description="Error message if execution failed")

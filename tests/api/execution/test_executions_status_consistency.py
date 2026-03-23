@@ -137,11 +137,21 @@ async def test_get_executions_normalizes_non_terminal_completed_to_running(monke
         "get_pool_connection",
         lambda: _ConnCtx(_FakeConn(_FakeCursor(rows))),
     )
+    async def fake_pending_counts(cursor, execution_ids):  # noqa: ARG001
+        return {"123": 1}
+
+    monkeypatch.setattr(
+        execution_api,
+        "_fetch_pending_command_counts_for_executions",
+        fake_pending_counts,
+    )
 
     result = await execution_api.get_executions()
     assert len(result) == 1
     assert result[0].status == "RUNNING"
     assert result[0].end_time is None
+    assert result[0].duration_seconds is not None
+    assert result[0].duration_human is not None
 
 
 @pytest.mark.asyncio
@@ -168,6 +178,49 @@ async def test_get_executions_keeps_terminal_completed(monkeypatch):
         execution_api,
         "get_pool_connection",
         lambda: _ConnCtx(_FakeConn(_FakeCursor(rows))),
+    )
+
+    result = await execution_api.get_executions()
+    assert len(result) == 1
+    assert result[0].status == "COMPLETED"
+    assert result[0].end_time == now
+    assert result[0].duration_seconds == 0.0
+    assert result[0].duration_human == "0s"
+
+
+@pytest.mark.asyncio
+async def test_get_executions_infers_completed_from_batch_done_without_pending(monkeypatch):
+    now = datetime(2026, 3, 21, 7, 0, 0, tzinfo=timezone.utc)
+    rows = [
+        {
+            "execution_id": "123",
+            "catalog_id": "321",
+            "event_type": "batch.completed",
+            "node_name": "events.batch",
+            "status": "COMPLETED",
+            "derived_event_type": "batch.completed",
+            "start_time": now,
+            "end_time": now,
+            "result": None,
+            "error": None,
+            "parent_execution_id": None,
+            "path": "bhs/state_report_generation_prod_v10",
+            "version": 1,
+        }
+    ]
+
+    monkeypatch.setattr(
+        execution_api,
+        "get_pool_connection",
+        lambda: _ConnCtx(_FakeConn(_FakeCursor(rows))),
+    )
+    async def fake_pending_counts(cursor, execution_ids):  # noqa: ARG001
+        return {"123": 0}
+
+    monkeypatch.setattr(
+        execution_api,
+        "_fetch_pending_command_counts_for_executions",
+        fake_pending_counts,
     )
 
     result = await execution_api.get_executions()

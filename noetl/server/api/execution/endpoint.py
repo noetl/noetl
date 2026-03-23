@@ -177,6 +177,53 @@ async def _fetch_execution_events_page(
     }
 
 
+async def _fetch_pending_command_counts_for_executions(
+    cursor,
+    execution_ids: list[str],
+) -> dict[str, int]:
+    if not execution_ids:
+        return {}
+
+    await cursor.execute(
+        """
+        WITH target_executions AS (
+            SELECT unnest(%s::text[]) AS execution_id
+        ),
+        issued AS (
+            SELECT
+                te.execution_id,
+                COALESCE(e.meta->>'command_id', e.result->'data'->>'command_id') AS command_id
+            FROM target_executions te
+            JOIN noetl.event e
+              ON e.execution_id::text = te.execution_id
+            WHERE e.event_type = 'command.issued'
+              AND COALESCE(e.meta->>'command_id', e.result->'data'->>'command_id') IS NOT NULL
+        ),
+        terminal AS (
+            SELECT
+                te.execution_id,
+                COALESCE(e.meta->>'command_id', e.result->'data'->>'command_id') AS command_id
+            FROM target_executions te
+            JOIN noetl.event e
+              ON e.execution_id::text = te.execution_id
+            WHERE e.event_type IN ('command.completed', 'command.failed', 'command.cancelled')
+              AND COALESCE(e.meta->>'command_id', e.result->'data'->>'command_id') IS NOT NULL
+        ),
+        pending AS (
+            SELECT execution_id, command_id FROM issued
+            EXCEPT
+            SELECT execution_id, command_id FROM terminal
+        )
+        SELECT execution_id, COUNT(*) AS pending_count
+        FROM pending
+        GROUP BY execution_id
+        """,
+        (execution_ids,),
+    )
+    rows = await cursor.fetchall()
+    return {str(row["execution_id"]): int(row["pending_count"] or 0) for row in rows}
+
+
 def _truncate_text(value: Optional[str], max_len: int = 600) -> Optional[str]:
     if value is None:
         return None
@@ -755,6 +802,7 @@ async def get_executions():
                             re.parent_execution_id,
                             re.start_time,
                             le.event_type,
+                            le.node_name,
                             le.status,
                             le.created_at AS end_time,
                             le.error
@@ -762,6 +810,7 @@ async def get_executions():
                         JOIN LATERAL (
                             SELECT
                                 e.event_type,
+                                e.node_name,
                                 e.status,
                                 e.created_at,
                                 e.error
@@ -798,6 +847,7 @@ async def get_executions():
                         le.execution_id,
                         le.catalog_id,
                         le.event_type,
+                        le.node_name,
                         COALESCE(lte.terminal_status, le.status) AS status,
                         COALESCE(lte.terminal_event_type, le.event_type) AS derived_event_type,
                         le.start_time,
@@ -813,6 +863,16 @@ async def get_executions():
                     ORDER BY le.start_time DESC
                 """)
                 rows = await cursor.fetchall()
+                candidate_execution_ids = [
+                    str(row["execution_id"])
+                    for row in rows
+                    if row.get("derived_event_type") == "batch.completed"
+                    and str(row.get("status") or "").upper() == "COMPLETED"
+                ]
+                pending_counts = await _fetch_pending_command_counts_for_executions(
+                    cursor,
+                    candidate_execution_ids,
+                )
             except Exception as exc:
                 logger.error("Failed to load executions list: %s", exc)
                 raise HTTPException(
@@ -821,15 +881,38 @@ async def get_executions():
                 ) from exc
             resp = []
             for row_dict in rows:
-                derived_status = _derive_execution_terminal_status(
-                    {
-                        "event_type": row_dict.get("derived_event_type"),
+                pending_count = pending_counts.get(str(row_dict["execution_id"]), 0)
+                latest_event = {
+                    "event_type": row_dict.get("event_type"),
+                    "node_name": row_dict.get("node_name"),
+                    "created_at": row_dict.get("end_time"),
+                    "status": row_dict.get("status"),
+                }
+                terminal_event = None
+                derived_event_type = row_dict.get("derived_event_type")
+                if derived_event_type in {
+                    "execution.cancelled",
+                    "playbook.failed",
+                    "workflow.failed",
+                    "command.failed",
+                    "playbook.completed",
+                    "workflow.completed",
+                }:
+                    terminal_event = {
+                        "event_type": derived_event_type,
+                        "created_at": row_dict.get("end_time"),
                         "status": row_dict.get("status"),
                     }
+                derived_status, inferred_end_time = _infer_execution_completion_from_events(
+                    latest_event,
+                    terminal_event,
+                    pending_count,
                 )
                 # Non-terminal latest events can be status=COMPLETED (e.g. batch.completed)
                 # while the execution is still active; keep these as RUNNING.
-                response_end_time = row_dict["end_time"] if derived_status != "RUNNING" else None
+                response_end_time = inferred_end_time if derived_status != "RUNNING" else None
+                duration_end = response_end_time or datetime.now(timezone.utc)
+                duration_seconds = _duration_seconds(row_dict["start_time"], duration_end)
                 resp.append(ExecutionEntryResponse(
                     execution_id=row_dict["execution_id"],
                     catalog_id=row_dict["catalog_id"],
@@ -838,6 +921,8 @@ async def get_executions():
                     status=derived_status,
                     start_time=row_dict["start_time"],
                     end_time=response_end_time,
+                    duration_seconds=round(duration_seconds, 3) if duration_seconds is not None else None,
+                    duration_human=_format_duration_human(duration_seconds),
                     progress=0,  # Not in query, needs to be computed
                     result=row_dict["result"],
                     error=row_dict["error"],
