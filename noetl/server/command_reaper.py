@@ -39,6 +39,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+from datetime import datetime, timedelta, timezone
 
 from psycopg.rows import dict_row
 
@@ -48,11 +49,13 @@ from noetl.core.urls import normalize_server_base_url
 
 logger = setup_logger(__name__, include_location=True)
 
-_TERMINAL_COMMAND_EVENT_TYPES = (
+_TERMINAL_COMMAND_EVENT_TYPES = [
     "command.completed",
     "command.failed",
     "command.cancelled",
-)
+]
+_SNOWFLAKE_EPOCH_MS = 1704067200000
+_SNOWFLAKE_TIMESTAMP_SHIFT = 23
 
 _REAPER_ENABLED = os.getenv("NOETL_COMMAND_REAPER_ENABLED", "true").strip().lower() in {
     "1", "true", "yes", "on"
@@ -78,6 +81,13 @@ def get_reaper_interval_seconds() -> float:
     return _REAPER_INTERVAL_SECONDS
 
 
+def _min_execution_id_for_lookback_hours(lookback_hours: int) -> int:
+    cutoff = datetime.now(timezone.utc) - timedelta(hours=lookback_hours)
+    cutoff_ms = int(cutoff.timestamp() * 1000)
+    elapsed_ms = max(0, cutoff_ms - _SNOWFLAKE_EPOCH_MS)
+    return elapsed_ms << _SNOWFLAKE_TIMESTAMP_SHIFT
+
+
 async def _find_orphaned_commands(
     stale_seconds: float,
     lookback_hours: int,
@@ -91,6 +101,7 @@ async def _find_orphaned_commands(
     """
     async with get_pool_connection(timeout=5.0) as conn:
         async with conn.cursor(row_factory=dict_row) as cur:
+            min_execution_id = _min_execution_id_for_lookback_hours(lookback_hours)
             await cur.execute(
                 """
                 WITH latest_claims AS (
@@ -123,6 +134,7 @@ async def _find_orphaned_commands(
                     ON  r.name = claims.worker_id
                     AND r.kind = 'worker_pool'
                 WHERE
+                    issued.execution_id >= %s
                     -- Worker is gone or heartbeat is stale
                     (   r.name IS NULL
                         OR r.status != 'ready'
@@ -147,7 +159,7 @@ async def _find_orphaned_commands(
                 ORDER BY issued.event_id
                 LIMIT %s
                 """,
-                (lookback_hours, stale_seconds, _TERMINAL_COMMAND_EVENT_TYPES, max_commands),
+                (lookback_hours, min_execution_id, stale_seconds, _TERMINAL_COMMAND_EVENT_TYPES, max_commands),
             )
             rows = await cur.fetchall()
     return list(rows or [])
@@ -159,13 +171,15 @@ async def _find_unclaimed_pending_commands(
     max_commands: int,
 ) -> list[dict]:
     """
-    Return commands that were issued but never claimed nor completed.
+    Return commands that were issued but never claimed nor reached a terminal
+    command state.
 
     These commands can be stranded when command.issued was committed but the
     NATS publish failed before workers were notified.
     """
     async with get_pool_connection(timeout=5.0) as conn:
         async with conn.cursor(row_factory=dict_row) as cur:
+            min_execution_id = _min_execution_id_for_lookback_hours(lookback_hours)
             await cur.execute(
                 """
                 SELECT
@@ -175,6 +189,7 @@ async def _find_unclaimed_pending_commands(
                     issued.node_name AS step
                 FROM noetl.event issued
                 WHERE issued.event_type = 'command.issued'
+                  AND issued.execution_id >= %s
                   AND issued.meta->>'command_id' IS NOT NULL
                   AND issued.created_at > NOW() - (%s * INTERVAL '1 hour')
                   AND issued.created_at < NOW() - (%s * INTERVAL '1 second')
@@ -204,7 +219,7 @@ async def _find_unclaimed_pending_commands(
                 ORDER BY issued.event_id
                 LIMIT %s
                 """,
-                (lookback_hours, pending_retry_seconds, _TERMINAL_COMMAND_EVENT_TYPES, max_commands),
+                (min_execution_id, lookback_hours, pending_retry_seconds, _TERMINAL_COMMAND_EVENT_TYPES, max_commands),
             )
             rows = await cur.fetchall()
     return list(rows or [])

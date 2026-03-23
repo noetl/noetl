@@ -57,6 +57,7 @@ async def test_find_orphaned_commands_sql_handles_meta_and_result_command_ids(mo
         return _FakeConnCtx(conn)
 
     monkeypatch.setattr(command_reaper, "get_pool_connection", _fake_get_pool_connection)
+    monkeypatch.setattr(command_reaper, "_min_execution_id_for_lookback_hours", lambda hours: 123456 if hours == 24 else 0)
 
     result = await command_reaper._find_orphaned_commands(
         stale_seconds=90.0,
@@ -65,12 +66,13 @@ async def test_find_orphaned_commands_sql_handles_meta_and_result_command_ids(mo
     )
 
     assert result == rows
-    assert cursor.params == (24, 90.0, command_reaper._TERMINAL_COMMAND_EVENT_TYPES, 50)
+    assert cursor.params == (24, 123456, 90.0, command_reaper._TERMINAL_COMMAND_EVENT_TYPES, 50)
 
     sql = cursor.query
     assert "COALESCE(meta->>'command_id', result->'data'->>'command_id')" in sql
     assert "t.result->'data'->>'command_id' = claims.command_id" in sql
     assert "t.event_type = ANY(%s)" in sql
+    assert "issued.execution_id >= %s" in sql
 
 
 @pytest.mark.asyncio
@@ -83,6 +85,7 @@ async def test_find_unclaimed_pending_commands_sql_filters_claimed_and_terminal(
         return _FakeConnCtx(conn)
 
     monkeypatch.setattr(command_reaper, "get_pool_connection", _fake_get_pool_connection)
+    monkeypatch.setattr(command_reaper, "_min_execution_id_for_lookback_hours", lambda hours: 222222 if hours == 24 else 0)
 
     result = await command_reaper._find_unclaimed_pending_commands(
         pending_retry_seconds=60.0,
@@ -91,12 +94,13 @@ async def test_find_unclaimed_pending_commands_sql_filters_claimed_and_terminal(
     )
 
     assert result == rows
-    assert cursor.params == (24, 60.0, command_reaper._TERMINAL_COMMAND_EVENT_TYPES, 50)
+    assert cursor.params == (222222, 24, 60.0, command_reaper._TERMINAL_COMMAND_EVENT_TYPES, 50)
 
     sql = cursor.query
     assert "issued.event_type = 'command.issued'" in sql
     assert "claims.event_type = 'command.claimed'" in sql
     assert "terminal.event_type = ANY(%s)" in sql
+    assert "issued.execution_id >= %s" in sql
 
 
 @pytest.mark.asyncio
