@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.10.30](https://github.com/noetl/noetl/compare/v2.10.29...v2.10.30) (2026-03-23)
+
+### Bug Fixes
+
+* harden nats publish recovery logging and reaper capacity ([2a6ef6d](https://github.com/noetl/noetl/commit/2a6ef6d340f55b3a7216fd52a4790385ea5f2057))
+* preserve reaper recovery for long-running executions ([b6c4810](https://github.com/noetl/noetl/commit/b6c481068ce8bcfa92342b4a27c1b3b2b09383ec))
+* prune reaper event scans by execution id window ([def791b](https://github.com/noetl/noetl/commit/def791b99504c034aa9764ad1d3650430953324a))
+* recover stranded commands after nats publish interruptions ([cb98d38](https://github.com/noetl/noetl/commit/cb98d383655a141a7cbb17403d1307cdf97d40bf))
+* reduce nats publish lock contention and unify reaper terminal events ([06894a2](https://github.com/noetl/noetl/commit/06894a2f390b055eaa2d366b2b72da92fc2b91df))
+* reset stale nats publisher state before reconnect ([0d320cb](https://github.com/noetl/noetl/commit/0d320cb0f461d8fad3efa5da65d0f8e0a7867e49))
+
 ## [2.10.29](https://github.com/noetl/noetl/compare/v2.10.28...v2.10.29) (2026-03-23)
 
 ### Bug Fixes
