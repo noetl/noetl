@@ -757,6 +757,48 @@ class StateStore:
         # No need to persist to workload table - it's redundant with event log
         # Just keep in memory cache for performance
         logger.debug(f"State cached in memory for execution {state.execution_id}")
+
+    async def should_refresh_cached_state(
+        self,
+        execution_id: str,
+        last_event_id: Optional[int],
+        *,
+        allowed_missing_events: int = 1,
+    ) -> bool:
+        """Return True when cached state is older than the persisted event stream.
+
+        When API/event ingestion persists the current event before calling the engine,
+        a healthy local cache should lag by at most that single event. If more than one
+        newer event exists in Postgres, another server advanced the execution and the
+        local in-memory snapshot is stale.
+        """
+        if last_event_id is None:
+            return True
+
+        async with get_pool_connection() as conn:
+            async with conn.cursor(row_factory=dict_row) as cur:
+                await cur.execute(
+                    """
+                    SELECT COUNT(*)::int AS newer_count, MAX(event_id) AS latest_event_id
+                    FROM noetl.event
+                    WHERE execution_id = %s AND event_id > %s
+                    """,
+                    (int(execution_id), int(last_event_id)),
+                )
+                row = await cur.fetchone()
+
+        newer_count = int((row or {}).get("newer_count", 0) or 0)
+        latest_event_id = (row or {}).get("latest_event_id")
+        refresh = newer_count > max(0, allowed_missing_events)
+        if refresh:
+            logger.warning(
+                "[STATE-CACHE-STALE] execution_id=%s last_event_id=%s latest_event_id=%s newer_count=%s",
+                execution_id,
+                last_event_id,
+                latest_event_id,
+                newer_count,
+            )
+        return refresh
     
     async def load_state(self, execution_id: str) -> Optional[ExecutionState]:
         """Load execution state from memory or reconstruct from events."""
@@ -853,7 +895,7 @@ class StateStore:
                 
                 # Replay events to rebuild state (event sourcing)
                 await cur.execute("""
-                    SELECT node_name, event_type, result, meta
+                    SELECT event_id, node_name, event_type, result, meta
                     FROM noetl.event
                     WHERE execution_id = %s
                     ORDER BY event_id
@@ -871,15 +913,22 @@ class StateStore:
                 
                 for row in rows:
                     if isinstance(row, dict):
+                        event_id = row.get("event_id")
                         node_name = row.get("node_name")
                         event_type = row.get("event_type")
                         result_data = row.get("result")
                         meta_data = row.get("meta")
                     else:
-                        node_name = row[0]
-                        event_type = row[1]
-                        result_data = row[2]
-                        meta_data = row[3] if len(row) > 3 else None
+                        event_id = row[0]
+                        node_name = row[1]
+                        event_type = row[2]
+                        result_data = row[3]
+                        meta_data = row[4] if len(row) > 4 else None
+
+                    if event_id is not None:
+                        state.last_event_id = int(event_id)
+                        if isinstance(node_name, str) and node_name:
+                            state.step_event_ids[node_name] = int(event_id)
 
                     # Track issued commands for pending detection (race condition fix)
                     if event_type == 'command.issued':
@@ -3203,7 +3252,24 @@ class ControlFlowEngine:
         commands: list[Command] = []
         normalized_payload = _unwrap_event_payload(event.payload)
         
-        # Load execution state (from memory cache or reconstruct from events)
+        # Load execution state. For already-persisted events we must guard against
+        # stale per-pod memory snapshots when another server advanced this execution.
+        if already_persisted:
+            cached_state = self.state_store.get_state(event.execution_id)
+            if (
+                cached_state
+                and cached_state.last_event_id is not None
+                and await self.state_store.should_refresh_cached_state(
+                    event.execution_id,
+                    cached_state.last_event_id,
+                    allowed_missing_events=1,
+                )
+            ):
+                await self.state_store.invalidate_state(
+                    event.execution_id,
+                    reason="stale_cache_newer_persisted_events",
+                )
+
         state = await self.state_store.load_state(event.execution_id)
         if not state:
             logger.error(f"Execution state not found: {event.execution_id}")
