@@ -20,9 +20,11 @@ class _FakeCursor:
     def __init__(self, rows):
         self._rows = rows
         self._query = ""
+        self._params = None
 
     async def execute(self, query, _params=None):
         self._query = query
+        self._params = _params
 
     async def fetchall(self):
         return self._rows
@@ -227,6 +229,40 @@ async def test_get_executions_infers_completed_from_batch_done_without_pending(m
     assert len(result) == 1
     assert result[0].status == "COMPLETED"
     assert result[0].end_time == now
+
+
+@pytest.mark.asyncio
+async def test_get_executions_applies_page_size_and_offset(monkeypatch):
+    now = datetime(2026, 3, 21, 7, 0, 0, tzinfo=timezone.utc)
+    rows = [
+        {
+            "execution_id": "123",
+            "catalog_id": "321",
+            "event_type": "playbook.completed",
+            "node_name": "end",
+            "status": "COMPLETED",
+            "derived_event_type": "playbook.completed",
+            "start_time": now,
+            "end_time": now,
+            "result": None,
+            "error": None,
+            "parent_execution_id": None,
+            "path": "tests/example",
+            "version": 1,
+        }
+    ]
+    cursor = _FakeCursor(rows)
+
+    monkeypatch.setattr(
+        execution_api,
+        "get_pool_connection",
+        lambda: _ConnCtx(_FakeConn(cursor)),
+    )
+
+    result = await execution_api.get_executions(page=2, page_size=25)
+
+    assert len(result) == 1
+    assert cursor._params == {"limit": 25, "offset": 25}
 
 
 @pytest.mark.asyncio
