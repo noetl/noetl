@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.10.20](https://github.com/noetl/noetl/compare/v2.10.19...v2.10.20) (2026-03-23)
+
+### Bug Fixes
+
+* keep repeated batch executions running until all commands finish ([1127650](https://github.com/noetl/noetl/commit/11276500db9c3361bfc57c4ead9b17bc7e1e967d))
+* share pending command query across execution endpoints ([8edbd32](https://github.com/noetl/noetl/commit/8edbd32d3bc069f78346d7573fbe822a685d4e37))
+
 ## [2.10.19](https://github.com/noetl/noetl/compare/v2.10.18...v2.10.19) (2026-03-22)
 
 ### Bug Fixes
