@@ -2484,15 +2484,17 @@ async def get_execution_status(execution_id: str, full: bool = False):
                     """, (exec_id_int,))
                     terminal_event = await cur.fetchone()
 
-                    await cur.execute("""
-                        SELECT node_name
-                        FROM noetl.event
-                        WHERE execution_id = %s
-                          AND event_type = 'step.exit'
-                          AND status = 'COMPLETED'
-                        ORDER BY event_id ASC
-                    """, (exec_id_int,))
-                    step_rows = await cur.fetchall()
+                    step_rows = []
+                    if full:
+                        await cur.execute("""
+                            SELECT node_name
+                            FROM noetl.event
+                            WHERE execution_id = %s
+                              AND event_type = 'step.exit'
+                              AND status = 'COMPLETED'
+                            ORDER BY event_id ASC
+                        """, (exec_id_int,))
+                        step_rows = await cur.fetchall()
 
                     pending_row = {"pending_count": 0}
                     should_check_pending_commands = (
@@ -2538,13 +2540,14 @@ async def get_execution_status(execution_id: str, full: bool = False):
                 failed = False
 
             completed_steps: list[str] = []
-            seen_steps: set[str] = set()
-            for row in step_rows or []:
-                step_name = row.get("node_name")
-                if not step_name or step_name in seen_steps:
-                    continue
-                seen_steps.add(step_name)
-                completed_steps.append(step_name)
+            if full:
+                seen_steps: set[str] = set()
+                for row in step_rows or []:
+                    step_name = row.get("node_name")
+                    if not step_name or step_name in seen_steps:
+                        continue
+                    seen_steps.add(step_name)
+                    completed_steps.append(step_name)
 
             fallback_variables: dict[str, Any] = {}
             duration = _duration_fields(

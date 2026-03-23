@@ -6,7 +6,7 @@ from collections import Counter, defaultdict
 from datetime import datetime, timezone
 from typing import Any, Optional
 from urllib.parse import quote
-from fastapi import APIRouter, HTTPException, Body, Query
+from fastapi import APIRouter, HTTPException, Body, Query, Request
 from fastapi.responses import JSONResponse
 from psycopg.rows import dict_row
 from psycopg.types.json import Json
@@ -36,6 +36,18 @@ except Exception:  # pragma: no cover
 
 logger = setup_logger(__name__, include_location=True)
 router = APIRouter(tags=["executions"])
+
+_EXECUTION_EVENT_QUERY_PARAM_NAMES = {
+    "page",
+    "page_size",
+    "since_event_id",
+    "event_type",
+    "node_name",
+    "event_status",
+    "search",
+    "include_payloads",
+    "payload_max_chars",
+}
 
 
 def _as_iso(value: Optional[datetime]) -> Optional[str]:
@@ -364,6 +376,177 @@ def _default_validation_commands(path: str, version: Any) -> tuple[list[str], li
         "pytest -q",
     ]
     return dry_run_commands, test_commands
+
+
+def _should_include_execution_events(request: Request, include_events: Optional[bool]) -> bool:
+    if include_events is not None:
+        return include_events
+    return any(name in request.query_params for name in _EXECUTION_EVENT_QUERY_PARAM_NAMES)
+
+
+def _build_execution_event_filters(
+    execution_id: str,
+    since_event_id: Optional[int],
+    event_type: Optional[str],
+    node_name: Optional[str],
+    event_status: Optional[str],
+    search: Optional[str],
+) -> tuple[str, dict[str, Any]]:
+    where_clauses = ["execution_id = %(execution_id)s"]
+    params: dict[str, Any] = {"execution_id": execution_id}
+
+    if since_event_id is not None:
+        where_clauses.append("event_id > %(since_event_id)s")
+        params["since_event_id"] = since_event_id
+
+    if event_type:
+        where_clauses.append("event_type = %(event_type)s")
+        params["event_type"] = event_type
+
+    if node_name:
+        where_clauses.append("node_name = %(node_name)s")
+        params["node_name"] = node_name
+
+    if event_status:
+        where_clauses.append("status = %(event_status)s")
+        params["event_status"] = event_status
+
+    if search:
+        where_clauses.append(
+            "("
+            "COALESCE(node_name, '') ILIKE %(search)s OR "
+            "COALESCE(event_type, '') ILIKE %(search)s OR "
+            "COALESCE(error, '') ILIKE %(search)s"
+            ")"
+        )
+        params["search"] = f"%{search}%"
+
+    return " AND ".join(where_clauses), params
+
+
+async def _load_execution_event_page(
+    cursor,
+    *,
+    execution_id: str,
+    page: int,
+    page_size: int,
+    since_event_id: Optional[int],
+    event_type: Optional[str],
+    node_name: Optional[str],
+    event_status: Optional[str],
+    search: Optional[str],
+    include_payloads: bool,
+    payload_max_chars: int,
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    where_sql, params = _build_execution_event_filters(
+        execution_id=execution_id,
+        since_event_id=since_event_id,
+        event_type=event_type,
+        node_name=node_name,
+        event_status=event_status,
+        search=search,
+    )
+
+    await cursor.execute(
+        f"""
+        SELECT COUNT(*) AS total
+        FROM noetl.event
+        WHERE {where_sql}
+        """,
+        params,
+    )
+    count_row = await cursor.fetchone()
+    total_events = count_row["total"] if count_row else 0
+    total_pages = (total_events + page_size - 1) // page_size if total_events > 0 else 1
+    offset = (page - 1) * page_size
+
+    params["page_size"] = page_size
+    params["offset"] = offset
+    params["payload_max_chars"] = payload_max_chars
+
+    if include_payloads:
+        payload_select = """
+            context,
+            result,
+            error
+        """
+    else:
+        payload_select = """
+            NULL::jsonb AS context,
+            NULL::jsonb AS result,
+            NULL::text AS error,
+            CASE WHEN context IS NULL THEN NULL ELSE LEFT(context::text, %(payload_max_chars)s) END AS context_excerpt,
+            CASE WHEN result IS NULL THEN NULL ELSE LEFT(result::text, %(payload_max_chars)s) END AS result_excerpt,
+            CASE WHEN error IS NULL THEN NULL ELSE LEFT(error, %(payload_max_chars)s) END AS error_excerpt,
+            context IS NOT NULL AS has_context,
+            result IS NOT NULL AS has_result,
+            error IS NOT NULL AS has_error
+        """
+
+    await cursor.execute(
+        f"""
+        SELECT event_id,
+               event_type,
+               node_id,
+               node_name,
+               status,
+               created_at,
+               catalog_id,
+               parent_execution_id,
+               parent_event_id,
+               duration,
+               {payload_select}
+        FROM noetl.event
+        WHERE {where_sql}
+        ORDER BY event_id DESC
+        LIMIT %(page_size)s OFFSET %(offset)s
+        """,
+        params,
+    )
+    rows = await cursor.fetchall()
+
+    events: list[dict[str, Any]] = []
+    for row in rows:
+        event_data = {
+            "event_id": row["event_id"],
+            "execution_id": execution_id,
+            "event_type": row["event_type"],
+            "node_id": row["node_id"],
+            "node_name": row["node_name"],
+            "status": row["status"],
+            "created_at": _as_iso(row["created_at"]),
+            "timestamp": _as_iso(row["created_at"]),
+            "catalog_id": row["catalog_id"],
+            "parent_execution_id": row["parent_execution_id"],
+            "parent_event_id": row["parent_event_id"],
+            "duration": row["duration"],
+            "payloads_included": include_payloads,
+        }
+        if include_payloads:
+            event_data["context"] = _json_ready(row["context"])
+            event_data["result"] = _json_ready(row["result"])
+            event_data["error"] = row["error"]
+        else:
+            event_data["context_excerpt"] = row.get("context_excerpt")
+            event_data["result_excerpt"] = row.get("result_excerpt")
+            event_data["error_excerpt"] = row.get("error_excerpt")
+            event_data["has_context"] = bool(row.get("has_context"))
+            event_data["has_result"] = bool(row.get("has_result"))
+            event_data["has_error"] = bool(row.get("has_error"))
+        events.append(event_data)
+
+    pagination = {
+        "page": page,
+        "page_size": page_size,
+        "total_events": total_events,
+        "total_pages": total_pages,
+        "has_next": page < total_pages,
+        "has_prev": page > 1,
+        "since_event_id": since_event_id,
+        "include_payloads": include_payloads,
+        "payload_max_chars": payload_max_chars if not include_payloads else None,
+    }
+    return events, pagination
 
 
 async def _load_db_rows_for_ai(
@@ -941,91 +1124,83 @@ async def get_execution_cancellation_status(execution_id: str):
             }
 
 
+@router.get("/executions/{execution_id}/events", response_class=JSONResponse)
+async def get_execution_events(
+    execution_id: str,
+    page: int = Query(default=1, ge=1, description="Page number (1-indexed)"),
+    page_size: int = Query(default=100, ge=10, le=500, description="Events per page"),
+    since_event_id: Optional[int] = Query(default=None, description="Get events after this event_id"),
+    event_type: Optional[str] = Query(default=None, description="Filter by event type"),
+    node_name: Optional[str] = Query(default=None, description="Filter by step/node name"),
+    event_status: Optional[str] = Query(default=None, description="Filter by event status"),
+    search: Optional[str] = Query(default=None, description="Search node_name, event_type, or error text"),
+    include_payloads: bool = Query(default=False, description="Include full context/result payloads"),
+    payload_max_chars: int = Query(default=1024, ge=128, le=20000, description="Excerpt size when payloads are omitted"),
+):
+    async with get_pool_connection() as conn:
+        async with conn.cursor(row_factory=dict_row) as cursor:
+            events, pagination = await _load_execution_event_page(
+                cursor,
+                execution_id=execution_id,
+                page=page,
+                page_size=page_size,
+                since_event_id=since_event_id,
+                event_type=event_type,
+                node_name=node_name,
+                event_status=event_status,
+                search=search,
+                include_payloads=include_payloads,
+                payload_max_chars=payload_max_chars,
+            )
+
+    return {
+        "execution_id": execution_id,
+        "events": events,
+        "pagination": pagination,
+    }
+
+
 @router.get("/executions/{execution_id}", response_class=JSONResponse)
 async def get_execution(
+    request: Request,
     execution_id: str,
     page: int = Query(default=1, ge=1, description="Page number (1-indexed)"),
     page_size: int = Query(default=100, ge=10, le=500, description="Events per page"),
     since_event_id: Optional[int] = Query(default=None, description="Get events after this event_id (for incremental loading)"),
-    event_type: Optional[str] = Query(default=None, description="Filter by event type")
+    event_type: Optional[str] = Query(default=None, description="Filter by event type"),
+    node_name: Optional[str] = Query(default=None, description="Filter by step/node name"),
+    event_status: Optional[str] = Query(default=None, description="Filter by event status"),
+    search: Optional[str] = Query(default=None, description="Search node_name, event_type, or error text"),
+    include_events: Optional[bool] = Query(default=None, description="Include paginated events in the response"),
+    include_payloads: bool = Query(default=False, description="Include full context/result payloads"),
+    payload_max_chars: int = Query(default=1024, ge=128, le=20000, description="Excerpt size when payloads are omitted"),
 ):
     """
-    Get execution by ID with paginated event history.
+    Get execution summary by ID.
 
-    **Query Parameters**:
-    - `page`: Page number (default: 1)
-    - `page_size`: Events per page (default: 100, max: 500)
-    - `since_event_id`: Get only events after this ID (for incremental polling)
-    - `event_type`: Filter events by type
-
-    **Response includes pagination metadata**:
-    ```json
-    {
-        "execution_id": "...",
-        "events": [...],
-        "pagination": {
-            "page": 1,
-            "page_size": 100,
-            "total_events": 5000,
-            "total_pages": 50,
-            "has_next": true,
-            "has_prev": false
-        }
-    }
-    ```
+    By default this endpoint returns lightweight execution metadata only.
+    Use `include_events=true` or the dedicated `/executions/{execution_id}/events`
+    endpoint for paginated event history.
     """
+    resolved_include_events = _should_include_execution_events(request, include_events)
     async with get_pool_connection() as conn:
         async with conn.cursor(row_factory=dict_row) as cursor:
-            # Build WHERE clause for filters
-            where_clauses = ["execution_id = %(execution_id)s"]
-            params = {"execution_id": execution_id}
-
-            if since_event_id is not None:
-                where_clauses.append("event_id > %(since_event_id)s")
-                params["since_event_id"] = since_event_id
-
-            if event_type:
-                where_clauses.append("event_type = %(event_type)s")
-                params["event_type"] = event_type
-
-            where_sql = " AND ".join(where_clauses)
-
-            # Get total count for pagination
-            await cursor.execute(f"""
-                SELECT COUNT(*) as total
-                FROM noetl.event
-                WHERE {where_sql}
-            """, params)
-            count_row = await cursor.fetchone()
-            total_events = count_row["total"] if count_row else 0
-
-            # Calculate pagination
-            total_pages = (total_events + page_size - 1) // page_size if total_events > 0 else 1
-            offset = (page - 1) * page_size
-
-            # Get paginated events (ordered by event_id DESC for most recent first)
-            params["page_size"] = page_size
-            params["offset"] = offset
-            await cursor.execute(f"""
-                SELECT event_id,
-                       event_type,
-                       node_id,
-                       node_name,
-                       status,
-                       created_at,
-                       context,
-                       result,
-                       error,
-                       catalog_id,
-                       parent_execution_id,
-                       parent_event_id,
-                       duration
-                FROM noetl.event
-                WHERE {where_sql}
-                ORDER BY event_id DESC
-                LIMIT %(page_size)s OFFSET %(offset)s
-            """, params)
-            rows = await cursor.fetchall()
+            events: list[dict[str, Any]] = []
+            pagination: Optional[dict[str, Any]] = None
+            if resolved_include_events:
+                events, pagination = await _load_execution_event_page(
+                    cursor,
+                    execution_id=execution_id,
+                    page=page,
+                    page_size=page_size,
+                    since_event_id=since_event_id,
+                    event_type=event_type,
+                    node_name=node_name,
+                    event_status=event_status,
+                    search=search,
+                    include_payloads=include_payloads,
+                    payload_max_chars=payload_max_chars,
+                )
 
             # Also get execution metadata (first event info) in a separate efficient query
             await cursor.execute("""
@@ -1107,24 +1282,6 @@ async def get_execution(
                 logger.warning(f"V2 engine fallback failed for execution {execution_id}: {e}")
         raise HTTPException(status_code=404, detail=f"Execution {execution_id} not found")
 
-    # Process events
-    events = []
-    for row in rows:
-        event_data = dict(row)
-        event_data["execution_id"] = execution_id
-        event_data["timestamp"] = row["created_at"].isoformat() if row["created_at"] else None
-        if isinstance(row["context"], str):
-            try:
-                event_data["context"] = json.loads(row["context"])
-            except json.JSONDecodeError:
-                pass
-        if isinstance(row["result"], str):
-            try:
-                event_data["result"] = json.loads(row["result"])
-            except json.JSONDecodeError:
-                pass
-        events.append(event_data)
-
     # Get playbook path and version from catalog
     playbook_path = "unknown"
     playbook_version = None
@@ -1163,15 +1320,10 @@ async def get_execution(
         "duration_seconds": round(duration_seconds, 3) if duration_seconds is not None else None,
         "duration_human": _format_duration_human(duration_seconds),
         "parent_execution_id": first_event.get("parent_execution_id"),
+        "events_included": resolved_include_events,
         "events": events,
-        "pagination": {
-            "page": page,
-            "page_size": page_size,
-            "total_events": total_events,
-            "total_pages": total_pages,
-            "has_next": page < total_pages,
-            "has_prev": page > 1
-        }
+        "pagination": pagination,
+        "events_endpoint": f"/api/executions/{execution_id}/events",
     }
 
 

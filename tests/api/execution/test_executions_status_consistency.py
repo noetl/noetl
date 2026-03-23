@@ -1,6 +1,7 @@
 from datetime import datetime, timezone
 
 import pytest
+from starlette.requests import Request
 
 import noetl.server.api.execution.endpoint as execution_api
 
@@ -46,7 +47,7 @@ class _GetExecutionCursor:
         raise AssertionError(f"Unexpected fetchall query: {self._query}")
 
     async def fetchone(self):
-        if "SELECT COUNT(*) as total" in self._query:
+        if "SELECT COUNT(*) AS total" in self._query or "SELECT COUNT(*) as total" in self._query:
             return {"total": len(self._events)}
         if "ORDER BY event_id ASC" in self._query:
             return self._first_event
@@ -97,6 +98,18 @@ class _ConnectionFactory:
         if not self._connections:
             raise AssertionError("No more fake connections available")
         return _ConnCtx(self._connections.pop(0))
+
+
+def _request(query_string: str = "") -> Request:
+    return Request(
+        {
+            "type": "http",
+            "method": "GET",
+            "path": "/api/executions/test",
+            "query_string": query_string.encode(),
+            "headers": [],
+        }
+    )
 
 
 def test_derive_status_keeps_non_terminal_completed_running():
@@ -231,11 +244,18 @@ async def test_get_execution_infers_completed_from_batch_done_without_pending_co
     )
 
     result = await execution_api.get_execution(
+        _request("page=1&page_size=100"),
         "587316413618979403",
         page=1,
         page_size=100,
         since_event_id=None,
         event_type=None,
+        node_name=None,
+        event_status=None,
+        search=None,
+        include_events=None,
+        include_payloads=False,
+        payload_max_chars=1024,
     )
 
     assert result["status"] == "COMPLETED"
@@ -298,11 +318,18 @@ async def test_get_execution_keeps_running_when_batch_done_still_has_pending_com
     )
 
     result = await execution_api.get_execution(
+        _request("page=1&page_size=100"),
         "588463546770392019",
         page=1,
         page_size=100,
         since_event_id=None,
         event_type=None,
+        node_name=None,
+        event_status=None,
+        search=None,
+        include_events=None,
+        include_payloads=False,
+        payload_max_chars=1024,
     )
 
     assert result["status"] == "RUNNING"
@@ -370,12 +397,77 @@ async def test_get_execution_prefers_terminal_failure_over_batch_completion_infe
     )
 
     result = await execution_api.get_execution(
+        _request("page=1&page_size=100"),
         "587316413618979403",
         page=1,
         page_size=100,
         since_event_id=None,
         event_type=None,
+        node_name=None,
+        event_status=None,
+        search=None,
+        include_events=None,
+        include_payloads=False,
+        payload_max_chars=1024,
     )
 
     assert result["status"] == "FAILED"
     assert result["end_time"] == terminal.isoformat()
+
+
+@pytest.mark.asyncio
+async def test_get_execution_omits_events_by_default(monkeypatch):
+    start = datetime(2026, 3, 23, 2, 17, 42, tzinfo=timezone.utc)
+    latest = datetime(2026, 3, 23, 2, 18, 11, tzinfo=timezone.utc)
+    first_event = {
+        "event_id": 1,
+        "event_type": "playbook.initialized",
+        "catalog_id": 7,
+        "parent_execution_id": None,
+        "created_at": start,
+        "status": "INITIALIZED",
+    }
+    latest_event = {
+        "event_type": "command.claimed",
+        "node_name": "run_mds_batch_workers",
+        "created_at": latest,
+        "status": "RUNNING",
+    }
+    catalog_row = {"path": "bhs/state_report_generation_prod_v10", "version": 7}
+
+    monkeypatch.setattr(
+        execution_api,
+        "get_pool_connection",
+        _ConnectionFactory(
+            _FakeConn(
+                _GetExecutionCursor(
+                    events=[],
+                    first_event=first_event,
+                    terminal_event=None,
+                    latest_event=latest_event,
+                    pending_row={"pending_count": 0},
+                )
+            ),
+            _FakeConn(_CatalogCursor(catalog_row)),
+        ),
+    )
+
+    result = await execution_api.get_execution(
+        _request(),
+        "588587201076658363",
+        page=1,
+        page_size=100,
+        since_event_id=None,
+        event_type=None,
+        node_name=None,
+        event_status=None,
+        search=None,
+        include_events=None,
+        include_payloads=False,
+        payload_max_chars=1024,
+    )
+
+    assert result["events_included"] is False
+    assert result["events"] == []
+    assert result["pagination"] is None
+    assert result["events_endpoint"] == "/api/executions/588587201076658363/events"

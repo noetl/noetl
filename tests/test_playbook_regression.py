@@ -200,8 +200,8 @@ class NoETLClient:
 
         while True:
             response = await self.client.get(
-                f"{self.base_url}/api/executions/{execution_id}",
-                params={"page": page, "page_size": page_size},
+                f"{self.base_url}/api/executions/{execution_id}/events",
+                params={"page": page, "page_size": page_size, "include_payloads": True},
             )
 
             if response.status_code in (404, 405):
