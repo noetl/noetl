@@ -22,6 +22,7 @@ from noetl.server.api.v2 import (
     router as v2_router,
     ensure_batch_acceptor_started,
     shutdown_batch_acceptor,
+    shutdown_publish_recovery_tasks,
     get_batch_metrics_snapshot,
 )
 from noetl.server.auto_resume import (
@@ -399,6 +400,10 @@ def _create_app(settings: Settings, enable_ui: Optional[bool] = None) -> FastAPI
                         await auto_resume_task
                 except Exception as e:
                     logger.exception(f"Critical error during auto-resume task shutdown: {e}")
+            try:
+                await shutdown_publish_recovery_tasks()
+            except Exception as e:
+                logger.error(f"Publish recovery task shutdown failed: {e}", exc_info=True)
             try:
                 await shutdown_batch_acceptor()
             except Exception as e:

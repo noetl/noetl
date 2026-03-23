@@ -681,6 +681,20 @@ def _track_publish_recovery_task(task: asyncio.Task) -> None:
     task.add_done_callback(_publish_recovery_tasks.discard)
 
 
+async def shutdown_publish_recovery_tasks() -> None:
+    """Cancel and await tracked publish-recovery tasks before pool shutdown."""
+    if not _publish_recovery_tasks:
+        return
+
+    tasks = list(_publish_recovery_tasks)
+    _publish_recovery_tasks.clear()
+
+    for task in tasks:
+        task.cancel()
+
+    await asyncio.gather(*tasks, return_exceptions=True)
+
+
 async def _command_has_claim_or_terminal(
     *,
     execution_id: int,
@@ -786,14 +800,27 @@ async def _publish_commands_with_recovery(
         return
 
     nats_pub = await get_nats_publisher()
+    publish_errors: list[Exception] = []
     for execution_id, event_id, command_id, step in command_events:
-        await nats_pub.publish_command(
-            execution_id=execution_id,
-            event_id=event_id,
-            command_id=command_id,
-            step=step,
-            server_url=server_url,
-        )
+        try:
+            await nats_pub.publish_command(
+                execution_id=execution_id,
+                event_id=event_id,
+                command_id=command_id,
+                step=step,
+                server_url=server_url,
+            )
+        except Exception as exc:
+            publish_errors.append(exc)
+            logger.warning(
+                "[PUBLISH-RECOVERY] Initial publish failed for execution_id=%s event_id=%s command_id=%s step=%s: %s",
+                execution_id,
+                event_id,
+                command_id,
+                step,
+                exc,
+                exc_info=True,
+            )
         recovery_task = asyncio.create_task(
             _recover_unclaimed_command_after_delay(
                 execution_id=execution_id,
@@ -806,6 +833,12 @@ async def _publish_commands_with_recovery(
             name=f"command-publish-recovery:{execution_id}:{command_id}",
         )
         _track_publish_recovery_task(recovery_task)
+
+    if publish_errors:
+        logger.warning(
+            "[PUBLISH-RECOVERY] Scheduled delayed recovery for %d command(s) after initial publish failure(s)",
+            len(publish_errors),
+        )
 
 
 async def _next_snowflake_id(cur) -> int:

@@ -1,3 +1,5 @@
+import asyncio
+
 import pytest
 
 from noetl.server.api import v2
@@ -131,3 +133,114 @@ async def test_publish_recovery_skips_claimed_command(monkeypatch):
     )
 
     assert published == []
+
+
+@pytest.mark.asyncio
+async def test_publish_commands_with_recovery_tracks_and_cleans_up_tasks(monkeypatch):
+    published = []
+
+    class _Publisher:
+        async def publish_command(self, **kwargs):
+            published.append(kwargs)
+
+    async def _fake_get_nats_publisher():
+        return _Publisher()
+
+    async def _fake_recover_unclaimed_command_after_delay(**_kwargs):
+        return None
+
+    monkeypatch.setattr(v2, "get_nats_publisher", _fake_get_nats_publisher)
+    monkeypatch.setattr(v2, "_recover_unclaimed_command_after_delay", _fake_recover_unclaimed_command_after_delay)
+
+    v2._publish_recovery_tasks.clear()
+    await v2._publish_commands_with_recovery(
+        [(1, 2, "cmd-1", "start")],
+        server_url="http://server",
+    )
+    await asyncio.gather(*list(v2._publish_recovery_tasks), return_exceptions=True)
+    await asyncio.sleep(0)
+
+    assert published == [
+        {
+            "execution_id": 1,
+            "event_id": 2,
+            "command_id": "cmd-1",
+            "step": "start",
+            "server_url": "http://server",
+        }
+    ]
+    assert not v2._publish_recovery_tasks
+
+
+@pytest.mark.asyncio
+async def test_publish_commands_with_recovery_schedules_task_after_initial_publish_failure(monkeypatch):
+    published = []
+    recovery_calls = []
+
+    class _Publisher:
+        async def publish_command(self, **kwargs):
+            published.append(kwargs)
+            raise RuntimeError("publish failed")
+
+    async def _fake_get_nats_publisher():
+        return _Publisher()
+
+    async def _fake_recover_unclaimed_command_after_delay(**kwargs):
+        recovery_calls.append(kwargs)
+        return None
+
+    monkeypatch.setattr(v2, "get_nats_publisher", _fake_get_nats_publisher)
+    monkeypatch.setattr(v2, "_recover_unclaimed_command_after_delay", _fake_recover_unclaimed_command_after_delay)
+
+    v2._publish_recovery_tasks.clear()
+    await v2._publish_commands_with_recovery(
+        [(1, 2, "cmd-1", "start")],
+        server_url="http://server",
+    )
+    await asyncio.gather(*list(v2._publish_recovery_tasks), return_exceptions=True)
+    await asyncio.sleep(0)
+
+    assert published == [
+        {
+            "execution_id": 1,
+            "event_id": 2,
+            "command_id": "cmd-1",
+            "step": "start",
+            "server_url": "http://server",
+        }
+    ]
+    assert recovery_calls == [
+        {
+            "execution_id": 1,
+            "event_id": 2,
+            "command_id": "cmd-1",
+            "step": "start",
+            "server_url": "http://server",
+            "delay_seconds": v2._COMMAND_PUBLISH_RECOVERY_DELAY_SECONDS,
+        }
+    ]
+    assert not v2._publish_recovery_tasks
+
+
+@pytest.mark.asyncio
+async def test_shutdown_publish_recovery_tasks_cancels_and_awaits_tasks():
+    started = asyncio.Event()
+    cancelled = asyncio.Event()
+
+    async def _never_finishes():
+        started.set()
+        try:
+            await asyncio.sleep(60)
+        except asyncio.CancelledError:
+            cancelled.set()
+            raise
+
+    task = asyncio.create_task(_never_finishes())
+    await started.wait()
+    v2._publish_recovery_tasks.clear()
+    v2._track_publish_recovery_task(task)
+
+    await v2.shutdown_publish_recovery_tasks()
+
+    assert cancelled.is_set()
+    assert not v2._publish_recovery_tasks
