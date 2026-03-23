@@ -2,6 +2,20 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.10.22](https://github.com/noetl/noetl/compare/v2.10.21...v2.10.22) (2026-03-23)
+
+### Bug Fixes
+
+* clamp running execution durations in ui ([409520b](https://github.com/noetl/noetl/commit/409520bd0d0ab18ef2eb7ffd3cdcdf4e807c870e))
+* normalize execution status counters in ui ([eeded19](https://github.com/noetl/noetl/commit/eeded19f6355c20e559dbc130f167a5762d10ca1))
+* normalize execution status stats in ui ([171b5e2](https://github.com/noetl/noetl/commit/171b5e200fec6f184c945d28848ac7c9d9e22ff0))
+* prevent loop transition event handler crash ([428eacd](https://github.com/noetl/noetl/commit/428eacdac7f6d6aec65144750bb4eb68af4d6ce9))
+* prevent stuck local executions on worker and terminal transitions ([73de8df](https://github.com/noetl/noetl/commit/73de8df654ef7e831c50012e70136864e78b82b9))
+* reduce duplicate execution event fetches ([15b221f](https://github.com/noetl/noetl/commit/15b221f9263c7f9000862538fcd04934dfe3cae9))
+* resolve full payloads for result refs ([c5ca431](https://github.com/noetl/noetl/commit/c5ca431b6dc2bf3b6c62aece58ffd014c881c820))
+* split execution events api and align ui consumers ([34c48eb](https://github.com/noetl/noetl/commit/34c48eb712e1f24af069f94892c82e0f77f3c650))
+* unwrap persisted event payloads for engine rendering ([280e7fe](https://github.com/noetl/noetl/commit/280e7fe7156172378df2f7cebd68eb4ea55a1bdd))
+
 ## [2.10.21](https://github.com/noetl/noetl/compare/v2.10.20...v2.10.21) (2026-03-23)
 
 ### Bug Fixes
