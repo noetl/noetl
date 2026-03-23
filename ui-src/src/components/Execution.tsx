@@ -139,7 +139,7 @@ const Execution: React.FC = () => {
         if (
           response.some(
             (exec: ExecutionData) =>
-              exec.status === "running" || exec.status === "pending",
+              exec.status?.toLowerCase() === "running" || exec.status?.toLowerCase() === "pending",
           )
         ) {
           setExecutions(response);
@@ -183,12 +183,13 @@ const Execution: React.FC = () => {
 
     // Filter by tab (event type)
     if (activeTab !== "all") {
-      filtered = filtered.filter((exec) => exec.status === activeTab);
+      filtered = filtered.filter((exec) => exec.status?.toLowerCase() === activeTab.toLowerCase());
     }
 
     // Filter by status (multiple selection)
     if (statusFilter.length > 0) {
-      filtered = filtered.filter((exec) => statusFilter.includes(exec.status));
+      const normalizedFilter = statusFilter.map((status) => status.toLowerCase());
+      filtered = filtered.filter((exec) => normalizedFilter.includes(exec.status?.toLowerCase()));
     }
 
     // Filter by playbook name

@@ -1,7 +1,5 @@
 // Common types used across the application
 
-import Execution from "../components/Execution";
-
 export interface ServerStatus {
   status: "ok" | "healthy" | "error" | "warning" | string;
   message: string;
@@ -51,18 +49,55 @@ export interface ExecutionEvent {
   event_type: string;
   node_name: string;
   status: string;
-  timestamp: string;
-  duration: number;
+  timestamp?: string;
+  created_at?: string;
+  duration?: number;
+  context?: any;
+  result?: any;
+  error?: any;
+  metadata?: any;
 }
+
+export interface ExecutionPagination {
+  page: number;
+  page_size: number;
+  total_events: number;
+  total_pages: number;
+  has_next: boolean;
+  has_prev: boolean;
+}
+
+export interface ExecutionStatusData {
+  execution_id: string;
+  current_step?: string | null;
+  completed_steps?: string[];
+  failed: boolean;
+  completed: boolean;
+  completion_inferred?: boolean;
+  start_time?: string | null;
+  end_time?: string | null;
+  duration_seconds?: number | null;
+  duration_human?: string | null;
+}
+
 export interface ExecutionData {
   execution_id: string;
   path: string;
-  version: string;
-  status: "RUNNING" | "COMPLETED" | "FAILED" | "PENDING" | "running" | "completed" | "failed" | "pending";
-  start_time: string;
+  version?: string;
+  status: "RUNNING" | "COMPLETED" | "FAILED" | "PENDING" | "CANCELLED" | "running" | "completed" | "failed" | "pending" | "cancelled";
+  start_time?: string | null;
   end_time?: string;
   duration?: number;
-  progress: number;
+  duration_seconds?: number | null;
+  duration_human?: string | null;
+  progress?: number;
+  current_step?: string | null;
+  failed?: boolean;
+  completed?: boolean;
+  completion_inferred?: boolean;
+  events_included?: boolean;
+  events_endpoint?: string;
+  pagination?: ExecutionPagination;
   result?: any;
   error?: string;
   events?: Array<ExecutionEvent>;

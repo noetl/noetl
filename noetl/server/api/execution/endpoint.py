@@ -1175,6 +1175,40 @@ async def get_execution(
     }
 
 
+@router.get("/executions/{execution_id}/events", response_class=JSONResponse)
+async def get_execution_events(
+    execution_id: str,
+    page: int = Query(default=1, ge=1, description="Page number (1-indexed)"),
+    page_size: int = Query(default=100, ge=10, le=500, description="Events per page"),
+    since_event_id: Optional[int] = Query(default=None, description="Get events after this event_id (for incremental loading)"),
+    event_type: Optional[str] = Query(default=None, description="Filter by event type"),
+):
+    payload = await get_execution(
+        execution_id=execution_id,
+        page=page,
+        page_size=page_size,
+        since_event_id=since_event_id,
+        event_type=event_type,
+    )
+    return {
+        "execution_id": payload.get("execution_id"),
+        "path": payload.get("path"),
+        "status": payload.get("status"),
+        "events": payload.get("events", []),
+        "pagination": payload.get(
+            "pagination",
+            {
+                "page": page,
+                "page_size": page_size,
+                "total_events": 0,
+                "total_pages": 1,
+                "has_next": False,
+                "has_prev": False,
+            },
+        ),
+    }
+
+
 @router.post("/executions/{execution_id}/analyze", response_model=AnalyzeExecutionResponse)
 async def analyze_execution(
     execution_id: str,

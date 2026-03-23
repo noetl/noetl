@@ -2,6 +2,8 @@ import axios from "axios";
 import {
   DashboardStats,
   ExecutionData,
+  ExecutionPagination,
+  ExecutionStatusData,
   PlaybookData,
   ServerStatus,
   CredentialData,
@@ -171,14 +173,15 @@ class APIService {
     return response.data;
   }
 
-  async getExecution(id: string, params?: {
-    page?: number;
-    page_size?: number;
-    since_event_id?: number;
-    event_type?: string;
-  }): Promise<ExecutionData> {
-    // Use primary execution detail endpoint under /api/executions with pagination support
-    const response = await apiClient.get(`/executions/${id}`, { params });
+  async getExecution(id: string): Promise<ExecutionData> {
+    const response = await apiClient.get(`/executions/${id}`);
+    return response.data;
+  }
+
+  async getExecutionStatus(id: string, params?: {
+    full?: boolean;
+  }): Promise<ExecutionStatusData> {
+    const response = await apiClient.get(`/executions/${id}/status`, { params });
     return response.data;
   }
 
@@ -187,19 +190,14 @@ class APIService {
     page_size?: number;
     since_event_id?: number;
     event_type?: string;
+    node_name?: string;
+    event_status?: string;
+    search?: string;
   }): Promise<{
     events: any[];
-    pagination: {
-      page: number;
-      page_size: number;
-      total_events: number;
-      total_pages: number;
-      has_next: boolean;
-      has_prev: boolean;
-    };
+    pagination: ExecutionPagination;
   }> {
-    // Get paginated events for incremental loading
-    const response = await apiClient.get(`/executions/${id}`, { params });
+    const response = await apiClient.get(`/executions/${id}/events`, { params });
     return {
       events: response.data.events || [],
       pagination: response.data.pagination || {

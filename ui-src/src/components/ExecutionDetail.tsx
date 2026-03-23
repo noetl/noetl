@@ -27,7 +27,7 @@ import {
   StopOutlined,
 } from "@ant-design/icons";
 import { apiService } from "../services/api";
-import { ExecutionData, ExecutionEvent } from "../types";
+import { ExecutionData, ExecutionEvent, ExecutionStatusData } from "../types";
 import moment from "moment";
 import "../styles/ExecutionDetail.css";
 import { CopyOutlined, ExpandAltOutlined, CompressOutlined } from "@ant-design/icons";
@@ -39,6 +39,38 @@ const { RangePicker } = DatePicker;
 
 // JSON stringify cache to avoid repeated heavy stringify on same object refs
 const jsonStringCache = new WeakMap<object, string>();
+
+const isTerminalStatus = (status?: string | null) => {
+  const normalized = status?.toLowerCase();
+  return normalized === "completed" || normalized === "failed" || normalized === "cancelled";
+};
+
+const deriveExecutionStatus = (
+  previousStatus: string | undefined,
+  statusData: ExecutionStatusData,
+) => {
+  if (previousStatus?.toLowerCase() === "cancelled") {
+    return "CANCELLED";
+  }
+  if (statusData.failed) {
+    return "FAILED";
+  }
+  if (statusData.completed) {
+    return "COMPLETED";
+  }
+  return "RUNNING";
+};
+
+const deriveExecutionProgress = (execution: Partial<ExecutionData>) => {
+  const normalized = execution.status?.toLowerCase();
+  if (normalized === "completed" || normalized === "failed" || normalized === "cancelled") {
+    return 100;
+  }
+  if (execution.progress !== undefined && execution.progress !== null) {
+    return execution.progress;
+  }
+  return execution.current_step ? 50 : 0;
+};
 
 const ExecutionDetail: React.FC = () => {
   const { id } = useParams<{ id: string }>();
@@ -87,19 +119,23 @@ const ExecutionDetail: React.FC = () => {
       try {
         setLoading(true);
         setError(null);
-        // Initial fetch with pagination
-        const data = await apiService.getExecution(id!, { page: 1, page_size: pageSize });
-        setExecution(data);
+        const [detail, eventData] = await Promise.all([
+          apiService.getExecution(id!),
+          apiService.getExecutionEvents(id!, { page: 1, page_size: pageSize }),
+        ]);
+        const normalizedDetail = {
+          ...detail,
+          progress: deriveExecutionProgress(detail),
+        };
+        setExecution(normalizedDetail);
 
-        // Store pagination info
-        if (data.pagination) {
-          setServerPagination(data.pagination);
-          setTotalEvents(data.pagination.total_events);
-          setTotalPages(data.pagination.total_pages);
+        if (eventData.pagination) {
+          setServerPagination(eventData.pagination);
+          setTotalEvents(eventData.pagination.total_events);
+          setTotalPages(eventData.pagination.total_pages);
         }
 
-        // Events are already sorted by server (DESC by event_id, most recent first)
-        const executionEvents = data.events || [];
+        const executionEvents = eventData.events || [];
         setEvents(executionEvents);
         setFilteredEvents(executionEvents);
 
@@ -115,41 +151,52 @@ const ExecutionDetail: React.FC = () => {
       }
     };
     fetchExecution();
+  }, [id, pageSize]);
 
-    // Incremental polling - only fetch new events since latestEventId
+  useEffect(() => {
     const fetchIncrementalEvents = async () => {
       try {
-        // Skip polling if execution is completed/failed/cancelled
-        if (execution?.status) {
-          const status = execution.status.toUpperCase();
-          if (['COMPLETED', 'FAILED', 'CANCELLED'].includes(status)) {
-            console.log('Execution completed, skipping polling');
-            return;
-          }
+        if (isTerminalStatus(execution?.status)) {
+          return;
         }
 
-        // Fetch new events incrementally using since_event_id
         const params: any = { page_size: 50 };
         if (latestEventId) {
           params.since_event_id = latestEventId;
         }
 
-        const data = await apiService.getExecution(id!, params);
+        const [statusData, eventData] = await Promise.all([
+          apiService.getExecutionStatus(id!),
+          apiService.getExecutionEvents(id!, params),
+        ]);
         setError(null);
-        setExecution(data);
 
-        // Update pagination info
-        if (data.pagination) {
-          setServerPagination(data.pagination);
-          setTotalEvents(data.pagination.total_events);
-          setTotalPages(data.pagination.total_pages);
+        setExecution((prev) => {
+          const nextExecution: ExecutionData = {
+            ...(prev || ({} as ExecutionData)),
+            status: deriveExecutionStatus(prev?.status, statusData) as ExecutionData["status"],
+            current_step: statusData.current_step,
+            failed: statusData.failed,
+            completed: statusData.completed,
+            completion_inferred: statusData.completion_inferred,
+            start_time: statusData.start_time ?? prev?.start_time,
+            end_time: statusData.end_time ?? prev?.end_time,
+            duration_seconds: statusData.duration_seconds ?? prev?.duration_seconds,
+            duration_human: statusData.duration_human ?? prev?.duration_human,
+          };
+          nextExecution.progress = deriveExecutionProgress(nextExecution);
+          return nextExecution;
+        });
+
+        if (eventData.pagination) {
+          setServerPagination(eventData.pagination);
+          setTotalEvents(eventData.pagination.total_events);
+          setTotalPages(eventData.pagination.total_pages);
         }
 
-        const newEvents = data.events || [];
+        const newEvents = eventData.events || [];
         if (newEvents.length > 0) {
-          // Prepend new events (they're most recent)
           setEvents(prev => {
-            // Deduplicate by event_id
             const existingIds = new Set(prev.map((e: any) => e.event_id));
             const uniqueNew = newEvents.filter((e: any) => !existingIds.has(e.event_id));
             return [...uniqueNew, ...prev];
@@ -166,26 +213,14 @@ const ExecutionDetail: React.FC = () => {
       }
     };
 
-    // Adaptive polling interval - stop polling for completed executions
-    const getPollingInterval = () => {
-      if (!execution) return 5000;
-      const status = execution.status?.toUpperCase();
-      if (['COMPLETED', 'FAILED', 'CANCELLED'].includes(status || '')) {
-        return null; // Stop polling
-      }
-      return 5000;
-    };
-
     const interval = setInterval(() => {
-      const shouldPoll = getPollingInterval() !== null;
-      if (shouldPoll) {
-        console.log('Refreshing execution data for id:', id, 'since_event_id:', latestEventId);
+      if (!isTerminalStatus(execution?.status)) {
         fetchIncrementalEvents();
       }
     }, 5000);
 
     return () => clearInterval(interval);
-  }, [id, latestEventId, execution?.status, pageSize]);
+  }, [id, latestEventId, execution?.status]);
 
   useEffect(() => {
     const handle = setTimeout(() => setDebouncedSearch(searchText), 250);
@@ -267,14 +302,12 @@ const ExecutionDetail: React.FC = () => {
   const loadServerPage = async (page: number) => {
     if (!id) return;
     try {
-      const data = await apiService.getExecution(id, { page, page_size: pageSize });
+      const data = await apiService.getExecutionEvents(id, { page, page_size: pageSize });
       if (data.events && data.events.length > 0) {
-        // Merge with existing events, deduplicating
         setEvents(prev => {
           const existingIds = new Set(prev.map((e: any) => e.event_id));
           const uniqueNew = data.events.filter((e: any) => !existingIds.has(e.event_id));
           const merged = [...prev, ...uniqueNew];
-          // Sort by event_id DESC (most recent first)
           return merged.sort((a: any, b: any) => (b.event_id || 0) - (a.event_id || 0));
         });
       }
@@ -296,12 +329,22 @@ const ExecutionDetail: React.FC = () => {
       await apiService.cancelExecution(id, "User requested cancellation from UI", true);
       message.success("Execution cancelled successfully");
 
-      // Refresh execution data
-      const data = await apiService.getExecution(id);
-      setExecution(data);
-      const executionEvents = data.events || [];
-      setEvents(executionEvents);
-      setFilteredEvents(executionEvents);
+      const [detail, eventData] = await Promise.all([
+        apiService.getExecution(id),
+        apiService.getExecutionEvents(id, { page: 1, page_size: pageSize }),
+      ]);
+      const nextExecution = {
+        ...detail,
+        progress: deriveExecutionProgress(detail),
+      };
+      setExecution(nextExecution);
+      setEvents(eventData.events || []);
+      setFilteredEvents(eventData.events || []);
+      if (eventData.pagination) {
+        setServerPagination(eventData.pagination);
+        setTotalEvents(eventData.pagination.total_events);
+        setTotalPages(eventData.pagination.total_pages);
+      }
     } catch (err: any) {
       console.error("Failed to cancel execution:", err);
       const errorMsg = err.response?.data?.message || "Failed to cancel execution";
@@ -441,7 +484,10 @@ const ExecutionDetail: React.FC = () => {
       title: "Timestamp",
       dataIndex: "timestamp",
       key: "timestamp",
-      render: (ts: string) => moment(ts).format("YYYY-MM-DD HH:mm:ss"),
+      render: (_ts: string, record: any) => {
+        const value = record.timestamp || record.created_at;
+        return value ? moment(value).format("YYYY-MM-DD HH:mm:ss") : "-";
+      },
     },
     {
       title: "Duration",
@@ -470,16 +516,7 @@ const ExecutionDetail: React.FC = () => {
       },
     },
   ];
-  console.log('Rendering ExecutionDetail for execution:', execution);
-  console.log('execution.start_time:', execution.start_time);
-  console.log('moment: execution.start_time:', moment(execution.start_time).format("YYYY-MM-DD HH:mm:ss"));
-
   const canCancel = execution?.status?.toLowerCase() === "running" || execution?.status?.toLowerCase() === "pending";
-  console.log('Cancel button check:', {
-    status: execution?.status,
-    statusLower: execution?.status?.toLowerCase(),
-    canCancel
-  });
 
   return (
     <Card className="execution-detail-container">
@@ -559,10 +596,10 @@ const ExecutionDetail: React.FC = () => {
             <div className="execution-detail-field">
               <Text className="execution-detail-label">Progress</Text>
               <Progress
-                percent={execution.progress}
+                percent={execution.progress ?? deriveExecutionProgress(execution)}
                 size="small"
                 className="execution-detail-progress"
-                status={execution.status === "failed" ? "exception" : "active"}
+                status={execution.status?.toLowerCase() === "failed" ? "exception" : "active"}
               />
             </div>
           </Col>
