@@ -6,6 +6,7 @@ import yaml
 
 import noetl.core.dsl.v2.engine as engine_module
 from noetl.core.dsl.v2.engine import ControlFlowEngine, ExecutionState, PlaybookRepo, StateStore
+from noetl.core.dsl.v2.models import Event
 
 
 class ClaimingNATSCache:
@@ -154,6 +155,68 @@ async def test_parallel_loop_issues_up_to_max_in_flight(monkeypatch):
     # The 4th command should not be claimable until one in-flight iteration completes.
     no_slot_command = await engine._create_command_for_step(state, step_def, {})
     assert no_slot_command is None
+
+
+@pytest.mark.asyncio
+async def test_transition_into_loop_step_issues_commands_without_name_error(monkeypatch):
+    playbook = {
+        "apiVersion": "noetl.io/v2",
+        "kind": "Playbook",
+        "metadata": {"name": "transition_loop_test"},
+        "workflow": [
+            {
+                "step": "start",
+                "tool": {"kind": "python", "code": "def main(**kwargs): return {'ok': True}"},
+                "next": [{"step": "loop_step"}],
+            },
+            {
+                "step": "loop_step",
+                "tool": {"kind": "python", "code": "def main(**kwargs): return kwargs"},
+                "loop": {
+                    "in": "{{ items }}",
+                    "iterator": "item",
+                    "spec": {"max_in_flight": 2},
+                },
+                "args": {
+                    "value": "{{ item.value }}",
+                    "index": "{{ loop_index }}",
+                },
+            },
+        ],
+    }
+
+    parsed_playbook = engine_module.Playbook(**playbook)
+    playbook_repo = PlaybookRepo()
+    state_store = StateStore(playbook_repo)
+    engine = ControlFlowEngine(playbook_repo, state_store)
+
+    state = ExecutionState(
+        "9303",
+        parsed_playbook,
+        payload={"items": [{"value": 10}, {"value": 20}, {"value": 30}]},
+    )
+    await state_store.save_state(state)
+
+    fake_cache = ClaimingNATSCache()
+
+    async def fake_get_nats_cache():
+        return fake_cache
+
+    monkeypatch.setattr(engine_module, "get_nats_cache", fake_get_nats_cache)
+
+    event = Event(
+        execution_id="9303",
+        step="start",
+        name="call.done",
+        payload={"response": {"ok": True}},
+    )
+
+    commands = await engine.handle_event(event, already_persisted=True)
+
+    assert len(commands) == 1
+    assert all(command.step == "loop_step" for command in commands)
+    assert [command.args.get("value") for command in commands] == [10]
+    assert [command.args.get("index") for command in commands] == [0]
 
 
 @pytest.mark.asyncio

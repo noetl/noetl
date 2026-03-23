@@ -1553,7 +1553,6 @@ class ControlFlowEngine:
 
         issue_budget = self._get_loop_max_in_flight(step_def)
         commands: list[Command] = []
-        normalized_payload = _unwrap_event_payload(event.payload)
 
         for _ in range(issue_budget):
             command = await self._create_command_for_step(state, step_def, args)
