@@ -344,6 +344,87 @@ async def test_loop_claim_repairs_zero_collection_size_metadata(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_loop_continue_rerenders_when_replayed_cached_collection_is_empty(monkeypatch):
+    fixture = Path(
+        "tests/fixtures/playbooks/batch_execution/heavy_payload_pipeline_in_step_parallel/"
+        "heavy_payload_pipeline_in_step_parallel.yaml"
+    )
+    playbook = yaml.safe_load(fixture.read_text(encoding="utf-8"))
+    run_batch_workers = next(
+        step for step in playbook["workflow"] if step.get("step") == "run_batch_workers"
+    )
+    run_batch_workers["args"] = {
+        "claimed_batch": "{{ iter.batch.batch_number }}",
+        "claimed_index": "{{ loop_index }}",
+    }
+
+    parsed_playbook = engine_module.Playbook(**playbook)
+    playbook_repo = PlaybookRepo()
+    state_store = StateStore(playbook_repo)
+    engine = ControlFlowEngine(playbook_repo, state_store)
+    state = ExecutionState(
+        "94025",
+        parsed_playbook,
+        payload={
+            "build_batch_plan": {
+                "batches": [
+                    {"batch_number": 1},
+                    {"batch_number": 2},
+                    {"batch_number": 3},
+                ]
+            }
+        },
+    )
+    state.loop_state["run_batch_workers"] = {
+        "collection": [],
+        "iterator": "batch",
+        "index": 1,
+        "mode": "parallel",
+        "completed": False,
+        "results": [],
+        "failed_count": 0,
+        "scheduled_count": 1,
+        "aggregation_finalized": False,
+        "event_id": "exec_94025",
+    }
+
+    fake_cache = RepairingNATSCache(
+        {
+            "collection_size": 3,
+            "completed_count": 1,
+            "scheduled_count": 1,
+            "event_id": "exec_94025",
+        }
+    )
+
+    async def fake_get_nats_cache():
+        return fake_cache
+
+    render_calls = {"count": 0}
+    original_render = engine._render_template
+
+    def tracked_render(template, context):
+        render_calls["count"] += 1
+        return original_render(template, context)
+
+    monkeypatch.setattr(engine_module, "get_nats_cache", fake_get_nats_cache)
+    monkeypatch.setattr(engine, "_render_template", tracked_render)
+
+    step_def = state.get_step("run_batch_workers")
+    command = await engine._create_command_for_step(
+        state,
+        step_def,
+        {"__loop_continue": True},
+    )
+
+    assert command is not None
+    assert render_calls["count"] >= 1
+    assert command.args.get("claimed_batch") == 2
+    assert command.args.get("claimed_index") == 1
+    assert len(state.loop_state["run_batch_workers"]["collection"]) == 3
+
+
+@pytest.mark.asyncio
 async def test_loop_watchdog_recovers_stalled_scheduled_counts(monkeypatch):
     fixture = Path(
         "tests/fixtures/playbooks/batch_execution/heavy_payload_pipeline_in_step_parallel/"

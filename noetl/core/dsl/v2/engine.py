@@ -2629,6 +2629,7 @@ class ControlFlowEngine:
                 existing_loop_state is not None
                 and (loop_continue_requested or loop_retry_requested)
                 and isinstance(existing_loop_state.get("collection"), list)
+                and len(existing_loop_state.get("collection") or []) > 0
             )
 
             if reuse_cached_collection:
