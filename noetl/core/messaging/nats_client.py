@@ -68,13 +68,17 @@ class NATSCommandPublisher:
                 logger.debug("Ignoring NATS close failure during reset", exc_info=True)
 
     async def ensure_connected(self, force: bool = False) -> None:
+        if not force and self._is_connected():
+            return
+
         async with self._connect_lock:
             if force:
                 await self._reset_connection_state()
-            elif self._is_connected():
-                return
-            elif self._nc is not None or self._js is not None:
-                await self._reset_connection_state()
+            else:
+                if self._is_connected():
+                    return
+                if self._nc is not None or self._js is not None:
+                    await self._reset_connection_state()
             await self.connect()
 
     async def _publish_payload(self, payload: bytes) -> None:

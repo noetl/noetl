@@ -65,11 +65,12 @@ async def test_find_orphaned_commands_sql_handles_meta_and_result_command_ids(mo
     )
 
     assert result == rows
-    assert cursor.params == (24, 90.0, 50)
+    assert cursor.params == (24, 90.0, command_reaper._TERMINAL_COMMAND_EVENT_TYPES, 50)
 
     sql = cursor.query
     assert "COALESCE(meta->>'command_id', result->'data'->>'command_id')" in sql
     assert "t.result->'data'->>'command_id' = claims.command_id" in sql
+    assert "t.event_type = ANY(%s)" in sql
 
 
 @pytest.mark.asyncio
@@ -90,12 +91,12 @@ async def test_find_unclaimed_pending_commands_sql_filters_claimed_and_terminal(
     )
 
     assert result == rows
-    assert cursor.params == (24, 60.0, 50)
+    assert cursor.params == (24, 60.0, command_reaper._TERMINAL_COMMAND_EVENT_TYPES, 50)
 
     sql = cursor.query
     assert "issued.event_type = 'command.issued'" in sql
     assert "claims.event_type = 'command.claimed'" in sql
-    assert "terminal.event_type IN ('command.completed', 'command.failed', 'command.cancelled')" in sql
+    assert "terminal.event_type = ANY(%s)" in sql
 
 
 @pytest.mark.asyncio

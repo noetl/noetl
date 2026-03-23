@@ -48,6 +48,12 @@ from noetl.core.urls import normalize_server_base_url
 
 logger = setup_logger(__name__, include_location=True)
 
+_TERMINAL_COMMAND_EVENT_TYPES = (
+    "command.completed",
+    "command.failed",
+    "command.cancelled",
+)
+
 _REAPER_ENABLED = os.getenv("NOETL_COMMAND_REAPER_ENABLED", "true").strip().lower() in {
     "1", "true", "yes", "on"
 }
@@ -126,7 +132,7 @@ async def _find_orphaned_commands(
                     AND NOT EXISTS (
                         SELECT 1 FROM noetl.event t
                         WHERE t.execution_id = issued.execution_id
-                          AND t.event_type IN ('command.completed', 'command.failed')
+                          AND t.event_type = ANY(%s)
                           AND (
                               t.meta->>'command_id' = claims.command_id
                               OR t.result->'data'->>'command_id' = claims.command_id
@@ -141,7 +147,7 @@ async def _find_orphaned_commands(
                 ORDER BY issued.event_id
                 LIMIT %s
                 """,
-                (lookback_hours, stale_seconds, max_commands),
+                (lookback_hours, stale_seconds, _TERMINAL_COMMAND_EVENT_TYPES, max_commands),
             )
             rows = await cur.fetchall()
     return list(rows or [])
@@ -184,7 +190,7 @@ async def _find_unclaimed_pending_commands(
                   AND NOT EXISTS (
                       SELECT 1 FROM noetl.event terminal
                       WHERE terminal.execution_id = issued.execution_id
-                        AND terminal.event_type IN ('command.completed', 'command.failed', 'command.cancelled')
+                        AND terminal.event_type = ANY(%s)
                         AND (
                             terminal.meta->>'command_id' = issued.meta->>'command_id'
                             OR terminal.result->'data'->>'command_id' = issued.meta->>'command_id'
@@ -198,7 +204,7 @@ async def _find_unclaimed_pending_commands(
                 ORDER BY issued.event_id
                 LIMIT %s
                 """,
-                (lookback_hours, pending_retry_seconds, max_commands),
+                (lookback_hours, pending_retry_seconds, _TERMINAL_COMMAND_EVENT_TYPES, max_commands),
             )
             rows = await cur.fetchall()
     return list(rows or [])
