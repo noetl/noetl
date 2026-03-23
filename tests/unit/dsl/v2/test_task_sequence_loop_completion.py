@@ -779,3 +779,195 @@ async def test_completed_execution_short_circuits_late_events(monkeypatch):
     commands = await engine.handle_event(event, already_persisted=True)
 
     assert commands == []
+
+
+@pytest.mark.asyncio
+async def test_state_replay_restores_event_watermark(monkeypatch):
+    playbook = Playbook(**yaml.safe_load(
+        """
+apiVersion: noetl.io/v2
+kind: Playbook
+metadata:
+  name: replay_event_ids
+  path: tests/replay_event_ids
+workload:
+  pg_auth: pg_k8s
+workflow:
+  - step: load_next_facility
+    tool:
+      kind: postgres
+      auth: pg_k8s
+      query: SELECT 1;
+  - step: load_patient_ids_context
+    tool:
+      kind: postgres
+      auth: pg_k8s
+      query: SELECT 1;
+        """
+    ))
+    playbook_repo = PlaybookRepo()
+    state_store = StateStore(playbook_repo)
+
+    async def fake_load_playbook_by_id(_catalog_id):
+        return playbook
+
+    monkeypatch.setattr(playbook_repo, "load_playbook_by_id", fake_load_playbook_by_id)
+
+    class FakeCursor:
+        def __init__(self):
+            self.last_query = ""
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        async def execute(self, query, _params):
+            self.last_query = query
+
+        async def fetchone(self):
+            return {
+                "catalog_id": "cat-event-ids",
+                "result": {"workload": {"pg_auth": "pg_k8s"}},
+            }
+
+        async def fetchall(self):
+            return [
+                {
+                    "event_id": 101,
+                    "node_name": "load_next_facility",
+                    "event_type": "step.exit",
+                    "result": {
+                        "kind": "data",
+                        "data": {"result": {"command_0": {"rows": [{"facility_mapping_id": 53}]}}},
+                    },
+                    "meta": None,
+                },
+                {
+                    "event_id": 102,
+                    "node_name": "load_patient_ids_context",
+                    "event_type": "step.exit",
+                    "result": {
+                        "kind": "data",
+                        "data": {"result": {"command_0": {"rows": [{"patient_count": 3}]}}},
+                    },
+                    "meta": None,
+                },
+            ]
+
+    class FakeConnection:
+        def cursor(self, row_factory=None):  # noqa: ARG002
+            return FakeCursor()
+
+    class FakeConnectionContext:
+        async def __aenter__(self):
+            return FakeConnection()
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+    monkeypatch.setattr(engine_module, "get_pool_connection", lambda: FakeConnectionContext())
+
+    state = await state_store.load_state("9030")
+
+    assert state is not None
+    assert state.last_event_id == 102
+    assert state.step_event_ids["load_next_facility"] == 101
+    assert state.step_event_ids["load_patient_ids_context"] == 102
+
+
+@pytest.mark.asyncio
+async def test_handle_event_invalidates_stale_cached_state(monkeypatch):
+    playbook = Playbook(**yaml.safe_load(
+        """
+apiVersion: noetl.io/v2
+kind: Playbook
+metadata:
+  name: stale_cache_refresh
+  path: tests/stale_cache_refresh
+workflow:
+  - step: start
+    tool:
+      kind: python
+      code: |
+        result = {"ok": True}
+        """
+    ))
+    playbook_repo = PlaybookRepo()
+    state_store = StateStore(playbook_repo)
+    engine = ControlFlowEngine(playbook_repo, state_store)
+
+    execution_id = "9031"
+    stale_state = ExecutionState(execution_id, playbook, payload={})
+    stale_state.last_event_id = 10
+    await state_store.save_state(stale_state)
+
+    refreshed_state = ExecutionState(execution_id, playbook, payload={})
+    refreshed_state.last_event_id = 12
+
+    invalidate_calls = []
+
+    async def fake_should_refresh(_execution_id, _last_event_id, *, allowed_missing_events=1):
+        assert _execution_id == execution_id
+        assert _last_event_id == 10
+        assert allowed_missing_events == 1
+        return True
+
+    async def fake_invalidate(execution_id_arg, reason="manual"):
+        invalidate_calls.append((execution_id_arg, reason))
+        return True
+
+    async def fake_load_state(_execution_id):
+        assert _execution_id == execution_id
+        return refreshed_state
+
+    async def fake_persist_event(_event, state_obj):
+        state_obj.last_event_id = (state_obj.last_event_id or 0) + 1
+
+    async def fake_save_state(_state):
+        return None
+
+    class FakeCursor:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        async def execute(self, query, _params=None):
+            self.last_query = query
+
+        async def fetchone(self):
+            return {"pending_count": 0}
+
+    class FakeConnection:
+        def cursor(self, row_factory=None):  # noqa: ARG002
+            return FakeCursor()
+
+    class FakeConnectionContext:
+        async def __aenter__(self):
+            return FakeConnection()
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+    monkeypatch.setattr(engine_module, "get_pool_connection", lambda: FakeConnectionContext())
+    monkeypatch.setattr(state_store, "should_refresh_cached_state", fake_should_refresh)
+    monkeypatch.setattr(state_store, "invalidate_state", fake_invalidate)
+    monkeypatch.setattr(state_store, "load_state", fake_load_state)
+    monkeypatch.setattr(engine, "_persist_event", fake_persist_event)
+    monkeypatch.setattr(state_store, "save_state", fake_save_state)
+
+    event = Event(
+        execution_id=execution_id,
+        step="start",
+        name="call.done",
+        payload={"response": {"status": "completed", "result": {"ok": True}}},
+    )
+
+    await engine.handle_event(event, already_persisted=True)
+
+    assert invalidate_calls == [
+        (execution_id, "stale_cache_newer_persisted_events")
+    ]
