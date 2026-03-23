@@ -28,6 +28,7 @@ from noetl.core.dsl.v2.models import Event
 from noetl.core.dsl.v2.engine import ControlFlowEngine, PlaybookRepo, StateStore
 from noetl.core.db.pool import get_pool_connection, get_server_pool_stats
 from noetl.core.messaging import NATSCommandPublisher
+from noetl.core.storage import Scope, create_preview, default_store, estimate_size
 from noetl.claim_policy import decide_reclaim_for_existing_claim
 from noetl.server.api.event_queries import PENDING_COMMAND_COUNT_SQL
 
@@ -79,6 +80,10 @@ _BATCH_MAX_EVENTS_PER_REQUEST = max(
 _BATCH_MAX_PAYLOAD_BYTES = max(
     1024,
     int(os.getenv("NOETL_BATCH_MAX_PAYLOAD_BYTES", str(2 * 1024 * 1024))),
+)
+_COMMAND_CONTEXT_INLINE_MAX_BYTES = max(
+    4096,
+    int(os.getenv("NOETL_COMMAND_CONTEXT_INLINE_MAX_BYTES", os.getenv("NOETL_INLINE_MAX_BYTES", "65536"))),
 )
 
 _BATCH_FAILURE_ENQUEUE_TIMEOUT = "ack_timeout"
@@ -678,6 +683,68 @@ def _estimate_json_size(value: Any) -> int:
         return len(str(value).encode("utf-8"))
 
 
+async def _store_command_context_if_needed(
+    *,
+    execution_id: int,
+    step: str,
+    command_id: str,
+    context: dict[str, Any],
+) -> dict[str, Any]:
+    """
+    Externalize oversized command context so claim responses stay bounded.
+
+    Workers resolve the returned ref locally from shared storage when needed.
+    """
+    try:
+        size_bytes = estimate_size(context)
+    except Exception:
+        size_bytes = _estimate_json_size(context)
+
+    if size_bytes <= _COMMAND_CONTEXT_INLINE_MAX_BYTES:
+        return context
+
+    try:
+        ref = await default_store.put(
+            execution_id=str(execution_id),
+            name=f"{step}_command_context",
+            data=context,
+            scope=Scope.EXECUTION,
+            source_step=step,
+            correlation={
+                "command_id": command_id,
+                "kind": "command_context",
+                "step": step,
+            },
+        )
+        preview = create_preview(context, max_bytes=1024)
+        logger.info(
+            "[COMMAND-CONTEXT] Externalized command context execution_id=%s step=%s command_id=%s bytes=%s store=%s",
+            execution_id,
+            step,
+            command_id,
+            size_bytes,
+            ref.store.value,
+        )
+        return {
+            "kind": ref.kind,
+            "ref": ref.ref,
+            "store": ref.store.value,
+            "scope": ref.scope.value,
+            "preview": preview,
+            "meta": ref.meta.model_dump(mode="json"),
+            "correlation": ref.correlation,
+        }
+    except Exception as exc:
+        logger.warning(
+            "[COMMAND-CONTEXT] Failed to externalize context execution_id=%s step=%s command_id=%s error=%s",
+            execution_id,
+            step,
+            command_id,
+            exc,
+        )
+        return context
+
+
 def _compact_status_value(value: Any, depth: int = 0) -> Any:
     """Compact large nested values for execution status payloads."""
     if value is None or isinstance(value, (bool, int, float, str)):
@@ -994,6 +1061,12 @@ async def execute(req: ExecuteRequest) -> ExecuteResponse:
 
                     # Store actionable flag in meta column (not separate column)
                     meta["actionable"] = True
+                    context = await _store_command_context_if_needed(
+                        execution_id=int(execution_id),
+                        step=cmd.step,
+                        command_id=cmd_id,
+                        context=context,
+                    )
 
                     await cur.execute("""
                         INSERT INTO noetl.event (
@@ -1671,6 +1744,12 @@ async def handle_event(req: EventRequest) -> EventResponse:
                     }
                     if cmd.metadata:
                         meta.update({k: v for k, v in cmd.metadata.items() if v is not None})
+                    context = await _store_command_context_if_needed(
+                        execution_id=int(cmd.execution_id),
+                        step=cmd.step,
+                        command_id=cmd_id,
+                        context=context,
+                    )
                     
                     await cur.execute("""
                         INSERT INTO noetl.event (
@@ -2078,6 +2157,12 @@ async def _issue_commands_for_batch(job: _BatchAcceptJob, commands: list) -> Non
                 }
                 if cmd.metadata:
                     meta.update({k: v for k, v in cmd.metadata.items() if v is not None})
+                context = await _store_command_context_if_needed(
+                    execution_id=int(cmd.execution_id),
+                    step=cmd.step,
+                    command_id=cmd_id,
+                    context=context,
+                )
 
                 await cur.execute(
                     """

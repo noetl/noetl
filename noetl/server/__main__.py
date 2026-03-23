@@ -39,6 +39,27 @@ def _load_suppressed_access_paths() -> tuple[str, ...]:
     return parts or _DEFAULT_SUPPRESSED_ACCESS_PATHS
 
 
+def _load_uvicorn_workers() -> int:
+    raw = os.getenv("NOETL_SERVER_WORKERS", "").strip()
+    default_workers = 1
+    if not raw:
+        return default_workers
+    try:
+        return max(1, int(raw))
+    except ValueError:
+        return default_workers
+
+
+def _load_timeout_keep_alive() -> int:
+    raw = os.getenv("NOETL_SERVER_TIMEOUT_KEEP_ALIVE_SECONDS", "").strip()
+    if not raw:
+        return 5
+    try:
+        return max(1, int(raw))
+    except ValueError:
+        return 5
+
+
 class AccessLogFilter(logging.Filter):
     """Filter noisy health/internal access logs to prevent log floods."""
 
@@ -95,9 +116,17 @@ def main():
         logging.getLogger("uvicorn.access").addFilter(
             AccessLogFilter(_load_suppressed_access_paths())
         )
-        
+
+        workers = _load_uvicorn_workers()
+        uvicorn_kwargs = {
+            "host": args.host,
+            "port": args.port,
+            "timeout_keep_alive": _load_timeout_keep_alive(),
+        }
+
+        uvicorn_kwargs["workers"] = workers
         app = create_app()
-        uvicorn.run(app, host=args.host, port=args.port)
+        uvicorn.run(app, **uvicorn_kwargs)
     except KeyboardInterrupt:
         print("\nServer stopped by user")
         sys.exit(0)
