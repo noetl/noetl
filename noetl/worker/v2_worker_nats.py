@@ -173,6 +173,12 @@ class V2Worker:
             1.0,
             min(30.0, float(worker_settings.command_timeout_seconds) / 4.0),
         )
+        self._recent_command_activity_ttl_seconds = max(
+            self._active_claim_retry_floor_seconds,
+            min(120.0, float(worker_settings.command_timeout_seconds)),
+        )
+        self._recent_command_activity: dict[str, float] = {}
+        self._recent_command_activity_last_prune_monotonic = 0.0
         # Adaptive AIMD concurrency controller: limits simultaneous claim/event
         # requests from this worker process, backing off when the server pool
         # is saturated (503) and recovering as it clears.
@@ -219,6 +225,36 @@ class V2Worker:
                 return True
 
         return False
+
+    def _prune_recent_command_activity(self, now: Optional[float] = None, *, force: bool = False) -> None:
+        now = time.monotonic() if now is None else now
+        if not force and (now - self._recent_command_activity_last_prune_monotonic) < 5.0:
+            return
+        self._recent_command_activity_last_prune_monotonic = now
+        expired = [
+            command_id
+            for command_id, expires_at in self._recent_command_activity.items()
+            if expires_at <= now
+        ]
+        for command_id in expired:
+            self._recent_command_activity.pop(command_id, None)
+
+    def _remember_recent_command_activity(self, command_id: str, *, ttl_seconds: Optional[float] = None) -> None:
+        now = time.monotonic()
+        self._prune_recent_command_activity(now, force=len(self._recent_command_activity) >= 2048)
+        ttl = max(1.0, float(ttl_seconds or self._recent_command_activity_ttl_seconds))
+        self._recent_command_activity[str(command_id)] = now + ttl
+
+    def _is_recent_command_activity(self, command_id: str) -> bool:
+        now = time.monotonic()
+        self._prune_recent_command_activity(now)
+        expires_at = self._recent_command_activity.get(str(command_id))
+        if expires_at is None:
+            return False
+        if expires_at <= now:
+            self._recent_command_activity.pop(str(command_id), None)
+            return False
+        return True
 
     async def _wait_for_postgres_capacity(self, step: str, command_id: str) -> None:
         """Pause db-heavy command execution while plugin pools are saturated."""
@@ -718,6 +754,14 @@ class V2Worker:
 
                 logger.info(f"[EVENT] Worker {self.worker_id} received notification: exec={execution_id}, command={command_id}, step={step}")
 
+                if self._is_recent_command_activity(command_id):
+                    logger.info(
+                        "[CLAIM] Command %s was recently claimed/settled on this worker; "
+                        "acking duplicate notification before re-claim",
+                        command_id,
+                    )
+                    return "ack"
+
                 # Single atomic call: claim + cancel check + fetch command details
                 t_claim_start = time.perf_counter()
                 command, claim_decision, retry_after_seconds = await self._claim_and_fetch_command(server_url, event_id)
@@ -743,8 +787,10 @@ class V2Worker:
                     # "skip_ack" means the NATS message should be ACKed with no further
                     # command execution. This covers terminal no-ops and duplicate
                     # notifications for commands already claimed elsewhere.
+                    self._remember_recent_command_activity(command_id, ttl_seconds=retry_after_seconds or None)
                     return "ack"
 
+                self._remember_recent_command_activity(command_id)
                 logger.info(f"[EVENT] Worker {self.worker_id} claimed command {command_id}")
 
                 command_tool = command.get("action")
