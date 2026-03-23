@@ -2629,6 +2629,7 @@ class ControlFlowEngine:
                 existing_loop_state is not None
                 and (loop_continue_requested or loop_retry_requested)
                 and isinstance(existing_loop_state.get("collection"), list)
+                and len(existing_loop_state.get("collection") or []) > 0
             )
 
             if reuse_cached_collection:
@@ -2649,11 +2650,19 @@ class ControlFlowEngine:
                     existing_loop_state is not None
                     and (loop_continue_requested or loop_retry_requested)
                 ):
-                    logger.warning(
-                        "[LOOP] Missing/invalid cached collection for %s continuation/retry; "
-                        "re-rendering loop expression",
-                        step.step,
-                    )
+                    cached_collection = existing_loop_state.get("collection")
+                    if isinstance(cached_collection, list) and len(cached_collection) == 0:
+                        logger.info(
+                            "[LOOP] Replayed cached collection is empty for %s continuation/retry; "
+                            "re-rendering loop expression",
+                            step.step,
+                        )
+                    else:
+                        logger.warning(
+                            "[LOOP] Missing/invalid cached collection for %s continuation/retry; "
+                            "re-rendering loop expression",
+                            step.step,
+                        )
 
                 # Get collection to iterate
                 context = state.get_render_context(Event(
