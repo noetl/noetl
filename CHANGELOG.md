@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.10.29](https://github.com/noetl/noetl/compare/v2.10.28...v2.10.29) (2026-03-23)
+
+### Bug Fixes
+
+* align pending command terminal events across apis ([5e34717](https://github.com/noetl/noetl/commit/5e347176c9abcace62f575865d4d92ae6435f81c))
+* keep call.done from closing pending commands ([9acbdb8](https://github.com/noetl/noetl/commit/9acbdb8055fb2e9c78d1d32bb38c2e6ba0366fee))
+
 ## [2.10.28](https://github.com/noetl/noetl/compare/v2.10.27...v2.10.28) (2026-03-23)
 
 ### Bug Fixes
