@@ -13,6 +13,7 @@ from psycopg.types.json import Json
 from noetl.core.db.pool import get_pool_connection, get_snowflake_id
 from noetl.core.logger import setup_logger
 from noetl.core.common import convert_snowflake_ids_for_api
+from noetl.server.api.event_queries import PENDING_COMMAND_COUNT_SQL
 from .schema import (
     ExecutionEntryResponse,
     CancelExecutionRequest,
@@ -311,6 +312,9 @@ def _derive_execution_terminal_status(row: Optional[dict[str, Any]]) -> str:
     if status in {"FAILED", "CANCELLED"}:
         return status
     return "RUNNING"
+
+
+_PENDING_COMMAND_COUNT_SQL = PENDING_COMMAND_COUNT_SQL
 
 
 def _infer_execution_completion_from_events(
@@ -1064,24 +1068,7 @@ async def get_execution(
             )
             if should_check_pending_commands:
                 await cursor.execute(
-                    """
-                    SELECT COUNT(*) AS pending_count
-                    FROM (
-                        SELECT node_name
-                        FROM noetl.event
-                        WHERE execution_id = %(execution_id)s
-                          AND event_type = 'command.issued'
-                        EXCEPT
-                        SELECT node_name
-                        FROM noetl.event
-                        WHERE execution_id = %(execution_id)s
-                          AND event_type IN (
-                              'call.done',
-                              'command.completed',
-                              'command.failed'
-                          )
-                    ) AS pending
-                    """,
+                    _PENDING_COMMAND_COUNT_SQL,
                     {"execution_id": execution_id},
                 )
                 pending_row = await cursor.fetchone()

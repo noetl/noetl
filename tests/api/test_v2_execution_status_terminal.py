@@ -41,6 +41,8 @@ class _FakeCursor:
     async def fetchone(self):
         if "ORDER BY event_id ASC" in self._query:
             return {"created_at": self._start_time}
+        if "SELECT COUNT(*) AS pending_count" in self._query:
+            return {"pending_count": self._pending_count}
         if "AND event_type IN (" in self._query:
             if self._terminal_time is None:
                 return None
@@ -50,8 +52,6 @@ class _FakeCursor:
                 "status": "COMPLETED",
                 "created_at": self._terminal_time,
             }
-        if "SELECT COUNT(*) AS pending_count" in self._query:
-            return {"pending_count": self._pending_count}
         if "ORDER BY event_id DESC" in self._query:
             return {
                 "event_type": self._latest_event_type,
@@ -79,6 +79,14 @@ class _ConnCtx:
 
     async def __aexit__(self, exc_type, exc, tb):
         return False
+
+
+def test_v2_pending_command_count_sql_tracks_command_ids():
+    sql = " ".join(v2_api._PENDING_COMMAND_COUNT_SQL.split())
+    assert "meta->>'command_id'" in sql
+    assert "result->'data'->>'command_id'" in sql
+    assert "UNION ALL" in sql
+    assert "SELECT node_name" not in sql
 
 
 @pytest.mark.asyncio
@@ -139,3 +147,36 @@ async def test_status_infers_completion_from_batch_completed_without_pending_com
     assert result["failed"] is False
     assert result["completion_inferred"] is True
     assert result["end_time"] == latest_batch_time.isoformat()
+
+
+@pytest.mark.asyncio
+async def test_status_keeps_running_when_batch_completed_still_has_pending_commands(monkeypatch):
+    start_time = datetime(2026, 3, 22, 22, 12, 2, tzinfo=timezone.utc)
+    latest_batch_time = datetime(2026, 3, 22, 22, 17, 1, tzinfo=timezone.utc)
+
+    fake_state = SimpleNamespace(
+        completed=False,
+        failed=False,
+        current_step="run_mds_batch_workers",
+        completed_steps={"start", "build_mds_batch_plan"},
+        variables={},
+    )
+    fake_engine = SimpleNamespace(state_store=SimpleNamespace(get_state=lambda _execution_id: fake_state))
+    fake_cursor = _FakeCursor(
+        start_time,
+        latest_batch_time,
+        terminal_time=None,
+        pending_count=1,
+        latest_event_type="batch.completed",
+        latest_status="COMPLETED",
+    )
+
+    monkeypatch.setattr(v2_api, "get_engine", lambda: fake_engine)
+    monkeypatch.setattr(v2_api, "get_pool_connection", lambda: _ConnCtx(_FakeConn(fake_cursor)))
+
+    result = await v2_api.get_execution_status("588463546770392019")
+
+    assert result["completed"] is False
+    assert result["failed"] is False
+    assert result["completion_inferred"] is False
+    assert result["end_time"] is None
