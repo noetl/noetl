@@ -233,7 +233,23 @@ def render_template(env: Environment, template: Any, context: Dict, rules: Dict 
             try:
                 custom_context = render_ctx.copy()
 
-                reserved = {'work', 'workload', 'context', 'env', 'job', 'input', 'data', 'results'}
+                reserved = {
+                    'work',
+                    'workload',
+                    'context',
+                    'env',
+                    'job',
+                    'input',
+                    'data',
+                    'results',
+                    # Keep execution/iteration namespaces as plain dicts so
+                    # Jinja can perform normal item lookup (e.g. ctx.foo)
+                    # without TaskResultProxy interfering with runtime vars.
+                    'ctx',
+                    'iter',
+                    'loop',
+                    'event',
+                }
                 for key, value in render_ctx.items():
                     if key in reserved:
                         continue
