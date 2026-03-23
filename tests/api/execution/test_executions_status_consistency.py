@@ -266,6 +266,21 @@ async def test_get_executions_applies_page_size_and_offset(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_get_executions_rejects_excessive_offset(monkeypatch):
+    monkeypatch.setattr(
+        execution_api,
+        "get_pool_connection",
+        lambda: _ConnCtx(_FakeConn(_FakeCursor([]))),
+    )
+
+    with pytest.raises(execution_api.HTTPException) as exc_info:
+        await execution_api.get_executions(page=1000, page_size=100)
+
+    assert exc_info.value.status_code == 422
+    assert "Max supported offset" in exc_info.value.detail
+
+
+@pytest.mark.asyncio
 async def test_get_execution_infers_completed_from_batch_done_without_pending_commands(monkeypatch):
     start = datetime(2026, 3, 21, 8, 12, 52, tzinfo=timezone.utc)
     latest = datetime(2026, 3, 21, 10, 3, 54, tzinfo=timezone.utc)
