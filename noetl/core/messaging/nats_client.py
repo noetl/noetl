@@ -13,6 +13,7 @@ Performance tuning:
 """
 
 import asyncio
+import json
 import math
 from typing import Optional, Callable, Awaitable
 import nats
@@ -46,6 +47,44 @@ class NATSCommandPublisher:
         self.stream_name = stream_name or ws.nats_stream
         self._nc: Optional[NATSClient] = None
         self._js: Optional[JetStreamContext] = None
+        self._connect_lock = asyncio.Lock()
+
+    def _is_connected(self) -> bool:
+        return bool(
+            self._nc
+            and getattr(self._nc, "is_connected", False)
+            and not getattr(self._nc, "is_closed", False)
+            and self._js is not None
+        )
+
+    async def _reset_connection_state(self) -> None:
+        nc = self._nc
+        self._nc = None
+        self._js = None
+        if nc is not None:
+            try:
+                await nc.close()
+            except Exception:
+                logger.debug("Ignoring NATS close failure during reset", exc_info=True)
+
+    async def ensure_connected(self, force: bool = False) -> None:
+        if not force and self._is_connected():
+            return
+
+        async with self._connect_lock:
+            if force:
+                await self._reset_connection_state()
+            else:
+                if self._is_connected():
+                    return
+                if self._nc is not None or self._js is not None:
+                    await self._reset_connection_state()
+            await self.connect()
+
+    async def _publish_payload(self, payload: bytes) -> None:
+        if not self._js:
+            raise RuntimeError("Not connected to NATS")
+        await self._js.publish(self.subject, payload)
 
     async def connect(self):
         """Connect to NATS and setup JetStream."""
@@ -87,8 +126,7 @@ class NATSCommandPublisher:
         - command_id: Unique identifier for atomic claiming
         - Workers claim by emitting command.claimed event (idempotent)
         """
-        if not self._js:
-            raise RuntimeError("Not connected to NATS")
+        await self.ensure_connected()
 
         message = {
             "execution_id": execution_id,
@@ -97,18 +135,36 @@ class NATSCommandPublisher:
             "step": step,
             "server_url": server_url
         }
+        payload = json.dumps(message).encode()
 
         try:
-            import json
-            await self._js.publish(
-                self.subject,
-                json.dumps(message).encode()
-            )
+            await self._publish_payload(payload)
             logger.debug(f"Published command notification: event_id={event_id} command_id={command_id}")
 
         except Exception as e:
-            logger.error(f"Failed to publish command: {e}")
-            raise
+            logger.warning(
+                "Failed to publish command event_id=%s command_id=%s on first attempt: %s. Retrying after reconnect.",
+                event_id,
+                command_id,
+                e,
+            )
+            await self.ensure_connected(force=True)
+            try:
+                await self._publish_payload(payload)
+                logger.info(
+                    "Published command notification after reconnect: event_id=%s command_id=%s",
+                    event_id,
+                    command_id,
+                )
+            except Exception as retry_error:
+                logger.error(
+                    "Failed to publish command after reconnect: event_id=%s command_id=%s error=%s",
+                    event_id,
+                    command_id,
+                    retry_error,
+                    exc_info=True,
+                )
+                raise
 
     async def close(self):
         """Close NATS connection."""
