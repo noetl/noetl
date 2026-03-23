@@ -11,6 +11,7 @@ Single source of truth: event table. No queue table.
 """
 
 import asyncio
+import json
 import logging
 import httpx
 import os
@@ -242,6 +243,98 @@ class V2Worker:
                 f"Resolved command context must be an object, got {type(resolved).__name__}"
             )
         return context if isinstance(context, dict) else {}
+
+    def _normalize_command_context_mapping(
+        self,
+        value: Any,
+        *,
+        field_name: str,
+        step: str,
+        execution_id: Any,
+    ) -> dict[str, Any]:
+        """Accept inline dicts and JSON-stringified dicts for worker command context fields."""
+        if value is None:
+            return {}
+        if isinstance(value, dict):
+            return value
+        if isinstance(value, str):
+            stripped = value.strip()
+            if not stripped:
+                return {}
+            try:
+                parsed = json.loads(stripped)
+            except json.JSONDecodeError:
+                logger.warning(
+                    "[COMMAND-CONTEXT] Expected object for %s but got non-JSON string | step=%s execution=%s",
+                    field_name,
+                    step,
+                    execution_id,
+                )
+                return {}
+            if isinstance(parsed, dict):
+                return parsed
+            logger.warning(
+                "[COMMAND-CONTEXT] Expected object for %s but parsed %s | step=%s execution=%s",
+                field_name,
+                type(parsed).__name__,
+                step,
+                execution_id,
+            )
+            return {}
+        logger.warning(
+            "[COMMAND-CONTEXT] Expected object for %s but got %s | step=%s execution=%s",
+            field_name,
+            type(value).__name__,
+            step,
+            execution_id,
+        )
+        return {}
+
+    def _normalize_command_context_list(
+        self,
+        value: Any,
+        *,
+        field_name: str,
+        step: str,
+        execution_id: Any,
+    ) -> list[Any]:
+        """Accept inline lists and JSON-stringified lists for worker command context fields."""
+        if value is None:
+            return []
+        if isinstance(value, list):
+            return value
+        if isinstance(value, str):
+            stripped = value.strip()
+            if not stripped:
+                return []
+            try:
+                parsed = json.loads(stripped)
+            except json.JSONDecodeError:
+                logger.warning(
+                    "[COMMAND-CONTEXT] Expected list for %s but got non-JSON string | step=%s execution=%s",
+                    field_name,
+                    step,
+                    execution_id,
+                )
+                return []
+            if isinstance(parsed, list):
+                return parsed
+            logger.warning(
+                "[COMMAND-CONTEXT] Expected list for %s but parsed %s | step=%s execution=%s",
+                field_name,
+                type(parsed).__name__,
+                step,
+                execution_id,
+            )
+            return []
+        logger.warning(
+            "[COMMAND-CONTEXT] Expected list for %s but got %s | step=%s execution=%s",
+            field_name,
+            type(value).__name__,
+            step,
+            execution_id,
+        )
+        return []
 
     async def _externalize_event_value_if_needed(
         self,
@@ -1333,12 +1426,37 @@ class V2Worker:
         
         # Store execution_id for sub-playbook calls
         self._current_execution_id = execution_id
-        
-        tool_config = context.get("tool_config", {})
-        args = context.get("args", {})
-        render_context = context.get("render_context", {})  # Full render context from engine
-        case_blocks = context.get("case")  # Case blocks from server for immediate execution
-        spec = context.get("spec")  # Step behavior spec (case_mode, eval_mode)
+
+        tool_config = self._normalize_command_context_mapping(
+            context.get("tool_config"),
+            field_name="tool_config",
+            step=step,
+            execution_id=execution_id,
+        )
+        args = self._normalize_command_context_mapping(
+            context.get("args"),
+            field_name="args",
+            step=step,
+            execution_id=execution_id,
+        )
+        render_context = self._normalize_command_context_mapping(
+            context.get("render_context"),
+            field_name="render_context",
+            step=step,
+            execution_id=execution_id,
+        )  # Full render context from engine
+        case_blocks = self._normalize_command_context_list(
+            context.get("case"),
+            field_name="case",
+            step=step,
+            execution_id=execution_id,
+        )  # Case blocks from server for immediate execution
+        spec = self._normalize_command_context_mapping(
+            context.get("spec"),
+            field_name="spec",
+            step=step,
+            execution_id=execution_id,
+        )  # Step behavior spec (case_mode, eval_mode)
 
         # Extract case evaluation settings from spec
         case_mode = "exclusive"  # Default: first match wins (XOR-split)

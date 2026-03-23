@@ -168,6 +168,13 @@ def _loop_results_total(loop_state: dict[str, Any]) -> int:
     return len(buffered_results) + max(0, omitted)
 
 
+def _unwrap_event_payload(payload: Any) -> Any:
+    """Normalize persisted event payload wrappers back to runtime payload semantics."""
+    if isinstance(payload, dict) and "kind" in payload and "data" in payload:
+        return payload.get("data")
+    return payload
+
+
 def _pending_step_key(step_name: Optional[str]) -> str:
     """
     Normalize orchestration pending-step keys.
@@ -545,6 +552,8 @@ class ExecutionState:
             len(self.variables),
             _sample_keys(self.variables),
         )
+
+        event_payload = _unwrap_event_payload(event.payload)
         
         # Protected system fields that should not be overridden by workload variables
         protected_fields = {"execution_id", "catalog_id", "job"}
@@ -563,7 +572,7 @@ class ExecutionState:
         context = {
             "event": {
                 "name": event.name,
-                "payload": event.payload,
+                "payload": event_payload,
                 "step": event.step,
                 "timestamp": event.timestamp.isoformat() if event.timestamp else None,
             },
@@ -603,27 +612,27 @@ class ExecutionState:
             # Note: Iterator variable itself (e.g., {{ num }}) comes from state.variables
         
         # Add event-specific data
-        if "response" in event.payload:
-            context["response"] = event.payload["response"]
-        elif "result" in event.payload:
+        if isinstance(event_payload, dict) and "response" in event_payload:
+            context["response"] = event_payload["response"]
+        elif isinstance(event_payload, dict) and "result" in event_payload:
             # Fallback: expose result as response for templates that expect {{ response.* }} on step.exit
-            context["response"] = event.payload["result"]
-        if "error" in event.payload:
-            context["error"] = event.payload["error"]
-        if "result" in event.payload:
-            context["result"] = event.payload["result"]
+            context["response"] = event_payload["result"]
+        if isinstance(event_payload, dict) and "error" in event_payload:
+            context["error"] = event_payload["error"]
+        if isinstance(event_payload, dict) and "result" in event_payload:
+            context["result"] = event_payload["result"]
         else:
             # CRITICAL FIX: For call.done events, the worker sends the tool response
             # directly as the payload (not wrapped in a "result" key). Make the entire
             # payload available as "result" so case conditions like
             # {{ result.sub is defined }} work correctly.
-            if event.name == "call.done" and event.payload:
-                context["result"] = event.payload
+            if event.name == "call.done" and event_payload:
+                context["result"] = event_payload
                 # Only set response if not already extracted from "response" key
                 # Worker may send {"response": actual_response} where actual_response
                 # was already extracted at line 413
                 if "response" not in context:
-                    context["response"] = event.payload
+                    context["response"] = event_payload
                 logger.debug(f"[RENDER_CTX] Set result/response from call.done payload for {event.step}")
 
         return context
@@ -3007,6 +3016,13 @@ class ControlFlowEngine:
         # Render Jinja2 templates in args
         rendered_args = recursive_render(self.jinja_env, step_args, context)
 
+        if step.tool is None:
+            logger.info(
+                "[CREATE-CMD] Step '%s' has no tool; treating as a terminal/non-actionable transition target",
+                step.step,
+            )
+            return None
+
         # Check if step.tool is a pipeline (list of labeled tasks) or single tool
         pipeline = None
         if isinstance(step.tool, list):
@@ -3141,6 +3157,7 @@ class ControlFlowEngine:
         """
         logger.info(f"[ENGINE] handle_event called: event.name={event.name}, step={event.step}, execution={event.execution_id}, already_persisted={already_persisted}")
         commands: list[Command] = []
+        normalized_payload = _unwrap_event_payload(event.payload)
         
         # Load execution state (from memory cache or reconstruct from events)
         state = await self.state_store.load_state(event.execution_id)
@@ -3248,10 +3265,14 @@ class ControlFlowEngine:
         # Task sequence steps have suffix :task_sequence (e.g., fetch_page:task_sequence)
         if event.step.endswith(":task_sequence") and event.name == "call.done":
             parent_step = event.step.rsplit(":", 1)[0]
-            response_data = event.payload.get("response", event.payload)
+            response_data = (
+                normalized_payload.get("response", normalized_payload)
+                if isinstance(normalized_payload, dict)
+                else normalized_payload
+            )
             payload_loop_event_id = (
-                event.payload.get("loop_event_id")
-                if isinstance(event.payload, dict)
+                normalized_payload.get("loop_event_id")
+                if isinstance(normalized_payload, dict)
                 else None
             )
             if not payload_loop_event_id and isinstance(response_data, dict):
@@ -3599,19 +3620,27 @@ class ControlFlowEngine:
         
         # PRE-PROCESSING: Identify if a retry is triggered by worker eval rules
         # This is needed to handle pagination correctly in loops
-        worker_eval_action = event.payload.get("eval_action")
+        worker_eval_action = normalized_payload.get("eval_action") if isinstance(normalized_payload, dict) else None
         has_worker_retry = worker_eval_action and worker_eval_action.get("type") == "retry"
 
         # CRITICAL: Store call.done/call.error response in state BEFORE evaluating next transitions
         # This ensures the result is available in render context for subsequent steps
         # Worker sends response directly as payload (not wrapped in "response" key)
         if event.name == "call.done":
-            response_data = event.payload.get("response", event.payload)
+            response_data = (
+                normalized_payload.get("response", normalized_payload)
+                if isinstance(normalized_payload, dict)
+                else normalized_payload
+            )
             state.mark_step_completed(event.step, response_data)
             logger.debug(f"[CALL.DONE] Stored response for step {event.step} in state BEFORE next evaluation")
         elif event.name == "call.error":
             # Mark step as completed even on error - it finished executing (with failure)
-            error_data = event.payload.get("error", event.payload)
+            error_data = (
+                normalized_payload.get("error", normalized_payload)
+                if isinstance(normalized_payload, dict)
+                else normalized_payload
+            )
             state.completed_steps.add(event.step)
             # CRITICAL: Track that execution has failures for final status determination
             state.failed = True
@@ -3666,10 +3695,17 @@ class ControlFlowEngine:
         # need loop counting here because step.exit is emitted as non-actionable and
         # never triggers handle_event().
         if event.name == "call.done" and is_loop_step:
-            response_data = event.payload.get("response", event.payload)
+            response_data = (
+                normalized_payload.get("response", normalized_payload)
+                if isinstance(normalized_payload, dict)
+                else normalized_payload
+            )
             loop_state = state.loop_state[event.step]
             if not loop_state.get("aggregation_finalized", False):
-                failed = (response_data.get("status", "") or "").upper() in ("FAILED", "ERROR")
+                status_str = ""
+                if isinstance(response_data, dict):
+                    status_str = response_data.get("status", "") or ""
+                failed = status_str.upper() in ("FAILED", "ERROR")
                 state.add_loop_result(event.step, response_data, failed=failed)
                 logger.info(f"[LOOP-CALL.DONE] Added iteration result to loop aggregation for {event.step}")
 

@@ -75,6 +75,108 @@ def _format_duration_human(total_seconds: Optional[float]) -> Optional[str]:
     return " ".join(parts)
 
 
+def _build_execution_event_filters(
+    execution_id: str,
+    *,
+    since_event_id: Optional[int] = None,
+    event_type: Optional[str] = None,
+) -> tuple[str, dict[str, Any]]:
+    where_clauses = ["execution_id = %(execution_id)s"]
+    params: dict[str, Any] = {"execution_id": execution_id}
+
+    if since_event_id is not None:
+        where_clauses.append("event_id > %(since_event_id)s")
+        params["since_event_id"] = since_event_id
+
+    if event_type:
+        where_clauses.append("event_type = %(event_type)s")
+        params["event_type"] = event_type
+
+    return " AND ".join(where_clauses), params
+
+
+def _deserialize_event_row(row: dict[str, Any], execution_id: str) -> dict[str, Any]:
+    event_data = dict(row)
+    event_data["execution_id"] = execution_id
+    event_data["timestamp"] = row["created_at"].isoformat() if row["created_at"] else None
+    if isinstance(row.get("context"), str):
+        try:
+            event_data["context"] = json.loads(row["context"])
+        except json.JSONDecodeError:
+            pass
+    if isinstance(row.get("result"), str):
+        try:
+            event_data["result"] = json.loads(row["result"])
+        except json.JSONDecodeError:
+            pass
+    return event_data
+
+
+async def _fetch_execution_events_page(
+    cursor,
+    *,
+    execution_id: str,
+    page: int,
+    page_size: int,
+    since_event_id: Optional[int],
+    event_type: Optional[str],
+) -> tuple[list[dict[str, Any]], dict[str, int | bool]]:
+    where_sql, params = _build_execution_event_filters(
+        execution_id,
+        since_event_id=since_event_id,
+        event_type=event_type,
+    )
+
+    await cursor.execute(
+        f"""
+        SELECT COUNT(*) as total
+        FROM noetl.event
+        WHERE {where_sql}
+        """,
+        params,
+    )
+    count_row = await cursor.fetchone()
+    total_events = count_row["total"] if count_row else 0
+    total_pages = (total_events + page_size - 1) // page_size if total_events > 0 else 1
+    offset = (page - 1) * page_size
+
+    params["page_size"] = page_size
+    params["offset"] = offset
+    await cursor.execute(
+        f"""
+        SELECT event_id,
+               event_type,
+               node_id,
+               node_name,
+               status,
+               created_at,
+               context,
+               result,
+               error,
+               catalog_id,
+               parent_execution_id,
+               parent_event_id,
+               duration
+        FROM noetl.event
+        WHERE {where_sql}
+        ORDER BY event_id DESC
+        LIMIT %(page_size)s OFFSET %(offset)s
+        """,
+        params,
+    )
+    rows = await cursor.fetchall()
+    events = [_deserialize_event_row(row, execution_id) for row in rows]
+
+    return events, {
+        "page": page,
+        "page_size": page_size,
+        "total_events": total_events,
+        "total_pages": total_pages,
+        "has_next": page < total_pages,
+        "has_prev": page > 1,
+    }
+
+
 def _truncate_text(value: Optional[str], max_len: int = 600) -> Optional[str]:
     if value is None:
         return None
@@ -947,7 +1049,8 @@ async def get_execution(
     page: int = Query(default=1, ge=1, description="Page number (1-indexed)"),
     page_size: int = Query(default=100, ge=10, le=500, description="Events per page"),
     since_event_id: Optional[int] = Query(default=None, description="Get events after this event_id (for incremental loading)"),
-    event_type: Optional[str] = Query(default=None, description="Filter by event type")
+    event_type: Optional[str] = Query(default=None, description="Filter by event type"),
+    include_events: bool = Query(default=True, description="Include paginated events in the response"),
 ):
     """
     Get execution by ID with paginated event history.
@@ -976,56 +1079,24 @@ async def get_execution(
     """
     async with get_pool_connection() as conn:
         async with conn.cursor(row_factory=dict_row) as cursor:
-            # Build WHERE clause for filters
-            where_clauses = ["execution_id = %(execution_id)s"]
-            params = {"execution_id": execution_id}
-
-            if since_event_id is not None:
-                where_clauses.append("event_id > %(since_event_id)s")
-                params["since_event_id"] = since_event_id
-
-            if event_type:
-                where_clauses.append("event_type = %(event_type)s")
-                params["event_type"] = event_type
-
-            where_sql = " AND ".join(where_clauses)
-
-            # Get total count for pagination
-            await cursor.execute(f"""
-                SELECT COUNT(*) as total
-                FROM noetl.event
-                WHERE {where_sql}
-            """, params)
-            count_row = await cursor.fetchone()
-            total_events = count_row["total"] if count_row else 0
-
-            # Calculate pagination
-            total_pages = (total_events + page_size - 1) // page_size if total_events > 0 else 1
-            offset = (page - 1) * page_size
-
-            # Get paginated events (ordered by event_id DESC for most recent first)
-            params["page_size"] = page_size
-            params["offset"] = offset
-            await cursor.execute(f"""
-                SELECT event_id,
-                       event_type,
-                       node_id,
-                       node_name,
-                       status,
-                       created_at,
-                       context,
-                       result,
-                       error,
-                       catalog_id,
-                       parent_execution_id,
-                       parent_event_id,
-                       duration
-                FROM noetl.event
-                WHERE {where_sql}
-                ORDER BY event_id DESC
-                LIMIT %(page_size)s OFFSET %(offset)s
-            """, params)
-            rows = await cursor.fetchall()
+            events: list[dict[str, Any]] = []
+            pagination = {
+                "page": page,
+                "page_size": page_size,
+                "total_events": 0,
+                "total_pages": 1,
+                "has_next": False,
+                "has_prev": False,
+            }
+            if include_events:
+                events, pagination = await _fetch_execution_events_page(
+                    cursor,
+                    execution_id=execution_id,
+                    page=page,
+                    page_size=page_size,
+                    since_event_id=since_event_id,
+                    event_type=event_type,
+                )
 
             # Also get execution metadata (first event info) in a separate efficient query
             await cursor.execute("""
@@ -1093,37 +1164,14 @@ async def get_execution(
                         "duration_seconds": None,
                         "duration_human": None,
                         "parent_execution_id": state.parent_execution_id,
-                        "events": [],
-                        "pagination": {
-                            "page": 1,
-                            "page_size": page_size,
-                            "total_events": 0,
-                            "total_pages": 1,
-                            "has_next": False,
-                            "has_prev": False
-                        }
+                        "events": events if include_events else [],
+                        "events_included": include_events,
+                        "events_endpoint": f"/api/executions/{execution_id}/events",
+                        "pagination": pagination if include_events else None,
                     }
             except Exception as e:
                 logger.warning(f"V2 engine fallback failed for execution {execution_id}: {e}")
         raise HTTPException(status_code=404, detail=f"Execution {execution_id} not found")
-
-    # Process events
-    events = []
-    for row in rows:
-        event_data = dict(row)
-        event_data["execution_id"] = execution_id
-        event_data["timestamp"] = row["created_at"].isoformat() if row["created_at"] else None
-        if isinstance(row["context"], str):
-            try:
-                event_data["context"] = json.loads(row["context"])
-            except json.JSONDecodeError:
-                pass
-        if isinstance(row["result"], str):
-            try:
-                event_data["result"] = json.loads(row["result"])
-            except json.JSONDecodeError:
-                pass
-        events.append(event_data)
 
     # Get playbook path and version from catalog
     playbook_path = "unknown"
@@ -1163,15 +1211,45 @@ async def get_execution(
         "duration_seconds": round(duration_seconds, 3) if duration_seconds is not None else None,
         "duration_human": _format_duration_human(duration_seconds),
         "parent_execution_id": first_event.get("parent_execution_id"),
+        "events": events if include_events else [],
+        "events_included": include_events,
+        "events_endpoint": f"/api/executions/{execution_id}/events",
+        "pagination": pagination if include_events else None,
+    }
+
+
+@router.get("/executions/{execution_id}/events", response_class=JSONResponse)
+async def get_execution_events(
+    execution_id: str,
+    page: int = Query(default=1, ge=1, description="Page number (1-indexed)"),
+    page_size: int = Query(default=100, ge=10, le=500, description="Events per page"),
+    since_event_id: Optional[int] = Query(default=None, description="Get events after this event_id (for incremental loading)"),
+    event_type: Optional[str] = Query(default=None, description="Filter by event type"),
+):
+    detail = await get_execution(
+        execution_id=execution_id,
+        page=1,
+        page_size=1,
+        since_event_id=None,
+        event_type=None,
+        include_events=False,
+    )
+    async with get_pool_connection() as conn:
+        async with conn.cursor(row_factory=dict_row) as cursor:
+            events, pagination = await _fetch_execution_events_page(
+                cursor,
+                execution_id=execution_id,
+                page=page,
+                page_size=page_size,
+                since_event_id=since_event_id,
+                event_type=event_type,
+            )
+    return {
+        "execution_id": detail.get("execution_id"),
+        "path": detail.get("path"),
+        "status": detail.get("status"),
         "events": events,
-        "pagination": {
-            "page": page,
-            "page_size": page_size,
-            "total_events": total_events,
-            "total_pages": total_pages,
-            "has_next": page < total_pages,
-            "has_prev": page > 1
-        }
+        "pagination": pagination,
     }
 
 

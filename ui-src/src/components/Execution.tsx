@@ -139,7 +139,7 @@ const Execution: React.FC = () => {
         if (
           response.some(
             (exec: ExecutionData) =>
-              exec.status === "running" || exec.status === "pending",
+              exec.status?.toLowerCase() === "running" || exec.status?.toLowerCase() === "pending",
           )
         ) {
           setExecutions(response);
@@ -183,12 +183,13 @@ const Execution: React.FC = () => {
 
     // Filter by tab (event type)
     if (activeTab !== "all") {
-      filtered = filtered.filter((exec) => exec.status === activeTab);
+      filtered = filtered.filter((exec) => exec.status?.toLowerCase() === activeTab.toLowerCase());
     }
 
     // Filter by status (multiple selection)
     if (statusFilter.length > 0) {
-      filtered = filtered.filter((exec) => statusFilter.includes(exec.status));
+      const normalizedFilter = statusFilter.map((status) => status.toLowerCase());
+      filtered = filtered.filter((exec) => normalizedFilter.includes(exec.status?.toLowerCase()));
     }
 
     // Filter by playbook name
@@ -247,19 +248,23 @@ const Execution: React.FC = () => {
     }
   };
 
+  const normalizeStatus = (status?: string | null) => (status || "").toLowerCase();
+
   const getStatusColor = (status: string) => {
-    switch (status?.toLowerCase()) {
+    switch (normalizeStatus(status)) {
       case "completed":
         return "green";
       case "failed":
         return "red";
+      case "pending":
+        return "orange";
       default:
         return "blue";
     }
   };
 
   const getStatusText = (status: string) => {
-    switch (status) {
+    switch (normalizeStatus(status)) {
       case "running":
         return "Running";
       case "completed":
@@ -273,10 +278,24 @@ const Execution: React.FC = () => {
     }
   };
 
-  const formatDuration = (startTime: string, endTime?: string) => {
-    const start = moment(startTime);
-    const end = endTime ? moment(endTime) : moment();
-    const duration = moment.duration(end.diff(start));
+  const formatDuration = (record: ExecutionData) => {
+    if (record.duration_human) {
+      return record.duration_human;
+    }
+
+    if (!record.start_time) {
+      return "-";
+    }
+
+    const start = moment(record.start_time);
+    const end = record.end_time ? moment(record.end_time) : moment();
+
+    if (!start.isValid() || !end.isValid()) {
+      return "-";
+    }
+
+    const diffMs = Math.max(0, end.diff(start));
+    const duration = moment.duration(diffMs);
 
     if (duration.asSeconds() < 1) {
       return `${Math.round(duration.asMilliseconds())}ms`;
@@ -588,8 +607,7 @@ const Execution: React.FC = () => {
     {
       title: "Duration",
       key: "duration",
-      render: (record: ExecutionData) =>
-        formatDuration(record.start_time, record.end_time),
+      render: (record: ExecutionData) => formatDuration(record),
     },
     {
       title: "Actions",
@@ -603,7 +621,7 @@ const Execution: React.FC = () => {
           >
             View
           </Button>
-          {(record.status === "running" || record.status === "pending") && (
+          {(normalizeStatus(record.status) === "running" || normalizeStatus(record.status) === "pending") && (
             <Button
               type="text"
               danger
@@ -619,16 +637,16 @@ const Execution: React.FC = () => {
   ];
 
   const runningExecutions = filteredExecutions.filter(
-    (exec) => exec.status === "running",
+    (exec) => normalizeStatus(exec.status) === "running",
   );
   const pendingExecutions = filteredExecutions.filter(
-    (exec) => exec.status === "pending",
+    (exec) => normalizeStatus(exec.status) === "pending",
   );
   const completedExecutions = filteredExecutions.filter(
-    (exec) => exec.status === "completed",
+    (exec) => normalizeStatus(exec.status) === "completed",
   );
   const failedExecutions = filteredExecutions.filter(
-    (exec) => exec.status === "failed",
+    (exec) => normalizeStatus(exec.status) === "failed",
   );
 
   // Get unique playbook names for filter dropdown
@@ -719,10 +737,10 @@ const Execution: React.FC = () => {
                 size="small"
               >
                 <TabPane tab="All Events" key="all" />
-                <TabPane tab={`Running (${executions.filter(e => e.status === "running").length})`} key="running" />
-                <TabPane tab={`Pending (${executions.filter(e => e.status === "pending").length})`} key="pending" />
-                <TabPane tab={`Completed (${executions.filter(e => e.status === "completed").length})`} key="completed" />
-                <TabPane tab={`Failed (${executions.filter(e => e.status === "failed").length})`} key="failed" />
+                <TabPane tab={`Running (${executions.filter(e => normalizeStatus(e.status) === "running").length})`} key="running" />
+                <TabPane tab={`Pending (${executions.filter(e => normalizeStatus(e.status) === "pending").length})`} key="pending" />
+                <TabPane tab={`Completed (${executions.filter(e => normalizeStatus(e.status) === "completed").length})`} key="completed" />
+                <TabPane tab={`Failed (${executions.filter(e => normalizeStatus(e.status) === "failed").length})`} key="failed" />
               </Tabs>
 
               {/* Additional Filters */}
