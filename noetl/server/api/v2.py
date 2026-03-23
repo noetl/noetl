@@ -85,6 +85,15 @@ _COMMAND_CONTEXT_INLINE_MAX_BYTES = max(
     4096,
     int(os.getenv("NOETL_COMMAND_CONTEXT_INLINE_MAX_BYTES", os.getenv("NOETL_INLINE_MAX_BYTES", "65536"))),
 )
+_COMMAND_PUBLISH_RECOVERY_DELAY_SECONDS = max(
+    5.0,
+    float(os.getenv("NOETL_COMMAND_PUBLISH_RECOVERY_DELAY_SECONDS", "20")),
+)
+_COMMAND_TERMINAL_EVENT_TYPES = [
+    "command.completed",
+    "command.failed",
+    "command.cancelled",
+]
 
 _BATCH_FAILURE_ENQUEUE_TIMEOUT = "ack_timeout"
 _BATCH_FAILURE_ENQUEUE_ERROR = "enqueue_error"
@@ -121,6 +130,7 @@ _DB_UNAVAILABLE_ERROR_MARKERS = (
 )
 _db_unavailable_failure_streak: int = 0
 _db_unavailable_backoff_until_monotonic: float = 0.0
+_publish_recovery_tasks: set[asyncio.Task] = set()
 
 
 def _compute_retry_after(min_seconds: float = 1.0, max_seconds: float = 15.0) -> str:
@@ -666,6 +676,138 @@ async def get_nats_publisher():
     return _nats_publisher
 
 
+def _track_publish_recovery_task(task: asyncio.Task) -> None:
+    _publish_recovery_tasks.add(task)
+    task.add_done_callback(_publish_recovery_tasks.discard)
+
+
+async def _command_has_claim_or_terminal(
+    *,
+    execution_id: int,
+    command_id: str,
+) -> bool:
+    async with get_pool_connection(timeout=5.0) as conn:
+        async with conn.cursor(row_factory=dict_row) as cur:
+            await cur.execute(
+                """
+                SELECT EXISTS (
+                    SELECT 1
+                    FROM noetl.event e
+                    WHERE e.execution_id = %s
+                      AND (
+                          (
+                              e.event_type = 'command.claimed'
+                              AND (
+                                  e.meta->>'command_id' = %s
+                                  OR e.result->'data'->>'command_id' = %s
+                              )
+                          )
+                          OR (
+                              e.event_type = ANY(%s)
+                              AND (
+                                  e.meta->>'command_id' = %s
+                                  OR e.result->'data'->>'command_id' = %s
+                              )
+                          )
+                          OR e.event_type = 'execution.cancelled'
+                      )
+                ) AS has_claim_or_terminal
+                """,
+                (
+                    execution_id,
+                    command_id,
+                    command_id,
+                    _COMMAND_TERMINAL_EVENT_TYPES,
+                    command_id,
+                    command_id,
+                ),
+            )
+            row = await cur.fetchone()
+    return bool(row and row.get("has_claim_or_terminal"))
+
+
+async def _recover_unclaimed_command_after_delay(
+    *,
+    execution_id: int,
+    event_id: int,
+    command_id: str,
+    step: str,
+    server_url: str,
+    delay_seconds: float,
+) -> None:
+    try:
+        await asyncio.sleep(delay_seconds)
+        if await _command_has_claim_or_terminal(
+            execution_id=execution_id,
+            command_id=command_id,
+        ):
+            logger.debug(
+                "[PUBLISH-RECOVERY] Skipping recovery for execution_id=%s command_id=%s; claim or terminal event already exists",
+                execution_id,
+                command_id,
+            )
+            return
+
+        logger.warning(
+            "[PUBLISH-RECOVERY] Re-publishing unclaimed command after %.1fs: execution_id=%s event_id=%s command_id=%s step=%s",
+            delay_seconds,
+            execution_id,
+            event_id,
+            command_id,
+            step,
+        )
+        nats_pub = await get_nats_publisher()
+        await nats_pub.publish_command(
+            execution_id=execution_id,
+            event_id=event_id,
+            command_id=command_id,
+            step=step,
+            server_url=server_url,
+        )
+    except asyncio.CancelledError:
+        raise
+    except Exception as exc:
+        logger.error(
+            "[PUBLISH-RECOVERY] Failed for execution_id=%s event_id=%s command_id=%s: %s",
+            execution_id,
+            event_id,
+            command_id,
+            exc,
+            exc_info=True,
+        )
+
+
+async def _publish_commands_with_recovery(
+    command_events: list[tuple[int, int, str, str]],
+    *,
+    server_url: str,
+) -> None:
+    if not command_events:
+        return
+
+    nats_pub = await get_nats_publisher()
+    for execution_id, event_id, command_id, step in command_events:
+        await nats_pub.publish_command(
+            execution_id=execution_id,
+            event_id=event_id,
+            command_id=command_id,
+            step=step,
+            server_url=server_url,
+        )
+        recovery_task = asyncio.create_task(
+            _recover_unclaimed_command_after_delay(
+                execution_id=execution_id,
+                event_id=event_id,
+                command_id=command_id,
+                step=step,
+                server_url=server_url,
+                delay_seconds=_COMMAND_PUBLISH_RECOVERY_DELAY_SECONDS,
+            ),
+            name=f"command-publish-recovery:{execution_id}:{command_id}",
+        )
+        _track_publish_recovery_task(recovery_task)
+
+
 async def _next_snowflake_id(cur) -> int:
     """Generate a snowflake ID using the current DB cursor/connection."""
     await cur.execute("SELECT noetl.snowflake_id() AS snowflake_id")
@@ -1027,7 +1169,6 @@ async def execute(req: ExecuteRequest) -> ExecuteResponse:
                 root_event_id = row['event_id'] if row else None
         
         # Emit command.issued events
-        nats_pub = await get_nats_publisher()
         server_url = os.getenv("NOETL_SERVER_URL", "http://noetl.noetl.svc.cluster.local:8082")
         command_events = []
         
@@ -1095,19 +1236,11 @@ async def execute(req: ExecuteRequest) -> ExecuteResponse:
                         "parent_execution_id": req.parent_execution_id,
                         "created_at": datetime.now(timezone.utc)
                     })
-                    command_events.append((evt_id, cmd_id, cmd))
+                    command_events.append((int(execution_id), evt_id, cmd_id, cmd.step))
             
             await conn.commit()
         
-        # NATS notifications
-        for evt_id, cmd_id, cmd in command_events:
-            await nats_pub.publish_command(
-                execution_id=int(execution_id),
-                event_id=evt_id,
-                command_id=cmd_id,
-                step=cmd.step,
-                server_url=server_url
-            )
+        await _publish_commands_with_recovery(command_events, server_url=server_url)
         
         return ExecuteResponse(execution_id=execution_id, status="started", commands_generated=len(commands))
     
@@ -1706,7 +1839,6 @@ async def handle_event(req: EventRequest) -> EventResponse:
             logger.debug(f"[ENGINE] Skipped engine for administrative event {req.name}")
         
         # Emit command.issued for next steps
-        nats_pub = await get_nats_publisher()
         server_url = os.getenv("NOETL_SERVER_URL", "http://noetl.noetl.svc.cluster.local:8082")
         command_events = []
         
@@ -1778,18 +1910,11 @@ async def handle_event(req: EventRequest) -> EventResponse:
                         "parent_execution_id": parent_exec,
                         "created_at": datetime.now(timezone.utc)
                     })
-                    command_events.append((new_evt_id, cmd_id, cmd))
+                    command_events.append((int(cmd.execution_id), new_evt_id, cmd_id, cmd.step))
                 
                 await conn.commit()
         
-        for new_evt_id, cmd_id, cmd in command_events:
-            await nats_pub.publish_command(
-                execution_id=int(cmd.execution_id),
-                event_id=new_evt_id,
-                command_id=cmd_id,
-                step=cmd.step,
-                server_url=server_url
-            )
+        await _publish_commands_with_recovery(command_events, server_url=server_url)
         
         # Trigger orchestrator for workflow progression
         if req.name == "command.completed" and req.step.lower() != "end":
@@ -2121,7 +2246,6 @@ async def _issue_commands_for_batch(job: _BatchAcceptJob, commands: list) -> Non
     if not commands:
         return
 
-    nats_pub = await get_nats_publisher()
     server_url = os.getenv("NOETL_SERVER_URL", "http://noetl.noetl.svc.cluster.local:8082")
     publish_items: list[tuple[int, str, str, int]] = []
 
@@ -2197,14 +2321,10 @@ async def _issue_commands_for_batch(job: _BatchAcceptJob, commands: list) -> Non
                 publish_items.append((int(cmd.execution_id), cmd.step, cmd_id, new_evt_id))
             await conn.commit()
 
-    for execution_id, step, cmd_id, evt_id in publish_items:
-        await nats_pub.publish_command(
-            execution_id=execution_id,
-            event_id=evt_id,
-            command_id=cmd_id,
-            step=step,
-            server_url=server_url,
-        )
+    await _publish_commands_with_recovery(
+        [(execution_id, evt_id, cmd_id, step) for execution_id, step, cmd_id, evt_id in publish_items],
+        server_url=server_url,
+    )
 
 
 async def _process_accepted_batch(job: _BatchAcceptJob) -> int:
