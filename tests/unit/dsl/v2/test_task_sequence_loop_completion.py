@@ -362,6 +362,138 @@ async def test_state_replay_unwraps_step_exit_result_and_skips_task_sequence_com
 
 
 @pytest.mark.asyncio
+async def test_state_replay_restores_set_ctx_variables_for_later_steps(monkeypatch):
+    playbook = Playbook(**yaml.safe_load(
+        """
+apiVersion: noetl.io/v2
+kind: Playbook
+metadata:
+  name: replay_set_ctx
+  path: tests/replay_set_ctx
+workload:
+  pg_auth: pg_k8s
+workflow:
+  - step: load_next_facility
+    tool:
+      kind: postgres
+      auth: pg_k8s
+      query: SELECT 1;
+    set_ctx:
+      facility_mapping_id: "{{ load_next_facility.command_0.rows[0].facility_mapping_id }}"
+      facility_id: "{{ load_next_facility.command_0.rows[0].facility_id }}"
+  - step: load_patient_ids_context
+    tool:
+      kind: postgres
+      auth: pg_k8s
+      query: SELECT 1;
+    set_ctx:
+      patient_count: "{{ load_patient_ids_context.command_0.rows[0].patient_count | int }}"
+      facility_mapping_id: "{{ load_next_facility.command_0.rows[0].facility_mapping_id }}"
+  - step: load_patients_for_assessments
+    tool:
+      kind: postgres
+      auth: pg_k8s
+      query: |
+        SELECT w.patient_id
+        FROM public.patient_ids_work w
+        WHERE w.facility_mapping_id = {{ facility_mapping_id }}
+          AND {{ patient_count }} > 0;
+        """
+    ))
+    playbook_repo = PlaybookRepo()
+    state_store = StateStore(playbook_repo)
+
+    async def fake_load_playbook_by_id(_catalog_id):
+        return playbook
+
+    monkeypatch.setattr(playbook_repo, "load_playbook_by_id", fake_load_playbook_by_id)
+
+    class FakeCursor:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        async def execute(self, query, _params):
+            self.last_query = query
+
+        async def fetchone(self):
+            return {
+                "catalog_id": "cat-ctx",
+                "result": {"workload": {"pg_auth": "pg_k8s"}},
+            }
+
+        async def fetchall(self):
+            return [
+                {
+                    "node_name": "load_next_facility",
+                    "event_type": "step.exit",
+                    "result": {
+                        "kind": "data",
+                        "data": {
+                            "result": {
+                                "command_0": {
+                                    "rows": [
+                                        {
+                                            "facility_mapping_id": 53,
+                                            "facility_id": 777,
+                                        }
+                                    ],
+                                    "row_count": 1,
+                                }
+                            },
+                            "status": "completed",
+                        },
+                    },
+                    "meta": None,
+                },
+                {
+                    "node_name": "load_patient_ids_context",
+                    "event_type": "step.exit",
+                    "result": {
+                        "kind": "data",
+                        "data": {
+                            "result": {
+                                "command_0": {
+                                    "rows": [{"patient_count": 3}],
+                                    "row_count": 1,
+                                }
+                            },
+                            "status": "completed",
+                        },
+                    },
+                    "meta": None,
+                },
+            ]
+
+    class FakeConnection:
+        def cursor(self, row_factory=None):  # noqa: ARG002
+            return FakeCursor()
+
+    class FakeConnectionContext:
+        async def __aenter__(self):
+            return FakeConnection()
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+    monkeypatch.setattr(engine_module, "get_pool_connection", lambda: FakeConnectionContext())
+
+    state = await state_store.load_state("9021")
+
+    assert state is not None
+    assert state.variables["facility_mapping_id"] == 53
+    assert state.variables["facility_id"] == 777
+    assert state.variables["patient_count"] == 3
+
+    context = state.get_render_context(Event(execution_id="9021", step="load_patients_for_assessments", name="call.done", payload={}))
+    assert context["facility_mapping_id"] == 53
+    assert context["ctx"]["facility_mapping_id"] == 53
+    assert context["patient_count"] == 3
+
+
+@pytest.mark.asyncio
 async def test_terminal_events_emit_when_pending_key_is_task_sequence_suffix(monkeypatch):
     fixture = Path(
         "tests/fixtures/playbooks/batch_execution/heavy_payload_pipeline_in_step/"
