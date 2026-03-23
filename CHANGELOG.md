@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.10.26](https://github.com/noetl/noetl/compare/v2.10.25...v2.10.26) (2026-03-23)
+
+### Bug Fixes
+
+* restore replayed set_ctx state from persisted events ([d408ff6](https://github.com/noetl/noetl/commit/d408ff60ecb791e9f86b807a279cc82a0611072c))
+
 ## [2.10.25](https://github.com/noetl/noetl/compare/v2.10.24...v2.10.25) (2026-03-23)
 
 ### Bug Fixes
