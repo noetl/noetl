@@ -1,5 +1,5 @@
 """
-Periodic command reaper for orphaned commands.
+Periodic command reaper for orphaned or unpublished commands.
 
 When a worker is OOMKilled or otherwise crashes ungracefully, it cannot emit
 command.completed / command.failed events. Its NATS messages were already ACKed
@@ -13,6 +13,10 @@ This module provides a background task that:
 3. A healthy worker picks up the notification, calls claim_command, and the
    existing decide_reclaim_for_existing_claim() logic detects the dead worker
    and reclaims the command transparently.
+
+It also recovers pending commands that were persisted as `command.issued` but
+never claimed, for example when the server lost its NATS publisher connection
+after committing the event.
 
 Environment variables:
   NOETL_COMMAND_REAPER_ENABLED          - true/false (default: true)
@@ -54,6 +58,9 @@ _REAPER_MAX_PER_RUN = max(
 )
 _REAPER_LOOKBACK_HOURS = max(
     1, int(os.getenv("NOETL_COMMAND_REAPER_LOOKBACK_HOURS", "24"))
+)
+_REAPER_PENDING_RETRY_SECONDS = max(
+    15.0, float(os.getenv("NOETL_COMMAND_REAPER_PENDING_RETRY_SECONDS", "60"))
 )
 
 
@@ -136,6 +143,69 @@ async def _find_orphaned_commands(
     return list(rows or [])
 
 
+async def _find_unclaimed_pending_commands(
+    pending_retry_seconds: float,
+    lookback_hours: int,
+    max_commands: int,
+) -> list[dict]:
+    """
+    Return commands that were issued but never claimed nor completed.
+
+    These commands can be stranded when command.issued was committed but the
+    NATS publish failed before workers were notified.
+    """
+    async with get_pool_connection(timeout=5.0) as conn:
+        async with conn.cursor(row_factory=dict_row) as cur:
+            await cur.execute(
+                """
+                SELECT
+                    issued.event_id,
+                    issued.execution_id,
+                    issued.meta->>'command_id' AS command_id,
+                    issued.node_name AS step
+                FROM noetl.event issued
+                WHERE issued.event_type = 'command.issued'
+                  AND issued.meta->>'command_id' IS NOT NULL
+                  AND issued.created_at > NOW() - (%s * INTERVAL '1 hour')
+                  AND issued.created_at < NOW() - (%s * INTERVAL '1 second')
+                  AND NOT EXISTS (
+                      SELECT 1 FROM noetl.event claims
+                      WHERE claims.execution_id = issued.execution_id
+                        AND claims.event_type = 'command.claimed'
+                        AND (
+                            claims.meta->>'command_id' = issued.meta->>'command_id'
+                            OR claims.result->'data'->>'command_id' = issued.meta->>'command_id'
+                        )
+                  )
+                  AND NOT EXISTS (
+                      SELECT 1 FROM noetl.event terminal
+                      WHERE terminal.execution_id = issued.execution_id
+                        AND terminal.event_type IN ('command.completed', 'command.failed', 'command.cancelled')
+                        AND (
+                            terminal.meta->>'command_id' = issued.meta->>'command_id'
+                            OR terminal.result->'data'->>'command_id' = issued.meta->>'command_id'
+                        )
+                  )
+                  AND NOT EXISTS (
+                      SELECT 1 FROM noetl.event x
+                      WHERE x.execution_id = issued.execution_id
+                        AND x.event_type = 'execution.cancelled'
+                  )
+                ORDER BY issued.event_id
+                LIMIT %s
+                """,
+                (lookback_hours, pending_retry_seconds, max_commands),
+            )
+            rows = await cur.fetchall()
+    return list(rows or [])
+
+
+async def _get_nats_publisher():
+    from noetl.server.api.v2 import get_nats_publisher
+
+    return await get_nats_publisher()
+
+
 async def reap_orphaned_commands_once(server_url: str) -> int:
     """
     Scan once for orphaned commands and re-publish them.
@@ -150,21 +220,31 @@ async def reap_orphaned_commands_once(server_url: str) -> int:
         lookback_hours=_REAPER_LOOKBACK_HOURS,
         max_commands=_REAPER_MAX_PER_RUN,
     )
+    stranded = await _find_unclaimed_pending_commands(
+        pending_retry_seconds=_REAPER_PENDING_RETRY_SECONDS,
+        lookback_hours=_REAPER_LOOKBACK_HOURS,
+        max_commands=max(1, _REAPER_MAX_PER_RUN - len(orphaned)),
+    )
+    recovered = orphaned + stranded
 
-    if not orphaned:
-        logger.debug("[REAPER] No orphaned commands found")
+    if not recovered:
+        logger.debug("[REAPER] No orphaned or stranded commands found")
         return 0
 
-    logger.warning(
-        "[REAPER] Found %d orphaned command(s) from dead workers; re-publishing to NATS",
-        len(orphaned),
-    )
+    if orphaned:
+        logger.warning(
+            "[REAPER] Found %d orphaned command(s) from dead workers; re-publishing to NATS",
+            len(orphaned),
+        )
+    if stranded:
+        logger.warning(
+            "[REAPER] Found %d stranded pending command(s) with no claim; re-publishing to NATS",
+            len(stranded),
+        )
 
-    from noetl.server.api.v2 import get_nats_publisher
-
-    nats_pub = await get_nats_publisher()
+    nats_pub = await _get_nats_publisher()
     republished = 0
-    for cmd in orphaned:
+    for cmd in recovered:
         try:
             await nats_pub.publish_command(
                 execution_id=int(cmd["execution_id"]),
@@ -188,9 +268,9 @@ async def reap_orphaned_commands_once(server_url: str) -> int:
             )
 
     logger.info(
-        "[REAPER] Re-published %d/%d orphaned commands",
+        "[REAPER] Re-published %d/%d recovered commands",
         republished,
-        len(orphaned),
+        len(recovered),
     )
     return republished
 
