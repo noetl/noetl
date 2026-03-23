@@ -37,6 +37,10 @@ except Exception:  # pragma: no cover
 logger = setup_logger(__name__, include_location=True)
 router = APIRouter(tags=["executions"])
 
+DEFAULT_EXECUTIONS_PAGE_SIZE = 100
+MAX_EXECUTIONS_PAGE_SIZE = 200
+MAX_EXECUTIONS_OFFSET = 5000
+
 
 def _as_iso(value: Optional[datetime]) -> Optional[str]:
     if not value:
@@ -776,8 +780,25 @@ async def finalize_execution(execution_id: str, request: FinalizeExecutionReques
 
 
 @router.get("/executions", response_model=list[ExecutionEntryResponse])
-async def get_executions():
-    """Get all executions"""
+async def get_executions(
+    page: int = 1,
+    page_size: int = DEFAULT_EXECUTIONS_PAGE_SIZE,
+):
+    """
+    List executions in a paginated fashion.
+
+    Results are ordered from most recent to oldest and limited by the `page` and
+    `page_size` query parameters. The requested `page_size` is capped by a
+    server-side maximum, so clients must paginate to traverse the full result set.
+    """
+    page = max(1, int(page))
+    page_size = max(1, min(MAX_EXECUTIONS_PAGE_SIZE, int(page_size)))
+    offset = (page - 1) * page_size
+    if offset > MAX_EXECUTIONS_OFFSET:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Requested page is too deep. Max supported offset is {MAX_EXECUTIONS_OFFSET}.",
+        )
     async with get_pool_connection() as conn:
         async with conn.cursor(row_factory=dict_row) as cursor:
             try:
@@ -789,17 +810,20 @@ async def get_executions():
                             e.execution_id,
                             e.catalog_id,
                             e.parent_execution_id,
+                            e.event_id AS initialized_event_id,
                             e.created_at AS start_time
                         FROM noetl.event e
                         WHERE e.event_type = 'playbook.initialized'
-                        ORDER BY e.event_id DESC
-                        LIMIT 500
+                        ORDER BY e.created_at DESC, e.event_id DESC
+                        LIMIT %(limit)s
+                        OFFSET %(offset)s
                     ),
                     latest_event AS (
                         SELECT
                             re.execution_id,
                             re.catalog_id,
                             re.parent_execution_id,
+                            re.initialized_event_id,
                             re.start_time,
                             le.event_type,
                             le.node_name,
@@ -819,37 +843,14 @@ async def get_executions():
                             ORDER BY e.event_id DESC
                             LIMIT 1
                         ) le ON TRUE
-                    ),
-                    latest_terminal_event AS (
-                        SELECT
-                            re.execution_id,
-                            te.event_type AS terminal_event_type,
-                            te.status AS terminal_status
-                        FROM recent_executions re
-                        LEFT JOIN LATERAL (
-                            SELECT
-                                e.event_type,
-                                e.status
-                            FROM noetl.event e
-                            WHERE e.execution_id = re.execution_id
-                              AND e.event_type IN (
-                                  'playbook.completed',
-                                  'playbook.failed',
-                                  'execution.cancelled',
-                                  'workflow.completed',
-                                  'workflow.failed'
-                              )
-                            ORDER BY e.event_id DESC
-                            LIMIT 1
-                        ) te ON TRUE
                     )
                     SELECT
                         le.execution_id,
                         le.catalog_id,
                         le.event_type,
                         le.node_name,
-                        COALESCE(lte.terminal_status, le.status) AS status,
-                        COALESCE(lte.terminal_event_type, le.event_type) AS derived_event_type,
+                        le.status AS status,
+                        le.event_type AS derived_event_type,
                         le.start_time,
                         le.end_time,
                         NULL::jsonb AS result,
@@ -859,9 +860,8 @@ async def get_executions():
                         COALESCE(c.version, 0) AS version
                     FROM latest_event le
                     LEFT JOIN noetl.catalog c ON c.catalog_id = le.catalog_id
-                    LEFT JOIN latest_terminal_event lte ON lte.execution_id = le.execution_id
-                    ORDER BY le.start_time DESC
-                """)
+                    ORDER BY le.start_time DESC, le.initialized_event_id DESC
+                """, {"limit": page_size, "offset": offset})
                 rows = await cursor.fetchall()
                 candidate_execution_ids = [
                     str(row["execution_id"])

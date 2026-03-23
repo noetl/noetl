@@ -168,8 +168,11 @@ class APIService {
     await apiClient.delete(`/catalog/playbooks/${id}`);
   }
 
-  async getExecutions(): Promise<ExecutionData[]> {
-    const response = await apiClient.get("/executions");
+  async getExecutions(params?: {
+    page?: number;
+    page_size?: number;
+  }): Promise<ExecutionData[]> {
+    const response = await apiClient.get("/executions", { params });
     return response.data;
   }
 

@@ -65,6 +65,8 @@ const nodeTypes = {
   default: { color: "#8c8c8c", icon: "📄" },
 };
 
+const EXECUTION_LIST_FETCH_SIZE = 100;
+
 interface TaskNode {
   id: string;
   name: string;
@@ -135,7 +137,7 @@ const Execution: React.FC = () => {
     // Set up auto-refresh for active executions
     const interval = setInterval(async () => {
       try {
-        const response = await apiService.getExecutions();
+        const response = await apiService.getExecutions({ page: 1, page_size: EXECUTION_LIST_FETCH_SIZE });
         if (
           response.some(
             (exec: ExecutionData) =>
@@ -161,7 +163,7 @@ const Execution: React.FC = () => {
       }
       setError(null);
 
-      const response = await apiService.getExecutions();
+      const response = await apiService.getExecutions({ page: 1, page_size: EXECUTION_LIST_FETCH_SIZE });
       // Deduplicate by execution_id
       const deduped = Array.from(
         new Map(response.map(exec => [exec.execution_id, exec])).values()
