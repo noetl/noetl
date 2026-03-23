@@ -220,11 +220,15 @@ async def reap_orphaned_commands_once(server_url: str) -> int:
         lookback_hours=_REAPER_LOOKBACK_HOURS,
         max_commands=_REAPER_MAX_PER_RUN,
     )
-    stranded = await _find_unclaimed_pending_commands(
-        pending_retry_seconds=_REAPER_PENDING_RETRY_SECONDS,
-        lookback_hours=_REAPER_LOOKBACK_HOURS,
-        max_commands=max(1, _REAPER_MAX_PER_RUN - len(orphaned)),
-    )
+    remaining_capacity = max(0, _REAPER_MAX_PER_RUN - len(orphaned))
+    if remaining_capacity > 0:
+        stranded = await _find_unclaimed_pending_commands(
+            pending_retry_seconds=_REAPER_PENDING_RETRY_SECONDS,
+            lookback_hours=_REAPER_LOOKBACK_HOURS,
+            max_commands=remaining_capacity,
+        )
+    else:
+        stranded = []
     recovered = orphaned + stranded
 
     if not recovered:
@@ -262,9 +266,12 @@ async def reap_orphaned_commands_once(server_url: str) -> int:
             )
         except Exception as pub_err:
             logger.error(
-                "[REAPER] Failed to re-publish command %s: %s",
+                "[REAPER] Failed to re-publish command execution_id=%s event_id=%s command_id=%s: %s",
+                cmd.get("execution_id"),
+                cmd.get("event_id"),
                 cmd.get("command_id"),
                 pub_err,
+                exc_info=True,
             )
 
     logger.info(

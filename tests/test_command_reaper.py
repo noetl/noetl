@@ -125,3 +125,32 @@ async def test_reap_orphaned_commands_once_republishes_orphaned_and_stranded(mon
 
     assert count == 2
     assert [item["command_id"] for item in published] == ["cmd-orphaned", "cmd-stranded"]
+
+
+@pytest.mark.asyncio
+async def test_reap_orphaned_commands_once_skips_stranded_query_when_capacity_is_exhausted(monkeypatch):
+    orphaned = [{"event_id": i, "execution_id": i, "command_id": f"cmd-{i}", "step": "start"} for i in range(100)]
+    published = []
+
+    class _Publisher:
+        async def publish_command(self, **kwargs):
+            published.append(kwargs)
+
+    async def _fake_find_orphaned_commands(**_kwargs):
+        return orphaned
+
+    async def _fake_find_unclaimed_pending_commands(**_kwargs):
+        raise AssertionError("Stranded query should be skipped when no remaining capacity")
+
+    async def _fake_get_nats_publisher():
+        return _Publisher()
+
+    monkeypatch.setattr(command_reaper, "_REAPER_MAX_PER_RUN", 100)
+    monkeypatch.setattr(command_reaper, "_find_orphaned_commands", _fake_find_orphaned_commands)
+    monkeypatch.setattr(command_reaper, "_find_unclaimed_pending_commands", _fake_find_unclaimed_pending_commands)
+    monkeypatch.setattr(command_reaper, "_get_nats_publisher", _fake_get_nats_publisher)
+
+    count = await command_reaper.reap_orphaned_commands_once("http://server-noetl.noetl.svc.cluster.local:80")
+
+    assert count == 100
+    assert len(published) == 100

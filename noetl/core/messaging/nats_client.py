@@ -152,7 +152,13 @@ class NATSCommandPublisher:
                     command_id,
                 )
             except Exception as retry_error:
-                logger.error(f"Failed to publish command after reconnect: {retry_error}")
+                logger.error(
+                    "Failed to publish command after reconnect: event_id=%s command_id=%s error=%s",
+                    event_id,
+                    command_id,
+                    retry_error,
+                    exc_info=True,
+                )
                 raise
 
     async def close(self):
