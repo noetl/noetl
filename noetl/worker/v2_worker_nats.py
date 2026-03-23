@@ -58,6 +58,7 @@ from noetl.core.workflow.workbook import execute_workbook_task
 from noetl.core.workflow.playbook import execute_playbook_task
 from noetl.tools.python import execute_python_task_async
 from jinja2 import Environment, BaseLoader
+from noetl.core.storage import Scope, create_preview, default_store, estimate_size
 from noetl.worker.keychain_resolver import populate_keychain_context
 from noetl.worker.case_evaluator import CaseEvaluator, build_eval_context
 from noetl.worker.result_handler import ResultHandler, is_result_ref
@@ -230,6 +231,109 @@ class V2Worker:
                 )
                 self._last_db_throttle_log_at = now
             await asyncio.sleep(self._throttle_poll_interval)
+
+    async def _resolve_command_context_if_needed(self, context: Any) -> dict[str, Any]:
+        """Resolve a top-level ref-wrapped command context when the server externalized it."""
+        if isinstance(context, dict) and context.get("kind") in {"temp_ref", "result_ref"} and context.get("ref"):
+            resolved = await default_store.resolve(context)
+            if isinstance(resolved, dict):
+                return resolved
+            raise RuntimeError(
+                f"Resolved command context must be an object, got {type(resolved).__name__}"
+            )
+        return context if isinstance(context, dict) else {}
+
+    async def _externalize_event_value_if_needed(
+        self,
+        *,
+        execution_id: int,
+        step: str,
+        event_name: str,
+        field_name: str,
+        value: Any,
+    ) -> Any:
+        """Bound large event fields by storing them externally and sending a ref wrapper."""
+        if value is None:
+            return value
+        if is_result_ref(value):
+            return value
+        if isinstance(value, dict) and value.get("kind") in {"temp_ref", "result_ref"} and value.get("ref"):
+            return value
+
+        try:
+            size_bytes = estimate_size(value)
+        except Exception:
+            try:
+                size_bytes = len(str(value).encode("utf-8"))
+            except Exception:
+                return value
+
+        event_inline_max_bytes = max(
+            4096,
+            int(
+                os.getenv(
+                    "NOETL_EVENT_INLINE_MAX_BYTES",
+                    os.getenv("NOETL_INLINE_MAX_BYTES", "65536"),
+                )
+            ),
+        )
+        if size_bytes <= event_inline_max_bytes:
+            return value
+
+        try:
+            ref = await default_store.put(
+                execution_id=str(execution_id),
+                name=f"{step}_{event_name}_{field_name}",
+                data=value,
+                scope=Scope.EXECUTION,
+                source_step=step,
+                correlation={
+                    "event_name": event_name,
+                    "field_name": field_name,
+                    "worker_id": self.worker_id,
+                },
+            )
+            return {
+                "_ref": ref.model_dump(mode="json"),
+                "_preview": create_preview(value, max_bytes=1024),
+                "_size_bytes": size_bytes,
+                "_store": ref.store.value,
+            }
+        except Exception as exc:
+            logger.warning(
+                "[EVENT] Failed to externalize %s.%s for execution %s step=%s: %s",
+                event_name,
+                field_name,
+                execution_id,
+                step,
+                exc,
+            )
+            return value
+
+    async def _prepare_event_payload_for_transport(
+        self,
+        *,
+        execution_id: int,
+        step: str,
+        event_name: str,
+        payload: dict[str, Any],
+    ) -> dict[str, Any]:
+        if not isinstance(payload, dict):
+            return payload
+
+        prepared = dict(payload)
+        bulky_fields = ("response", "result", "context", "inputs")
+        for field_name in bulky_fields:
+            if field_name not in prepared:
+                continue
+            prepared[field_name] = await self._externalize_event_value_if_needed(
+                execution_id=execution_id,
+                step=step,
+                event_name=event_name,
+                field_name=field_name,
+                value=prepared.get(field_name),
+            )
+        return prepared
     
     async def _register_worker(self, server_url: str) -> bool:
         """Register this worker in the runtime table via API."""
@@ -654,13 +758,16 @@ class V2Worker:
                     await self._concurrency.release_success()
                     _released = True
                     data = response.json()
+                    resolved_context = await self._resolve_command_context_if_needed(
+                        data.get("context")
+                    )
                     logger.info(f"[CLAIM] Successfully claimed command for event_id={event_id}")
                     return ({
                         "execution_id": data["execution_id"],
                         "node_id": data["node_id"],
                         "node_name": data["node_name"],
                         "action": data["action"],
-                        "context": data["context"],
+                        "context": resolved_context,
                         "meta": data["meta"]
                     }, "claimed", 0.0)
                 if response.status_code == 409:
@@ -2555,10 +2662,21 @@ class V2Worker:
             raise RuntimeError("HTTP client not initialized")
 
         batch_url = _api_url(server_url, "events/batch")
+        prepared_events = []
+        for evt in events:
+            prepared_payload = await self._prepare_event_payload_for_transport(
+                execution_id=execution_id,
+                step=evt["step"],
+                event_name=evt["name"],
+                payload=evt.get("payload", {}),
+            )
+            prepared_evt = dict(evt)
+            prepared_evt["payload"] = prepared_payload
+            prepared_events.append(prepared_evt)
         batch_data = {
             "execution_id": str(execution_id),
             "worker_id": self.worker_id,
-            "events": events,
+            "events": prepared_events,
         }
 
         import time
@@ -2589,7 +2707,7 @@ class V2Worker:
                     await self._concurrency.release_success()
                     _released = True
                     logger.debug("[BATCH] /api/events/batch not found, falling back to individual calls")
-                    for evt in events:
+                    for evt in prepared_events:
                         await self._emit_event(
                             server_url,
                             execution_id,
@@ -2722,13 +2840,19 @@ class V2Worker:
             raise RuntimeError("HTTP client not initialized")
         
         event_url = _api_url(server_url, "events")
+        prepared_payload = await self._prepare_event_payload_for_transport(
+            execution_id=execution_id,
+            step=step,
+            event_name=name,
+            payload=payload,
+        )
         
         # Build event data - server handles result storage (kind: data|ref|refs)
         event_data = {
             "execution_id": str(execution_id),
             "step": step,
             "name": name,
-            "payload": payload,
+            "payload": prepared_payload,
             "worker_id": self.worker_id,
             "actionable": actionable,
             "informative": informative,

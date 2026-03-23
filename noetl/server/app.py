@@ -28,7 +28,11 @@ from noetl.server.auto_resume import (
     resume_interrupted_executions,
     get_auto_resume_metrics_snapshot,
 )
-from noetl.server.command_reaper import run_command_reaper
+from noetl.server.command_reaper import (
+    reap_orphaned_commands_once,
+    get_reaper_interval_seconds,
+)
+from noetl.server.runtime_leases import RuntimeLease, load_control_lease_seconds
 
 logger = setup_logger(__name__, include_location=True)
 
@@ -67,12 +71,22 @@ def _create_app(settings: Settings, enable_ui: Optional[bool] = None) -> FastAPI
     _request_count_key = "noetl_request_total"
     _metrics_counters: Dict[str, int] = {_request_count_key: 0}
 
-    def register_server_directly() -> None:
+    def _logical_server_name() -> str:
+        return settings.server_name or "server"
+
+    def _server_instance_name() -> str:
+        configured = os.getenv("NOETL_SERVER_INSTANCE_NAME", "").strip()
+        if configured:
+            return configured
+        return f"{_logical_server_name()}@{settings.hostname}:{os.getpid()}"
+
+    def register_server_directly(instance_name: str) -> None:
         from noetl.core.common import get_db_connection, get_snowflake_id
         server_url = settings.server_api_url
-        name = settings.server_name
-        labels = settings.server_labels or None
+        labels = list(settings.server_labels or [])
         hostname = settings.hostname
+        logical_name = _logical_server_name()
+        labels.append(f"logical:{logical_name}")
 
         import datetime as _dt
         try:
@@ -82,6 +96,8 @@ def _create_app(settings: Settings, enable_ui: Optional[bool] = None) -> FastAPI
 
         payload_runtime = {
             "type": "server",
+            "logical_name": logical_name,
+            "instance_name": instance_name,
             "pid": os.getpid(),
             "hostname": hostname,
         }
@@ -104,24 +120,18 @@ def _create_app(settings: Settings, enable_ui: Optional[bool] = None) -> FastAPI
                         heartbeat = now(),
                         updated_at = now()
                     """,
-                    (rid, name, server_url, labels_json, runtime_json)
+                    (rid, instance_name, server_url, labels_json, runtime_json)
                 )
                 conn.commit()
+        try:
+            with open("/tmp/noetl_server_name", "w") as f:
+                f.write(instance_name)
+        except Exception:
+            logger.debug("Could not write server instance name to /tmp/noetl_server_name", exc_info=True)
 
-    def deregister_server_directly() -> None:
+    def deregister_server_directly(instance_name: str) -> None:
         try:
             from noetl.core.common import get_db_connection
-            name: Optional[str] = None
-            if os.path.exists('/tmp/noetl_server_name'):
-                try:
-                    with open('/tmp/noetl_server_name', 'r') as f:
-                        name = f.read().strip()
-                except Exception:
-                    name = None
-            if not name:
-                name = settings.server_name
-            if not name:
-                return
             with get_db_connection() as conn:
                 with conn.cursor() as cursor:
                     cursor.execute(
@@ -130,7 +140,7 @@ def _create_app(settings: Settings, enable_ui: Optional[bool] = None) -> FastAPI
                         SET status = 'offline', updated_at = now()
                         WHERE kind = 'server_api' AND name = %s
                         """,
-                        (name,)
+                        (instance_name,)
                     )
                     conn.commit()
         except Exception as e:
@@ -140,105 +150,132 @@ def _create_app(settings: Settings, enable_ui: Optional[bool] = None) -> FastAPI
     async def lifespan(app: FastAPI):
         await init_pool(get_pgdb_connection())
         try:
-            register_server_directly()
+            instance_name = _server_instance_name()
+            logical_name = _logical_server_name()
+            register_server_directly(instance_name)
 
-            auto_resume_task: Optional[asyncio.Task] = None
-            # --------------------------------------------------
-            # Auto-resume interrupted executions (readiness-gated)
-            # --------------------------------------------------
-            try:
-                auto_resume_task = asyncio.create_task(
-                    resume_interrupted_executions(),
-                    name="auto-resume-recovery",
-                )
-            except Exception as e:
-                logger.error(f"Auto-resume startup failed (non-fatal): {e}", exc_info=True)
-
-            # Start async batch acceptance workers (202 + request_id contract).
-            try:
-                await ensure_batch_acceptor_started()
-            except Exception as e:
-                logger.error(f"Batch acceptor startup failed (non-fatal): {e}", exc_info=True)
-
-            # --------------------------------------------------
-            # Background runtime sweeper / server heartbeat
-            # --------------------------------------------------
             stop_event = asyncio.Event()
             sweep_interval = settings.runtime_sweep_interval
             offline_after = settings.runtime_offline_seconds
-            server_name = settings.server_name
             auto_recreate_runtime = getattr(settings, 'auto_recreate_runtime', False)
             server_url = settings.server_api_url
             hostname = settings.hostname
             command_server_url = normalize_server_base_url(settings.server_url)
+            control_lease_seconds = load_control_lease_seconds()
 
-            async def _runtime_sweeper():
+            runtime_sweeper_lease = RuntimeLease(
+                task_name="runtime_sweeper",
+                instance_name=instance_name,
+                server_url=server_url,
+                hostname=hostname,
+                logical_name=logical_name,
+                lease_seconds=control_lease_seconds,
+            )
+            command_reaper_lease = RuntimeLease(
+                task_name="command_reaper",
+                instance_name=instance_name,
+                server_url=server_url,
+                hostname=hostname,
+                logical_name=logical_name,
+                lease_seconds=control_lease_seconds,
+            )
+            auto_resume_lease = RuntimeLease(
+                task_name="auto_resume",
+                instance_name=instance_name,
+                server_url=server_url,
+                hostname=hostname,
+                logical_name=logical_name,
+                lease_seconds=control_lease_seconds,
+            )
+
+            async def _server_heartbeat_loop():
                 while not stop_event.is_set():
                     try:
                         async with get_async_db_connection() as conn:
                             async with conn.cursor() as cur:
-                                # Mark stale (non-offline) runtimes offline
-                                try:
-                                    await cur.execute(
-                                        """
-                                        UPDATE runtime SET status = 'offline', updated_at = now()
-                                        WHERE status != 'offline' AND heartbeat < (now() - make_interval(secs => %s))
-                                        """,
-                                        (offline_after,)
+                                logger.debug(
+                                    "About to update server heartbeat for %s",
+                                    instance_name,
+                                )
+                                await cur.execute(
+                                    """
+                                    UPDATE runtime
+                                    SET heartbeat = now(), updated_at = now(), status = 'ready'
+                                    WHERE kind = 'server_api' AND name = %s
+                                    """,
+                                    (instance_name,),
+                                )
+                                if cur.rowcount == 0 and auto_recreate_runtime:
+                                    logger.info(
+                                        "Server runtime row missing for %s; auto recreating",
+                                        instance_name,
                                     )
-                                except Exception as e:
-                                    logger.exception(f"Runtime offline sweep failed: {e}")
+                                    import datetime as _dt
 
-                                # Server heartbeat
-                                try:
-                                    logger.debug(f"About to update server heartbeat for {server_name}")
-                                    await cur.execute(
-                                        """
-                                        UPDATE runtime 
-                                        SET heartbeat = now(), updated_at = now(), status = 'ready'
-                                        WHERE kind = 'server_api' AND name = %s
-                                        """,
-                                        (server_name,)
-                                    )
-                                    logger.debug(f"Server heartbeat updated for {server_name}, rows affected: {cur.rowcount}")
-                                    if cur.rowcount == 0 and auto_recreate_runtime:
-                                        logger.info("Server runtime row missing; auto recreating")
-                                        import datetime as _dt
-                                        try:
-                                            rid = get_snowflake_id()
-                                        except Exception:
-                                            rid = int(_dt.datetime.now().timestamp() * 1000)
+                                    try:
+                                        rid = get_snowflake_id()
+                                    except Exception:
+                                        rid = int(_dt.datetime.now().timestamp() * 1000)
 
-                                        runtime_payload = json.dumps({
+                                    runtime_payload = json.dumps(
+                                        {
                                             "type": "server",
+                                            "logical_name": logical_name,
+                                            "instance_name": instance_name,
                                             "pid": os.getpid(),
                                             "hostname": hostname,
-                                        })
-
-                                        await cur.execute(
-                                            """
-                                            INSERT INTO runtime (runtime_id, name, kind, uri, status, labels, capacity, runtime, heartbeat, created_at, updated_at)
-                                            VALUES (%s, %s, 'server_api', %s, 'ready', NULL, NULL, %s::jsonb, now(), now(), now())
-                                            ON CONFLICT (kind, name)
-                                            DO UPDATE SET
-                                                uri = EXCLUDED.uri,
-                                                status = EXCLUDED.status,
-                                                runtime = EXCLUDED.runtime,
-                                                heartbeat = now(),
-                                                updated_at = now()
-                                            """,
-                                            (rid, server_name, server_url, runtime_payload)
+                                        }
+                                    )
+                                    await cur.execute(
+                                        """
+                                        INSERT INTO runtime (
+                                            runtime_id, name, kind, uri, status, labels,
+                                            capacity, runtime, heartbeat, created_at, updated_at
                                         )
-                                except Exception as e:
-                                    logger.exception(f"Server heartbeat refresh failed: {e}")
-                                try:
+                                        VALUES (
+                                            %s, %s, 'server_api', %s, 'ready', NULL, NULL,
+                                            %s::jsonb, now(), now(), now()
+                                        )
+                                        ON CONFLICT (kind, name)
+                                        DO UPDATE SET
+                                            uri = EXCLUDED.uri,
+                                            status = EXCLUDED.status,
+                                            runtime = EXCLUDED.runtime,
+                                            heartbeat = now(),
+                                            updated_at = now()
+                                        """,
+                                        (rid, instance_name, server_url, runtime_payload),
+                                    )
+                                await conn.commit()
+                    except Exception as exc:
+                        logger.exception(
+                            "Server heartbeat refresh failed for %s: %s",
+                            instance_name,
+                            exc,
+                        )
+                    try:
+                        await asyncio.sleep(sweep_interval)
+                    except asyncio.CancelledError:
+                        logger.info("Server heartbeat task cancelled; exiting")
+                        break
+
+            async def _runtime_sweeper():
+                while not stop_event.is_set():
+                    try:
+                        lease_state = await runtime_sweeper_lease.try_acquire_or_renew()
+                        if lease_state.acquired:
+                            async with get_async_db_connection() as conn:
+                                async with conn.cursor() as cur:
+                                    await cur.execute(
+                                        """
+                                        UPDATE runtime
+                                        SET status = 'offline', updated_at = now()
+                                        WHERE status != 'offline'
+                                          AND heartbeat < (now() - make_interval(secs => %s))
+                                        """,
+                                        (offline_after,),
+                                    )
                                     await conn.commit()
-                                    logger.debug(f"Runtime sweeper transaction committed successfully")
-                                except Exception as e:
-                                    logger.exception(f"Runtime sweeper commit failed: {e}")
-
-                        # Note: V2 uses NATS for command distribution, no queue table to reclaim
-
                     except Exception as outer_e:
                         logger.exception(f"Runtime sweeper loop error: {outer_e}")
                     try:
@@ -247,7 +284,62 @@ def _create_app(settings: Settings, enable_ui: Optional[bool] = None) -> FastAPI
                         logger.info("Runtime sweeper task cancelled; exiting")
                         break
 
+            async def _command_reaper_loop():
+                interval_seconds = get_reaper_interval_seconds()
+                while not stop_event.is_set():
+                    try:
+                        lease_state = await command_reaper_lease.try_acquire_or_renew()
+                        if lease_state.acquired:
+                            await reap_orphaned_commands_once(command_server_url)
+                    except Exception as exc:
+                        logger.exception("Command reaper loop failed: %s", exc)
+                    try:
+                        await asyncio.sleep(interval_seconds)
+                    except asyncio.CancelledError:
+                        logger.info("Command reaper task cancelled; exiting")
+                        break
+
+            async def _auto_resume_loop():
+                completed = False
+                retry_delay = min(5.0, max(1.0, float(sweep_interval)))
+                while not stop_event.is_set() and not completed:
+                    try:
+                        lease_state = await auto_resume_lease.try_acquire_or_renew()
+                        if lease_state.acquired:
+                            await resume_interrupted_executions()
+                            completed = True
+                            await auto_resume_lease.release()
+                            break
+                    except asyncio.CancelledError:
+                        raise
+                    except Exception as exc:
+                        logger.error(
+                            "Auto-resume startup failed (non-fatal): %s",
+                            exc,
+                            exc_info=True,
+                        )
+                    try:
+                        await asyncio.sleep(retry_delay)
+                    except asyncio.CancelledError:
+                        logger.info("Auto-resume task cancelled; exiting")
+                        break
+
+            # Start async batch acceptance workers (202 + request_id contract).
+            try:
+                await ensure_batch_acceptor_started()
+            except Exception as e:
+                logger.error(f"Batch acceptor startup failed (non-fatal): {e}", exc_info=True)
+
+            heartbeat_task: Optional[asyncio.Task] = None
             sweeper_task: Optional[asyncio.Task] = None
+            auto_resume_task: Optional[asyncio.Task] = None
+            try:
+                logger.info("Starting server heartbeat background task...")
+                heartbeat_task = asyncio.create_task(_server_heartbeat_loop(), name="server-heartbeat")
+                logger.info("Server heartbeat background task started successfully")
+            except Exception as e:
+                logger.exception(f"Failed to start server heartbeat: {e}")
+
             try:
                 logger.info("Starting runtime sweeper background task...")
                 sweeper_task = asyncio.create_task(_runtime_sweeper())
@@ -255,23 +347,37 @@ def _create_app(settings: Settings, enable_ui: Optional[bool] = None) -> FastAPI
             except Exception as e:
                 logger.exception(f"Failed to start runtime sweeper: {e}")
 
-            # --------------------------------------------------
-            # Command reaper: recovers commands orphaned by OOMKill/SIGKILL
-            # --------------------------------------------------
             reaper_task: Optional[asyncio.Task] = None
             try:
                 logger.info("Starting command reaper background task...")
                 reaper_task = asyncio.create_task(
-                    run_command_reaper(stop_event, command_server_url),
+                    _command_reaper_loop(),
                     name="command-reaper",
                 )
                 logger.info("Command reaper background task started successfully")
             except Exception as e:
                 logger.exception(f"Failed to start command reaper: {e}")
 
+            try:
+                logger.info("Starting auto-resume coordination task...")
+                auto_resume_task = asyncio.create_task(
+                    _auto_resume_loop(),
+                    name="auto-resume-recovery",
+                )
+                logger.info("Auto-resume coordination task started successfully")
+            except Exception as e:
+                logger.error(f"Auto-resume startup failed (non-fatal): {e}", exc_info=True)
+
             yield
             # Shutdown
             stop_event.set()
+            if heartbeat_task:
+                try:
+                    heartbeat_task.cancel()
+                    with contextlib.suppress(Exception):
+                        await heartbeat_task
+                except Exception as e:
+                    logger.exception(f"Critical error during heartbeat task shutdown: {e}")
             if sweeper_task:
                 try:
                     sweeper_task.cancel()
@@ -298,7 +404,10 @@ def _create_app(settings: Settings, enable_ui: Optional[bool] = None) -> FastAPI
             except Exception as e:
                 logger.error(f"Batch acceptor shutdown failed: {e}", exc_info=True)
             try:
-                deregister_server_directly()
+                await runtime_sweeper_lease.release()
+                await command_reaper_lease.release()
+                await auto_resume_lease.release()
+                deregister_server_directly(instance_name)
             except Exception as e:
                 logger.error(f"Server deregistration failed during shutdown: {e}")
                 # Don't pass this silently - log but continue shutdown

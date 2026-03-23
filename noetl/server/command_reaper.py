@@ -57,6 +57,10 @@ _REAPER_LOOKBACK_HOURS = max(
 )
 
 
+def get_reaper_interval_seconds() -> float:
+    return _REAPER_INTERVAL_SECONDS
+
+
 async def _find_orphaned_commands(
     stale_seconds: float,
     lookback_hours: int,
@@ -132,6 +136,65 @@ async def _find_orphaned_commands(
     return list(rows or [])
 
 
+async def reap_orphaned_commands_once(server_url: str) -> int:
+    """
+    Scan once for orphaned commands and re-publish them.
+
+    Returns the number of commands successfully re-published.
+    """
+    # Reaper notifications must carry base server URL because workers append '/api/...'.
+    server_url = normalize_server_base_url(server_url)
+
+    orphaned = await _find_orphaned_commands(
+        stale_seconds=_REAPER_WORKER_STALE_SECONDS,
+        lookback_hours=_REAPER_LOOKBACK_HOURS,
+        max_commands=_REAPER_MAX_PER_RUN,
+    )
+
+    if not orphaned:
+        logger.debug("[REAPER] No orphaned commands found")
+        return 0
+
+    logger.warning(
+        "[REAPER] Found %d orphaned command(s) from dead workers; re-publishing to NATS",
+        len(orphaned),
+    )
+
+    from noetl.server.api.v2 import get_nats_publisher
+
+    nats_pub = await get_nats_publisher()
+    republished = 0
+    for cmd in orphaned:
+        try:
+            await nats_pub.publish_command(
+                execution_id=int(cmd["execution_id"]),
+                event_id=int(cmd["event_id"]),
+                command_id=str(cmd["command_id"]),
+                step=str(cmd["step"]),
+                server_url=server_url,
+            )
+            republished += 1
+            logger.info(
+                "[REAPER] Re-published command: execution_id=%s command_id=%s step=%s",
+                cmd["execution_id"],
+                cmd["command_id"],
+                cmd["step"],
+            )
+        except Exception as pub_err:
+            logger.error(
+                "[REAPER] Failed to re-publish command %s: %s",
+                cmd.get("command_id"),
+                pub_err,
+            )
+
+    logger.info(
+        "[REAPER] Re-published %d/%d orphaned commands",
+        republished,
+        len(orphaned),
+    )
+    return republished
+
+
 async def run_command_reaper(stop_event: asyncio.Event, server_url: str) -> None:
     """
     Background task: scan for orphaned commands and re-publish NATS notifications.
@@ -142,9 +205,6 @@ async def run_command_reaper(stop_event: asyncio.Event, server_url: str) -> None
     if not _REAPER_ENABLED:
         logger.info("[REAPER] Disabled via NOETL_COMMAND_REAPER_ENABLED=false")
         return
-
-    # Reaper notifications must carry base server URL because workers append '/api/...'.
-    server_url = normalize_server_base_url(server_url)
 
     logger.info(
         "[REAPER] Started (interval=%.0fs, stale_threshold=%.0fs, lookback=%dh)",
@@ -164,53 +224,7 @@ async def run_command_reaper(stop_event: asyncio.Event, server_url: str) -> None
             break
 
         try:
-            orphaned = await _find_orphaned_commands(
-                stale_seconds=_REAPER_WORKER_STALE_SECONDS,
-                lookback_hours=_REAPER_LOOKBACK_HOURS,
-                max_commands=_REAPER_MAX_PER_RUN,
-            )
-
-            if not orphaned:
-                logger.debug("[REAPER] No orphaned commands found")
-                continue
-
-            logger.warning(
-                "[REAPER] Found %d orphaned command(s) from dead workers; re-publishing to NATS",
-                len(orphaned),
-            )
-
-            from noetl.server.api.v2 import get_nats_publisher
-            nats_pub = await get_nats_publisher()
-
-            republished = 0
-            for cmd in orphaned:
-                try:
-                    await nats_pub.publish_command(
-                        execution_id=int(cmd["execution_id"]),
-                        event_id=int(cmd["event_id"]),
-                        command_id=str(cmd["command_id"]),
-                        step=str(cmd["step"]),
-                        server_url=server_url,
-                    )
-                    republished += 1
-                    logger.info(
-                        "[REAPER] Re-published command: execution_id=%s command_id=%s step=%s",
-                        cmd["execution_id"],
-                        cmd["command_id"],
-                        cmd["step"],
-                    )
-                except Exception as pub_err:
-                    logger.error(
-                        "[REAPER] Failed to re-publish command %s: %s",
-                        cmd.get("command_id"),
-                        pub_err,
-                    )
-
-            logger.info(
-                "[REAPER] Re-published %d/%d orphaned commands",
-                republished,
-                len(orphaned),
-            )
+            await reap_orphaned_commands_once(server_url)
 
         except asyncio.CancelledError:
             logger.info("[REAPER] Cancelled during scan; exiting")
