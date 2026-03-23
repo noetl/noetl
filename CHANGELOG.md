@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.10.25](https://github.com/noetl/noetl/compare/v2.10.24...v2.10.25) (2026-03-23)
+
+### Bug Fixes
+
+* preserve ctx and iter dict lookup in render templates ([1955d6f](https://github.com/noetl/noetl/commit/1955d6f46e683d46637cd915fc8d2e96eb282091))
+
 ## [2.10.24](https://github.com/noetl/noetl/compare/v2.10.23...v2.10.24) (2026-03-23)
 
 ### Bug Fixes
