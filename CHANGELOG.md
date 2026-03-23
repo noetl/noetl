@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.10.21](https://github.com/noetl/noetl/compare/v2.10.20...v2.10.21) (2026-03-23)
+
+### Bug Fixes
+
+* align server leases with runtime schema ([50cd421](https://github.com/noetl/noetl/commit/50cd4213dcad6177100981776215421f8236bfc2))
+* coordinate server control loops and externalize oversized payloads ([f5af6dd](https://github.com/noetl/noetl/commit/f5af6dd2e696673cc9908bf420cb8f6da95c4915))
+
 ## [2.10.20](https://github.com/noetl/noetl/compare/v2.10.19...v2.10.20) (2026-03-23)
 
 ### Bug Fixes
