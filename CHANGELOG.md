@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.10.27](https://github.com/noetl/noetl/compare/v2.10.26...v2.10.27) (2026-03-23)
+
+### Bug Fixes
+
+* invalidate stale cross-pod execution state cache ([5a71e3c](https://github.com/noetl/noetl/commit/5a71e3cc1b9a3869482af2774c30b777d8ce732a))
+
 ## [2.10.26](https://github.com/noetl/noetl/compare/v2.10.25...v2.10.26) (2026-03-23)
 
 ### Bug Fixes
