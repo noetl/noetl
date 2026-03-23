@@ -13,7 +13,7 @@ from noetl.core.logger import setup_logger
 
 logger = setup_logger(__name__, include_location=True)
 
-_RUNTIME_LEASE_KIND = "server_control"
+_RUNTIME_LEASE_KIND = "server_api"
 
 
 def load_control_lease_seconds() -> float:
@@ -35,7 +35,7 @@ class RuntimeLease:
 
     Multiple API instances may be live at once. Each instance heartbeats its own
     `server_api` runtime row, and singleton control loops coordinate through a
-    dedicated `server_control` row keyed by task name.
+    dedicated lease row distinguished by `runtime.type='server_control'`.
     """
 
     def __init__(
@@ -106,10 +106,13 @@ class RuntimeLease:
                         updated_at = now()
                     WHERE
                         (
-                            noetl.runtime.heartbeat < (
-                                now() - make_interval(secs => %s)
+                            coalesce(noetl.runtime.runtime->>'type', '') = 'server_control'
+                            AND (
+                                noetl.runtime.heartbeat < (
+                                    now() - make_interval(secs => %s)
+                                )
+                                OR noetl.runtime.runtime->>'owner_instance' = EXCLUDED.runtime->>'owner_instance'
                             )
-                            OR noetl.runtime.runtime->>'owner_instance' = EXCLUDED.runtime->>'owner_instance'
                         )
                     RETURNING runtime
                     """,
@@ -149,6 +152,7 @@ class RuntimeLease:
                     SELECT runtime
                     FROM noetl.runtime
                     WHERE kind = %s AND name = %s
+                      AND coalesce(runtime->>'type', '') = 'server_control'
                     LIMIT 1
                     """,
                     (_RUNTIME_LEASE_KIND, self.lease_name),
@@ -167,6 +171,7 @@ class RuntimeLease:
                         SET status = 'offline', updated_at = now()
                         WHERE kind = %s
                           AND name = %s
+                          AND coalesce(runtime->>'type', '') = 'server_control'
                           AND runtime->>'owner_instance' = %s
                         """,
                         (_RUNTIME_LEASE_KIND, self.lease_name, self.instance_name),

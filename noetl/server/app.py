@@ -72,7 +72,7 @@ def _create_app(settings: Settings, enable_ui: Optional[bool] = None) -> FastAPI
     _metrics_counters: Dict[str, int] = {_request_count_key: 0}
 
     def _logical_server_name() -> str:
-        return settings.server_name or f"server-{settings.hostname}"
+        return settings.server_name or "server"
 
     def _server_instance_name() -> str:
         configured = os.getenv("NOETL_SERVER_INSTANCE_NAME", "").strip()
