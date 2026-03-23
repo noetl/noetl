@@ -87,6 +87,10 @@ def test_v2_pending_command_count_sql_tracks_command_ids():
     assert "result->'data'->>'command_id'" in sql
     assert "UNION ALL" in sql
     assert "SELECT node_name" not in sql
+    assert "'call.done'" not in sql
+    assert "'command.completed'" in sql
+    assert "'command.failed'" in sql
+    assert "'command.cancelled'" in sql
 
 
 @pytest.mark.asyncio
