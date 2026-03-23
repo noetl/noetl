@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.10.23](https://github.com/noetl/noetl/compare/v2.10.22...v2.10.23) (2026-03-23)
+
+### Bug Fixes
+
+* align execution list status with terminal inference ([75eec20](https://github.com/noetl/noetl/commit/75eec20d34c7247f22687f20d8908b9e86ebbad3))
+
 ## [2.10.22](https://github.com/noetl/noetl/compare/v2.10.21...v2.10.22) (2026-03-23)
 
 ### Bug Fixes
