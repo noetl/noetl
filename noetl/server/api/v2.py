@@ -799,28 +799,39 @@ async def _publish_commands_with_recovery(
     if not command_events:
         return
 
-    nats_pub = await get_nats_publisher()
+    nats_pub = None
     publish_errors: list[Exception] = []
+    try:
+        nats_pub = await get_nats_publisher()
+    except Exception as exc:
+        publish_errors.append(exc)
+        logger.warning(
+            "[PUBLISH-RECOVERY] NATS publisher unavailable before initial publish; scheduling delayed recovery for %d command(s): %s",
+            len(command_events),
+            exc,
+            exc_info=True,
+        )
     for execution_id, event_id, command_id, step in command_events:
-        try:
-            await nats_pub.publish_command(
-                execution_id=execution_id,
-                event_id=event_id,
-                command_id=command_id,
-                step=step,
-                server_url=server_url,
-            )
-        except Exception as exc:
-            publish_errors.append(exc)
-            logger.warning(
-                "[PUBLISH-RECOVERY] Initial publish failed for execution_id=%s event_id=%s command_id=%s step=%s: %s",
-                execution_id,
-                event_id,
-                command_id,
-                step,
-                exc,
-                exc_info=True,
-            )
+        if nats_pub is not None:
+            try:
+                await nats_pub.publish_command(
+                    execution_id=execution_id,
+                    event_id=event_id,
+                    command_id=command_id,
+                    step=step,
+                    server_url=server_url,
+                )
+            except Exception as exc:
+                publish_errors.append(exc)
+                logger.warning(
+                    "[PUBLISH-RECOVERY] Initial publish failed for execution_id=%s event_id=%s command_id=%s step=%s: %s",
+                    execution_id,
+                    event_id,
+                    command_id,
+                    step,
+                    exc,
+                    exc_info=True,
+                )
         recovery_task = asyncio.create_task(
             _recover_unclaimed_command_after_delay(
                 execution_id=execution_id,
