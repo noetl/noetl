@@ -621,7 +621,7 @@ const Execution: React.FC = () => {
           >
             View
           </Button>
-          {(record.status === "running" || record.status === "pending") && (
+          {(normalizeStatus(record.status) === "running" || normalizeStatus(record.status) === "pending") && (
             <Button
               type="text"
               danger
@@ -637,16 +637,16 @@ const Execution: React.FC = () => {
   ];
 
   const runningExecutions = filteredExecutions.filter(
-    (exec) => exec.status === "running",
+    (exec) => normalizeStatus(exec.status) === "running",
   );
   const pendingExecutions = filteredExecutions.filter(
-    (exec) => exec.status === "pending",
+    (exec) => normalizeStatus(exec.status) === "pending",
   );
   const completedExecutions = filteredExecutions.filter(
-    (exec) => exec.status === "completed",
+    (exec) => normalizeStatus(exec.status) === "completed",
   );
   const failedExecutions = filteredExecutions.filter(
-    (exec) => exec.status === "failed",
+    (exec) => normalizeStatus(exec.status) === "failed",
   );
 
   // Get unique playbook names for filter dropdown
