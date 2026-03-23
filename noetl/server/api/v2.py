@@ -29,6 +29,7 @@ from noetl.core.dsl.v2.engine import ControlFlowEngine, PlaybookRepo, StateStore
 from noetl.core.db.pool import get_pool_connection, get_server_pool_stats
 from noetl.core.messaging import NATSCommandPublisher
 from noetl.claim_policy import decide_reclaim_for_existing_claim
+from noetl.server.api.event_queries import PENDING_COMMAND_COUNT_SQL
 
 from noetl.core.logger import setup_logger
 logger = setup_logger(__name__, include_location=True)
@@ -491,44 +492,7 @@ _HANDLE_EVENT_CLAIMED_LOOKUP_SQL = _build_command_id_latest_lookup_sql(
     event_type_predicate=_EVENT_TYPE_CLAIMED_PREDICATE,
     alias="claimed_event",
 )
-_PENDING_COMMAND_COUNT_SQL = """
-    WITH issued_commands AS (
-        SELECT meta->>'command_id' AS command_id
-        FROM noetl.event
-        WHERE execution_id = %(execution_id)s
-          AND event_type = 'command.issued'
-          AND meta ? 'command_id'
-        UNION
-        SELECT result->'data'->>'command_id' AS command_id
-        FROM noetl.event
-        WHERE execution_id = %(execution_id)s
-          AND event_type = 'command.issued'
-          AND (result->'data') ? 'command_id'
-    ),
-    finished_commands AS (
-        SELECT meta->>'command_id' AS command_id
-        FROM noetl.event
-        WHERE execution_id = %(execution_id)s
-          AND event_type IN ('call.done', 'command.completed', 'command.failed')
-          AND meta ? 'command_id'
-        UNION
-        SELECT result->'data'->>'command_id' AS command_id
-        FROM noetl.event
-        WHERE execution_id = %(execution_id)s
-          AND event_type IN ('call.done', 'command.completed', 'command.failed')
-          AND (result->'data') ? 'command_id'
-    )
-    SELECT COUNT(*) AS pending_count
-    FROM (
-        SELECT command_id
-        FROM issued_commands
-        WHERE command_id IS NOT NULL
-        EXCEPT
-        SELECT command_id
-        FROM finished_commands
-        WHERE command_id IS NOT NULL
-    ) AS pending
-"""
+_PENDING_COMMAND_COUNT_SQL = PENDING_COMMAND_COUNT_SQL
 
 
 @dataclass(slots=True)

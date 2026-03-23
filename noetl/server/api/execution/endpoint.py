@@ -13,6 +13,7 @@ from psycopg.types.json import Json
 from noetl.core.db.pool import get_pool_connection, get_snowflake_id
 from noetl.core.logger import setup_logger
 from noetl.core.common import convert_snowflake_ids_for_api
+from noetl.server.api.event_queries import PENDING_COMMAND_COUNT_SQL
 from .schema import (
     ExecutionEntryResponse,
     CancelExecutionRequest,
@@ -313,44 +314,7 @@ def _derive_execution_terminal_status(row: Optional[dict[str, Any]]) -> str:
     return "RUNNING"
 
 
-_PENDING_COMMAND_COUNT_SQL = """
-    WITH issued_commands AS (
-        SELECT meta->>'command_id' AS command_id
-        FROM noetl.event
-        WHERE execution_id = %(execution_id)s
-          AND event_type = 'command.issued'
-          AND meta ? 'command_id'
-        UNION
-        SELECT result->'data'->>'command_id' AS command_id
-        FROM noetl.event
-        WHERE execution_id = %(execution_id)s
-          AND event_type = 'command.issued'
-          AND (result->'data') ? 'command_id'
-    ),
-    finished_commands AS (
-        SELECT meta->>'command_id' AS command_id
-        FROM noetl.event
-        WHERE execution_id = %(execution_id)s
-          AND event_type IN ('call.done', 'command.completed', 'command.failed')
-          AND meta ? 'command_id'
-        UNION
-        SELECT result->'data'->>'command_id' AS command_id
-        FROM noetl.event
-        WHERE execution_id = %(execution_id)s
-          AND event_type IN ('call.done', 'command.completed', 'command.failed')
-          AND (result->'data') ? 'command_id'
-    )
-    SELECT COUNT(*) AS pending_count
-    FROM (
-        SELECT command_id
-        FROM issued_commands
-        WHERE command_id IS NOT NULL
-        EXCEPT
-        SELECT command_id
-        FROM finished_commands
-        WHERE command_id IS NOT NULL
-    ) AS pending
-"""
+_PENDING_COMMAND_COUNT_SQL = PENDING_COMMAND_COUNT_SQL
 
 
 def _infer_execution_completion_from_events(

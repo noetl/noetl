@@ -108,6 +108,7 @@ def test_pending_command_count_sql_tracks_command_ids():
     sql = " ".join(execution_api._PENDING_COMMAND_COUNT_SQL.split())
     assert "meta->>'command_id'" in sql
     assert "result->'data'->>'command_id'" in sql
+    assert "UNION ALL" in sql
     assert "SELECT node_name" not in sql
 
 
