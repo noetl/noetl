@@ -740,7 +740,9 @@ class V2Worker:
                     return nak_action
 
                 if command is None:
-                    # Terminally skipped (already completed/cancelled)
+                    # "skip_ack" means the NATS message should be ACKed with no further
+                    # command execution. This covers terminal no-ops and duplicate
+                    # notifications for commands already claimed elsewhere.
                     return "ack"
 
                 logger.info(f"[EVENT] Worker {self.worker_id} claimed command {command_id}")
@@ -803,7 +805,8 @@ class V2Worker:
 
         Returns:
             - (command, "claimed", 0.0) on successful claim
-            - (None, "skip_ack", 0.0) for terminal no-op outcomes (already completed/cancelled)
+            - (None, "skip_ack", 0.0) for ACKed no-op outcomes
+              (already completed/cancelled or duplicate active-claim notifications)
             - (None, "retry_later", seconds) for transient overload/claim contention
         """
         max_attempts = 5
@@ -875,6 +878,9 @@ class V2Worker:
                             event_id,
                             code or "unknown",
                         )
+                        # Treat this as an ACKed duplicate notification. The existing
+                        # claim remains authoritative, and the command reaper handles
+                        # recovery if that worker later dies.
                         return None, "skip_ack", 0.0
                     if code in {"already_terminal", "execution_cancelled"}:
                         logger.info(
