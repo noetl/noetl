@@ -276,6 +276,10 @@ async def get_recovery_candidates() -> list[Dict[str, Any]]:
 
     Parent only: `parent_execution_id IS NULL`.
     """
+    fetch_limit = max(
+        max(_AUTO_RESUME_MAX_CANDIDATES, 1) * 10,
+        max(_AUTO_RESUME_MAX_CANDIDATES, 1),
+    )
     async with get_pool_connection() as conn:
         async with conn.cursor(row_factory=dict_row) as cur:
             await cur.execute(
@@ -309,7 +313,7 @@ async def get_recovery_candidates() -> list[Dict[str, Any]]:
                 ORDER BY e.created_at DESC
                 LIMIT %s
                 """,
-                (_AUTO_RESUME_LOOKBACK_MINUTES, _AUTO_RESUME_MAX_CANDIDATES),
+                (_AUTO_RESUME_LOOKBACK_MINUTES, fetch_limit),
             )
             rows = await cur.fetchall()
     return list(rows or [])
@@ -426,7 +430,10 @@ async def _recover_interrupted_parent_executions(mode: str) -> None:
         len(candidates),
         mode,
     )
+    recovered_candidates = 0
     for candidate in candidates:
+        if recovered_candidates >= _AUTO_RESUME_MAX_CANDIDATES:
+            break
         execution_id = int(candidate["execution_id"])
         path = str(candidate.get("path") or "")
         stale_age_seconds = _candidate_stale_age_seconds(candidate)
@@ -453,6 +460,7 @@ async def _recover_interrupted_parent_executions(mode: str) -> None:
         if mode == "restart":
             restarted_execution_id = await _restart_execution(candidate)
             if restarted_execution_id:
+                recovered_candidates += 1
                 await mark_execution_cancelled(
                     execution_id,
                     reason="Auto-recovery restart launched replacement execution",
@@ -474,6 +482,8 @@ async def _recover_interrupted_parent_executions(mode: str) -> None:
             )
             if not ok:
                 _inc_metric("recoveries_failed_total")
+            else:
+                recovered_candidates += 1
 
 
 async def resume_interrupted_executions() -> None:

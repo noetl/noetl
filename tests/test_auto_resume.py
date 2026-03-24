@@ -102,6 +102,49 @@ async def test_recover_interrupted_parent_execution_cancel_mode(monkeypatch):
     assert cancelled["called"] == 1
 
 
+@pytest.mark.asyncio
+async def test_recover_interrupted_parent_execution_skips_fresh_and_recovers_stale(monkeypatch):
+    fresh_candidate = {
+        "execution_id": 100,
+        "path": "fresh",
+        "catalog_id": 1,
+        "result": {},
+        "created_at": "2026-03-24T20:48:11Z",
+        "latest_event_at": "2026-03-24T20:48:14Z",
+        "latest_event_type": "command.issued",
+    }
+    stale_candidate = {
+        "execution_id": 101,
+        "path": "stale",
+        "catalog_id": 1,
+        "result": {},
+        "created_at": "2026-03-24T20:00:00Z",
+        "latest_event_at": "2026-03-24T20:05:00Z",
+        "latest_event_type": "command.started",
+    }
+    monkeypatch.setattr(auto_resume, "_AUTO_RESUME_MAX_CANDIDATES", 1)
+    monkeypatch.setattr(auto_resume, "_AUTO_RESUME_MIN_STALE_SECONDS", 180.0)
+    monkeypatch.setattr(
+        auto_resume,
+        "get_recovery_candidates",
+        lambda: _async_value([fresh_candidate, stale_candidate]),
+    )
+    monkeypatch.setattr(auto_resume, "get_execution_status", lambda _eid: _async_value("running"))
+    monkeypatch.setattr(auto_resume, "_restart_execution", lambda _cand: _async_value("202"))
+
+    cancelled = []
+
+    async def _fake_mark(exec_id, reason, meta_extra=None, payload_extra=None):
+        cancelled.append(exec_id)
+        return True
+
+    monkeypatch.setattr(auto_resume, "mark_execution_cancelled", _fake_mark)
+
+    await auto_resume._recover_interrupted_parent_executions(mode="restart")
+
+    assert cancelled == [101]
+
+
 def test_should_recover_candidate_skips_pending_only_command_issued(monkeypatch):
     monkeypatch.setattr(auto_resume, "_AUTO_RESUME_MIN_STALE_SECONDS", 0.0)
     candidate = {

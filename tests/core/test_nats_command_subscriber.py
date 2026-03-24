@@ -174,8 +174,51 @@ async def test_keep_message_in_progress_sends_periodic_heartbeats():
             interval_seconds=0.01,
         )
     )
-    await asyncio.sleep(0.035)
-    stop_event.set()
-    await task
+    async def _wait_for_heartbeats() -> None:
+        while msg.in_progress_calls < 2:
+            await asyncio.sleep(0.01)
+
+    try:
+        await asyncio.wait_for(_wait_for_heartbeats(), timeout=1.0)
+    finally:
+        stop_event.set()
+        await task
 
     assert msg.in_progress_calls >= 2
+
+
+@pytest.mark.asyncio
+async def test_run_callback_with_message_heartbeat_cancels_hung_callback(monkeypatch):
+    monkeypatch.setenv("NOETL_WORKER_COMMAND_TIMEOUT_SECONDS", "0.01")
+    monkeypatch.setenv("NOETL_WORKER_NATS_ACK_WAIT_SECONDS", "0.02")
+    monkeypatch.setenv("NOETL_WORKER_NATS_ACK_WAIT_BUFFER_SECONDS", "0")
+    config_module._worker_settings = None
+    try:
+        subscriber = NATSCommandSubscriber(
+            consumer_name="test-consumer",
+            stream_name="NOETL_COMMANDS",
+            max_ack_pending=64,
+            max_inflight=1,
+        )
+        subscriber.callback_progress_interval_seconds = 0.01
+        subscriber.callback_hard_timeout_seconds = 0.04
+        msg = _FakeMsg()
+        cancelled = asyncio.Event()
+
+        async def _hung_callback(_data):
+            try:
+                await asyncio.sleep(1.0)
+            except asyncio.CancelledError:
+                cancelled.set()
+                raise
+
+        with pytest.raises(asyncio.TimeoutError):
+            await subscriber._run_callback_with_message_heartbeat(
+                _hung_callback,
+                {},
+                msg,
+            )
+
+        assert cancelled.is_set()
+    finally:
+        config_module._worker_settings = None

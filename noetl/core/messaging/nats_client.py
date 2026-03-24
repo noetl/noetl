@@ -213,6 +213,10 @@ class NATSCommandSubscriber:
             if callback_timeout_seconds is not None
             else ws.command_timeout_seconds
         )
+        self.callback_hard_timeout_seconds = max(
+            self.callback_timeout_seconds * 4.0,
+            self._effective_ack_wait_seconds(),
+        )
         self.callback_progress_interval_seconds = max(
             5.0,
             min(30.0, self.callback_timeout_seconds / 4.0),
@@ -223,6 +227,13 @@ class NATSCommandSubscriber:
         self._background_tasks: set = set()
         self._inflight_semaphore = asyncio.Semaphore(self.max_inflight)
         self._throttle_hits = 0
+
+    @staticmethod
+    def _effective_ack_wait_seconds() -> float:
+        from noetl.core.config import get_worker_settings
+        ws = get_worker_settings()
+        minimum_ack_wait_seconds = float(ws.command_timeout_seconds) + float(ws.nats_ack_wait_buffer_seconds)
+        return max(float(ws.nats_ack_wait_seconds), minimum_ack_wait_seconds)
 
     async def _keep_message_in_progress(
         self,
@@ -250,9 +261,47 @@ class NATSCommandSubscriber:
             except asyncio.TimeoutError:
                 try:
                     await msg.in_progress()
-                except Exception as exc:
-                    logger.warning("Failed to send in-progress ack for message: %s", exc)
+                except Exception:
+                    logger.warning("Failed to send in-progress ack for message", exc_info=True)
                     return
+
+    async def _run_callback_with_message_heartbeat(
+        self,
+        callback: Callable[[dict], Awaitable[Optional[str]]],
+        data: dict,
+        msg,
+    ) -> Optional[str]:
+        """
+        Run the subscriber callback with JetStream heartbeat extension and a hard timeout.
+
+        The hard timeout is intentionally much larger than the nominal command timeout so
+        long-running but healthy callbacks keep their lease, while truly stuck callbacks
+        still get cancelled and released.
+        """
+        progress_stop = asyncio.Event()
+        progress_task = asyncio.create_task(
+            self._keep_message_in_progress(msg, progress_stop)
+        )
+        callback_task = asyncio.create_task(callback(data))
+        try:
+            return await asyncio.wait_for(
+                callback_task,
+                timeout=self.callback_hard_timeout_seconds,
+            )
+        except asyncio.TimeoutError:
+            logger.error(
+                "Command callback exceeded hard timeout after %.1fs; cancelling and NAKing for redelivery",
+                self.callback_hard_timeout_seconds,
+            )
+            callback_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await asyncio.wait_for(callback_task, timeout=5.0)
+            raise
+        finally:
+            progress_stop.set()
+            progress_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await progress_task
 
     @staticmethod
     def _is_not_found_error(exc: Exception) -> bool:
@@ -319,7 +368,7 @@ class NATSCommandSubscriber:
         from noetl.core.config import get_worker_settings
         ws = get_worker_settings()
         minimum_ack_wait_seconds = float(ws.command_timeout_seconds) + float(ws.nats_ack_wait_buffer_seconds)
-        ack_wait_seconds = max(float(ws.nats_ack_wait_seconds), minimum_ack_wait_seconds)
+        ack_wait_seconds = self._effective_ack_wait_seconds()
         if ack_wait_seconds > float(ws.nats_ack_wait_seconds):
             logger.warning(
                 "Configured NOETL_WORKER_NATS_ACK_WAIT_SECONDS=%.1fs is below minimum %.1fs "
@@ -471,22 +520,16 @@ class NATSCommandSubscriber:
             """Process message in background - don't block fetch loop."""
             callback_action = "nak"
             callback_nak_delay_seconds: Optional[float] = None
-            progress_stop = asyncio.Event()
-            progress_task = create_background_task(
-                self._keep_message_in_progress(msg, progress_stop)
-            )
             try:
-                action = await callback(data)
+                action = await self._run_callback_with_message_heartbeat(callback, data, msg)
                 callback_action, callback_nak_delay_seconds = self._parse_callback_action(action)
+            except asyncio.TimeoutError:
+                pass
             except asyncio.CancelledError:
                 logger.warning("Command callback task cancelled; issuing NAK for redelivery")
             except Exception as e:
                 logger.error(f"Error processing message: {e}", exc_info=True)
             finally:
-                progress_stop.set()
-                progress_task.cancel()
-                with suppress(asyncio.CancelledError):
-                    await progress_task
                 try:
                     if callback_action == "nak":
                         if callback_nak_delay_seconds is not None and callback_nak_delay_seconds > 0:
