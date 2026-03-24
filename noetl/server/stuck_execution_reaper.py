@@ -24,7 +24,6 @@ from typing import Any
 from psycopg.rows import dict_row
 from psycopg.types.json import Json
 
-from noetl.core.common import get_snowflake_id
 from noetl.core.db.pool import get_pool_connection
 from noetl.core.logger import setup_logger
 
@@ -51,6 +50,8 @@ _TERMINAL_EXECUTION_EVENT_TYPES = [
     "execution.cancelled",
 ]
 
+_CANDIDATE_SCAN_MULTIPLIER = 10
+
 
 def is_stuck_execution_reaper_enabled() -> bool:
     return _STUCK_EXECUTION_REAPER_ENABLED
@@ -64,29 +65,29 @@ async def _find_inactive_executions(
     inactivity_minutes: int,
     max_executions: int,
 ) -> list[dict[str, Any]]:
+    candidate_limit = max(max_executions, max_executions * _CANDIDATE_SCAN_MULTIPLIER)
     async with get_pool_connection(timeout=5.0) as conn:
         async with conn.cursor(row_factory=dict_row) as cur:
             await cur.execute(
                 """
                 WITH candidate_exec AS (
-                    SELECT DISTINCT e.execution_id
+                    SELECT
+                        e.execution_id,
+                        MIN(e.created_at) AS first_event_at
                     FROM noetl.event e
                     WHERE e.event_type = 'playbook.initialized'
                       AND e.created_at < NOW() - (%s * INTERVAL '1 minute')
+                    GROUP BY e.execution_id
+                    ORDER BY MIN(e.created_at) ASC, e.execution_id ASC
+                    LIMIT %s
                 ),
                 stale AS (
                     SELECT
                         c.execution_id,
-                        started.first_event_at,
+                        c.first_event_at,
                         latest.catalog_id,
                         latest.last_event_at
                     FROM candidate_exec c
-                    JOIN LATERAL (
-                        SELECT MIN(e.created_at) AS first_event_at
-                        FROM noetl.event e
-                        WHERE e.execution_id = c.execution_id
-                          AND e.event_type = 'playbook.initialized'
-                    ) AS started ON TRUE
                     JOIN LATERAL (
                         SELECT
                             e.catalog_id,
@@ -116,6 +117,7 @@ async def _find_inactive_executions(
                 """,
                 (
                     inactivity_minutes,
+                    candidate_limit,
                     inactivity_minutes,
                     _TERMINAL_EXECUTION_EVENT_TYPES,
                     max_executions,
@@ -134,6 +136,7 @@ async def cleanup_inactive_executions_once(
     if not is_stuck_execution_reaper_enabled():
         return {
             "cancelled_count": 0,
+            "candidate_count": 0,
             "execution_ids": [],
             "dry_run": dry_run,
             "disabled": True,
@@ -169,22 +172,28 @@ async def cleanup_inactive_executions_once(
 
     async with get_pool_connection(timeout=5.0) as conn:
         async with conn.cursor(row_factory=dict_row) as cur:
+            cancelled_execution_ids: list[str] = []
             for row in candidates:
-                event_id = int(get_snowflake_id())
                 await cur.execute(
                     """
                     INSERT INTO noetl.event (
                         execution_id, catalog_id, event_id, event_type,
                         node_id, node_name, status, result, meta, created_at
-                    ) VALUES (
-                        %s, %s, %s, 'execution.cancelled',
+                    )
+                    SELECT
+                        %s, %s, ids.event_id, 'execution.cancelled',
                         %s, %s, 'CANCELLED', %s, %s, NOW()
+                    FROM (SELECT noetl.snowflake_id() AS event_id) ids
+                    WHERE NOT EXISTS (
+                        SELECT 1
+                        FROM noetl.event terminal
+                        WHERE terminal.execution_id = %s
+                          AND terminal.event_type = ANY(%s)
                     )
                     """,
                     (
                         row["execution_id"],
                         row["catalog_id"],
-                        event_id,
                         "workflow",
                         "workflow",
                         Json(
@@ -208,19 +217,23 @@ async def cleanup_inactive_executions_once(
                                 "inactivity_minutes": inactivity_minutes,
                             }
                         ),
+                        row["execution_id"],
+                        _TERMINAL_EXECUTION_EVENT_TYPES,
                     ),
                 )
+                if cur.rowcount:
+                    cancelled_execution_ids.append(str(row["execution_id"]))
             await conn.commit()
 
     logger.warning(
         "[STUCK-REAPER] Cancelled %d inactive execution(s) after %d minute inactivity: %s",
-        len(execution_ids),
+        len(cancelled_execution_ids),
         inactivity_minutes,
-        ", ".join(execution_ids),
+        ", ".join(cancelled_execution_ids),
     )
     return {
-        "cancelled_count": len(execution_ids),
+        "cancelled_count": len(cancelled_execution_ids),
         "candidate_count": len(execution_ids),
-        "execution_ids": execution_ids,
+        "execution_ids": cancelled_execution_ids,
         "dry_run": False,
     }
