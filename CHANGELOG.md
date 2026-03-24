@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.10.33](https://github.com/noetl/noetl/compare/v2.10.32...v2.10.33) (2026-03-24)
+
+### Bug Fixes
+
+* short-circuit repeated duplicate command notifications ([28af615](https://github.com/noetl/noetl/commit/28af615dee6adf81de9b74a5f083b3e1d342a84e))
+
 ## [2.10.32](https://github.com/noetl/noetl/compare/v2.10.31...v2.10.32) (2026-03-23)
 
 ### Bug Fixes
