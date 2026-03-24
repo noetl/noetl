@@ -3717,6 +3717,25 @@ class ControlFlowEngine:
                     commands.extend(next_commands)
                     logger.info(f"[TASK_SEQ] Generated {len(next_commands)} commands from next transitions")
 
+            for cmd in commands:
+                pending_key = _pending_step_key(cmd.step)
+                if not pending_key:
+                    continue
+                state.issued_steps.add(pending_key)
+                logger.info(
+                    "[ISSUED] Added task-sequence %s to issued_steps for execution %s, total issued=%s",
+                    pending_key,
+                    state.execution_id,
+                    len(state.issued_steps),
+                )
+
+            # Task-sequence call.done can mutate loop_state, variables, and pending tracking
+            # even when the next actionable command is emitted by the API after this method
+            # returns. Persist that state before returning so later status/completion checks
+            # do not see a stale pre-continuation snapshot.
+            await self.state_store.save_state(state)
+            if not already_persisted:
+                await self._persist_event(event, state)
             return commands
 
         # Task-sequence lifecycle is driven by call.done/call.error. The corresponding
