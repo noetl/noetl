@@ -1045,6 +1045,86 @@ workflow:
 
 
 @pytest.mark.asyncio
+async def test_load_state_preserves_terminal_failure_after_late_events(monkeypatch):
+    playbook = Playbook(**yaml.safe_load(
+        """
+apiVersion: noetl.io/v2
+kind: Playbook
+metadata:
+  name: terminal_replay
+  path: tests/terminal_replay
+workflow:
+  - step: start
+    tool:
+      kind: python
+      code: |
+        result = {"ok": True}
+        """
+    ))
+    playbook_repo = PlaybookRepo()
+    state_store = StateStore(playbook_repo)
+
+    async def _fake_load_playbook_by_id(_catalog_id):
+        return playbook
+
+    monkeypatch.setattr(playbook_repo, "load_playbook_by_id", _fake_load_playbook_by_id)
+
+    class FakeCursor:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        async def execute(self, query, _params):
+            self.last_query = query
+
+        async def fetchone(self):
+            return {
+                "catalog_id": 999,
+                "result": {"workload": {}},
+            }
+
+        async def fetchall(self):
+            return [
+                {
+                    "event_id": 201,
+                    "node_name": "workflow",
+                    "event_type": "workflow.failed",
+                    "result": {"kind": "data", "data": {"error": {"message": "boom"}}},
+                    "meta": None,
+                },
+                {
+                    "event_id": 202,
+                    "node_name": "start",
+                    "event_type": "command.issued",
+                    "result": None,
+                    "meta": {"command_id": "exec:start:202"},
+                },
+            ]
+
+    class FakeConnection:
+        def cursor(self, row_factory=None):  # noqa: ARG002
+            return FakeCursor()
+
+    class FakeConnectionContext:
+        async def __aenter__(self):
+            return FakeConnection()
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+    monkeypatch.setattr(engine_module, "get_pool_connection", lambda: FakeConnectionContext())
+
+    state = await state_store.load_state("9031")
+
+    assert state is not None
+    assert state.failed is True
+    assert state.completed is True
+    assert state.last_event_id == 202
+
+
+@pytest.mark.asyncio
 async def test_handle_event_invalidates_stale_cached_state(monkeypatch):
     playbook = Playbook(**yaml.safe_load(
         """

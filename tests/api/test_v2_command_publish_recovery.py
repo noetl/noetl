@@ -88,6 +88,7 @@ async def test_publish_recovery_republishes_unclaimed_command(monkeypatch):
         v2._COMMAND_TERMINAL_EVENT_TYPES,
         "cmd-1",
         "cmd-1",
+        v2._EXECUTION_TERMINAL_EVENT_TYPES,
     )
     assert published == [
         {

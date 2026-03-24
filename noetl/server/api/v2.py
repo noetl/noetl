@@ -102,6 +102,13 @@ _COMMAND_TERMINAL_EVENT_TYPES = [
     "command.failed",
     "command.cancelled",
 ]
+_EXECUTION_TERMINAL_EVENT_TYPES = [
+    "playbook.completed",
+    "playbook.failed",
+    "workflow.completed",
+    "workflow.failed",
+    "execution.cancelled",
+]
 
 _BATCH_FAILURE_ENQUEUE_TIMEOUT = "ack_timeout"
 _BATCH_FAILURE_ENQUEUE_ERROR = "enqueue_error"
@@ -740,7 +747,7 @@ async def _command_has_claim_or_terminal(
                                   OR e.result->'data'->>'command_id' = %s
                               )
                           )
-                          OR e.event_type = 'execution.cancelled'
+                          OR e.event_type = ANY(%s)
                       )
                 ) AS has_claim_or_terminal
                 """,
@@ -751,10 +758,30 @@ async def _command_has_claim_or_terminal(
                     _COMMAND_TERMINAL_EVENT_TYPES,
                     command_id,
                     command_id,
+                    _EXECUTION_TERMINAL_EVENT_TYPES,
                 ),
             )
             row = await cur.fetchone()
     return bool(row and row.get("has_claim_or_terminal"))
+
+
+async def _fetch_execution_terminal_event(
+    cur,
+    execution_id: int,
+) -> Optional[dict[str, Any]]:
+    await cur.execute(
+        """
+        SELECT event_type, created_at
+        FROM noetl.event
+        WHERE execution_id = %s
+          AND event_type = ANY(%s)
+        ORDER BY event_id DESC
+        LIMIT 1
+        """,
+        (execution_id, _EXECUTION_TERMINAL_EVENT_TYPES),
+    )
+    row = await cur.fetchone()
+    return row if isinstance(row, dict) else None
 
 
 async def _recover_unclaimed_command_after_delay(
@@ -1385,9 +1412,10 @@ async def claim_command(event_id: int, req: ClaimRequest):
 
     Combines claim + fetch into single operation:
     1. Acquires advisory lock on command_id
-    2. Checks if already claimed
-    3. If not claimed, inserts command.claimed event
-    4. Returns command details from command.issued event
+    2. Checks if the execution is already terminal
+    3. Checks if already claimed
+    4. If not claimed, inserts command.claimed event
+    5. Returns command details from command.issued event
 
     Returns 409 Conflict if already claimed by another worker.
     Returns 404 if command.issued event not found.
@@ -1431,7 +1459,8 @@ async def claim_command(event_id: int, req: ClaimRequest):
                 meta = cmd_row['meta'] or {}
                 command_id = meta.get('command_id', f"{execution_id}:{step}:{event_id}")
 
-                # If command is already terminal, no further claim attempts are needed.
+                # If the command or its parent execution is already terminal,
+                # no further claim attempts are needed.
                 await cur.execute(
                     _CLAIM_TERMINAL_LOOKUP_SQL,
                     _command_id_lookup_params(execution_id, command_id),
@@ -1448,19 +1477,15 @@ async def claim_command(event_id: int, req: ClaimRequest):
                         },
                     )
 
-                # Check if execution is cancelled FIRST (before claiming)
-                await cur.execute("""
-                    SELECT 1 FROM noetl.event
-                    WHERE execution_id = %s AND event_type = 'execution.cancelled'
-                    LIMIT 1
-                """, (execution_id,))
-                if await cur.fetchone():
+                terminal_execution = await _fetch_execution_terminal_event(cur, execution_id)
+                if terminal_execution:
                     _active_claim_cache_invalidate(command_id=command_id, event_id=event_id)
                     raise HTTPException(
                         409,
                         detail={
-                            "code": "execution_cancelled",
-                            "message": "Execution has been cancelled",
+                            "code": "already_terminal",
+                            "message": "Execution already reached a terminal state",
+                            "event_type": terminal_execution.get("event_type"),
                         },
                     )
 

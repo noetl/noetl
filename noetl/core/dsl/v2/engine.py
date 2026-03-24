@@ -57,6 +57,17 @@ _LOOP_STALL_RECOVERY_COOLDOWN_SECONDS = max(
     0.0,
     float(os.getenv("NOETL_LOOP_STALL_RECOVERY_COOLDOWN_SECONDS", "15")),
 )
+_EXECUTION_TERMINAL_EVENT_TYPES = {
+    "playbook.completed",
+    "playbook.failed",
+    "workflow.completed",
+    "workflow.failed",
+    "execution.cancelled",
+}
+_EXECUTION_FAILURE_EVENT_TYPES = {
+    "playbook.failed",
+    "workflow.failed",
+}
 
 
 def _sample_keys(value: Any, max_items: int = 10) -> list[str]:
@@ -929,6 +940,11 @@ class StateStore:
                         state.last_event_id = int(event_id)
                         if isinstance(node_name, str) and node_name:
                             state.step_event_ids[node_name] = int(event_id)
+
+                    if event_type in _EXECUTION_TERMINAL_EVENT_TYPES:
+                        state.completed = True
+                        if event_type in _EXECUTION_FAILURE_EVENT_TYPES:
+                            state.failed = True
 
                     # Track issued commands for pending detection (race condition fix)
                     if event_type == 'command.issued':
