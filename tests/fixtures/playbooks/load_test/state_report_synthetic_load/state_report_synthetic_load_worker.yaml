@@ -64,8 +64,8 @@ workflow:
           SELECT s.item_id, s.group_id, s.payload
           FROM public.synthetic_state_report_load_items s
           ORDER BY s.item_id ASC
-          OFFSET {{ offset | int }}
-          LIMIT {{ batch_size | int }}
+          OFFSET {{ start.offset | int }}
+          LIMIT {{ start.batch_size | int }}
         ),
         upserted AS (
           INSERT INTO public.synthetic_state_report_load_results (item_id, result_data)

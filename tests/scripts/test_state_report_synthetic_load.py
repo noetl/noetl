@@ -161,7 +161,16 @@ def main() -> int:
     if summary:
         print(json.dumps(summary, indent=2, sort_keys=True))
 
-    return 0 if status == "completed" else 1
+    incomplete = False
+    if summary:
+        is_complete = summary.get("is_complete")
+        remaining_items = summary.get("remaining_items")
+        if is_complete is False:
+            incomplete = True
+        elif isinstance(remaining_items, int) and remaining_items > 0:
+            incomplete = True
+
+    return 0 if status == "completed" and not incomplete else 1
 
 
 if __name__ == "__main__":

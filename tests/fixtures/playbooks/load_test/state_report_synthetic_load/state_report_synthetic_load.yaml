@@ -346,9 +346,9 @@ workflow:
         INSERT INTO public.synthetic_state_report_load_items (item_id, group_id, payload)
         SELECT
           i AS item_id,
-          ((i - 1) / {{ batch_size | int }}) + 1 AS group_id,
+          ((i - 1) / {{ start.batch_size | int }}) + 1 AS group_id,
           'synthetic_payload_' || i || '_' || repeat('x', 64) AS payload
-        FROM generate_series(1, {{ total_items | int }}) AS i;
+        FROM generate_series(1, {{ start.total_items | int }}) AS i;
       spec:
         policy:
           rules:
@@ -470,7 +470,7 @@ workflow:
         loop_stats = worker_loop.get("stats", {}) if isinstance(worker_loop, dict) else {}
 
         result = {
-            "status": "completed",
+            "status": "completed" if remaining_items == 0 and processed_items == total_items else "failed",
             "total_items": total_items,
             "processed_items": processed_items,
             "remaining_items": remaining_items,
@@ -489,9 +489,21 @@ workflow:
     next:
       spec: { mode: exclusive }
       arcs:
+        - step: fail_incomplete
+          when: '{{ not (summarize.is_complete | default(false)) }}'
         - step: cleanup
-          when: '{{ (drop_tables | string | lower) == "true" }}'
+          when: '{{ summarize.is_complete and (drop_tables | string | lower) == "true" }}'
         - step: end
+          when: '{{ summarize.is_complete }}'
+
+  - step: fail_incomplete
+    desc: Fail when verification finds missing or mismatched synthetic results
+    tool:
+      kind: python
+      args:
+        summary: '{{ summarize }}'
+      code: |
+        raise RuntimeError(f"synthetic state-report load did not reconcile: {summary}")
 
   - step: cleanup
     desc: Drop test tables
