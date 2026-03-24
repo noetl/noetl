@@ -2925,13 +2925,20 @@ class ControlFlowEngine:
                 in_flight = max(0, scheduled_hint - completed_count)
 
                 # Runtime loop-stall watchdog:
-                # If there is pending work and all slots appear scheduled, but progress
-                # has been stale for too long (including ghost in-flight claims), reset
-                # scheduled_count back to completed_count and attempt to reclaim one slot.
+                # If there is pending work but no claimable slot is available, stale
+                # distributed loop metadata can leave the loop parked indefinitely.
+                # That shows up in two shapes:
+                # 1. all slots appear scheduled (`scheduled_count >= collection_size`)
+                # 2. ghost in-flight work saturates `max_in_flight` before all items are scheduled
+                # In both cases, look for orphaned iteration indexes and replay one when
+                # progress has been stale long enough.
                 if (
                     nats_loop_state
                     and collection_size_hint > completed_count
-                    and scheduled_hint >= collection_size_hint
+                    and (
+                        scheduled_hint >= collection_size_hint
+                        or in_flight >= max_in_flight
+                    )
                 ):
                     now_utc = datetime.now(timezone.utc)
                     last_progress = (
