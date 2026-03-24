@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.10.35](https://github.com/noetl/noetl/compare/v2.10.34...v2.10.35) (2026-03-24)
+
+### Bug Fixes
+
+* persist task sequence call.done before early return ([1521bb2](https://github.com/noetl/noetl/commit/1521bb2f0f178ff4fd08924ec20681a89c70f04f))
+* persist task sequence continuation state ([5b9e612](https://github.com/noetl/noetl/commit/5b9e6126bf9cb4f26c2b38d78e10f12eb00e49cc))
+
 ## [2.10.34](https://github.com/noetl/noetl/compare/v2.10.33...v2.10.34) (2026-03-24)
 
 ### Bug Fixes
