@@ -33,6 +33,11 @@ from noetl.server.command_reaper import (
     reap_orphaned_commands_once,
     get_reaper_interval_seconds,
 )
+from noetl.server.stuck_execution_reaper import (
+    cleanup_inactive_executions_once,
+    is_stuck_execution_reaper_enabled,
+    get_stuck_execution_reaper_interval_seconds,
+)
 from noetl.server.runtime_leases import RuntimeLease, load_control_lease_seconds
 
 logger = setup_logger(__name__, include_location=True)
@@ -188,6 +193,14 @@ def _create_app(settings: Settings, enable_ui: Optional[bool] = None) -> FastAPI
                 logical_name=logical_name,
                 lease_seconds=control_lease_seconds,
             )
+            stuck_execution_reaper_lease = RuntimeLease(
+                task_name="stuck_execution_reaper",
+                instance_name=instance_name,
+                server_url=server_url,
+                hostname=hostname,
+                logical_name=logical_name,
+                lease_seconds=control_lease_seconds,
+            )
 
             async def _server_heartbeat_loop():
                 while not stop_event.is_set():
@@ -325,6 +338,21 @@ def _create_app(settings: Settings, enable_ui: Optional[bool] = None) -> FastAPI
                         logger.info("Auto-resume task cancelled; exiting")
                         break
 
+            async def _stuck_execution_reaper_loop():
+                interval_seconds = get_stuck_execution_reaper_interval_seconds()
+                while not stop_event.is_set():
+                    try:
+                        lease_state = await stuck_execution_reaper_lease.try_acquire_or_renew()
+                        if lease_state.acquired:
+                            await cleanup_inactive_executions_once()
+                    except Exception as exc:
+                        logger.exception("Stuck execution reaper loop failed: %s", exc)
+                    try:
+                        await asyncio.sleep(interval_seconds)
+                    except asyncio.CancelledError:
+                        logger.info("Stuck execution reaper task cancelled; exiting")
+                        break
+
             # Start async batch acceptance workers (202 + request_id contract).
             try:
                 await ensure_batch_acceptor_started()
@@ -349,6 +377,7 @@ def _create_app(settings: Settings, enable_ui: Optional[bool] = None) -> FastAPI
                 logger.exception(f"Failed to start runtime sweeper: {e}")
 
             reaper_task: Optional[asyncio.Task] = None
+            stuck_execution_reaper_task: Optional[asyncio.Task] = None
             try:
                 logger.info("Starting command reaper background task...")
                 reaper_task = asyncio.create_task(
@@ -358,6 +387,19 @@ def _create_app(settings: Settings, enable_ui: Optional[bool] = None) -> FastAPI
                 logger.info("Command reaper background task started successfully")
             except Exception as e:
                 logger.exception(f"Failed to start command reaper: {e}")
+
+            if is_stuck_execution_reaper_enabled():
+                try:
+                    logger.info("Starting stuck execution reaper background task...")
+                    stuck_execution_reaper_task = asyncio.create_task(
+                        _stuck_execution_reaper_loop(),
+                        name="stuck-execution-reaper",
+                    )
+                    logger.info("Stuck execution reaper background task started successfully")
+                except Exception as e:
+                    logger.exception(f"Failed to start stuck execution reaper: {e}")
+            else:
+                logger.info("Stuck execution reaper is disabled by configuration")
 
             try:
                 logger.info("Starting auto-resume coordination task...")
@@ -393,6 +435,13 @@ def _create_app(settings: Settings, enable_ui: Optional[bool] = None) -> FastAPI
                         await reaper_task
                 except Exception as e:
                     logger.exception(f"Critical error during command reaper shutdown: {e}")
+            if stuck_execution_reaper_task:
+                try:
+                    stuck_execution_reaper_task.cancel()
+                    with contextlib.suppress(Exception):
+                        await stuck_execution_reaper_task
+                except Exception as e:
+                    logger.exception(f"Critical error during stuck execution reaper shutdown: {e}")
             if auto_resume_task:
                 try:
                     auto_resume_task.cancel()
@@ -412,6 +461,7 @@ def _create_app(settings: Settings, enable_ui: Optional[bool] = None) -> FastAPI
                 await runtime_sweeper_lease.release()
                 await command_reaper_lease.release()
                 await auto_resume_lease.release()
+                await stuck_execution_reaper_lease.release()
                 deregister_server_directly(instance_name)
             except Exception as e:
                 logger.error(f"Server deregistration failed during shutdown: {e}")
