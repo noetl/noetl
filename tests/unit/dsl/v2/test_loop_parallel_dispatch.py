@@ -487,3 +487,71 @@ async def test_loop_watchdog_recovers_stalled_scheduled_counts(monkeypatch):
     assert command.args.get("claimed_index") == 1
     assert int(fake_cache.state.get("scheduled_count", 0)) == 4
     assert int(state.loop_state["run_batch_workers"].get("watchdog_repair_count", 0)) >= 1
+
+
+@pytest.mark.asyncio
+async def test_loop_watchdog_recovers_stale_inflight_saturation(monkeypatch):
+    fixture = Path(
+        "tests/fixtures/playbooks/batch_execution/heavy_payload_pipeline_in_step_parallel/"
+        "heavy_payload_pipeline_in_step_parallel.yaml"
+    )
+    playbook = yaml.safe_load(fixture.read_text(encoding="utf-8"))
+    run_batch_workers = next(
+        step for step in playbook["workflow"] if step.get("step") == "run_batch_workers"
+    )
+    run_batch_workers["args"] = {
+        "claimed_batch": "{{ iter.batch.batch_number }}",
+        "claimed_index": "{{ loop_index }}",
+    }
+
+    parsed_playbook = engine_module.Playbook(**playbook)
+    playbook_repo = PlaybookRepo()
+    state_store = StateStore(playbook_repo)
+    engine = ControlFlowEngine(playbook_repo, state_store)
+    state = ExecutionState(
+        "9403b",
+        parsed_playbook,
+        payload={
+            "build_batch_plan": {
+                "batches": [
+                    {"batch_number": 1},
+                    {"batch_number": 2},
+                    {"batch_number": 3},
+                    {"batch_number": 4},
+                    {"batch_number": 5},
+                    {"batch_number": 6},
+                ]
+            }
+        },
+    )
+
+    stale_progress_at = (datetime.now(timezone.utc) - timedelta(seconds=300)).isoformat()
+    fake_cache = RepairingNATSCache(
+        {
+            "collection_size": 6,
+            "completed_count": 3,
+            "scheduled_count": 6,
+            "last_progress_at": stale_progress_at,
+        }
+    )
+
+    async def fake_get_nats_cache():
+        return fake_cache
+
+    async def fake_find_orphaned(*_args, **_kwargs):
+        return [3]
+
+    monkeypatch.setattr(engine_module, "get_nats_cache", fake_get_nats_cache)
+    monkeypatch.setattr(engine, "_find_orphaned_loop_iteration_indices", fake_find_orphaned)
+    monkeypatch.setattr(engine_module, "_LOOP_STALL_WATCHDOG_SECONDS", 1.0)
+    monkeypatch.setattr(engine_module, "_LOOP_STALL_RECOVERY_COOLDOWN_SECONDS", 0.0)
+
+    step_def = state.get_step("run_batch_workers")
+    step_def.loop.spec.max_in_flight = 3
+    command = await engine._create_command_for_step(state, step_def, {})
+
+    assert command is not None
+    assert command.args.get("claimed_batch") == 4
+    assert command.args.get("claimed_index") == 3
+    assert int(fake_cache.state.get("scheduled_count", 0)) == 6
+    assert int(state.loop_state["run_batch_workers"].get("watchdog_repair_count", 0)) >= 1
