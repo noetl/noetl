@@ -1,3 +1,4 @@
+import asyncio
 from types import SimpleNamespace
 
 import pytest
@@ -145,3 +146,36 @@ def test_parse_callback_action_caps_large_delayed_nak():
 
     assert action == "nak"
     assert delay == pytest.approx(3600.0)
+
+
+class _FakeMsg:
+    def __init__(self):
+        self.in_progress_calls = 0
+
+    async def in_progress(self):
+        self.in_progress_calls += 1
+
+
+@pytest.mark.asyncio
+async def test_keep_message_in_progress_sends_periodic_heartbeats():
+    subscriber = NATSCommandSubscriber(
+        consumer_name="test-consumer",
+        stream_name="NOETL_COMMANDS",
+        max_ack_pending=64,
+        max_inflight=1,
+    )
+    msg = _FakeMsg()
+    stop_event = asyncio.Event()
+
+    task = asyncio.create_task(
+        subscriber._keep_message_in_progress(
+            msg,
+            stop_event,
+            interval_seconds=0.01,
+        )
+    )
+    await asyncio.sleep(0.035)
+    stop_event.set()
+    await task
+
+    assert msg.in_progress_calls >= 2

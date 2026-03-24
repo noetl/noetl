@@ -15,6 +15,7 @@ Performance tuning:
 import asyncio
 import json
 import math
+from contextlib import suppress
 from typing import Optional, Callable, Awaitable
 import nats
 from nats.js import JetStreamContext
@@ -212,12 +213,46 @@ class NATSCommandSubscriber:
             if callback_timeout_seconds is not None
             else ws.command_timeout_seconds
         )
+        self.callback_progress_interval_seconds = max(
+            5.0,
+            min(30.0, self.callback_timeout_seconds / 4.0),
+        )
         self._nc: Optional[NATSClient] = None
         self._js: Optional[JetStreamContext] = None
         self._subscription = None
         self._background_tasks: set = set()
         self._inflight_semaphore = asyncio.Semaphore(self.max_inflight)
         self._throttle_hits = 0
+
+    async def _keep_message_in_progress(
+        self,
+        msg,
+        stop_event: asyncio.Event,
+        interval_seconds: Optional[float] = None,
+    ) -> None:
+        """
+        Periodically extend the JetStream ack deadline while callback work is active.
+
+        This prevents long-running commands from being redelivered mid-flight.
+        """
+        interval = float(
+            interval_seconds
+            if interval_seconds is not None
+            else self.callback_progress_interval_seconds
+        )
+        if interval <= 0:
+            return
+
+        while True:
+            try:
+                await asyncio.wait_for(stop_event.wait(), timeout=interval)
+                return
+            except asyncio.TimeoutError:
+                try:
+                    await msg.in_progress()
+                except Exception as exc:
+                    logger.warning("Failed to send in-progress ack for message: %s", exc)
+                    return
 
     @staticmethod
     def _is_not_found_error(exc: Exception) -> bool:
@@ -436,22 +471,22 @@ class NATSCommandSubscriber:
             """Process message in background - don't block fetch loop."""
             callback_action = "nak"
             callback_nak_delay_seconds: Optional[float] = None
+            progress_stop = asyncio.Event()
+            progress_task = create_background_task(
+                self._keep_message_in_progress(msg, progress_stop)
+            )
             try:
-                action = await asyncio.wait_for(
-                    callback(data),
-                    timeout=self.callback_timeout_seconds,
-                )
+                action = await callback(data)
                 callback_action, callback_nak_delay_seconds = self._parse_callback_action(action)
-            except asyncio.TimeoutError:
-                logger.error(
-                    "Command callback timed out after %.1fs; issuing NAK for redelivery",
-                    self.callback_timeout_seconds,
-                )
             except asyncio.CancelledError:
                 logger.warning("Command callback task cancelled; issuing NAK for redelivery")
             except Exception as e:
                 logger.error(f"Error processing message: {e}", exc_info=True)
             finally:
+                progress_stop.set()
+                progress_task.cancel()
+                with suppress(asyncio.CancelledError):
+                    await progress_task
                 try:
                     if callback_action == "nak":
                         if callback_nak_delay_seconds is not None and callback_nak_delay_seconds > 0:
