@@ -529,8 +529,8 @@ async def test_loop_watchdog_recovers_stale_inflight_saturation(monkeypatch):
     fake_cache = RepairingNATSCache(
         {
             "collection_size": 6,
-            "completed_count": 3,
-            "scheduled_count": 6,
+            "completed_count": 2,
+            "scheduled_count": 5,
             "last_progress_at": stale_progress_at,
         }
     )
@@ -553,5 +553,5 @@ async def test_loop_watchdog_recovers_stale_inflight_saturation(monkeypatch):
     assert command is not None
     assert command.args.get("claimed_batch") == 4
     assert command.args.get("claimed_index") == 3
-    assert int(fake_cache.state.get("scheduled_count", 0)) == 6
+    assert int(fake_cache.state.get("scheduled_count", 0)) == 5
     assert int(state.loop_state["run_batch_workers"].get("watchdog_repair_count", 0)) >= 1
