@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.10.37](https://github.com/noetl/noetl/compare/v2.10.36...v2.10.37) (2026-03-24)
+
+### Bug Fixes
+
+* recover stale loop inflight saturation ([692598d](https://github.com/noetl/noetl/commit/692598d45a91b64abbe309276d3c214866b93e60))
+
 ## [2.10.36](https://github.com/noetl/noetl/compare/v2.10.35...v2.10.36) (2026-03-24)
 
 ### Bug Fixes
