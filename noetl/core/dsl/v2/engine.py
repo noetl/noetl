@@ -3734,6 +3734,8 @@ class ControlFlowEngine:
             # returns. Persist that state before returning so later status/completion checks
             # do not see a stale pre-continuation snapshot.
             await self.state_store.save_state(state)
+            if not already_persisted:
+                await self._persist_event(event, state)
             return commands
 
         # Task-sequence lifecycle is driven by call.done/call.error. The corresponding
