@@ -146,6 +146,14 @@ async def cleanup_inactive_executions_once(
         max_executions = int(_STUCK_EXECUTION_REAPER_MAX_PER_RUN)
     else:
         max_executions = int(max_executions)
+    if inactivity_minutes <= 0 or max_executions <= 0:
+        return {
+            "cancelled_count": 0,
+            "candidate_count": 0,
+            "execution_ids": [],
+            "dry_run": dry_run,
+            "invalid_params": True,
+        }
     candidates = await _find_inactive_executions(
         inactivity_minutes=inactivity_minutes,
         max_executions=max_executions,
@@ -153,7 +161,8 @@ async def cleanup_inactive_executions_once(
     execution_ids = [str(row["execution_id"]) for row in candidates]
     if dry_run or not candidates:
         return {
-            "cancelled_count": 0 if dry_run is False else len(execution_ids),
+            "cancelled_count": 0,
+            "candidate_count": len(execution_ids),
             "execution_ids": execution_ids,
             "dry_run": dry_run,
         }
@@ -161,7 +170,7 @@ async def cleanup_inactive_executions_once(
     async with get_pool_connection(timeout=5.0) as conn:
         async with conn.cursor(row_factory=dict_row) as cur:
             for row in candidates:
-                event_id = int(await get_snowflake_id())
+                event_id = int(get_snowflake_id())
                 await cur.execute(
                     """
                     INSERT INTO noetl.event (
@@ -211,6 +220,7 @@ async def cleanup_inactive_executions_once(
     )
     return {
         "cancelled_count": len(execution_ids),
+        "candidate_count": len(execution_ids),
         "execution_ids": execution_ids,
         "dry_run": False,
     }

@@ -117,7 +117,7 @@ async def test_cleanup_inactive_executions_once_cancels_candidates(monkeypatch):
         assert max_executions == 10
         return rows
 
-    async def _fake_get_snowflake_id():
+    def _fake_get_snowflake_id():
         _fake_get_snowflake_id.counter += 1
         return 9000 + _fake_get_snowflake_id.counter
 
@@ -141,6 +141,7 @@ async def test_cleanup_inactive_executions_once_cancels_candidates(monkeypatch):
 
     assert result == {
         "cancelled_count": 2,
+        "candidate_count": 2,
         "execution_ids": ["101", "303"],
         "dry_run": False,
     }
@@ -169,7 +170,8 @@ async def test_cleanup_inactive_executions_once_dry_run_skips_inserts(monkeypatc
     )
 
     assert result == {
-        "cancelled_count": 1,
+        "cancelled_count": 0,
+        "candidate_count": 1,
         "execution_ids": ["101"],
         "dry_run": True,
     }
@@ -198,17 +200,6 @@ async def test_cleanup_inactive_executions_once_returns_disabled_when_feature_of
 
 @pytest.mark.asyncio
 async def test_cleanup_inactive_executions_once_preserves_explicit_zero(monkeypatch):
-    async def _fake_find_inactive_executions(*, inactivity_minutes, max_executions):
-        assert inactivity_minutes == 0
-        assert max_executions == 0
-        return []
-
-    monkeypatch.setattr(
-        stuck_execution_reaper,
-        "_find_inactive_executions",
-        _fake_find_inactive_executions,
-    )
-
     result = await stuck_execution_reaper.cleanup_inactive_executions_once(
         inactivity_minutes=0,
         max_executions=0,
@@ -216,6 +207,8 @@ async def test_cleanup_inactive_executions_once_preserves_explicit_zero(monkeypa
 
     assert result == {
         "cancelled_count": 0,
+        "candidate_count": 0,
         "execution_ids": [],
         "dry_run": False,
+        "invalid_params": True,
     }

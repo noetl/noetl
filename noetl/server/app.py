@@ -417,35 +417,35 @@ def _create_app(settings: Settings, enable_ui: Optional[bool] = None) -> FastAPI
             if heartbeat_task:
                 try:
                     heartbeat_task.cancel()
-                    with contextlib.suppress(Exception):
+                    with contextlib.suppress(asyncio.CancelledError):
                         await heartbeat_task
                 except Exception as e:
                     logger.exception(f"Critical error during heartbeat task shutdown: {e}")
             if sweeper_task:
                 try:
                     sweeper_task.cancel()
-                    with contextlib.suppress(Exception):
+                    with contextlib.suppress(asyncio.CancelledError):
                         await sweeper_task
                 except Exception as e:
                     logger.exception(f"Critical error during sweeper task shutdown: {e}")
             if reaper_task:
                 try:
                     reaper_task.cancel()
-                    with contextlib.suppress(Exception):
+                    with contextlib.suppress(asyncio.CancelledError):
                         await reaper_task
                 except Exception as e:
                     logger.exception(f"Critical error during command reaper shutdown: {e}")
             if stuck_execution_reaper_task:
                 try:
                     stuck_execution_reaper_task.cancel()
-                    with contextlib.suppress(Exception):
+                    with contextlib.suppress(asyncio.CancelledError):
                         await stuck_execution_reaper_task
                 except Exception as e:
                     logger.exception(f"Critical error during stuck execution reaper shutdown: {e}")
             if auto_resume_task:
                 try:
                     auto_resume_task.cancel()
-                    with contextlib.suppress(Exception):
+                    with contextlib.suppress(asyncio.CancelledError):
                         await auto_resume_task
                 except Exception as e:
                     logger.exception(f"Critical error during auto-resume task shutdown: {e}")
