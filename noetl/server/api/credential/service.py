@@ -313,42 +313,40 @@ class CredentialService:
                                     cache_scope = execution_id if execution_id else "global"
                                     cache_key = f"{cred_name}:{resolved_catalog_id}:{cache_scope}"
 
-                                    # Use pool connection for cache INSERT
-                                    async with get_pool_connection() as cache_conn:
-                                        async with cache_conn.cursor(row_factory=dict_row) as cache_cursor:
-                                            await cache_cursor.execute(
-                                                """
-                                                INSERT INTO noetl.keychain (
-                                                    cache_key, keychain_name, catalog_id, credential_type,
-                                                    cache_type, scope_type, execution_id, parent_execution_id,
-                                                    data_encrypted, expires_at, created_at, accessed_at, access_count
-                                                )
-                                                VALUES (
-                                                    %(cache_key)s, %(keychain_name)s, %(catalog_id)s, %(credential_type)s,
-                                                    %(cache_type)s, %(scope_type)s, %(execution_id)s, %(parent_execution_id)s,
-                                                    %(data_encrypted)s, %(expires_at)s, NOW(), NOW(), 0
-                                                )
-                                                ON CONFLICT (cache_key) DO UPDATE
-                                                SET data_encrypted = EXCLUDED.data_encrypted,
-                                                    accessed_at = NOW(),
-                                                    access_count = noetl.keychain.access_count + 1,
-                                                    expires_at = EXCLUDED.expires_at,
-                                                    execution_id = EXCLUDED.execution_id,
-                                                    parent_execution_id = EXCLUDED.parent_execution_id
-                                                """,
-                                                {
-                                                    "cache_key": cache_key,
-                                                    "keychain_name": cred_name,
-                                                    "catalog_id": resolved_catalog_id,
-                                                    "credential_type": row["type"],
-                                                    "cache_type": "secret",
-                                                    "scope_type": scope_type,
-                                                    "execution_id": execution_id,
-                                                    "parent_execution_id": parent_execution_id,
-                                                    "data_encrypted": encrypted_data,
-                                                    "expires_at": expires_at,
-                                                },
-                                            )
+                                    await cursor.execute(
+                                        """
+                                        INSERT INTO noetl.keychain (
+                                            cache_key, keychain_name, catalog_id, credential_type,
+                                            cache_type, scope_type, execution_id, parent_execution_id,
+                                            data_encrypted, expires_at, created_at, accessed_at, access_count
+                                        )
+                                        VALUES (
+                                            %(cache_key)s, %(keychain_name)s, %(catalog_id)s, %(credential_type)s,
+                                            %(cache_type)s, %(scope_type)s, %(execution_id)s, %(parent_execution_id)s,
+                                            %(data_encrypted)s, %(expires_at)s, NOW(), NOW(), 0
+                                        )
+                                        ON CONFLICT (cache_key) DO UPDATE
+                                        SET data_encrypted = EXCLUDED.data_encrypted,
+                                            accessed_at = NOW(),
+                                            access_count = noetl.keychain.access_count + 1,
+                                            expires_at = EXCLUDED.expires_at,
+                                            execution_id = EXCLUDED.execution_id,
+                                            parent_execution_id = EXCLUDED.parent_execution_id
+                                        """,
+                                        {
+                                            "cache_key": cache_key,
+                                            "keychain_name": cred_name,
+                                            "catalog_id": resolved_catalog_id,
+                                            "credential_type": row["type"],
+                                            "cache_type": "secret",
+                                            "scope_type": scope_type,
+                                            "execution_id": execution_id,
+                                            "parent_execution_id": parent_execution_id,
+                                            "data_encrypted": encrypted_data,
+                                            "expires_at": expires_at,
+                                        },
+                                    )
+                                    await conn.commit()
                                     logger.debug(
                                         "Cached credential '%s' in keychain (catalog_id=%s, scope=%s)",
                                         cred_name,

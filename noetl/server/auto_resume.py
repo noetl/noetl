@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+from datetime import datetime, timezone
 from typing import Optional, Dict, Any
 
 from psycopg.rows import dict_row
@@ -56,6 +57,13 @@ _AUTO_RESUME_MIN_READY_WORKERS = max(
     1,
     int(os.getenv("NOETL_AUTO_RESUME_MIN_READY_WORKERS", "1")),
 )
+_AUTO_RESUME_MIN_STALE_SECONDS = max(
+    0.0,
+    float(os.getenv("NOETL_AUTO_RESUME_MIN_STALE_SECONDS", "180")),
+)
+_AUTO_RESUME_PENDING_ONLY_EVENT_TYPES = frozenset({
+    "command.issued",
+})
 
 _auto_resume_metrics: dict[str, float] = {
     "attempts_total": 0.0,
@@ -196,6 +204,46 @@ def _extract_workload_from_result(result_obj: Any) -> dict[str, Any]:
     return {}
 
 
+def _coerce_utc_datetime(value: Any) -> Optional[datetime]:
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+    if isinstance(value, str):
+        normalized = value.strip()
+        if not normalized:
+            return None
+        if normalized.endswith("Z"):
+            normalized = normalized[:-1] + "+00:00"
+        try:
+            parsed = datetime.fromisoformat(normalized)
+        except ValueError:
+            return None
+        return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+    return None
+
+
+def _candidate_stale_age_seconds(candidate: Dict[str, Any], *, now: Optional[datetime] = None) -> Optional[float]:
+    now_utc = now or datetime.now(timezone.utc)
+    last_event_at = _coerce_utc_datetime(candidate.get("latest_event_at"))
+    if last_event_at is None:
+        last_event_at = _coerce_utc_datetime(candidate.get("created_at"))
+    if last_event_at is None:
+        return None
+    return max(0.0, (now_utc - last_event_at).total_seconds())
+
+
+def _should_recover_candidate(candidate: Dict[str, Any], *, now: Optional[datetime] = None) -> bool:
+    latest_event_type = str(candidate.get("latest_event_type") or "").strip().lower()
+    if latest_event_type in _AUTO_RESUME_PENDING_ONLY_EVENT_TYPES:
+        return False
+
+    stale_age_seconds = _candidate_stale_age_seconds(candidate, now=now)
+    if stale_age_seconds is None:
+        return True
+    return stale_age_seconds >= _AUTO_RESUME_MIN_STALE_SECONDS
+
+
 async def get_execution_status(execution_id: int) -> str:
     """Determine execution status from terminal events."""
     async with get_pool_connection() as conn:
@@ -228,6 +276,10 @@ async def get_recovery_candidates() -> list[Dict[str, Any]]:
 
     Parent only: `parent_execution_id IS NULL`.
     """
+    fetch_limit = max(
+        max(_AUTO_RESUME_MAX_CANDIDATES, 1) * 10,
+        max(_AUTO_RESUME_MAX_CANDIDATES, 1),
+    )
     async with get_pool_connection() as conn:
         async with conn.cursor(row_factory=dict_row) as cur:
             await cur.execute(
@@ -237,9 +289,18 @@ async def get_recovery_candidates() -> list[Dict[str, Any]]:
                     c.path,
                     e.catalog_id,
                     e.result,
-                    e.created_at
+                    e.created_at,
+                    latest.event_type AS latest_event_type,
+                    latest.created_at AS latest_event_at
                 FROM noetl.event e
                 JOIN noetl.catalog c ON c.catalog_id = e.catalog_id
+                JOIN LATERAL (
+                    SELECT ev.event_type, ev.created_at
+                    FROM noetl.event ev
+                    WHERE ev.execution_id = e.execution_id
+                    ORDER BY ev.event_id DESC
+                    LIMIT 1
+                ) latest ON TRUE
                 WHERE e.event_type = 'playbook.initialized'
                   AND e.parent_execution_id IS NULL
                   AND e.created_at > NOW() - (%s * INTERVAL '1 minute')
@@ -252,7 +313,7 @@ async def get_recovery_candidates() -> list[Dict[str, Any]]:
                 ORDER BY e.created_at DESC
                 LIMIT %s
                 """,
-                (_AUTO_RESUME_LOOKBACK_MINUTES, _AUTO_RESUME_MAX_CANDIDATES),
+                (_AUTO_RESUME_LOOKBACK_MINUTES, fetch_limit),
             )
             rows = await cur.fetchall()
     return list(rows or [])
@@ -369,9 +430,23 @@ async def _recover_interrupted_parent_executions(mode: str) -> None:
         len(candidates),
         mode,
     )
+    recovered_candidates = 0
     for candidate in candidates:
+        if recovered_candidates >= _AUTO_RESUME_MAX_CANDIDATES:
+            break
         execution_id = int(candidate["execution_id"])
         path = str(candidate.get("path") or "")
+        stale_age_seconds = _candidate_stale_age_seconds(candidate)
+        latest_event_type = str(candidate.get("latest_event_type") or "")
+        if not _should_recover_candidate(candidate):
+            logger.info(
+                "[AUTO-RESUME] Skip execution %s (%s): latest_event_type=%s stale_age_seconds=%s",
+                execution_id,
+                path,
+                latest_event_type or "unknown",
+                round(stale_age_seconds, 3) if stale_age_seconds is not None else "unknown",
+            )
+            continue
         status = await get_execution_status(execution_id)
         if status != "running":
             logger.info(
@@ -385,6 +460,7 @@ async def _recover_interrupted_parent_executions(mode: str) -> None:
         if mode == "restart":
             restarted_execution_id = await _restart_execution(candidate)
             if restarted_execution_id:
+                recovered_candidates += 1
                 await mark_execution_cancelled(
                     execution_id,
                     reason="Auto-recovery restart launched replacement execution",
@@ -406,6 +482,8 @@ async def _recover_interrupted_parent_executions(mode: str) -> None:
             )
             if not ok:
                 _inc_metric("recoveries_failed_total")
+            else:
+                recovered_candidates += 1
 
 
 async def resume_interrupted_executions() -> None:
