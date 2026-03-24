@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.10.38](https://github.com/noetl/noetl/compare/v2.10.37...v2.10.38) (2026-03-24)
+
+### Bug Fixes
+
+* **runtime:** address PR review follow-ups ([3509394](https://github.com/noetl/noetl/commit/35093942ea424dedef1d4e9132ac1361027fa465))
+* **server:** avoid false auto-resume recovery loops ([9ae0384](https://github.com/noetl/noetl/commit/9ae0384ad5bb1cf2df2a1ee54db515840fd9fa0d))
+* **worker:** keep jetstream commands alive during execution ([89de91a](https://github.com/noetl/noetl/commit/89de91aae039c94942ce7db72e530fde030e4b51))
+
 ## [2.10.37](https://github.com/noetl/noetl/compare/v2.10.36...v2.10.37) (2026-03-24)
 
 ### Bug Fixes
