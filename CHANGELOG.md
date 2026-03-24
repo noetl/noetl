@@ -2,6 +2,15 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.10.34](https://github.com/noetl/noetl/compare/v2.10.33...v2.10.34) (2026-03-24)
+
+### Bug Fixes
+
+* auto-cancel inactive stuck executions ([f64f57c](https://github.com/noetl/noetl/commit/f64f57c2bf6bc02fc230e70e801cae7b3ecdcef7))
+* guard reaper cancellation races ([4e20dfa](https://github.com/noetl/noetl/commit/4e20dfa102d62535243aac0121ab245aa3285f68))
+* harden stuck execution reaper safety ([26ee21e](https://github.com/noetl/noetl/commit/26ee21ecaea5ec96dd3cb427d0a5ead9b74061d7))
+* narrow stuck execution reaper selection ([de02e95](https://github.com/noetl/noetl/commit/de02e95bdc932b1b29e5c1a77a2755492ef185b1))
+
 ## [2.10.33](https://github.com/noetl/noetl/compare/v2.10.32...v2.10.33) (2026-03-24)
 
 ### Bug Fixes
