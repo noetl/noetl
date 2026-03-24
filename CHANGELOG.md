@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.10.36](https://github.com/noetl/noetl/compare/v2.10.35...v2.10.36) (2026-03-24)
+
+### Bug Fixes
+
+* stop inferring completion for active fallback status ([c1e4039](https://github.com/noetl/noetl/commit/c1e40392cd5b0fb57da42ce5523e5b84c0ad6cdf))
+
 ## [2.10.35](https://github.com/noetl/noetl/compare/v2.10.34...v2.10.35) (2026-03-24)
 
 ### Bug Fixes
