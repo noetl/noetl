@@ -1,9 +1,8 @@
 #!/usr/bin/env python3
-"""Runner for the synthetic BHS state-report load test fixture."""
+"""Runner for the synthetic state-report load test fixture."""
 
 import argparse
 import json
-import sys
 import time
 from pathlib import Path
 from typing import Any
@@ -11,10 +10,9 @@ from typing import Any
 import requests
 import yaml
 
-PLAYBOOK_FILE = Path(
-    "tests/fixtures/playbooks/load_test/bhs_state_report_synthetic_load/"
-    "bhs_state_report_synthetic_load.yaml"
-)
+FIXTURE_DIR = Path("tests/fixtures/playbooks/load_test/state_report_synthetic_load")
+PLAYBOOK_FILE = FIXTURE_DIR / "state_report_synthetic_load.yaml"
+WORKER_PLAYBOOK_FILE = FIXTURE_DIR / "state_report_synthetic_load_worker.yaml"
 
 
 def post_json(base_url: str, path: str, payload: dict[str, Any], timeout: float = 30.0) -> dict[str, Any]:
@@ -30,15 +28,27 @@ def query_postgres(base_url: str, query: str) -> list[Any]:
     return data.get("result", [])
 
 
-def register_playbook(base_url: str) -> dict[str, Any]:
-    playbook = yaml.safe_load(PLAYBOOK_FILE.read_text(encoding="utf-8"))
+def register_catalog_playbook(base_url: str, playbook_file: Path) -> dict[str, Any]:
+    playbook = yaml.safe_load(playbook_file.read_text(encoding="utf-8"))
     result = post_json(
         base_url,
         "/api/catalog/register",
-        {"path": playbook["metadata"]["path"], "content": PLAYBOOK_FILE.read_text(encoding="utf-8")},
+        {"content": playbook_file.read_text(encoding="utf-8")},
         timeout=60.0,
     )
+    playbook_path = playbook.get("metadata", {}).get("path")
+    result_path = result.get("path")
+    if playbook_path is not None and result_path is not None and result_path != playbook_path:
+        raise RuntimeError(
+            f"catalog register response path {result_path!r} does not match playbook metadata path {playbook_path!r}"
+        )
     return {"playbook": playbook, "result": result}
+
+
+def register_playbooks(base_url: str) -> dict[str, Any]:
+    worker = register_catalog_playbook(base_url, WORKER_PLAYBOOK_FILE)
+    main = register_catalog_playbook(base_url, PLAYBOOK_FILE)
+    return {"worker": worker, "main": main}
 
 
 def execute_playbook(base_url: str, path: str, total_items: int, batch_size: int, concurrent_batches: int, items_max_in_flight: int) -> int:
@@ -109,7 +119,7 @@ def fetch_summary(base_url: str, execution_id: int) -> dict[str, Any] | None:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Run the synthetic BHS state-report load test")
+    parser = argparse.ArgumentParser(description="Run the synthetic state-report load test")
     parser.add_argument("--base-url", default="http://localhost:8082")
     parser.add_argument("--total-items", type=int, default=540)
     parser.add_argument("--batch-size", type=int, default=30)
@@ -119,7 +129,7 @@ def main() -> int:
     args = parser.parse_args()
 
     print("=" * 60)
-    print("BHS STATE REPORT SYNTHETIC LOAD TEST")
+    print("STATE REPORT SYNTHETIC LOAD TEST")
     print("=" * 60)
     print(f"Base URL: {args.base_url}")
     print(f"Total items: {args.total_items}")
@@ -128,9 +138,10 @@ def main() -> int:
     print(f"Items max in flight: {args.items_max_in_flight}")
     print("=" * 60)
 
-    registered = register_playbook(args.base_url)
-    path = registered["playbook"]["metadata"]["path"]
-    print(f"Registered: {path}")
+    registered = register_playbooks(args.base_url)
+    print(f"Registered worker: {registered['worker']['playbook']['metadata']['path']}")
+    path = registered["main"]["playbook"]["metadata"]["path"]
+    print(f"Registered main: {path}")
 
     execution_id = execute_playbook(
         args.base_url,

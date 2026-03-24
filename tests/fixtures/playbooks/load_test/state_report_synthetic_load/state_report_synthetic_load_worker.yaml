@@ -2,10 +2,10 @@ apiVersion: noetl.io/v2
 kind: Playbook
 
 metadata:
-  name: bhs_state_report_synthetic_load_worker
-  path: tests/fixtures/playbooks/load_test/bhs_state_report_synthetic_load/bhs_state_report_synthetic_load_worker
+  name: state_report_synthetic_load_worker
+  path: load_test/state_report_synthetic_load/state_report_synthetic_load_worker
   description: |
-    Synthetic chunk worker for the BHS state-report load test.
+    Synthetic chunk worker for the state-report load test.
     Processes a full batch in a single SQL upsert statement:
       - reads the batch window with OFFSET/LIMIT
       - builds full result_data (item_id, group_id, payload, status, 600 fields)
@@ -22,7 +22,7 @@ workload:
 
 workflow:
   - step: start
-    desc: Initialize chunk worker inputs (v2 batch upsert variant)
+    desc: Initialize chunk worker inputs (batch upsert variant)
     tool:
       kind: python
       args:
@@ -51,7 +51,7 @@ workflow:
         - step: upsert_batch
 
   - step: upsert_batch
-    desc: Upsert full batch in one SQL command (includes full payload + 600 computed fields)
+    desc: Upsert full batch in one SQL command
     tool:
       kind: postgres
       auth: '{{ pg_auth }}'
@@ -98,7 +98,7 @@ workflow:
         - step: summarize
 
   - step: summarize
-    desc: Return chunk summary for v2 batch upsert worker
+    desc: Return chunk summary for batch upsert worker
     tool:
       kind: python
       args:
@@ -114,7 +114,7 @@ workflow:
             "variant": "batch_upsert_sql",
             "batch_number": int(batch_number or 0),
             "batch_size": int(batch_size or 0),
-            "batch_count": upserted_count,
+            "upserted_count": upserted_count,
             "loop": {"total": upserted_count, "failed": 0},
         }
     next:
