@@ -38,6 +38,11 @@ class _FakeCursor:
     async def execute(self, query, _params):
         self._query = query
 
+    async def fetchall(self):
+        if "event_type = 'step.exit'" in self._query:
+            return []
+        raise AssertionError(f"Unexpected fetchall query in test cursor: {self._query}")
+
     async def fetchone(self):
         if "ORDER BY event_id ASC" in self._query:
             return {"created_at": self._start_time}
@@ -184,3 +189,31 @@ async def test_status_keeps_running_when_batch_completed_still_has_pending_comma
     assert result["failed"] is False
     assert result["completion_inferred"] is False
     assert result["end_time"] is None
+
+
+@pytest.mark.asyncio
+async def test_status_event_log_fallback_keeps_completion_inferred_false_for_non_terminal_call_done(monkeypatch):
+    start_time = datetime(2026, 3, 24, 6, 20, 0, tzinfo=timezone.utc)
+    latest_time = datetime(2026, 3, 24, 6, 26, 29, tzinfo=timezone.utc)
+
+    fake_engine = SimpleNamespace(state_store=SimpleNamespace(get_state=lambda _execution_id: None))
+    fake_cursor = _FakeCursor(
+        start_time,
+        latest_time,
+        terminal_time=None,
+        pending_count=0,
+        latest_event_type="call.done",
+        latest_status="COMPLETED",
+    )
+
+    monkeypatch.setattr(v2_api, "get_engine", lambda: fake_engine)
+    monkeypatch.setattr(v2_api, "get_pool_connection", lambda: _ConnCtx(_FakeConn(fake_cursor)))
+
+    result = await v2_api.get_execution_status("589375687589363999")
+
+    assert result["current_step"] == "events.batch"
+    assert result["completed"] is False
+    assert result["failed"] is False
+    assert result["completion_inferred"] is False
+    assert result["end_time"] is None
+    assert result["source"] == "event_log_fallback"
