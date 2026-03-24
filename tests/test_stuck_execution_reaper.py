@@ -78,14 +78,19 @@ async def test_find_inactive_executions_uses_inactivity_window_and_terminal_filt
     assert cursor.params == [
         (
             120,
+            120,
             stuck_execution_reaper._TERMINAL_EXECUTION_EVENT_TYPES,
             10,
         )
     ]
     sql = cursor.queries[0]
-    assert "HAVING MAX(e.created_at) < NOW() - (%s * INTERVAL '1 minute')" in sql
+    assert "WITH candidate_exec AS (" in sql
+    assert "e.event_type = 'playbook.initialized'" in sql
+    assert "JOIN LATERAL (" in sql
+    assert "ORDER BY e.event_id DESC" in sql
+    assert "latest.last_event_at < NOW() - (%s * INTERVAL '1 minute')" in sql
     assert "terminal.event_type = ANY(%s)" in sql
-    assert "playbook.initialized" in sql
+    assert "LIMIT %s" in sql
 
 
 @pytest.mark.asyncio
@@ -188,4 +193,29 @@ async def test_cleanup_inactive_executions_once_returns_disabled_when_feature_of
         "execution_ids": [],
         "dry_run": False,
         "disabled": True,
+    }
+
+
+@pytest.mark.asyncio
+async def test_cleanup_inactive_executions_once_preserves_explicit_zero(monkeypatch):
+    async def _fake_find_inactive_executions(*, inactivity_minutes, max_executions):
+        assert inactivity_minutes == 0
+        assert max_executions == 0
+        return []
+
+    monkeypatch.setattr(
+        stuck_execution_reaper,
+        "_find_inactive_executions",
+        _fake_find_inactive_executions,
+    )
+
+    result = await stuck_execution_reaper.cleanup_inactive_executions_once(
+        inactivity_minutes=0,
+        max_executions=0,
+    )
+
+    assert result == {
+        "cancelled_count": 0,
+        "execution_ids": [],
+        "dry_run": False,
     }

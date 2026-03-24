@@ -68,15 +68,35 @@ async def _find_inactive_executions(
         async with conn.cursor(row_factory=dict_row) as cur:
             await cur.execute(
                 """
-                WITH stale AS (
-                    SELECT
-                        e.execution_id,
-                        MIN(e.catalog_id) FILTER (WHERE e.catalog_id IS NOT NULL) AS catalog_id,
-                        MIN(e.created_at) AS first_event_at,
-                        MAX(e.created_at) AS last_event_at
+                WITH candidate_exec AS (
+                    SELECT DISTINCT e.execution_id
                     FROM noetl.event e
-                    GROUP BY e.execution_id
-                    HAVING MAX(e.created_at) < NOW() - (%s * INTERVAL '1 minute')
+                    WHERE e.event_type = 'playbook.initialized'
+                      AND e.created_at < NOW() - (%s * INTERVAL '1 minute')
+                ),
+                stale AS (
+                    SELECT
+                        c.execution_id,
+                        started.first_event_at,
+                        latest.catalog_id,
+                        latest.last_event_at
+                    FROM candidate_exec c
+                    JOIN LATERAL (
+                        SELECT MIN(e.created_at) AS first_event_at
+                        FROM noetl.event e
+                        WHERE e.execution_id = c.execution_id
+                          AND e.event_type = 'playbook.initialized'
+                    ) AS started ON TRUE
+                    JOIN LATERAL (
+                        SELECT
+                            e.catalog_id,
+                            e.created_at AS last_event_at
+                        FROM noetl.event e
+                        WHERE e.execution_id = c.execution_id
+                        ORDER BY e.event_id DESC
+                        LIMIT 1
+                    ) AS latest ON TRUE
+                    WHERE latest.last_event_at < NOW() - (%s * INTERVAL '1 minute')
                 )
                 SELECT
                     stale.execution_id,
@@ -85,12 +105,6 @@ async def _find_inactive_executions(
                     stale.last_event_at
                 FROM stale
                 WHERE stale.catalog_id IS NOT NULL
-                  AND EXISTS (
-                      SELECT 1
-                      FROM noetl.event started
-                      WHERE started.execution_id = stale.execution_id
-                        AND started.event_type = 'playbook.initialized'
-                  )
                   AND NOT EXISTS (
                       SELECT 1
                       FROM noetl.event terminal
@@ -100,7 +114,12 @@ async def _find_inactive_executions(
                 ORDER BY stale.last_event_at ASC, stale.execution_id ASC
                 LIMIT %s
                 """,
-                (inactivity_minutes, _TERMINAL_EXECUTION_EVENT_TYPES, max_executions),
+                (
+                    inactivity_minutes,
+                    inactivity_minutes,
+                    _TERMINAL_EXECUTION_EVENT_TYPES,
+                    max_executions,
+                ),
             )
             rows = await cur.fetchall()
     return list(rows or [])
@@ -119,8 +138,14 @@ async def cleanup_inactive_executions_once(
             "dry_run": dry_run,
             "disabled": True,
         }
-    inactivity_minutes = int(inactivity_minutes or _STUCK_EXECUTION_REAPER_INACTIVITY_MINUTES)
-    max_executions = int(max_executions or _STUCK_EXECUTION_REAPER_MAX_PER_RUN)
+    if inactivity_minutes is None:
+        inactivity_minutes = int(_STUCK_EXECUTION_REAPER_INACTIVITY_MINUTES)
+    else:
+        inactivity_minutes = int(inactivity_minutes)
+    if max_executions is None:
+        max_executions = int(_STUCK_EXECUTION_REAPER_MAX_PER_RUN)
+    else:
+        max_executions = int(max_executions)
     candidates = await _find_inactive_executions(
         inactivity_minutes=inactivity_minutes,
         max_executions=max_executions,
