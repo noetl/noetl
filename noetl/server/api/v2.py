@@ -2780,15 +2780,17 @@ async def get_execution_status(execution_id: str, full: bool = False):
 
             completed = False
             failed = False
-            completion_inferred = True
+            completion_inferred = False
 
             terminal_type = terminal_event["event_type"] if terminal_event else None
             if terminal_type in terminal_complete_events:
                 completed = True
                 failed = False
+                completion_inferred = True
             elif terminal_type in terminal_failed_events:
                 completed = True
                 failed = terminal_type != "execution.cancelled"
+                completion_inferred = True
             elif (
                 latest_event["node_name"] == "end"
                 and latest_event["status"] == "COMPLETED"
@@ -2796,6 +2798,7 @@ async def get_execution_status(execution_id: str, full: bool = False):
             ):
                 completed = True
                 failed = False
+                completion_inferred = True
             elif (
                 latest_event["event_type"] == "batch.completed"
                 and latest_event["status"] == "COMPLETED"
@@ -2803,6 +2806,7 @@ async def get_execution_status(execution_id: str, full: bool = False):
             ):
                 completed = True
                 failed = False
+                completion_inferred = True
 
             completed_steps: list[str] = []
             seen_steps: set[str] = set()
