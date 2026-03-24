@@ -222,6 +222,88 @@ async def test_task_sequence_loop_prefers_execution_loop_key_when_step_event_id_
     assert fake_cache.get_state_calls[0] == (execution_id, parent_step, f"exec_{execution_id}")
 
 
+@pytest.mark.asyncio
+async def test_task_sequence_loop_persists_issued_steps_before_return(monkeypatch):
+    fixture = Path(
+        "tests/fixtures/playbooks/batch_execution/traveler_batch_enrichment_in_step/"
+        "traveler_batch_enrichment_in_step.yaml"
+    )
+    playbook = Playbook(**yaml.safe_load(fixture.read_text(encoding="utf-8")))
+
+    playbook_repo = PlaybookRepo()
+    state_store = StateStore(playbook_repo)
+    engine = ControlFlowEngine(playbook_repo, state_store)
+
+    execution_id = "9011"
+    parent_step = "run_batch_workers"
+    state = ExecutionState(execution_id, playbook, payload={})
+    state.loop_state[parent_step] = {
+        "collection": [],
+        "iterator": "batch",
+        "index": 0,
+        "mode": "sequential",
+        "completed": False,
+        "results": [],
+        "failed_count": 0,
+        "aggregation_finalized": False,
+        "event_id": None,
+    }
+    await state_store.save_state(state)
+
+    fake_cache = FakeNATSCache()
+
+    async def fake_get_nats_cache():
+        return fake_cache
+
+    saved_issued_steps: list[set[str]] = []
+    real_save_state = state_store.save_state
+
+    async def tracking_save_state(state_obj):
+        saved_issued_steps.append(set(state_obj.issued_steps))
+        await real_save_state(state_obj)
+
+    async def fake_create_command_for_step(_state, step_def, _args):
+        return Command(
+            execution_id=execution_id,
+            step=step_def.step,
+            tool=ToolCall(kind="playbook", config={}),
+            args={},
+            render_context={},
+        )
+
+    async def fake_evaluate_next_transitions(*_args, **_kwargs):
+        return []
+
+    monkeypatch.setattr(engine_module, "get_nats_cache", fake_get_nats_cache)
+    monkeypatch.setattr(engine, "_create_command_for_step", fake_create_command_for_step)
+    monkeypatch.setattr(engine, "_evaluate_next_transitions", fake_evaluate_next_transitions)
+    monkeypatch.setattr(state_store, "save_state", tracking_save_state)
+
+    event = Event(
+        execution_id=execution_id,
+        step=f"{parent_step}:task_sequence",
+        name="call.done",
+        payload={
+            "response": {
+                "status": "completed",
+                "results": {
+                    "worker_result": {
+                        "status": "completed",
+                    }
+                },
+            }
+        },
+    )
+
+    commands = await engine.handle_event(event, already_persisted=True)
+
+    assert len(commands) == 1
+    assert commands[0].step == parent_step
+    assert parent_step in state.issued_steps
+    assert saved_issued_steps
+    assert parent_step in saved_issued_steps[-1]
+
+
 def test_normalize_loop_collection_does_not_split_unresolved_template():
     playbook_repo = PlaybookRepo()
     state_store = StateStore(playbook_repo)
