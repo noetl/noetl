@@ -1,3 +1,5 @@
+from datetime import datetime, timedelta, timezone
+
 import pytest
 
 import noetl.server.auto_resume as auto_resume
@@ -98,6 +100,50 @@ async def test_recover_interrupted_parent_execution_cancel_mode(monkeypatch):
 
     assert restarted["called"] == 0
     assert cancelled["called"] == 1
+
+
+def test_should_recover_candidate_skips_pending_only_command_issued(monkeypatch):
+    monkeypatch.setattr(auto_resume, "_AUTO_RESUME_MIN_STALE_SECONDS", 0.0)
+    candidate = {
+        "created_at": "2026-03-24T20:48:11Z",
+        "latest_event_at": "2026-03-24T20:48:14Z",
+        "latest_event_type": "command.issued",
+    }
+
+    should_recover = auto_resume._should_recover_candidate(
+        candidate,
+        now=datetime(2026, 3, 24, 21, 0, 0, tzinfo=timezone.utc),
+    )
+
+    assert should_recover is False
+
+
+def test_should_recover_candidate_skips_recent_inflight_execution(monkeypatch):
+    monkeypatch.setattr(auto_resume, "_AUTO_RESUME_MIN_STALE_SECONDS", 180.0)
+    now = datetime(2026, 3, 24, 21, 0, 0, tzinfo=timezone.utc)
+    candidate = {
+        "created_at": (now - timedelta(seconds=120)).isoformat(),
+        "latest_event_at": (now - timedelta(seconds=90)).isoformat(),
+        "latest_event_type": "command.started",
+    }
+
+    should_recover = auto_resume._should_recover_candidate(candidate, now=now)
+
+    assert should_recover is False
+
+
+def test_should_recover_candidate_allows_stale_inflight_execution(monkeypatch):
+    monkeypatch.setattr(auto_resume, "_AUTO_RESUME_MIN_STALE_SECONDS", 180.0)
+    now = datetime(2026, 3, 24, 21, 0, 0, tzinfo=timezone.utc)
+    candidate = {
+        "created_at": (now - timedelta(minutes=10)).isoformat(),
+        "latest_event_at": (now - timedelta(minutes=5)).isoformat(),
+        "latest_event_type": "command.started",
+    }
+
+    should_recover = auto_resume._should_recover_candidate(candidate, now=now)
+
+    assert should_recover is True
 
 
 async def _async_value(value):
