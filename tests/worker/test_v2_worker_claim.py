@@ -26,6 +26,10 @@ class _FakeHttpClient:
         return self._response
 
 
+async def _noop_execute(*_args, **_kwargs):
+    return None
+
+
 @pytest.mark.asyncio
 async def test_claim_conflict_active_claim_returns_skip_ack():
     worker = V2Worker(worker_id="test-worker")
@@ -147,3 +151,67 @@ async def test_claim_url_normalizes_server_url_with_duplicate_api_suffix():
     method, args, _kwargs = fake_client.calls[0]
     assert method == "post"
     assert args[0] == "http://server/api/commands/42/claim"
+
+
+@pytest.mark.asyncio
+async def test_duplicate_active_claim_notification_is_short_circuited_locally():
+    worker = V2Worker(worker_id="test-worker")
+    fake_client = _FakeHttpClient(
+        _FakeResponse(
+            409,
+            payload={"detail": {"code": "active_claim", "message": "claimed elsewhere"}},
+            headers={"Retry-After": "2"},
+        )
+    )
+    worker._http_client = fake_client
+    worker._running = True
+    worker._execute_command = _noop_execute
+    notification = {
+        "execution_id": 1,
+        "event_id": 100,
+        "command_id": "exec:start:1",
+        "step": "start",
+        "server_url": "http://server",
+    }
+
+    first = await worker._handle_command_notification(notification)
+    second = await worker._handle_command_notification(notification)
+
+    assert first == "ack"
+    assert second == "ack"
+    assert len(fake_client.calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_duplicate_claimed_notification_is_short_circuited_locally():
+    worker = V2Worker(worker_id="test-worker")
+    fake_client = _FakeHttpClient(
+        _FakeResponse(
+            200,
+            payload={
+                "execution_id": 1,
+                "node_id": "start",
+                "node_name": "start",
+                "action": "noop",
+                "context": {},
+                "meta": {},
+            },
+        )
+    )
+    worker._http_client = fake_client
+    worker._running = True
+    worker._execute_command = _noop_execute
+    notification = {
+        "execution_id": 1,
+        "event_id": 101,
+        "command_id": "exec:start:2",
+        "step": "start",
+        "server_url": "http://server",
+    }
+
+    first = await worker._handle_command_notification(notification)
+    second = await worker._handle_command_notification(notification)
+
+    assert first == "ack"
+    assert second == "ack"
+    assert len(fake_client.calls) == 1
