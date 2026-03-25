@@ -1838,7 +1838,7 @@ class ControlFlowEngine:
         if not any_matched:
             logger.debug(f"[NEXT-EVAL] No next targets matched for step {event.step}")
 
-        return commands, any_actionable_issued
+        return commands, any_matched
 
     def _has_matching_next_transition(
         self,
