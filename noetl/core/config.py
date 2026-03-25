@@ -495,6 +495,7 @@ class WorkerSettings(BaseModel):
         'postgres_pool_waiting_threshold',
         'throttle_poll_interval',
         'command_timeout_seconds',
+        'concurrency_probe_interval',
         mode='before'
     )
     def coerce_numeric(cls, v, info):
@@ -546,6 +547,8 @@ class WorkerSettings(BaseModel):
             raise ValueError("NOETL_WORKER_NATS_ACK_WAIT_BUFFER_SECONDS must be >= 0")
         if self.throttle_poll_interval <= 0:
             raise ValueError("NOETL_WORKER_THROTTLE_POLL_INTERVAL_SECONDS must be > 0")
+        if self.concurrency_probe_interval < 0.5:
+            raise ValueError("NOETL_WORKER_CONCURRENCY_PROBE_INTERVAL must be >= 0.5")
         if self.postgres_pool_waiting_threshold < 0:
             raise ValueError("NOETL_WORKER_POSTGRES_POOL_WAITING_THRESHOLD must be >= 0")
         if self.command_timeout_seconds <= 0:
@@ -749,6 +752,9 @@ def get_worker_settings(reload: bool = False) -> WorkerSettings:
             ),
             NOETL_WORKER_POSTGRES_POOL_WAITING_THRESHOLD=env.get(
                 'NOETL_WORKER_POSTGRES_POOL_WAITING_THRESHOLD', '2'
+            ),
+            NOETL_WORKER_CONCURRENCY_PROBE_INTERVAL=env.get(
+                'NOETL_WORKER_CONCURRENCY_PROBE_INTERVAL', '2.0'
             ),
         )
     return _worker_settings
