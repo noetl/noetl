@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.10.39](https://github.com/noetl/noetl/compare/v2.10.38...v2.10.39) (2026-03-25)
+
+### Bug Fixes
+
+* **runtime:** stop terminal executions from leaking commands ([e71797a](https://github.com/noetl/noetl/commit/e71797a514a75c7f0a446bee4d0e1e507ba3b11f))
+
 ## [2.10.38](https://github.com/noetl/noetl/compare/v2.10.37...v2.10.38) (2026-03-24)
 
 ### Bug Fixes
