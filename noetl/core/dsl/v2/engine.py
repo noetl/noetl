@@ -1718,7 +1718,12 @@ class ControlFlowEngine:
         event: Event,
     ) -> tuple[list[Command], bool]:
         """
-        Evaluate next[].when conditions and return commands plus actionable-match status.
+        Evaluate next[].when conditions and return commands plus matched-arc status.
+
+        The boolean return is True when any arc condition matched AND the target step
+        exists in the playbook.  A matched-but-deduplicated arc (target already in
+        issued_steps) still returns True — the command is already in flight, so this
+        is not a dead-end.
 
         Canonical format routing using next[].when:
         - Each next entry has optional 'when' condition
@@ -1772,7 +1777,6 @@ class ControlFlowEngine:
         logger.info(f"[NEXT-EVAL] Step {event.step} has {len(next_items)} next targets, mode={next_mode}, evaluating for event {event.name}")
 
         any_matched = False
-        any_actionable_issued = False
 
         for idx, next_target in enumerate(next_items):
             target_step = next_target.get("step")
@@ -1794,16 +1798,18 @@ class ControlFlowEngine:
                 # No when condition = always matches
                 logger.info(f"[NEXT-MATCH] Step {event.step}: matched next[{idx}] -> {target_step} (unconditional)")
 
-            any_matched = True
-
-            # Get target step definition
+            # Get target step definition — must exist before we count this as a match
             target_step_def = state.get_step(target_step)
             if not target_step_def:
                 logger.error(f"[NEXT-EVAL] Target step not found: {target_step}")
                 continue
 
-            # DEDUPLICATION: Skip if command for this step is already pending
-            # This prevents duplicate commands when multiple events trigger orchestration
+            # Arc condition matched AND target step exists.
+            any_matched = True
+
+            # DEDUPLICATION: Skip if command for this step is already pending.
+            # A matched-but-deduplicated arc is NOT a dead-end — the command is
+            # already in flight from a concurrent event processor.
             if target_step in state.issued_steps and target_step not in state.completed_steps:
                 logger.warning(f"[NEXT-EVAL] Skipping duplicate command for step '{target_step}' - already in issued_steps")
                 continue
@@ -1819,7 +1825,6 @@ class ControlFlowEngine:
             issued_cmds = await self._issue_loop_commands(state, target_step_def, rendered_args)
             if issued_cmds:
                 commands.extend(issued_cmds)
-                any_actionable_issued = True
                 # Steps can be revisited in loopback workflows; clear old completion marker
                 # so pending tracking reflects the new in-flight invocation.
                 state.completed_steps.discard(target_step)
