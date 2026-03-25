@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.10.40](https://github.com/noetl/noetl/compare/v2.10.39...v2.10.40) (2026-03-25)
+
+### Bug Fixes
+
+* **engine:** address copilot review comments on PR326 ([a420948](https://github.com/noetl/noetl/commit/a420948c304e06da45aacab7ae09e3f67d9638fc))
+* **engine:** return any_matched not any_actionable_issued from next transition eval ([fa7ee2c](https://github.com/noetl/noetl/commit/fa7ee2cdb60a5e6fa260dc2ef2b450f7f214a532))
+
 ## [2.10.39](https://github.com/noetl/noetl/compare/v2.10.38...v2.10.39) (2026-03-25)
 
 ### Bug Fixes
