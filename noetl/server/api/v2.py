@@ -445,7 +445,11 @@ def _extract_event_command_id(req: "EventRequest") -> Optional[str]:
     return None
 
 
-_EVENT_TYPE_TERMINAL_PREDICATE = "event_type IN ('command.completed', 'command.failed')"
+_EVENT_TYPE_TERMINAL_PREDICATE = (
+    "event_type IN ("
+    + ", ".join(f"'{e}'" for e in _COMMAND_TERMINAL_EVENT_TYPES)
+    + ")"
+)
 _EVENT_TYPE_CLAIMED_PREDICATE = "event_type = 'command.claimed'"
 _EVENT_TYPE_SAME_WORKER_LATEST_PREDICATE = (
     "event_type IN ('command.started', 'command.completed', 'command.failed')"
@@ -1411,13 +1415,19 @@ async def claim_command(event_id: int, req: ClaimRequest):
     Atomically claim a command and return its details.
 
     Combines claim + fetch into single operation:
-    1. Acquires advisory lock on command_id
-    2. Checks if the execution is already terminal
-    3. Checks if already claimed
-    4. If not claimed, inserts command.claimed event
-    5. Returns command details from command.issued event
+    1. Checks if the command is already terminal (command.completed / command.failed /
+       command.cancelled) → 409 already_terminal
+    2. Checks if the parent execution is already terminal (playbook.completed,
+       playbook.failed, workflow.completed, workflow.failed, execution.cancelled)
+       → 409 already_terminal
+    3. Acquires advisory lock on command_id
+    4. Checks if already claimed → 409 active_claim
+    5. If not claimed, inserts command.claimed event
+    6. Returns command details from command.issued event
 
-    Returns 409 Conflict if already claimed by another worker.
+    Returns 409 Conflict if:
+      - command or execution is already in a terminal state (code: already_terminal)
+      - command is being claimed by another worker (code: active_claim)
     Returns 404 if command.issued event not found.
     """
     try:
@@ -1677,16 +1687,41 @@ async def claim_command(event_id: int, req: ClaimRequest):
                         claim_meta["reclaimed_reason"] = reclaimed_reason
                 result_obj = {"kind": "data", "data": {"command_id": command_id}}
 
+                # Guard against a concurrent terminal execution event that arrived
+                # between the pre-lock terminal check (above) and this INSERT.
+                # The WHERE NOT EXISTS clause makes the guard atomic with the write.
                 await cur.execute("""
                     INSERT INTO noetl.event (
                         event_id, execution_id, catalog_id, event_type,
                         node_id, node_name, status, result, meta, worker_id, created_at
-                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    )
+                    SELECT %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
+                    WHERE NOT EXISTS (
+                        SELECT 1 FROM noetl.event
+                        WHERE execution_id = %s
+                          AND event_type = ANY(%s)
+                        LIMIT 1
+                    )
+                    RETURNING event_id
                 """, (
                     claim_evt_id, execution_id, catalog_id, "command.claimed",
                     step, step, "RUNNING",
-                    Json(result_obj), Json(claim_meta), req.worker_id, datetime.now(timezone.utc)
+                    Json(result_obj), Json(claim_meta), req.worker_id, datetime.now(timezone.utc),
+                    execution_id, _EXECUTION_TERMINAL_EVENT_TYPES,
                 ))
+                inserted = await cur.fetchone()
+                if not inserted:
+                    # A terminal execution event raced in after our pre-lock check.
+                    late_terminal = await _fetch_execution_terminal_event(cur, execution_id)
+                    _active_claim_cache_invalidate(command_id=command_id, event_id=event_id)
+                    raise HTTPException(
+                        409,
+                        detail={
+                            "code": "already_terminal",
+                            "message": "Execution reached a terminal state concurrently",
+                            "event_type": late_terminal.get("event_type") if late_terminal else None,
+                        },
+                    )
                 await conn.commit()
                 _active_claim_cache_set(event_id, command_id, req.worker_id)
 
