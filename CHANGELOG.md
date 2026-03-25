@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.10.41](https://github.com/noetl/noetl/compare/v2.10.40...v2.10.41) (2026-03-25)
+
+### Bug Fixes
+
+* **config:** wire NOETL_WORKER_CONCURRENCY_PROBE_INTERVAL into get_worker_settings and validate ([da49706](https://github.com/noetl/noetl/commit/da497068bfbf280d0df5ed0c8ffa2e8148634396)), closes [PR#328](https://github.com/noetl/PR/issues/328)
+* **worker:** make concurrency probe interval configurable, default 2s ([8d37f5f](https://github.com/noetl/noetl/commit/8d37f5fdb151f2a475ac6b5aba73846f65d1c31f))
+
 ## [2.10.40](https://github.com/noetl/noetl/compare/v2.10.39...v2.10.40) (2026-03-25)
 
 ### Bug Fixes
