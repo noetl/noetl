@@ -186,6 +186,7 @@ class V2Worker:
             initial_limit=max(1.0, self._max_inflight_commands / 2.0),
             min_limit=1.0,
             max_limit=float(self._max_inflight_commands),
+            probe_interval=worker_settings.concurrency_probe_interval,
         )
 
     @staticmethod

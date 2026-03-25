@@ -455,6 +455,7 @@ class WorkerSettings(BaseModel):
     max_inflight_db_commands: int = Field(4, alias="NOETL_WORKER_MAX_INFLIGHT_DB_COMMANDS")
     throttle_poll_interval: float = Field(0.2, alias="NOETL_WORKER_THROTTLE_POLL_INTERVAL_SECONDS")
     postgres_pool_waiting_threshold: int = Field(2, alias="NOETL_WORKER_POSTGRES_POOL_WAITING_THRESHOLD")
+    concurrency_probe_interval: float = Field(default=2.0, alias="NOETL_WORKER_CONCURRENCY_PROBE_INTERVAL")
 
     @field_validator('pool_runtime', mode='before')
     def normalize_runtime(cls, v):
