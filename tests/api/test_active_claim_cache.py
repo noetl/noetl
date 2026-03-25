@@ -181,3 +181,65 @@ def test_active_claim_cache_set_clamps_ttl_to_claim_lease(monkeypatch):
 
     assert cached.expires_at_monotonic == pytest.approx(130.0)
     _clear_cache()
+
+
+@pytest.mark.asyncio
+async def test_claim_command_rejects_terminal_execution(monkeypatch):
+    _clear_cache()
+
+    class _CursorCtx:
+        def __init__(self, cursor):
+            self._cursor = cursor
+
+        async def __aenter__(self):
+            return self._cursor
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+    class _Cursor:
+        def __init__(self):
+            self._fetchone_results = iter(
+                [
+                    {
+                        "execution_id": 42,
+                        "catalog_id": 10,
+                        "step": "start",
+                        "tool_kind": "python",
+                        "context": {},
+                        "meta": {"command_id": "cmd-42"},
+                    },
+                    None,
+                    {
+                        "event_type": "workflow.failed",
+                        "created_at": None,
+                    },
+                ]
+            )
+
+        async def execute(self, *_args, **_kwargs):
+            return None
+
+        async def fetchone(self):
+            return next(self._fetchone_results, None)
+
+    class _Conn:
+        def cursor(self, row_factory=None):
+            return _CursorCtx(_Cursor())
+
+    class _ConnCtx:
+        async def __aenter__(self):
+            return _Conn()
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+    monkeypatch.setattr(v2_api, "get_pool_connection", lambda *_args, **_kwargs: _ConnCtx())
+
+    with pytest.raises(HTTPException) as exc:
+        await v2_api.claim_command(77, v2_api.ClaimRequest(worker_id="worker-a"))
+
+    assert exc.value.status_code == 409
+    assert exc.value.detail["code"] == "already_terminal"
+    assert exc.value.detail["event_type"] == "workflow.failed"
+    _clear_cache()
