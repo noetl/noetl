@@ -51,11 +51,15 @@ class TaskResultProxy:
     def __getitem__(self, key):
         try:
             data = object.__getattribute__(self, "_data")
+            def _wrap(val: Any):
+                if isinstance(val, dict):
+                    return TaskResultProxy(val, name=str(key))
+                return val
             if key in data:
-                return data[key]
+                return _wrap(data[key])
             context = data.get("context") if isinstance(data, dict) else None
             if isinstance(context, dict) and key in context:
-                return context[key]
+                return _wrap(context[key])
             return data[key]
         except Exception as e:
             raise KeyError(key) from e

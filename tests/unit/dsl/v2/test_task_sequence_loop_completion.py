@@ -4,6 +4,7 @@ import pytest
 import yaml
 
 import noetl.core.dsl.v2.engine as engine_module
+from noetl.core.dsl.render import TaskResultProxy
 from noetl.core.dsl.v2.engine import ControlFlowEngine, ExecutionState, PlaybookRepo, StateStore
 from noetl.core.dsl.v2.models import Command, Event, Playbook, ToolCall
 
@@ -817,6 +818,54 @@ workflow:
     assert "context" in step_result
     assert step_result["context"]["report_start_date"] == "2026-03-01"
     assert step_result["context"]["report_end_date"] == "2026-03-31"
+
+
+def test_mark_step_completed_does_not_flatten_non_reference_context_payload():
+    playbook = Playbook(**yaml.safe_load(
+        """
+apiVersion: noetl.io/v2
+kind: Playbook
+metadata:
+  name: context_flatten_guard_test
+  path: tests/context_flatten_guard_test
+workflow:
+  - step: end
+    tool:
+      kind: python
+      code: |
+        def main():
+          return {}
+        """
+    ))
+    state = ExecutionState("9024", playbook, payload={})
+    state.mark_step_completed(
+        "end",
+        {
+            "status": "COMPLETED",
+            "context": {"ctx_vars": {"foo": "bar"}},
+        },
+    )
+
+    step_result = state.step_results["end"]
+    assert "ctx_vars" not in step_result
+    assert step_result["context"]["ctx_vars"]["foo"] == "bar"
+
+
+def test_task_result_proxy_getitem_wraps_context_dict_values():
+    proxy = TaskResultProxy(
+        {
+            "status": "COMPLETED",
+            "context": {
+                "command_0": {
+                    "rows": [{"facility_mapping_id": 42}],
+                    "row_count": 1,
+                }
+            },
+        }
+    )
+    command_result = proxy["command_0"]
+    assert isinstance(command_result, TaskResultProxy)
+    assert command_result.rows[0]["facility_mapping_id"] == 42
 
 
 @pytest.mark.asyncio
