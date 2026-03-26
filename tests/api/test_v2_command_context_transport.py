@@ -50,3 +50,47 @@ async def test_store_command_context_if_needed_keeps_small_context_inline(monkey
     )
 
     assert result == context
+
+
+def test_validate_postgres_command_context_requires_auth():
+    with pytest.raises(ValueError, match="missing auth"):
+        v2_api._validate_postgres_command_context(
+            step="load_rows",
+            tool_kind="postgres",
+            context={
+                "tool_config": {},
+                "args": {},
+            },
+        )
+
+
+def test_validate_postgres_command_context_accepts_tool_or_args_auth():
+    v2_api._validate_postgres_command_context(
+        step="load_rows",
+        tool_kind="postgres",
+        context={
+            "tool_config": {"auth": "pg_main"},
+            "args": {},
+        },
+    )
+
+    v2_api._validate_postgres_command_context(
+        step="load_rows",
+        tool_kind="postgres",
+        context={
+            "tool_config": {},
+            "args": {"auth": "pg_main"},
+        },
+    )
+
+
+def test_validate_postgres_command_context_rejects_direct_connection_fields():
+    with pytest.raises(ValueError, match="forbidden direct connection fields"):
+        v2_api._validate_postgres_command_context(
+            step="load_rows",
+            tool_kind="postgres",
+            context={
+                "tool_config": {"auth": "pg_main", "db_host": "localhost"},
+                "args": {},
+            },
+        )

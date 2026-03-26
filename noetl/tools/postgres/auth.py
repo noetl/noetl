@@ -8,6 +8,7 @@ This module handles:
 - Connection string building
 """
 
+import os
 from typing import Dict, Tuple
 from jinja2 import Environment
 from noetl.core.logger import setup_logger
@@ -15,8 +16,16 @@ from noetl.core.dsl.render import render_template
 from noetl.worker.secrets import fetch_credential_by_key
 from noetl.worker.auth_resolver import resolve_auth
 from noetl.worker.auth_compatibility import transform_credentials_to_auth, validate_auth_transition
+from .env import env_bool
 
 logger = setup_logger(__name__, include_location=True)
+
+
+def _has_non_empty_auth(task_config: Dict, task_with: Dict) -> bool:
+    auth_config = task_config.get("auth") if isinstance(task_config, dict) else None
+    if auth_config in (None, "", {}):
+        auth_config = task_with.get("auth") if isinstance(task_with, dict) else None
+    return auth_config not in (None, "", {})
 
 
 def resolve_postgres_auth(task_config: Dict, task_with: Dict, jinja_env: Environment, context: Dict) -> Tuple[Dict, Dict]:
@@ -35,19 +44,33 @@ def resolve_postgres_auth(task_config: Dict, task_with: Dict, jinja_env: Environ
     # Apply backwards compatibility transformation for deprecated 'credentials' field
     validate_auth_transition(task_config, task_with)
     task_config, task_with = transform_credentials_to_auth(task_config, task_with)
+    auth_required = env_bool("NOETL_POSTGRES_AUTH_REQUIRED", True)
+    has_auth_config = _has_non_empty_auth(task_config, task_with)
+
+    if auth_required and not has_auth_config:
+        raise ValueError(
+            "Postgres connection requires `auth` (reference to credential/keychain). "
+            "Direct db_* connection fields are not supported for postgres tool execution."
+        )
 
     # Resolve unified auth system
     postgres_auth = None
+    auth_resolution_error = None
     try:
         auth_config = task_config.get('auth') or task_with.get('auth')
         if auth_config:
             logger.debug("POSTGRES: Using unified auth system")
             mode, resolved_items = resolve_auth(auth_config, jinja_env, context)
             
-            # For Postgres, we expect single auth mode or use the first resolved item
+            # Prefer an explicit postgres auth payload when multiple auth refs are resolved.
             resolved_auth = None
             if resolved_items:
-                resolved_auth = list(resolved_items.values())[0]
+                for candidate in resolved_items.values():
+                    if getattr(candidate, "service", None) == "postgres":
+                        resolved_auth = candidate
+                        break
+                if resolved_auth is None:
+                    resolved_auth = list(resolved_items.values())[0]
             
             if resolved_auth:
                 logger.debug(f"POSTGRES: Resolved auth service: '{resolved_auth.service}', payload keys: {list(resolved_auth.payload.keys()) if resolved_auth.payload else 'None'}")
@@ -90,6 +113,7 @@ def resolve_postgres_auth(task_config: Dict, task_with: Dict, jinja_env: Environ
             else:
                 logger.debug(f"POSTGRES: Auth resolved but not postgres type: {resolved_auth.service if resolved_auth else 'None'}")
     except Exception as e:
+        auth_resolution_error = e
         logger.debug(f"POSTGRES: Unified auth processing failed: {e}", exc_info=True)
     
     # Legacy fallback: resolve single auth/credential reference 
@@ -137,6 +161,16 @@ def resolve_postgres_auth(task_config: Dict, task_with: Dict, jinja_env: Environ
                             task_with[dst] = data.get(src)
         except Exception:
             logger.debug("POSTGRES: failed to resolve legacy auth credential", exc_info=True)
+
+    if auth_required and not postgres_auth:
+        if auth_resolution_error is not None:
+            raise ValueError(
+                "Postgres auth resolution failed. Ensure `auth` points to a valid postgres credential."
+            ) from auth_resolution_error
+        raise ValueError(
+            "Postgres auth is required and could not be resolved. "
+            "Set `auth` on the step/tool and avoid direct db_* connection fields."
+        )
     
     return task_config, task_with
 
@@ -176,7 +210,10 @@ def validate_and_render_connection_params(task_with: Dict, jinja_env: Environmen
     if _missing:
         raise ValueError(
             "Postgres connection is not configured. Missing: " + ", ".join(_missing) +
-            ". Use `auth: <credential_key>` or `auth: {type: postgres, host: ..., user: ..., password: ..., database: ...}` on the step, or provide explicit db_* fields in `with:`."
+            ". Use `auth: <credential_key>`, `auth: {type: postgres, credential: <key>}`, "
+            "or inline fields via "
+            "`auth: {type: postgres, source: inline, fields: {host: ..., user: ..., password: ..., database: ...}}` "
+            "on the step."
         )
 
     # Build a rendering context that includes a 'workload' alias for compatibility
@@ -215,13 +252,37 @@ def validate_and_render_connection_params(task_with: Dict, jinja_env: Environmen
     if not pg_db or str(pg_db).strip() == '':
         raise ValueError("Database name is empty after rendering")
 
+    enforce_pgbouncer = env_bool("NOETL_POSTGRES_ENFORCE_PGBOUNCER", False)
+    if enforce_pgbouncer:
+        pgbouncer_host = (os.getenv("NOETL_POSTGRES_PGBOUNCER_HOST") or "").strip()
+        pgbouncer_port = (os.getenv("NOETL_POSTGRES_PGBOUNCER_PORT") or "").strip()
+        if not pgbouncer_host:
+            raise ValueError(
+                "NOETL_POSTGRES_ENFORCE_PGBOUNCER=true requires NOETL_POSTGRES_PGBOUNCER_HOST"
+            )
+        original_host, original_port = pg_host, pg_port
+        pg_host = pgbouncer_host
+        if pgbouncer_port:
+            pg_port = pgbouncer_port
+        logger.debug(
+            "POSTGRES: Enforcing pgbouncer route host=%s port=%s (auth host=%s port=%s)",
+            pg_host,
+            pg_port,
+            original_host,
+            original_port,
+        )
+
     # Build or render connection string
-    if 'db_conn_string' in task_with:
+    if 'db_conn_string' in task_with and not enforce_pgbouncer:
         conn_string_raw = task_with.get('db_conn_string')
         pg_conn_string = render_template(jinja_env, conn_string_raw, render_ctx, strict_keys=True) if isinstance(conn_string_raw, str) and '{{' in conn_string_raw else conn_string_raw
         if not pg_conn_string or str(pg_conn_string).strip() == '':
             raise ValueError("Database connection string is empty after rendering")
     else:
+        if enforce_pgbouncer and 'db_conn_string' in task_with:
+            logger.warning(
+                "POSTGRES: Ignoring db_conn_string because NOETL_POSTGRES_ENFORCE_PGBOUNCER=true"
+            )
         # Build connection string with connect_timeout to prevent DNS hangs
         pg_conn_string = f"dbname={pg_db} user={pg_user} password={pg_password} host={pg_host} port={pg_port} connect_timeout=10"
 

@@ -414,6 +414,76 @@ async def test_execute_command_normalizes_stringified_context_sections(monkeypat
 
 
 @pytest.mark.asyncio
+async def test_execute_command_postgres_requires_auth_in_context(monkeypatch):
+    worker = V2Worker(worker_id="test-worker")
+    emitted = []
+
+    async def fake_emit_event(_server_url, _execution_id, _step, event_name, payload, **_kwargs):
+        emitted.append((event_name, payload))
+
+    async def fake_emit_batch_events(*_args, **_kwargs):
+        return True
+
+    async def fail_execute_tool(*_args, **_kwargs):
+        raise AssertionError("_execute_tool should not run when postgres auth is missing")
+
+    monkeypatch.setattr(worker, "_emit_event", fake_emit_event)
+    monkeypatch.setattr(worker, "_emit_batch_events", fake_emit_batch_events)
+    monkeypatch.setattr(worker, "_execute_tool", fail_execute_tool)
+
+    command = {
+        "execution_id": "exec-3",
+        "step": "load_rows",
+        "tool_kind": "postgres",
+        "context": {
+            "tool_config": {},
+            "args": {},
+            "render_context": {},
+        },
+    }
+
+    await worker._execute_command(command, server_url="http://noetl.test", command_id="cmd-3")
+
+    failed_payload = next(payload for name, payload in emitted if name == "command.failed")
+    assert "missing auth" in failed_payload["error"]
+
+
+@pytest.mark.asyncio
+async def test_execute_command_postgres_rejects_direct_connection_fields(monkeypatch):
+    worker = V2Worker(worker_id="test-worker")
+    emitted = []
+
+    async def fake_emit_event(_server_url, _execution_id, _step, event_name, payload, **_kwargs):
+        emitted.append((event_name, payload))
+
+    async def fake_emit_batch_events(*_args, **_kwargs):
+        return True
+
+    async def fail_execute_tool(*_args, **_kwargs):
+        raise AssertionError("_execute_tool should not run when direct db_* fields are present")
+
+    monkeypatch.setattr(worker, "_emit_event", fake_emit_event)
+    monkeypatch.setattr(worker, "_emit_batch_events", fake_emit_batch_events)
+    monkeypatch.setattr(worker, "_execute_tool", fail_execute_tool)
+
+    command = {
+        "execution_id": "exec-4",
+        "step": "load_rows",
+        "tool_kind": "postgres",
+        "context": {
+            "tool_config": {"auth": "pg_main", "db_host": "localhost"},
+            "args": {},
+            "render_context": {},
+        },
+    }
+
+    await worker._execute_command(command, server_url="http://noetl.test", command_id="cmd-4")
+
+    failed_payload = next(payload for name, payload in emitted if name == "command.failed")
+    assert "forbidden direct connection fields" in failed_payload["error"]
+
+
+@pytest.mark.asyncio
 async def test_wait_for_postgres_capacity_retries_until_headroom(monkeypatch):
     worker = V2Worker(worker_id="test-worker")
     worker._running = True
