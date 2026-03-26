@@ -1632,7 +1632,7 @@ class ControlFlowEngine:
             if (
                 loop_mode == "parallel"
                 and cached_size <= 1
-                and (scheduled_count > 0 or completed_count > 0)
+                and (scheduled_count > cached_size or completed_count > cached_size)
             ):
                 logger.warning(
                     "[LOOP-CACHE-RESTORE] Skipping tiny parallel snapshot for %s "
