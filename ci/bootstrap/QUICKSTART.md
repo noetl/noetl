@@ -375,8 +375,8 @@ git log -1 --oneline
 # Update to latest
 cd noetl
 git fetch origin
-git checkout master
-git pull origin master
+git checkout main
+git pull origin main
 cd ..
 
 # Or update to specific version

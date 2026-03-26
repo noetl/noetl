@@ -13,10 +13,10 @@ source .venv/bin/activate
 pip install -e .      
 noetl register ./examples/weather/weather_example.yaml --host localhost --port 8082
 
-git checkout master
+git checkout main
 git pull
 git checkout e2e
-git merge master
+git merge main
 git push
 noetl k8s reset
 

@@ -114,4 +114,4 @@ cp target/release/noetl /usr/local/bin/
 
 ## License
 
-MIT License - see [LICENSE](https://github.com/noetl/noetl/blob/master/LICENSE)
+MIT License - see [LICENSE](https://github.com/noetl/noetl/blob/main/LICENSE)
