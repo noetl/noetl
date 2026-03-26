@@ -146,6 +146,11 @@ CREATE INDEX IF NOT EXISTS idx_event_exec_type_meta_command_id_event_id_desc
     ON noetl.event (execution_id, event_type, ((meta->>'command_id')), event_id DESC)
     WHERE meta ? 'command_id';
 
+-- Reaper fast-path: scan recent command.issued candidates by time window and event_id
+CREATE INDEX IF NOT EXISTS idx_event_command_issued_created_event_id_desc
+    ON noetl.event (created_at DESC, event_id DESC, execution_id, ((meta->>'command_id')))
+    WHERE event_type = 'command.issued' AND meta ? 'command_id';
+
 -- Legacy inline result index (result->data->command_id) is obsolete under reference-only contract
 DROP INDEX IF EXISTS noetl.idx_event_exec_type_result_command_id_event_id_desc;
 

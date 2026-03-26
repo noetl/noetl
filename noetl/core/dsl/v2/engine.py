@@ -75,6 +75,19 @@ _EXECUTION_FAILURE_EVENT_TYPES = {
     "playbook.failed",
     "workflow.failed",
 }
+_STATE_REPLAY_EVENT_TYPES = (
+    "command.issued",
+    "command.completed",
+    "command.failed",
+    "command.cancelled",
+    "step.exit",
+    "call.done",
+    "playbook.completed",
+    "playbook.failed",
+    "workflow.completed",
+    "workflow.failed",
+    "execution.cancelled",
+)
 
 
 def _sample_keys(value: Any, max_items: int = 10) -> list[str]:
@@ -838,7 +851,7 @@ class StateStore:
             async with conn.cursor(row_factory=dict_row) as cur:
                 # Get playbook info and workload from playbook.initialized event
                 await cur.execute("""
-                    SELECT catalog_id, result
+                    SELECT catalog_id, context, result
                     FROM noetl.event
                     WHERE execution_id = %s AND event_type = 'playbook.initialized'
                     ORDER BY event_id
@@ -857,14 +870,16 @@ class StateStore:
 
                 if isinstance(result, dict):
                     catalog_id = result.get("catalog_id")
+                    event_context = result.get("context")
                     event_result = result.get("result")
                 else:
                     catalog_id = result[0]
-                    event_result = result[1]
+                    event_context = result[1] if len(result) > 1 else None
+                    event_result = result[2] if len(result) > 2 else None
                 if catalog_id is None:
                     return None
                 
-                # Extract workload from playbook.initialized event result
+                # Extract workload from playbook.initialized event payload.
                 # This contains the merged workload (playbook defaults + parent args)
                 workload = {}
                 logger.debug(
@@ -873,22 +888,33 @@ class StateStore:
                     bool(event_result),
                     isinstance(event_result, dict) if event_result is not None else False,
                 )
-                if event_result and isinstance(event_result, dict):
-                    workload = event_result.get("workload", {})
+                if isinstance(event_context, dict):
+                    workload = event_context.get("workload", {}) or {}
+                if not workload and event_result and isinstance(event_result, dict):
+                    result_context = event_result.get("context")
+                    if isinstance(result_context, dict):
+                        workload = result_context.get("workload", {}) or {}
+                if not workload and event_result and isinstance(event_result, dict):
+                    workload = event_result.get("workload", {}) or {}
+                if isinstance(workload, dict):
                     logger.debug(
                         "[STATE-LOAD] restored workload keys=%s",
-                        list(workload.keys()) if isinstance(workload, dict) else [],
+                        list(workload.keys()),
                     )
                     if not workload:
                         logger.warning(
-                            "[STATE-LOAD] workload is empty (event_result keys=%s)",
-                            list(event_result.keys()),
+                            "[STATE-LOAD] workload is empty (event_context keys=%s event_result keys=%s)",
+                            list(event_context.keys()) if isinstance(event_context, dict) else [],
+                            list(event_result.keys()) if isinstance(event_result, dict) else [],
                         )
                 else:
                     logger.warning(
-                        "[STATE-LOAD] Could not extract workload from event_result (type=%s)",
+                        "[STATE-LOAD] Could not extract workload from playbook.initialized payload "
+                        "(context_type=%s result_type=%s)",
+                        type(event_context).__name__,
                         type(event_result).__name__,
                     )
+                    workload = {}
                 
                 # Load playbook
                 playbook = await self.playbook_repo.load_playbook_by_id(catalog_id)
@@ -913,11 +939,17 @@ class StateStore:
                 
                 # Replay events to rebuild state (event sourcing)
                 await cur.execute("""
-                    SELECT event_id, node_name, event_type, result, meta
+                    SELECT
+                        event_id,
+                        node_name,
+                        event_type,
+                        CASE WHEN event_type IN ('step.exit', 'call.done') THEN result ELSE NULL END AS result,
+                        CASE WHEN event_type = 'command.issued' THEN meta ELSE NULL END AS meta
                     FROM noetl.event
                     WHERE execution_id = %s
+                      AND event_type = ANY(%s)
                     ORDER BY event_id
-                """, (int(execution_id),))
+                """, (int(execution_id), list(_STATE_REPLAY_EVENT_TYPES)))
                 
                 rows = await cur.fetchall()
                 
@@ -968,14 +1000,18 @@ class StateStore:
                                     else node_name
                                 )
                                 loop_event_ids[loop_step] = str(loop_event_id)
-                    elif event_type == 'command.completed':
+                    elif event_type in {'command.completed', 'command.failed', 'command.cancelled'}:
                         pending_key = _pending_step_key(node_name)
                         if pending_key:
                             state.issued_steps.discard(pending_key)
-                            logger.debug(f"[STATE-LOAD] Removed completed command from issued_steps: {pending_key}")
+                            logger.debug(
+                                "[STATE-LOAD] Removed terminal command from issued_steps: %s (%s)",
+                                pending_key,
+                                event_type,
+                            )
 
-                    # Stored event.result values are wrapped as {"kind": "...", "data": {...}}.
-                    # Replay should work against payload semantics, not the storage wrapper.
+                    # Compatibility: older rows may still use {"kind":"...","data":...} wrappers.
+                    # Replay should work against payload semantics, not storage transport details.
                     event_payload = result_data
                     if isinstance(result_data, dict) and "kind" in result_data and "data" in result_data:
                         event_payload = result_data.get("data")
@@ -1531,11 +1567,12 @@ class ControlFlowEngine:
                               {loop_filter}
                         ),
                         terminal AS (
-                            SELECT DISTINCT result->'data'->>'command_id' AS command_id
+                            SELECT DISTINCT meta->>'command_id' AS command_id
                             FROM noetl.event
                             WHERE execution_id = %s
                               AND node_name = %s
-                              AND event_type IN ('command.completed', 'command.failed')
+                              AND event_type IN ('command.completed', 'command.failed', 'command.cancelled')
+                              AND meta ? 'command_id'
                         )
                         SELECT i.loop_iteration_index
                         FROM issued i
@@ -1605,18 +1642,20 @@ class ControlFlowEngine:
                               {loop_filter}
                         ),
                         started AS (
-                            SELECT DISTINCT result->'data'->>'command_id' AS command_id
+                            SELECT DISTINCT meta->>'command_id' AS command_id
                             FROM noetl.event
                             WHERE execution_id = %s
                               AND node_name = %s
                               AND event_type = 'command.started'
+                              AND meta ? 'command_id'
                         ),
                         terminal AS (
-                            SELECT DISTINCT result->'data'->>'command_id' AS command_id
+                            SELECT DISTINCT meta->>'command_id' AS command_id
                             FROM noetl.event
                             WHERE execution_id = %s
                               AND node_name = %s
-                              AND event_type IN ('command.completed', 'command.failed')
+                              AND event_type IN ('command.completed', 'command.failed', 'command.cancelled')
+                              AND meta ? 'command_id'
                         )
                         SELECT i.loop_iteration_index
                         FROM issued i
@@ -4802,6 +4841,17 @@ class ControlFlowEngine:
                     context_data["execution_id"] = str(event.execution_id)
                     context_data["catalog_id"] = str(catalog_id) if catalog_id else None
                     context_data["root_event_id"] = str(state.root_event_id) if state.root_event_id else None
+                else:
+                    context_data = {}
+
+                # Persist payload result details in context column (not event.result).
+                # event.result is reserved for control-plane status + optional reference/context.
+                payload_result = event.payload.get("result")
+                if isinstance(payload_result, dict):
+                    for key, value in payload_result.items():
+                        context_data.setdefault(key, value)
+                elif payload_result is not None:
+                    context_data.setdefault("result_value", payload_result)
                 
                 # Determine status: Use payload status if provided, otherwise infer from event name
                 payload_status = event.payload.get("status")
@@ -4811,7 +4861,12 @@ class ControlFlowEngine:
                 else:
                     # Fallback to event name-based status for events without explicit status
                     status = "FAILED" if "failed" in event.name else "COMPLETED" if ("step.exit" == event.name or "completed" in event.name) else "RUNNING"
-                
+
+                result_obj: dict[str, Any] = {"status": status}
+                payload_reference = event.payload.get("reference")
+                if isinstance(payload_reference, dict):
+                    result_obj["reference"] = payload_reference
+
                 await cur.execute("""
                     INSERT INTO noetl.event (
                         execution_id, catalog_id, event_id, parent_event_id, parent_execution_id, event_type,
@@ -4829,7 +4884,7 @@ class ControlFlowEngine:
                     event.step,
                     status,
                     Json(context_data) if context_data else None,
-                    Json(event.payload.get("result")) if event.payload.get("result") else None,
+                    Json(result_obj),
                     Json(event.payload.get("error")) if event.payload.get("error") else None,
                     event.payload.get("stack_trace"),
                     event.worker_id,
