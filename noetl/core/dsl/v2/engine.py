@@ -425,6 +425,31 @@ class ExecutionState:
         """
         self.completed_steps.add(step_name)
         if result is not None:
+            if isinstance(result, dict):
+                # Reference-only compatibility:
+                # worker/server store compact step output under result.context, while
+                # many existing templates still read step.command_0.*.
+                # Promote only known command keys to avoid flattening arbitrary
+                # user payloads that may legitimately use a nested "context".
+                context_obj = result.get("context")
+                if isinstance(context_obj, dict):
+                    has_reference_shape = "reference" in result or "_ref" in result
+                    has_command_context = any(
+                        str(key).startswith("command_") for key in context_obj.keys()
+                    )
+                    if has_reference_shape or has_command_context:
+                        for key, value in context_obj.items():
+                            key_str = str(key)
+                            if key_str.startswith("command_") or key_str == "command_id":
+                                result.setdefault(key, value)
+                else:
+                    # Also support templates that expect step.context.* when the
+                    # payload is already a plain dict of compact fields.
+                    result["context"] = {
+                        k: v
+                        for k, v in result.items()
+                        if k not in {"reference", "_ref", "context"}
+                    }
             self.step_results[step_name] = result
             self.variables[step_name] = result
 

@@ -4,6 +4,7 @@ import pytest
 import yaml
 
 import noetl.core.dsl.v2.engine as engine_module
+from noetl.core.dsl.render import TaskResultProxy
 from noetl.core.dsl.v2.engine import ControlFlowEngine, ExecutionState, PlaybookRepo, StateStore
 from noetl.core.dsl.v2.models import Command, Event, Playbook, ToolCall
 
@@ -658,6 +659,213 @@ workflow:
     assert context["facility_mapping_id"] == 53
     assert context["ctx"]["facility_mapping_id"] == 53
     assert context["patient_count"] == 3
+
+
+@pytest.mark.asyncio
+async def test_state_replay_restores_set_ctx_from_reference_only_context_shape(monkeypatch):
+    playbook = Playbook(**yaml.safe_load(
+        """
+apiVersion: noetl.io/v2
+kind: Playbook
+metadata:
+  name: replay_set_ctx_reference_only
+  path: tests/replay_set_ctx_reference_only
+workload:
+  pg_auth: pg_k8s
+workflow:
+  - step: load_next_facility
+    tool:
+      kind: postgres
+      auth: pg_k8s
+      query: SELECT 1;
+    set_ctx:
+      facility_mapping_id: "{{ load_next_facility.command_0.rows[0].facility_mapping_id }}"
+      facility_id: "{{ load_next_facility.command_0.rows[0].facility_id }}"
+  - step: load_patient_ids_context
+    tool:
+      kind: postgres
+      auth: pg_k8s
+      query: SELECT 1;
+    set_ctx:
+      patient_count: "{{ load_patient_ids_context.command_0.rows[0].patient_count | int }}"
+      facility_mapping_id: "{{ load_next_facility.command_0.rows[0].facility_mapping_id }}"
+  - step: load_patients_for_assessments
+    tool:
+      kind: postgres
+      auth: pg_k8s
+      query: |
+        SELECT w.patient_id
+        FROM public.patient_ids_work w
+        WHERE w.facility_mapping_id = {{ facility_mapping_id }}
+          AND {{ patient_count }} > 0;
+        """
+    ))
+    playbook_repo = PlaybookRepo()
+    state_store = StateStore(playbook_repo)
+
+    async def fake_load_playbook_by_id(_catalog_id):
+        return playbook
+
+    monkeypatch.setattr(playbook_repo, "load_playbook_by_id", fake_load_playbook_by_id)
+
+    class FakeCursor:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        async def execute(self, query, _params):
+            self.last_query = query
+
+        async def fetchone(self):
+            return {
+                "catalog_id": "cat-ctx-ref",
+                "context": {"workload": {"pg_auth": "pg_k8s"}},
+                "result": {"status": "COMPLETED"},
+            }
+
+        async def fetchall(self):
+            return [
+                {
+                    "node_name": "load_next_facility",
+                    "event_type": "step.exit",
+                    "result": {
+                        "status": "COMPLETED",
+                        "context": {
+                            "command_0": {
+                                "rows": [
+                                    {
+                                        "facility_mapping_id": 91,
+                                        "facility_id": 7001,
+                                    }
+                                ],
+                                "row_count": 1,
+                            }
+                        },
+                    },
+                    "meta": None,
+                },
+                {
+                    "node_name": "load_patient_ids_context",
+                    "event_type": "step.exit",
+                    "result": {
+                        "status": "COMPLETED",
+                        "context": {
+                            "command_0": {
+                                "rows": [{"patient_count": 17}],
+                                "row_count": 1,
+                            }
+                        },
+                    },
+                    "meta": None,
+                },
+            ]
+
+    class FakeConnection:
+        def cursor(self, row_factory=None):  # noqa: ARG002
+            return FakeCursor()
+
+    class FakeConnectionContext:
+        async def __aenter__(self):
+            return FakeConnection()
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+    monkeypatch.setattr(engine_module, "get_pool_connection", lambda: FakeConnectionContext())
+
+    state = await state_store.load_state("9022")
+
+    assert state is not None
+    assert state.variables["facility_mapping_id"] == 91
+    assert state.variables["facility_id"] == 7001
+    assert state.variables["patient_count"] == 17
+
+    context = state.get_render_context(Event(execution_id="9022", step="load_patients_for_assessments", name="call.done", payload={}))
+    assert context["facility_mapping_id"] == 91
+    assert context["ctx"]["facility_mapping_id"] == 91
+    assert context["patient_count"] == 17
+
+
+def test_mark_step_completed_adds_context_alias_for_plain_dict_results():
+    playbook = Playbook(**yaml.safe_load(
+        """
+apiVersion: noetl.io/v2
+kind: Playbook
+metadata:
+  name: context_alias_test
+  path: tests/context_alias_test
+workflow:
+  - step: compute_report_window
+    tool:
+      kind: python
+      code: |
+        def main():
+          return {}
+        """
+    ))
+    state = ExecutionState("9023", playbook, payload={})
+    state.mark_step_completed(
+        "compute_report_window",
+        {
+            "report_start_date": "2026-03-01",
+            "report_end_date": "2026-03-31",
+        },
+    )
+
+    step_result = state.step_results["compute_report_window"]
+    assert "context" in step_result
+    assert step_result["context"]["report_start_date"] == "2026-03-01"
+    assert step_result["context"]["report_end_date"] == "2026-03-31"
+
+
+def test_mark_step_completed_does_not_flatten_non_reference_context_payload():
+    playbook = Playbook(**yaml.safe_load(
+        """
+apiVersion: noetl.io/v2
+kind: Playbook
+metadata:
+  name: context_flatten_guard_test
+  path: tests/context_flatten_guard_test
+workflow:
+  - step: end
+    tool:
+      kind: python
+      code: |
+        def main():
+          return {}
+        """
+    ))
+    state = ExecutionState("9024", playbook, payload={})
+    state.mark_step_completed(
+        "end",
+        {
+            "status": "COMPLETED",
+            "context": {"ctx_vars": {"foo": "bar"}},
+        },
+    )
+
+    step_result = state.step_results["end"]
+    assert "ctx_vars" not in step_result
+    assert step_result["context"]["ctx_vars"]["foo"] == "bar"
+
+
+def test_task_result_proxy_getitem_wraps_context_dict_values():
+    proxy = TaskResultProxy(
+        {
+            "status": "COMPLETED",
+            "context": {
+                "command_0": {
+                    "rows": [{"facility_mapping_id": 42}],
+                    "row_count": 1,
+                }
+            },
+        }
+    )
+    command_result = proxy["command_0"]
+    assert isinstance(command_result, TaskResultProxy)
+    assert command_result.rows[0]["facility_mapping_id"] == 42
 
 
 @pytest.mark.asyncio
