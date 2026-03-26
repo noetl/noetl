@@ -89,6 +89,10 @@ _EVENT_RESULT_CONTEXT_MAX_BYTES = max(
     1024,
     int(os.getenv("NOETL_EVENT_RESULT_CONTEXT_MAX_BYTES", "16384")),
 )
+_EVENT_RESULT_CONTEXT_MAX_ROWS_PER_COMMAND = max(
+    1,
+    int(os.getenv("NOETL_EVENT_RESULT_CONTEXT_MAX_ROWS_PER_COMMAND", "1")),
+)
 _COMMAND_PUBLISH_RECOVERY_DELAY_SECONDS = max(
     5.0,
     float(os.getenv("NOETL_COMMAND_PUBLISH_RECOVERY_DELAY_SECONDS", "20")),
@@ -2144,8 +2148,7 @@ def _extract_reference_from_payload(
 
 
 def _extract_context_from_payload(payload: dict[str, Any]) -> Optional[dict[str, Any]]:
-    context_obj = payload.get("context")
-    if isinstance(context_obj, dict):
+    def _filter_context_obj(context_obj: dict[str, Any]) -> Optional[dict[str, Any]]:
         filtered = {
             key: value
             for key, value in context_obj.items()
@@ -2161,11 +2164,52 @@ def _extract_context_from_payload(payload: dict[str, Any]) -> Optional[dict[str,
                 "extracted",
             }
         }
-        if not filtered:
+        return filtered or None
+
+    def _compact_response_for_context(response_obj: dict[str, Any]) -> Optional[dict[str, Any]]:
+        if not isinstance(response_obj, dict):
             return None
-        if _estimate_json_size(filtered) > _EVENT_RESULT_CONTEXT_MAX_BYTES:
-            return None
-        return filtered
+
+        # Postgres and several plugins wrap results in {"status", "data": {...}}.
+        source_obj = response_obj.get("data")
+        source = source_obj if isinstance(source_obj, dict) else response_obj
+        compact: dict[str, Any] = {}
+
+        for command_key, command_value in source.items():
+            if not isinstance(command_key, str) or not command_key.startswith("command_"):
+                continue
+            if not isinstance(command_value, dict):
+                continue
+
+            command_compact: dict[str, Any] = {}
+            for field in ("status", "row_count", "message", "error"):
+                value = command_value.get(field)
+                if value is not None:
+                    command_compact[field] = value
+
+            rows = command_value.get("rows")
+            if isinstance(rows, list):
+                max_rows = min(len(rows), _EVENT_RESULT_CONTEXT_MAX_ROWS_PER_COMMAND)
+                command_compact["rows"] = rows[:max_rows]
+
+            if command_compact:
+                compact[command_key] = command_compact
+
+        return compact or None
+
+    def _merge_and_bound_context(
+        candidate: Optional[dict[str, Any]],
+        compact_fields: dict[str, Any],
+    ) -> Optional[dict[str, Any]]:
+        if candidate:
+            merged = dict(candidate)
+            for key, value in compact_fields.items():
+                merged.setdefault(key, value)
+            if _estimate_json_size(merged) <= _EVENT_RESULT_CONTEXT_MAX_BYTES:
+                return merged
+            if _estimate_json_size(candidate) <= _EVENT_RESULT_CONTEXT_MAX_BYTES:
+                return candidate
+        return compact_fields or None
 
     compact: dict[str, Any] = {}
     for key in (
@@ -2181,6 +2225,48 @@ def _extract_context_from_payload(payload: dict[str, Any]) -> Optional[dict[str,
     ):
         if key in payload and payload[key] is not None:
             compact[key] = payload[key]
+
+    context_obj = payload.get("context")
+    if isinstance(context_obj, dict):
+        filtered = _filter_context_obj(context_obj)
+        return _merge_and_bound_context(filtered, compact)
+
+    # Reference-only contract persists context in event.result.context.
+    # If worker payload omits explicit context, try deriving a bounded context
+    # from response/result envelopes to preserve routing-critical fields.
+    for key in ("response", "result"):
+        candidate_obj = payload.get(key)
+        if not isinstance(candidate_obj, dict):
+            continue
+
+        # Prefer response.data/result.data when present so postgres-style
+        # payloads keep command_0/command_1 at the top level for templates.
+        source_obj = candidate_obj.get("data")
+        source_context = source_obj if isinstance(source_obj, dict) else candidate_obj
+
+        filtered_source = _filter_context_obj(source_context)
+        if filtered_source:
+            merged_source = dict(filtered_source)
+            for key_name, key_value in compact.items():
+                merged_source.setdefault(key_name, key_value)
+            if _estimate_json_size(merged_source) <= _EVENT_RESULT_CONTEXT_MAX_BYTES:
+                return merged_source
+
+        # Fallback to the full envelope if source-only extraction didn't fit.
+        if source_context is not candidate_obj:
+            filtered_envelope = _filter_context_obj(candidate_obj)
+            if filtered_envelope:
+                merged_envelope = dict(filtered_envelope)
+                for key_name, key_value in compact.items():
+                    merged_envelope.setdefault(key_name, key_value)
+                if _estimate_json_size(merged_envelope) <= _EVENT_RESULT_CONTEXT_MAX_BYTES:
+                    return merged_envelope
+
+        compact_candidate = _compact_response_for_context(candidate_obj)
+        merged_compact = _merge_and_bound_context(compact_candidate, compact)
+        if merged_compact:
+            return merged_compact
+
     return compact or None
 
 

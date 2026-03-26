@@ -86,6 +86,57 @@ def test_extract_context_filters_transport_wrappers_and_honors_size_limit(monkey
     assert context == {"safe": "ok", "command_id": "cmd-1"}
 
 
+def test_extract_context_derives_from_response_payload():
+    context = v2_api._extract_context_from_payload(
+        {
+            "command_id": "cmd-42",
+            "response": {
+                "status": "success",
+                "data": {
+                    "command_0": {
+                        "status": "success",
+                        "row_count": 2,
+                        "rows": [{"facility_mapping_id": 123}, {"facility_mapping_id": 456}],
+                    }
+                },
+            },
+        }
+    )
+
+    assert context is not None
+    assert context["command_id"] == "cmd-42"
+    assert "command_0" in context
+    assert context["command_0"]["row_count"] == 2
+    assert context["command_0"]["rows"][0]["facility_mapping_id"] == 123
+
+
+def test_extract_context_compacts_large_response_payload(monkeypatch):
+    monkeypatch.setattr(v2_api, "_EVENT_RESULT_CONTEXT_MAX_BYTES", 768)
+    monkeypatch.setattr(v2_api, "_EVENT_RESULT_CONTEXT_MAX_ROWS_PER_COMMAND", 1)
+
+    context = v2_api._extract_context_from_payload(
+        {
+            "command_id": "cmd-99",
+            "response": {
+                "status": "success",
+                "data": {
+                    "command_0": {
+                        "status": "success",
+                        "row_count": 2000,
+                        "rows": [{"id": i, "value": "x" * 32} for i in range(20)],
+                    }
+                },
+            },
+        }
+    )
+
+    assert context is not None
+    assert context["command_id"] == "cmd-99"
+    assert context["command_0"]["row_count"] == 2000
+    assert len(context["command_0"]["rows"]) == 1
+    assert context["command_0"]["rows"][0]["id"] == 0
+
+
 def test_build_reference_only_result_outputs_contract_shape():
     payload = {
         "reference": {"type": "nats", "locator": "nats://bucket/key"},
