@@ -63,6 +63,13 @@ _EXECUTION_TERMINAL_EVENT_TYPES = {
     "workflow.completed",
     "workflow.failed",
     "execution.cancelled",
+    # NOTE: "command.failed" is intentionally NOT in this set.
+    # command.failed is an infrastructure-level event (retries exhausted) that may arrive
+    # after a call.error arc has already issued recovery steps. It does not by itself make
+    # an execution terminal — only workflow.failed/playbook.failed do. This means that when
+    # the command.failed handler skips terminal emission (recovery in-flight), the status
+    # API will NOT report the execution as completed/failed based on the command.failed
+    # event alone. The execution remains in-progress until a true terminal event is emitted.
 }
 _EXECUTION_FAILURE_EVENT_TYPES = {
     "playbook.failed",
