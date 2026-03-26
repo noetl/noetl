@@ -1511,7 +1511,7 @@ class V2Worker:
             logger.debug("Args config: merged_from_tool_config | keys=%s", _safe_keys(args))
         else:
             logger.debug("Args config: using_top_level | keys=%s", _safe_keys(args))
-        
+
         logger.info(f"[EVENT] Executing {step} (tool={tool_kind}) for execution {execution_id}" + (f" command={command_id}" if command_id else ""))
 
         # Extract catalog_id from meta (where server stores it)
@@ -1558,6 +1558,16 @@ class V2Worker:
             )
             t_events_end = time.perf_counter()
             logger.info(f"[PERF] emit_initial_events (batch) took {(t_events_end - t_events_start)*1000:.1f}ms")
+
+            if str(tool_kind).lower() == "postgres":
+                postgres_auth = tool_config.get("auth")
+                if postgres_auth in (None, "", {}):
+                    postgres_auth = args.get("auth") if isinstance(args, dict) else None
+                if postgres_auth in (None, "", {}):
+                    raise ValueError(
+                        f"Postgres step '{step}' is missing auth in command context. "
+                        "Use tool.auth and do not rely on direct db_* variables."
+                    )
 
             # Execute tool
             t_tool_start = time.perf_counter()

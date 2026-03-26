@@ -899,6 +899,26 @@ def _estimate_json_size(value: Any) -> int:
         return len(str(value).encode("utf-8"))
 
 
+def _validate_postgres_command_context(*, step: str, tool_kind: str, context: dict[str, Any]) -> None:
+    """
+    Enforce postgres command contract before command.issued is persisted.
+
+    Postgres execution must use auth references, not inline db_* fields.
+    """
+    if str(tool_kind).lower() != "postgres":
+        return
+    tool_config = context.get("tool_config") if isinstance(context, dict) else {}
+    args = context.get("args") if isinstance(context, dict) else {}
+    auth_cfg = tool_config.get("auth") if isinstance(tool_config, dict) else None
+    if auth_cfg in (None, "", {}):
+        auth_cfg = args.get("auth") if isinstance(args, dict) else None
+    if auth_cfg in (None, "", {}):
+        raise ValueError(
+            f"Postgres command for step '{step}' is missing auth in command context. "
+            "Use tool.auth and avoid direct db_* connection variables."
+        )
+
+
 async def _store_command_context_if_needed(
     *,
     execution_id: int,
@@ -1260,6 +1280,11 @@ async def execute(req: ExecuteRequest) -> ExecuteResponse:
                         "pipeline": cmd.pipeline,  # Canonical v2: task pipeline
                         "spec": cmd.spec.model_dump() if cmd.spec else None,  # Step behavior (next_mode)
                     }
+                    _validate_postgres_command_context(
+                        step=cmd.step,
+                        tool_kind=cmd.tool.kind,
+                        context=context,
+                    )
                     meta = {
                         "command_id": cmd_id,
                         "step": cmd.step,
@@ -1959,6 +1984,11 @@ async def handle_event(req: EventRequest) -> EventResponse:
                         "pipeline": cmd.pipeline,  # Canonical v2: task pipeline
                         "spec": cmd.spec.model_dump() if cmd.spec else None,  # Step behavior (next_mode)
                     }
+                    _validate_postgres_command_context(
+                        step=cmd.step,
+                        tool_kind=cmd.tool.kind,
+                        context=context,
+                    )
                     meta = {
                         "command_id": cmd_id,
                         "step": cmd.step,
@@ -2629,6 +2659,11 @@ async def _issue_commands_for_batch(job: _BatchAcceptJob, commands: list) -> Non
                     "pipeline": cmd.pipeline,
                     "spec": cmd.spec.model_dump() if cmd.spec else None,
                 }
+                _validate_postgres_command_context(
+                    step=cmd.step,
+                    tool_kind=cmd.tool.kind,
+                    context=context,
+                )
                 meta = {
                     "command_id": cmd_id,
                     "step": cmd.step,
