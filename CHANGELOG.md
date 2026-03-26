@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.11.0](https://github.com/noetl/noetl/compare/v2.10.42...v2.11.0) (2026-03-26)
+
+### Features
+
+* **runtime:** enforce reference-only event.result contract ([f726aff](https://github.com/noetl/noetl/commit/f726aff6fbea4c73574dec092097d59097456c1f))
+
+### Performance Improvements
+
+* **runtime:** reduce reaper and state-replay DB pressure ([2dc5fe4](https://github.com/noetl/noetl/commit/2dc5fe498a7ebff0c6783fa1309e0f4640c3796b))
+* **state:** trim replay scope and reduce stale-cache churn ([399dea7](https://github.com/noetl/noetl/commit/399dea7070c4c3781e4b1ca9be151e107b8ce369))
+
 ## [2.10.42](https://github.com/noetl/noetl/compare/v2.10.41...v2.10.42) (2026-03-26)
 
 ### Bug Fixes
