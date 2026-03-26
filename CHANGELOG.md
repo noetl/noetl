@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.12.4](https://github.com/noetl/noetl/compare/v2.12.3...v2.12.4) (2026-03-26)
+
+### Bug Fixes
+
+* **postgres:** enforce auth contract and pgbouncer routing ([5070b02](https://github.com/noetl/noetl/commit/5070b027ffe6fc856167cf6ad37a8fd95653ac3d))
+* **review:** address copilot feedback for postgres auth contract ([9a27889](https://github.com/noetl/noetl/commit/9a27889dbe612cc79e8e76094cc5b876749e3b95))
+
 ## [2.12.3](https://github.com/noetl/noetl/compare/v2.12.2...v2.12.3) (2026-03-26)
 
 ### Bug Fixes
