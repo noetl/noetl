@@ -722,3 +722,97 @@ def test_restore_loop_collection_snapshot_skips_when_cached_smaller_than_require
 
     assert restored == 0
     assert len(state.loop_state["run_batch_workers"]["collection"]) == 0
+
+
+def test_snapshot_loop_collections_captures_progress_counts():
+    fixture = Path(
+        "tests/fixtures/playbooks/batch_execution/heavy_payload_pipeline_in_step_parallel/"
+        "heavy_payload_pipeline_in_step_parallel.yaml"
+    )
+    playbook = yaml.safe_load(fixture.read_text(encoding="utf-8"))
+    parsed_playbook = engine_module.Playbook(**playbook)
+    playbook_repo = PlaybookRepo()
+    state_store = StateStore(playbook_repo)
+    engine = ControlFlowEngine(playbook_repo, state_store)
+
+    state = ExecutionState(
+        "9504",
+        parsed_playbook,
+        payload={
+            "build_batch_plan": {
+                "batches": [{"batch_number": i} for i in range(1, 20)]
+            }
+        },
+    )
+    state.loop_state["run_batch_workers"] = {
+        "collection": [{"batch_number": i} for i in range(1, 20)],
+        "iterator": "batch",
+        "index": 7,
+        "mode": "parallel",
+        "completed": False,
+        "results": [{}, {}, {}, {}],
+        "failed_count": 0,
+        "scheduled_count": 9,
+        "aggregation_finalized": False,
+        "event_id": "exec_9504",
+        "omitted_results_count": 3,
+    }
+
+    snapshots = engine._snapshot_loop_collections(state)
+    snapshot = snapshots.get("run_batch_workers")
+
+    assert snapshot is not None
+    assert snapshot.get("completed_count") == 7
+    assert snapshot.get("scheduled_count") == 9
+
+
+def test_restore_loop_collection_snapshot_honors_snapshot_progress_counts():
+    fixture = Path(
+        "tests/fixtures/playbooks/batch_execution/heavy_payload_pipeline_in_step_parallel/"
+        "heavy_payload_pipeline_in_step_parallel.yaml"
+    )
+    playbook = yaml.safe_load(fixture.read_text(encoding="utf-8"))
+    parsed_playbook = engine_module.Playbook(**playbook)
+    playbook_repo = PlaybookRepo()
+    state_store = StateStore(playbook_repo)
+    engine = ControlFlowEngine(playbook_repo, state_store)
+
+    state = ExecutionState(
+        "9505",
+        parsed_playbook,
+        payload={
+            "build_batch_plan": {
+                "batches": [{"batch_number": i} for i in range(1, 30)]
+            }
+        },
+    )
+    state.loop_state["run_batch_workers"] = {
+        "collection": [],
+        "iterator": "batch",
+        "index": 0,
+        "mode": "parallel",
+        "completed": False,
+        "results": [],
+        "failed_count": 0,
+        "scheduled_count": 0,
+        "aggregation_finalized": False,
+        "event_id": "exec_9505",
+        "omitted_results_count": 0,
+    }
+
+    snapshots = {
+        "run_batch_workers": {
+            "collection": [{"batch_number": i} for i in range(1, 5)],  # too small for progress floor
+            "event_id": "exec_9505",
+            "iterator": "batch",
+            "mode": "parallel",
+            "completed_count": 6,
+            "scheduled_count": 8,
+        }
+    }
+
+    restored = engine._restore_loop_collection_snapshots(state, snapshots)
+
+    assert restored == 0
+    assert len(state.loop_state["run_batch_workers"]["collection"]) == 0
+    assert int(state.loop_state["run_batch_workers"].get("scheduled_count", 0)) == 0

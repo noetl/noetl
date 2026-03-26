@@ -1555,6 +1555,12 @@ class ControlFlowEngine:
             collection = loop_state.get("collection")
             if not isinstance(collection, list) or len(collection) == 0:
                 continue
+            completed_count = state.get_loop_completed_count(step_name)
+            scheduled_count = int(
+                loop_state.get("scheduled_count", completed_count) or completed_count
+            )
+            if scheduled_count < completed_count:
+                scheduled_count = completed_count
             snapshots[step_name] = {
                 "collection": list(collection),
                 "event_id": (
@@ -1564,6 +1570,8 @@ class ControlFlowEngine:
                 ),
                 "iterator": loop_state.get("iterator"),
                 "mode": loop_state.get("mode"),
+                "completed_count": completed_count,
+                "scheduled_count": scheduled_count,
             }
         return snapshots
 
@@ -1598,21 +1606,58 @@ class ControlFlowEngine:
                 if isinstance(current_collection, list)
                 else 0
             )
-            completed_count = state.get_loop_completed_count(step_name)
-            scheduled_count = int(
-                loop_state.get("scheduled_count", completed_count) or completed_count
+            snapshot_completed_count = int(
+                snapshot.get("completed_count", 0) or 0
+            )
+            snapshot_scheduled_count = int(
+                snapshot.get("scheduled_count", snapshot_completed_count)
+                or snapshot_completed_count
+            )
+            if snapshot_scheduled_count < snapshot_completed_count:
+                snapshot_scheduled_count = snapshot_completed_count
+
+            completed_count = max(
+                state.get_loop_completed_count(step_name),
+                snapshot_completed_count,
+            )
+            scheduled_count = max(
+                int(loop_state.get("scheduled_count", completed_count) or completed_count),
+                completed_count,
+                snapshot_scheduled_count,
             )
             min_required_size = max(1, completed_count, scheduled_count)
             cached_size = len(cached_collection)
+
+            loop_mode = str(loop_state.get("mode") or snapshot.get("mode") or "").lower()
+            if (
+                loop_mode == "parallel"
+                and cached_size <= 1
+                and (scheduled_count > 0 or completed_count > 0)
+            ):
+                logger.warning(
+                    "[LOOP-CACHE-RESTORE] Skipping tiny parallel snapshot for %s "
+                    "(cached_size=%s scheduled=%s completed=%s snapshot_scheduled=%s snapshot_completed=%s)",
+                    step_name,
+                    cached_size,
+                    scheduled_count,
+                    completed_count,
+                    snapshot_scheduled_count,
+                    snapshot_completed_count,
+                )
+                continue
+
             if cached_size < min_required_size:
                 logger.warning(
                     "[LOOP-CACHE-RESTORE] Skipping snapshot restore for %s "
-                    "(cached_size=%s required_min=%s scheduled=%s completed=%s cached_event_id=%s restored_event_id=%s)",
+                    "(cached_size=%s required_min=%s scheduled=%s completed=%s "
+                    "snapshot_scheduled=%s snapshot_completed=%s cached_event_id=%s restored_event_id=%s)",
                     step_name,
                     cached_size,
                     min_required_size,
                     scheduled_count,
                     completed_count,
+                    snapshot_scheduled_count,
+                    snapshot_completed_count,
                     cached_event_id,
                     restored_event_id,
                 )
@@ -1630,15 +1675,22 @@ class ControlFlowEngine:
                 loop_state["iterator"] = snapshot.get("iterator")
             if not loop_state.get("mode") and snapshot.get("mode") is not None:
                 loop_state["mode"] = snapshot.get("mode")
+            loop_state["scheduled_count"] = max(
+                int(loop_state.get("scheduled_count", 0) or 0),
+                scheduled_count,
+            )
             restored_count += 1
             logger.warning(
                 "[LOOP-CACHE-RESTORE] Restored collection snapshot for %s "
-                "(cached_size=%s replay_size=%s scheduled=%s completed=%s cached_event_id=%s restored_event_id=%s)",
+                "(cached_size=%s replay_size=%s scheduled=%s completed=%s "
+                "snapshot_scheduled=%s snapshot_completed=%s cached_event_id=%s restored_event_id=%s)",
                 step_name,
                 cached_size,
                 current_size,
                 scheduled_count,
                 completed_count,
+                snapshot_scheduled_count,
+                snapshot_completed_count,
                 cached_event_id,
                 restored_event_id,
             )
