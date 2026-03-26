@@ -2148,6 +2148,17 @@ def _extract_reference_from_payload(
 
 
 def _extract_context_from_payload(payload: dict[str, Any]) -> Optional[dict[str, Any]]:
+    size_cache: dict[int, int] = {}
+
+    def _json_size_cached(obj: dict[str, Any]) -> int:
+        cache_key = id(obj)
+        cached = size_cache.get(cache_key)
+        if cached is not None:
+            return cached
+        size = _estimate_json_size(obj)
+        size_cache[cache_key] = size
+        return size
+
     def _filter_context_obj(context_obj: dict[str, Any]) -> Optional[dict[str, Any]]:
         filtered = {
             key: value
@@ -2165,6 +2176,29 @@ def _extract_context_from_payload(payload: dict[str, Any]) -> Optional[dict[str,
             }
         }
         return filtered or None
+
+    def _bound_command_rows(
+        context_obj: Optional[dict[str, Any]],
+    ) -> Optional[dict[str, Any]]:
+        if not context_obj:
+            return None
+
+        bounded: dict[str, Any] = {}
+        for key, value in context_obj.items():
+            if (
+                isinstance(key, str)
+                and key.startswith("command_")
+                and isinstance(value, dict)
+            ):
+                command_obj = dict(value)
+                rows = command_obj.get("rows")
+                if isinstance(rows, list):
+                    max_rows = min(len(rows), _EVENT_RESULT_CONTEXT_MAX_ROWS_PER_COMMAND)
+                    command_obj["rows"] = rows[:max_rows]
+                bounded[key] = command_obj
+            else:
+                bounded[key] = value
+        return bounded
 
     def _compact_response_for_context(response_obj: dict[str, Any]) -> Optional[dict[str, Any]]:
         if not isinstance(response_obj, dict):
@@ -2205,9 +2239,29 @@ def _extract_context_from_payload(payload: dict[str, Any]) -> Optional[dict[str,
             merged = dict(candidate)
             for key, value in compact_fields.items():
                 merged.setdefault(key, value)
-            if _estimate_json_size(merged) <= _EVENT_RESULT_CONTEXT_MAX_BYTES:
+            if _json_size_cached(merged) <= _EVENT_RESULT_CONTEXT_MAX_BYTES:
                 return merged
-            if _estimate_json_size(candidate) <= _EVENT_RESULT_CONTEXT_MAX_BYTES:
+
+            if not compact_fields:
+                if _json_size_cached(candidate) <= _EVENT_RESULT_CONTEXT_MAX_BYTES:
+                    return candidate
+                return None
+
+            # Keep compact routing keys even when candidate is too large.
+            bounded = dict(compact_fields)
+            for key, value in candidate.items():
+                if key in bounded:
+                    continue
+                bounded[key] = value
+                if _json_size_cached(bounded) > _EVENT_RESULT_CONTEXT_MAX_BYTES:
+                    del bounded[key]
+                    break
+            if bounded:
+                return bounded
+
+            if _json_size_cached(compact_fields) <= _EVENT_RESULT_CONTEXT_MAX_BYTES:
+                return compact_fields
+            if _json_size_cached(candidate) <= _EVENT_RESULT_CONTEXT_MAX_BYTES:
                 return candidate
         return compact_fields or None
 
@@ -2228,7 +2282,7 @@ def _extract_context_from_payload(payload: dict[str, Any]) -> Optional[dict[str,
 
     context_obj = payload.get("context")
     if isinstance(context_obj, dict):
-        filtered = _filter_context_obj(context_obj)
+        filtered = _bound_command_rows(_filter_context_obj(context_obj))
         return _merge_and_bound_context(filtered, compact)
 
     # Reference-only contract persists context in event.result.context.
@@ -2244,22 +2298,18 @@ def _extract_context_from_payload(payload: dict[str, Any]) -> Optional[dict[str,
         source_obj = candidate_obj.get("data")
         source_context = source_obj if isinstance(source_obj, dict) else candidate_obj
 
-        filtered_source = _filter_context_obj(source_context)
+        filtered_source = _bound_command_rows(_filter_context_obj(source_context))
         if filtered_source:
-            merged_source = dict(filtered_source)
-            for key_name, key_value in compact.items():
-                merged_source.setdefault(key_name, key_value)
-            if _estimate_json_size(merged_source) <= _EVENT_RESULT_CONTEXT_MAX_BYTES:
+            merged_source = _merge_and_bound_context(filtered_source, compact)
+            if merged_source:
                 return merged_source
 
         # Fallback to the full envelope if source-only extraction didn't fit.
         if source_context is not candidate_obj:
-            filtered_envelope = _filter_context_obj(candidate_obj)
+            filtered_envelope = _bound_command_rows(_filter_context_obj(candidate_obj))
             if filtered_envelope:
-                merged_envelope = dict(filtered_envelope)
-                for key_name, key_value in compact.items():
-                    merged_envelope.setdefault(key_name, key_value)
-                if _estimate_json_size(merged_envelope) <= _EVENT_RESULT_CONTEXT_MAX_BYTES:
+                merged_envelope = _merge_and_bound_context(filtered_envelope, compact)
+                if merged_envelope:
                     return merged_envelope
 
         compact_candidate = _compact_response_for_context(candidate_obj)
