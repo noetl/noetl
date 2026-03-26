@@ -48,6 +48,7 @@ Canonical v10 usage in playbooks:
 
 import asyncio
 import time
+import re
 from typing import Any, Optional, Callable, Awaitable
 from dataclasses import dataclass, field
 
@@ -116,7 +117,7 @@ class TaskSequenceContext:
 class ControlAction:
     """Result of policy rule evaluation (canonical v10)."""
     action: str  # continue, retry, break, jump, fail
-    to: Optional[str] = None  # For jump: target task label
+    to: Optional[str] = None  # For jump: target task label (or special "previous")
     attempts: int = 3  # Max retry attempts
     backoff: str = "none"  # none, linear, exponential
     delay: float = 1.0  # Initial delay seconds
@@ -220,6 +221,8 @@ class TaskSequenceExecutor:
 
     NO BACKWARD COMPATIBILITY - rejects eval, expr, set_vars.
     """
+    _MISSING_REFERENCE_CODE = "REFERENCE_NOT_AVAILABLE"
+    _SPECIAL_PREVIOUS_TARGETS = {"previous", "prev", "_previous", "@previous"}
 
     def __init__(
         self,
@@ -289,6 +292,7 @@ class TaskSequenceExecutor:
         while current_idx < len(parsed_tasks):
             task = parsed_tasks[current_idx]
             task_name = task["name"]
+            previous_task_name = parsed_tasks[current_idx - 1]["name"] if current_idx > 0 else None
             tool_config = task["config"]
             policy_rules = task.get("policy_rules", [])
 
@@ -369,13 +373,21 @@ class TaskSequenceExecutor:
                     if retryable_val is None:
                         retryable_val = status_code == 429 or (status_code is not None and status_code >= 500)
 
+                    error_message = result.get("error") or result.get("message", "Tool returned error status")
                     error_info = {
                         "kind": result.get("error_kind", "tool_error"),
                         "retryable": bool(retryable_val),
                         "code": error_code,
                         "status_code": status_code,
-                        "message": result.get("error") or result.get("message", "Tool returned error status"),
+                        "message": error_message,
                     }
+                    if self._is_missing_reference_error(error_message):
+                        error_info["kind"] = "missing_reference"
+                        error_info["retryable"] = True
+                        error_info["code"] = self._MISSING_REFERENCE_CODE
+                        if previous_task_name:
+                            error_info["recovery"] = {"do": "jump", "to": previous_task_name}
+
                     outcome = build_outcome(
                         status="error",
                         error=error_info,
@@ -397,7 +409,12 @@ class TaskSequenceExecutor:
 
             except Exception as e:
                 duration_ms = int((time.monotonic() - start_time) * 1000)
-                error_info = self._classify_task_error(e, task_name, tool_config.get("kind", "unknown"))
+                error_info = self._classify_task_error(
+                    e,
+                    task_name,
+                    tool_config.get("kind", "unknown"),
+                    previous_task_name=previous_task_name,
+                )
                 outcome = build_outcome(
                     status="error",
                     error=error_info.to_dict(),
@@ -498,7 +515,22 @@ class TaskSequenceExecutor:
                         "failed_task": task_name,
                     }
 
-                target_idx = next((i for i, t in enumerate(parsed_tasks) if t["name"] == target), None)
+                target_idx: Optional[int]
+                if isinstance(target, str) and target.strip().lower() in self._SPECIAL_PREVIOUS_TARGETS:
+                    if current_idx <= 0:
+                        logger.error("[TASK_SEQ] Cannot jump to previous task from first task")
+                        return {
+                            "status": "failed",
+                            "_prev": ctx._prev,
+                            "results": ctx.results,
+                            "ctx": ctx.ctx,
+                            "error": {"kind": "config", "message": "Jump target 'previous' invalid for first task"},
+                            "failed_task": task_name,
+                        }
+                    target_idx = current_idx - 1
+                    target = parsed_tasks[target_idx]["name"]
+                else:
+                    target_idx = next((i for i, t in enumerate(parsed_tasks) if t["name"] == target), None)
                 if target_idx is None:
                     logger.error(f"[TASK_SEQ] Jump target '{target}' not found in task sequence")
                     return {
@@ -630,8 +662,21 @@ class TaskSequenceExecutor:
         error: Exception,
         task_name: str,
         tool_kind: str,
+        previous_task_name: Optional[str] = None,
     ) -> ErrorInfo:
         """Classify a task execution error."""
+        if self._is_missing_reference_error(str(error)):
+            details = {}
+            if previous_task_name:
+                details["recovery"] = {"do": "jump", "to": previous_task_name}
+            return ErrorInfo(
+                retryable=True,
+                code=self._MISSING_REFERENCE_CODE,
+                message=str(error),
+                source=tool_kind,
+                details=details,
+            )
+
         context = {}
 
         if isinstance(error, TaskSequenceError):
@@ -641,6 +686,34 @@ class TaskSequenceExecutor:
             return classify_error(error, source=error.source, context=context)
 
         return classify_error(error, source=tool_kind, context=context)
+
+    @staticmethod
+    def _is_missing_reference_error(message: Any) -> bool:
+        """Detect reference-resolution/storage misses that should trigger replay recovery."""
+        text = str(message or "").lower()
+        if not text:
+            return False
+
+        ref_markers = (
+            r"\bresult_ref\b",
+            r"\b_ref\b",
+            r"\breference\b",
+            r"\bdata_reference\b",
+            r"noetl://",
+            r"\bartifact\b",
+        )
+        not_found_markers = (
+            "not found",
+            "missing",
+            "no message found",
+            "keyerror",
+            "filenotfounderror",
+            "does not exist",
+        )
+
+        return any(re.search(marker, text) for marker in ref_markers) and any(
+            marker in text for marker in not_found_markers
+        )
 
     def _evaluate_policy_rules(
         self,

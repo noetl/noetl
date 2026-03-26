@@ -132,3 +132,244 @@ async def test_http_error_infers_retryable_for_429():
 
     assert result["status"] == "ok"
     assert calls["count"] == 2
+
+
+@pytest.mark.asyncio
+async def test_task_sequence_jump_overwrites_latest_result_for_same_task_name():
+    calls = {"fetch": 0, "route": 0}
+
+    async def fake_tool_executor(_kind: str, config: dict, _ctx: dict):
+        task_id = config.get("id")
+        if task_id == "fetch":
+            calls["fetch"] += 1
+            return {"value": calls["fetch"]}
+        if task_id == "route":
+            calls["route"] += 1
+            return {"jump": calls["route"] == 1}
+        raise AssertionError(f"Unexpected task id: {task_id}")
+
+    executor = TaskSequenceExecutor(
+        tool_executor=fake_tool_executor,
+        render_template=_render_template,
+        render_dict=_render_dict,
+    )
+
+    tasks = [
+        {
+            "name": "fetch",
+            "kind": "python",
+            "id": "fetch",
+            "spec": {"policy": {"rules": [{"else": {"then": {"do": "continue"}}}]}},
+        },
+        {
+            "name": "route",
+            "kind": "python",
+            "id": "route",
+            "spec": {
+                "policy": {
+                    "rules": [
+                        {
+                            "when": "{{ outcome.status == 'ok' and outcome.result.jump }}",
+                            "then": {"do": "jump", "to": "fetch"},
+                        },
+                        {"else": {"then": {"do": "continue"}}},
+                    ]
+                }
+            },
+        },
+    ]
+
+    result = await executor.execute(tasks=tasks, base_context={})
+
+    assert result["status"] == "ok"
+    assert calls["fetch"] == 2
+    assert calls["route"] == 2
+    assert result["results"]["fetch"] == {"value": 2}
+    assert result["results"]["route"] == {"jump": False}
+
+
+@pytest.mark.asyncio
+async def test_task_sequence_unnamed_tasks_use_index_keys():
+    async def fake_tool_executor(_kind: str, config: dict, _ctx: dict):
+        return {"id": config.get("id")}
+
+    executor = TaskSequenceExecutor(
+        tool_executor=fake_tool_executor,
+        render_template=_render_template,
+        render_dict=_render_dict,
+    )
+
+    tasks = [
+        {
+            "kind": "python",
+            "id": "first",
+            "spec": {"policy": {"rules": [{"else": {"then": {"do": "continue"}}}]}},
+        },
+        {
+            "kind": "python",
+            "id": "second",
+            "spec": {"policy": {"rules": [{"else": {"then": {"do": "continue"}}}]}},
+        },
+    ]
+
+    result = await executor.execute(tasks=tasks, base_context={})
+
+    assert result["status"] == "ok"
+    assert result["results"]["task_0"] == {"id": "first"}
+    assert result["results"]["task_1"] == {"id": "second"}
+
+
+@pytest.mark.asyncio
+async def test_task_sequence_jump_previous_alias_targets_prior_task():
+    calls = {"producer": 0, "route": 0}
+
+    async def fake_tool_executor(_kind: str, config: dict, _ctx: dict):
+        task_id = config.get("id")
+        if task_id == "producer":
+            calls["producer"] += 1
+            return {"version": calls["producer"]}
+        if task_id == "route":
+            calls["route"] += 1
+            return {"repeat": calls["route"] == 1}
+        raise AssertionError(f"Unexpected task id: {task_id}")
+
+    executor = TaskSequenceExecutor(
+        tool_executor=fake_tool_executor,
+        render_template=_render_template,
+        render_dict=_render_dict,
+    )
+
+    tasks = [
+        {
+            "name": "producer",
+            "kind": "python",
+            "id": "producer",
+            "spec": {"policy": {"rules": [{"else": {"then": {"do": "continue"}}}]}},
+        },
+        {
+            "name": "route",
+            "kind": "python",
+            "id": "route",
+            "spec": {
+                "policy": {
+                    "rules": [
+                        {
+                            "when": "{{ outcome.status == 'ok' and outcome.result.repeat }}",
+                            "then": {"do": "jump", "to": "previous"},
+                        },
+                        {"else": {"then": {"do": "continue"}}},
+                    ]
+                }
+            },
+        },
+    ]
+
+    result = await executor.execute(tasks=tasks, base_context={})
+
+    assert result["status"] == "ok"
+    assert calls["producer"] == 2
+    assert calls["route"] == 2
+    assert result["results"]["producer"] == {"version": 2}
+    assert result["results"]["route"] == {"repeat": False}
+
+
+@pytest.mark.asyncio
+async def test_task_sequence_missing_reference_error_supports_jump_replay():
+    calls = {"producer": 0, "consumer": 0}
+
+    async def fake_tool_executor(_kind: str, config: dict, _ctx: dict):
+        task_id = config.get("id")
+        if task_id == "producer":
+            calls["producer"] += 1
+            return {"produced": calls["producer"]}
+        if task_id == "consumer":
+            calls["consumer"] += 1
+            if calls["consumer"] == 1:
+                raise FileNotFoundError("result_ref not found for noetl://execution/1/step/producer")
+            return {"consumed": True}
+        raise AssertionError(f"Unexpected task id: {task_id}")
+
+    executor = TaskSequenceExecutor(
+        tool_executor=fake_tool_executor,
+        render_template=_render_template,
+        render_dict=_render_dict,
+    )
+
+    tasks = [
+        {
+            "name": "producer",
+            "kind": "python",
+            "id": "producer",
+            "spec": {"policy": {"rules": [{"else": {"then": {"do": "continue"}}}]}},
+        },
+        {
+            "name": "consumer",
+            "kind": "python",
+            "id": "consumer",
+            "spec": {
+                "policy": {
+                    "rules": [
+                        {
+                            "when": "{{ outcome.status == 'error' and outcome.error.code == 'REFERENCE_NOT_AVAILABLE' }}",
+                            "then": {"do": "jump", "to": "previous"},
+                        },
+                        {
+                            "when": "{{ outcome.status == 'error' }}",
+                            "then": {"do": "fail"},
+                        },
+                        {"else": {"then": {"do": "continue"}}},
+                    ]
+                }
+            },
+        },
+    ]
+
+    result = await executor.execute(tasks=tasks, base_context={})
+
+    assert result["status"] == "ok"
+    assert calls["producer"] == 2
+    assert calls["consumer"] == 2
+    assert result["results"]["producer"] == {"produced": 2}
+    assert result["results"]["consumer"] == {"consumed": True}
+
+
+@pytest.mark.asyncio
+async def test_task_sequence_missing_reference_error_reports_reference_code():
+    async def fake_tool_executor(_kind: str, _config: dict, _ctx: dict):
+        raise FileNotFoundError("artifact reference missing: result_ref key not found")
+
+    executor = TaskSequenceExecutor(
+        tool_executor=fake_tool_executor,
+        render_template=_render_template,
+        render_dict=_render_dict,
+    )
+
+    tasks = [
+        {
+            "name": "consumer",
+            "kind": "python",
+            "id": "consumer",
+            "spec": {
+                "policy": {
+                    "rules": [
+                        {
+                            "when": "{{ outcome.status == 'error' }}",
+                            "then": {"do": "fail"},
+                        }
+                    ]
+                }
+            },
+        }
+    ]
+
+    result = await executor.execute(tasks=tasks, base_context={})
+
+    assert result["status"] == "failed"
+    assert result["error"]["code"] == "REFERENCE_NOT_AVAILABLE"
+    assert result["error"]["retryable"] is True
+
+
+def test_task_sequence_missing_reference_detection_avoids_refresh_false_positive():
+    assert TaskSequenceExecutor._is_missing_reference_error(
+        "refresh token missing for upstream auth provider"
+    ) is False
