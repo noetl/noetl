@@ -653,3 +653,72 @@ def test_restore_loop_collection_snapshot_skips_incompatible_event_ids():
 
     assert restored == 0
     assert len(state.loop_state["run_batch_workers"]["collection"]) == 1
+
+
+def test_loop_event_ids_compatible_does_not_treat_exec_as_wildcard():
+    assert (
+        ControlFlowEngine._loop_event_ids_compatible("exec_123", "exec_123")
+        is True
+    )
+    assert (
+        ControlFlowEngine._loop_event_ids_compatible("exec_123", "exec_456")
+        is False
+    )
+    assert (
+        ControlFlowEngine._loop_event_ids_compatible("exec_123", "loop_123")
+        is False
+    )
+    assert (
+        ControlFlowEngine._loop_event_ids_compatible("exec_123", "987654")
+        is False
+    )
+
+
+def test_restore_loop_collection_snapshot_skips_when_cached_smaller_than_required():
+    fixture = Path(
+        "tests/fixtures/playbooks/batch_execution/heavy_payload_pipeline_in_step_parallel/"
+        "heavy_payload_pipeline_in_step_parallel.yaml"
+    )
+    playbook = yaml.safe_load(fixture.read_text(encoding="utf-8"))
+    parsed_playbook = engine_module.Playbook(**playbook)
+    playbook_repo = PlaybookRepo()
+    state_store = StateStore(playbook_repo)
+    engine = ControlFlowEngine(playbook_repo, state_store)
+
+    state = ExecutionState(
+        "9503",
+        parsed_playbook,
+        payload={
+            "build_batch_plan": {
+                "batches": [{"batch_number": i} for i in range(1, 30)]
+            }
+        },
+    )
+    # completed_count = len(results) + omitted_results_count = 6
+    state.loop_state["run_batch_workers"] = {
+        "collection": [],
+        "iterator": "batch",
+        "index": 6,
+        "mode": "parallel",
+        "completed": False,
+        "results": [{}, {}, {}],
+        "failed_count": 0,
+        "scheduled_count": 6,
+        "aggregation_finalized": False,
+        "event_id": "exec_9503",
+        "omitted_results_count": 3,
+    }
+
+    snapshots = {
+        "run_batch_workers": {
+            "collection": [{"batch_number": i} for i in range(1, 4)],  # too small
+            "event_id": "exec_9503",
+            "iterator": "batch",
+            "mode": "parallel",
+        }
+    }
+
+    restored = engine._restore_loop_collection_snapshots(state, snapshots)
+
+    assert restored == 0
+    assert len(state.loop_state["run_batch_workers"]["collection"]) == 0

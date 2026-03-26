@@ -1537,8 +1537,13 @@ class ControlFlowEngine:
         restored = str(restored_event_id)
         if cached == restored:
             return True
-        # Compatibility fallback: some replay paths normalize loop keys to exec_<id>.
-        return cached.startswith("exec_") or restored.startswith("exec_")
+
+        # Compatibility fallback: allow exec-key matches only for the same execution key.
+        # Do not treat exec_<id> as a wildcard against loop_<...> or numeric step event ids.
+        if cached.startswith("exec_") and restored.startswith("exec_"):
+            return cached == restored
+
+        return False
 
     def _snapshot_loop_collections(
         self,
@@ -1598,10 +1603,24 @@ class ControlFlowEngine:
                 loop_state.get("scheduled_count", completed_count) or completed_count
             )
             min_required_size = max(1, completed_count, scheduled_count)
+            cached_size = len(cached_collection)
+            if cached_size < min_required_size:
+                logger.warning(
+                    "[LOOP-CACHE-RESTORE] Skipping snapshot restore for %s "
+                    "(cached_size=%s required_min=%s scheduled=%s completed=%s cached_event_id=%s restored_event_id=%s)",
+                    step_name,
+                    cached_size,
+                    min_required_size,
+                    scheduled_count,
+                    completed_count,
+                    cached_event_id,
+                    restored_event_id,
+                )
+                continue
 
             should_restore = (
                 current_size == 0
-                or (current_size <= min_required_size and len(cached_collection) > current_size)
+                or (current_size <= min_required_size and cached_size > current_size)
             )
             if not should_restore:
                 continue
@@ -1616,7 +1635,7 @@ class ControlFlowEngine:
                 "[LOOP-CACHE-RESTORE] Restored collection snapshot for %s "
                 "(cached_size=%s replay_size=%s scheduled=%s completed=%s cached_event_id=%s restored_event_id=%s)",
                 step_name,
-                len(cached_collection),
+                cached_size,
                 current_size,
                 scheduled_count,
                 completed_count,
@@ -3487,8 +3506,6 @@ class ControlFlowEngine:
         # stale per-pod memory snapshots when another server advanced this execution.
         if already_persisted:
             cached_state = self.state_store.get_state(event.execution_id)
-            if cached_state:
-                preserved_loop_snapshots = self._snapshot_loop_collections(cached_state)
             if (
                 cached_state
                 and cached_state.last_event_id is not None
@@ -3498,6 +3515,7 @@ class ControlFlowEngine:
                     allowed_missing_events=_STATE_CACHE_ALLOWED_MISSING_EVENTS,
                 )
             ):
+                preserved_loop_snapshots = self._snapshot_loop_collections(cached_state)
                 await self.state_store.invalidate_state(
                     event.execution_id,
                     reason="stale_cache_newer_persisted_events",
