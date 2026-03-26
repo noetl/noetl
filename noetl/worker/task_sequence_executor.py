@@ -48,6 +48,7 @@ Canonical v10 usage in playbooks:
 
 import asyncio
 import time
+import re
 from typing import Any, Optional, Callable, Awaitable
 from dataclasses import dataclass, field
 
@@ -693,7 +694,14 @@ class TaskSequenceExecutor:
         if not text:
             return False
 
-        ref_markers = ("result_ref", "_ref", "reference", "artifact", "noetl://", "ref")
+        ref_markers = (
+            r"\bresult_ref\b",
+            r"\b_ref\b",
+            r"\breference\b",
+            r"\bdata_reference\b",
+            r"noetl://",
+            r"\bartifact\b",
+        )
         not_found_markers = (
             "not found",
             "missing",
@@ -703,7 +711,7 @@ class TaskSequenceExecutor:
             "does not exist",
         )
 
-        return any(marker in text for marker in ref_markers) and any(
+        return any(re.search(marker, text) for marker in ref_markers) and any(
             marker in text for marker in not_found_markers
         )
 

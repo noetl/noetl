@@ -2148,16 +2148,9 @@ def _extract_reference_from_payload(
 
 
 def _extract_context_from_payload(payload: dict[str, Any]) -> Optional[dict[str, Any]]:
-    size_cache: dict[int, int] = {}
-
-    def _json_size_cached(obj: dict[str, Any]) -> int:
-        cache_key = id(obj)
-        cached = size_cache.get(cache_key)
-        if cached is not None:
-            return cached
-        size = _estimate_json_size(obj)
-        size_cache[cache_key] = size
-        return size
+    def _json_size(obj: dict[str, Any]) -> int:
+        # Context dicts are mutated while being bounded; avoid stale cache-by-id sizing.
+        return _estimate_json_size(obj)
 
     def _filter_context_obj(context_obj: dict[str, Any]) -> Optional[dict[str, Any]]:
         filtered = {
@@ -2239,11 +2232,11 @@ def _extract_context_from_payload(payload: dict[str, Any]) -> Optional[dict[str,
             merged = dict(candidate)
             for key, value in compact_fields.items():
                 merged.setdefault(key, value)
-            if _json_size_cached(merged) <= _EVENT_RESULT_CONTEXT_MAX_BYTES:
+            if _json_size(merged) <= _EVENT_RESULT_CONTEXT_MAX_BYTES:
                 return merged
 
             if not compact_fields:
-                if _json_size_cached(candidate) <= _EVENT_RESULT_CONTEXT_MAX_BYTES:
+                if _json_size(candidate) <= _EVENT_RESULT_CONTEXT_MAX_BYTES:
                     return candidate
                 return None
 
@@ -2253,17 +2246,19 @@ def _extract_context_from_payload(payload: dict[str, Any]) -> Optional[dict[str,
                 if key in bounded:
                     continue
                 bounded[key] = value
-                if _json_size_cached(bounded) > _EVENT_RESULT_CONTEXT_MAX_BYTES:
+                if _json_size(bounded) > _EVENT_RESULT_CONTEXT_MAX_BYTES:
                     del bounded[key]
                     break
             if bounded:
                 return bounded
 
-            if _json_size_cached(compact_fields) <= _EVENT_RESULT_CONTEXT_MAX_BYTES:
+            if _json_size(compact_fields) <= _EVENT_RESULT_CONTEXT_MAX_BYTES:
                 return compact_fields
-            if _json_size_cached(candidate) <= _EVENT_RESULT_CONTEXT_MAX_BYTES:
+            if not compact_fields and _json_size(candidate) <= _EVENT_RESULT_CONTEXT_MAX_BYTES:
                 return candidate
-        return compact_fields or None
+        if compact_fields and _json_size(compact_fields) <= _EVENT_RESULT_CONTEXT_MAX_BYTES:
+            return compact_fields
+        return None
 
     compact: dict[str, Any] = {}
     for key in (

@@ -86,7 +86,8 @@ def test_extract_context_filters_transport_wrappers_and_honors_size_limit(monkey
     assert context == {"safe": "ok", "command_id": "cmd-1"}
 
 
-def test_extract_context_derives_from_response_payload():
+def test_extract_context_derives_from_response_payload(monkeypatch):
+    monkeypatch.setattr(v2_api, "_EVENT_RESULT_CONTEXT_MAX_ROWS_PER_COMMAND", 1)
     context = v2_api._extract_context_from_payload(
         {
             "command_id": "cmd-42",
@@ -111,7 +112,8 @@ def test_extract_context_derives_from_response_payload():
     assert context["command_0"]["rows"][0]["facility_mapping_id"] == 123
 
 
-def test_extract_context_derives_from_result_payload():
+def test_extract_context_derives_from_result_payload(monkeypatch):
+    monkeypatch.setattr(v2_api, "_EVENT_RESULT_CONTEXT_MAX_ROWS_PER_COMMAND", 1)
     context = v2_api._extract_context_from_payload(
         {
             "command_id": "cmd-result-1",

@@ -367,3 +367,9 @@ async def test_task_sequence_missing_reference_error_reports_reference_code():
     assert result["status"] == "failed"
     assert result["error"]["code"] == "REFERENCE_NOT_AVAILABLE"
     assert result["error"]["retryable"] is True
+
+
+def test_task_sequence_missing_reference_detection_avoids_refresh_false_positive():
+    assert TaskSequenceExecutor._is_missing_reference_error(
+        "refresh token missing for upstream auth provider"
+    ) is False
