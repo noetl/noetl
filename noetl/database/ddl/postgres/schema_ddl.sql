@@ -89,6 +89,17 @@ CREATE TABLE IF NOT EXISTS noetl.event (
     context_value       TEXT,
     trace_component     JSONB,
     stack_trace         TEXT,
+    CONSTRAINT chk_event_result_shape
+        CHECK (
+            result IS NULL
+            OR (
+                jsonb_typeof(result) = 'object'
+                AND result ? 'status'
+                AND (result - 'status' - 'reference' - 'context') = '{}'::jsonb
+                AND (NOT (result ? 'reference') OR jsonb_typeof(result->'reference') = 'object')
+                AND (NOT (result ? 'context') OR jsonb_typeof(result->'context') = 'object')
+            )
+        ),
     PRIMARY KEY (execution_id, event_id)
 ) PARTITION BY RANGE (execution_id);
 
@@ -130,13 +141,21 @@ CREATE INDEX IF NOT EXISTS idx_event_exec_id_event_id_desc ON noetl.event (execu
 -- Composite index for filtering by event_type within execution
 CREATE INDEX IF NOT EXISTS idx_event_exec_type ON noetl.event (execution_id, event_type, event_id DESC);
 
--- Command lifecycle lookups (claim/start/completed/failed) by command_id stored in meta/result
+-- Command lifecycle lookups (claim/start/completed/failed) by command_id stored in meta
 CREATE INDEX IF NOT EXISTS idx_event_exec_type_meta_command_id_event_id_desc
     ON noetl.event (execution_id, event_type, ((meta->>'command_id')), event_id DESC)
     WHERE meta ? 'command_id';
-CREATE INDEX IF NOT EXISTS idx_event_exec_type_result_command_id_event_id_desc
-    ON noetl.event (execution_id, event_type, ((result->'data'->>'command_id')), event_id DESC)
-    WHERE (result->'data') ? 'command_id';
+
+-- Legacy inline result index (result->data->command_id) is obsolete under reference-only contract
+DROP INDEX IF EXISTS noetl.idx_event_exec_type_result_command_id_event_id_desc;
+
+-- Reference lookup indexes
+CREATE INDEX IF NOT EXISTS idx_event_result_reference_type
+    ON noetl.event (((result->'reference'->>'type')))
+    WHERE result ? 'reference';
+CREATE INDEX IF NOT EXISTS idx_event_result_reference_record_id
+    ON noetl.event (((result->'reference'->>'record_id')))
+    WHERE (result->'reference') ? 'record_id';
 
 -- Batch status polling by request id
 CREATE INDEX IF NOT EXISTS idx_event_batch_request_event_id_desc

@@ -95,18 +95,16 @@ async def _find_orphaned_commands(
                 """
                 WITH latest_claims AS (
                     -- Most recent command.claimed event per command_id
-                    SELECT DISTINCT ON (
-                        COALESCE(meta->>'command_id', result->'data'->>'command_id')
-                    )
-                        COALESCE(meta->>'command_id', result->'data'->>'command_id') AS command_id,
+                    SELECT DISTINCT ON (meta->>'command_id')
+                        meta->>'command_id' AS command_id,
                         worker_id,
                         execution_id
                     FROM noetl.event
                     WHERE event_type = 'command.claimed'
-                      AND COALESCE(meta->>'command_id', result->'data'->>'command_id') IS NOT NULL
+                      AND meta ? 'command_id'
                       AND created_at > NOW() - (%s * INTERVAL '1 hour')
                     ORDER BY
-                        COALESCE(meta->>'command_id', result->'data'->>'command_id'),
+                        meta->>'command_id',
                         event_id DESC
                 )
                 SELECT
@@ -133,10 +131,7 @@ async def _find_orphaned_commands(
                         SELECT 1 FROM noetl.event t
                         WHERE t.execution_id = issued.execution_id
                           AND t.event_type = ANY(%s)
-                          AND (
-                              t.meta->>'command_id' = claims.command_id
-                              OR t.result->'data'->>'command_id' = claims.command_id
-                          )
+                          AND t.meta->>'command_id' = claims.command_id
                     )
                     -- Execution is not cancelled
                     AND NOT EXISTS (
@@ -183,19 +178,13 @@ async def _find_unclaimed_pending_commands(
                       SELECT 1 FROM noetl.event claims
                       WHERE claims.execution_id = issued.execution_id
                         AND claims.event_type = 'command.claimed'
-                        AND (
-                            claims.meta->>'command_id' = issued.meta->>'command_id'
-                            OR claims.result->'data'->>'command_id' = issued.meta->>'command_id'
-                        )
+                        AND claims.meta->>'command_id' = issued.meta->>'command_id'
                   )
                   AND NOT EXISTS (
                       SELECT 1 FROM noetl.event terminal
                       WHERE terminal.execution_id = issued.execution_id
                         AND terminal.event_type = ANY(%s)
-                        AND (
-                            terminal.meta->>'command_id' = issued.meta->>'command_id'
-                            OR terminal.result->'data'->>'command_id' = issued.meta->>'command_id'
-                        )
+                        AND terminal.meta->>'command_id' = issued.meta->>'command_id'
                   )
                   AND NOT EXISTS (
                       SELECT 1 FROM noetl.event x

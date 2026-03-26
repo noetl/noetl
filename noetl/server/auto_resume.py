@@ -377,7 +377,7 @@ async def mark_execution_cancelled(
                         int(event_id),
                         "workflow",
                         "workflow",
-                        Json({"kind": "data", "data": cancel_payload}),
+                        Json({"status": "CANCELLED", "context": cancel_payload}),
                         Json(cancel_meta),
                     ),
                 )

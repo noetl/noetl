@@ -196,22 +196,22 @@ async def _fetch_pending_command_counts_for_executions(
         issued AS (
             SELECT
                 te.execution_id,
-                COALESCE(e.meta->>'command_id', e.result->'data'->>'command_id') AS command_id
+                e.meta->>'command_id' AS command_id
             FROM target_executions te
             JOIN noetl.event e
               ON e.execution_id::text = te.execution_id
             WHERE e.event_type = 'command.issued'
-              AND COALESCE(e.meta->>'command_id', e.result->'data'->>'command_id') IS NOT NULL
+              AND e.meta ? 'command_id'
         ),
         terminal AS (
             SELECT
                 te.execution_id,
-                COALESCE(e.meta->>'command_id', e.result->'data'->>'command_id') AS command_id
+                e.meta->>'command_id' AS command_id
             FROM target_executions te
             JOIN noetl.event e
               ON e.execution_id::text = te.execution_id
             WHERE e.event_type IN ('command.completed', 'command.failed', 'command.cancelled')
-              AND COALESCE(e.meta->>'command_id', e.result->'data'->>'command_id') IS NOT NULL
+              AND e.meta ? 'command_id'
         ),
         pending AS (
             SELECT execution_id, command_id FROM issued
