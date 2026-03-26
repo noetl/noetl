@@ -1525,6 +1525,126 @@ class ControlFlowEngine:
 
         return candidates
 
+    @staticmethod
+    def _loop_event_ids_compatible(
+        cached_event_id: Optional[str],
+        restored_event_id: Optional[str],
+    ) -> bool:
+        """Allow safe loop snapshot reuse across replay key normalization."""
+        if cached_event_id is None or restored_event_id is None:
+            return True
+        cached = str(cached_event_id)
+        restored = str(restored_event_id)
+        if cached == restored:
+            return True
+
+        # Compatibility fallback: allow exec-key matches only for the same execution key.
+        # Do not treat exec_<id> as a wildcard against loop_<...> or numeric step event ids.
+        if cached.startswith("exec_") and restored.startswith("exec_"):
+            return cached == restored
+
+        return False
+
+    def _snapshot_loop_collections(
+        self,
+        state: "ExecutionState",
+    ) -> dict[str, dict[str, Any]]:
+        """Capture active loop collection snapshots before cache invalidation."""
+        snapshots: dict[str, dict[str, Any]] = {}
+        for step_name, loop_state in state.loop_state.items():
+            collection = loop_state.get("collection")
+            if not isinstance(collection, list) or len(collection) == 0:
+                continue
+            snapshots[step_name] = {
+                "collection": list(collection),
+                "event_id": (
+                    str(loop_state.get("event_id"))
+                    if loop_state.get("event_id") is not None
+                    else None
+                ),
+                "iterator": loop_state.get("iterator"),
+                "mode": loop_state.get("mode"),
+            }
+        return snapshots
+
+    def _restore_loop_collection_snapshots(
+        self,
+        state: "ExecutionState",
+        snapshots: dict[str, dict[str, Any]],
+    ) -> int:
+        """Restore loop collections that replay could not reconstruct safely."""
+        restored_count = 0
+        for step_name, snapshot in snapshots.items():
+            loop_state = state.loop_state.get(step_name)
+            if not loop_state:
+                continue
+
+            cached_collection = snapshot.get("collection")
+            if not isinstance(cached_collection, list) or len(cached_collection) == 0:
+                continue
+
+            restored_event_id = (
+                str(loop_state.get("event_id"))
+                if loop_state.get("event_id") is not None
+                else None
+            )
+            cached_event_id = snapshot.get("event_id")
+            if not self._loop_event_ids_compatible(cached_event_id, restored_event_id):
+                continue
+
+            current_collection = loop_state.get("collection")
+            current_size = (
+                len(current_collection)
+                if isinstance(current_collection, list)
+                else 0
+            )
+            completed_count = state.get_loop_completed_count(step_name)
+            scheduled_count = int(
+                loop_state.get("scheduled_count", completed_count) or completed_count
+            )
+            min_required_size = max(1, completed_count, scheduled_count)
+            cached_size = len(cached_collection)
+            if cached_size < min_required_size:
+                logger.warning(
+                    "[LOOP-CACHE-RESTORE] Skipping snapshot restore for %s "
+                    "(cached_size=%s required_min=%s scheduled=%s completed=%s cached_event_id=%s restored_event_id=%s)",
+                    step_name,
+                    cached_size,
+                    min_required_size,
+                    scheduled_count,
+                    completed_count,
+                    cached_event_id,
+                    restored_event_id,
+                )
+                continue
+
+            should_restore = (
+                current_size == 0
+                or (current_size <= min_required_size and cached_size > current_size)
+            )
+            if not should_restore:
+                continue
+
+            loop_state["collection"] = list(cached_collection)
+            if not loop_state.get("iterator") and snapshot.get("iterator") is not None:
+                loop_state["iterator"] = snapshot.get("iterator")
+            if not loop_state.get("mode") and snapshot.get("mode") is not None:
+                loop_state["mode"] = snapshot.get("mode")
+            restored_count += 1
+            logger.warning(
+                "[LOOP-CACHE-RESTORE] Restored collection snapshot for %s "
+                "(cached_size=%s replay_size=%s scheduled=%s completed=%s cached_event_id=%s restored_event_id=%s)",
+                step_name,
+                cached_size,
+                current_size,
+                scheduled_count,
+                completed_count,
+                cached_event_id,
+                restored_event_id,
+            )
+
+        return restored_count
+
     async def _count_step_events(
         self,
         execution_id: str,
@@ -2840,6 +2960,21 @@ class ControlFlowEngine:
                         loop_event_id,
                     )
                 else:
+                    rendered_collection_size = len(collection)
+                    if (
+                        (loop_continue_requested or loop_retry_requested)
+                        and isinstance(previous_collection, list)
+                        and previous_size > 0
+                        and rendered_collection_size < previous_size
+                    ):
+                        logger.warning(
+                            "[LOOP] Preserving prior collection snapshot for %s continuation/retry "
+                            "(rendered_size=%s previous_size=%s)",
+                            step.step,
+                            rendered_collection_size,
+                            previous_size,
+                        )
+                        collection = list(previous_collection)
                     existing_loop_state["collection"] = list(collection)
             loop_state = existing_loop_state
             loop_event_id_for_metadata = (
@@ -3364,6 +3499,8 @@ class ControlFlowEngine:
         logger.info(f"[ENGINE] handle_event called: event.name={event.name}, step={event.step}, execution={event.execution_id}, already_persisted={already_persisted}")
         commands: list[Command] = []
         normalized_payload = _unwrap_event_payload(event.payload)
+        preserved_loop_snapshots: dict[str, dict[str, Any]] = {}
+        cache_refreshed = False
         
         # Load execution state. For already-persisted events we must guard against
         # stale per-pod memory snapshots when another server advanced this execution.
@@ -3378,15 +3515,20 @@ class ControlFlowEngine:
                     allowed_missing_events=_STATE_CACHE_ALLOWED_MISSING_EVENTS,
                 )
             ):
+                preserved_loop_snapshots = self._snapshot_loop_collections(cached_state)
                 await self.state_store.invalidate_state(
                     event.execution_id,
                     reason="stale_cache_newer_persisted_events",
                 )
+                cache_refreshed = True
 
         state = await self.state_store.load_state(event.execution_id)
         if not state:
             logger.error(f"Execution state not found: {event.execution_id}")
             return commands
+
+        if cache_refreshed and preserved_loop_snapshots:
+            self._restore_loop_collection_snapshots(state, preserved_loop_snapshots)
 
         if state.completed:
             logger.info(
