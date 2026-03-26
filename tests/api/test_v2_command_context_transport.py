@@ -31,7 +31,7 @@ async def test_store_command_context_if_needed_externalizes_large_context(monkey
     assert result["kind"] == "result_ref"
     assert result["store"] == "kv"
     assert result["ref"].startswith("noetl://execution/123/")
-    assert result["preview"]
+    assert "preview" not in result
 
 
 @pytest.mark.asyncio

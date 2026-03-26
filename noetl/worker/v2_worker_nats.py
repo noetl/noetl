@@ -59,7 +59,7 @@ from noetl.core.workflow.workbook import execute_workbook_task
 from noetl.core.workflow.playbook import execute_playbook_task
 from noetl.tools.python import execute_python_task_async
 from jinja2 import Environment, BaseLoader
-from noetl.core.storage import Scope, create_preview, default_store, estimate_size
+from noetl.core.storage import Scope, default_store, estimate_size
 from noetl.worker.keychain_resolver import populate_keychain_context
 from noetl.worker.case_evaluator import CaseEvaluator, build_eval_context
 from noetl.worker.result_handler import ResultHandler, is_result_ref
@@ -425,7 +425,6 @@ class V2Worker:
             )
             return {
                 "_ref": ref.model_dump(mode="json"),
-                "_preview": create_preview(value, max_bytes=1024),
                 "_size_bytes": size_bytes,
                 "_store": ref.store.value,
             }
@@ -3000,7 +2999,7 @@ class V2Worker:
             payload=payload,
         )
         
-        # Build event data - server handles result storage (kind: data|ref|refs)
+        # Build event data - server persists reference-only result records.
         event_data = {
             "execution_id": str(execution_id),
             "step": step,

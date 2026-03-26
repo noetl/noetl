@@ -198,8 +198,8 @@ async def cleanup_inactive_executions_once(
                         "workflow",
                         Json(
                             {
-                                "kind": "data",
-                                "data": {
+                                "status": "CANCELLED",
+                                "context": {
                                     "reason": (
                                         "Auto-cancelled after execution inactivity "
                                         f"for {inactivity_minutes} minutes"

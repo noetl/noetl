@@ -2,7 +2,7 @@
 NoETL API v2 - Pure Event Sourcing Architecture.
 
 Single source of truth: noetl.event table
-- event.result stores either inline data OR reference (kind: data|ref|refs)
+- event.result stores control-plane state with status + optional reference/context (no inline output payload)
 - No queue tables, no projection tables
 - All state derived from events
 - NATS for command notifications only
@@ -28,7 +28,7 @@ from noetl.core.dsl.v2.models import Event
 from noetl.core.dsl.v2.engine import ControlFlowEngine, PlaybookRepo, StateStore
 from noetl.core.db.pool import get_pool_connection, get_server_pool_stats
 from noetl.core.messaging import NATSCommandPublisher
-from noetl.core.storage import Scope, create_preview, default_store, estimate_size
+from noetl.core.storage import Scope, default_store, estimate_size
 from noetl.claim_policy import decide_reclaim_for_existing_claim
 from noetl.server.api.event_queries import PENDING_COMMAND_COUNT_SQL
 
@@ -84,6 +84,10 @@ _BATCH_MAX_PAYLOAD_BYTES = max(
 _COMMAND_CONTEXT_INLINE_MAX_BYTES = max(
     4096,
     int(os.getenv("NOETL_COMMAND_CONTEXT_INLINE_MAX_BYTES", os.getenv("NOETL_INLINE_MAX_BYTES", "65536"))),
+)
+_EVENT_RESULT_CONTEXT_MAX_BYTES = max(
+    1024,
+    int(os.getenv("NOETL_EVENT_RESULT_CONTEXT_MAX_BYTES", "16384")),
 )
 _COMMAND_PUBLISH_RECOVERY_DELAY_SECONDS = max(
     5.0,
@@ -435,9 +439,9 @@ def _extract_event_command_id(req: "EventRequest") -> Optional[str]:
         payload.get("command_id"),
         meta.get("command_id"),
     ]
-    data_payload = payload.get("data")
-    if isinstance(data_payload, dict):
-        candidates.append(data_payload.get("command_id"))
+    payload_context = payload.get("context")
+    if isinstance(payload_context, dict):
+        candidates.append(payload_context.get("command_id"))
 
     for value in candidates:
         if isinstance(value, str) and value.strip():
@@ -466,41 +470,22 @@ def _build_command_id_latest_lookup_sql(
     """
     Build latest-event lookup SQL with index-friendly command_id predicates.
 
-    The query intentionally uses two UNION ALL branches (meta + result.data)
-    so PostgreSQL can use the partial expression indexes on each JSON path.
+    Reference-only contract stores command_id in meta; avoid result JSON scans.
     """
     return f"""
         SELECT {outer_select_columns}
-        FROM (
-            (
-            SELECT {inner_select_columns}
-            FROM noetl.event
-            WHERE execution_id = %s
-              AND {event_type_predicate}
-              AND meta ? 'command_id'
-              AND meta->>'command_id' = %s
-            ORDER BY event_id DESC
-            LIMIT 1
-            )
-            UNION ALL
-            (
-            SELECT {inner_select_columns}
-            FROM noetl.event
-            WHERE execution_id = %s
-              AND {event_type_predicate}
-              AND (result->'data') ? 'command_id'
-              AND (result->'data'->>'command_id') = %s
-            ORDER BY event_id DESC
-            LIMIT 1
-            )
-        ) {alias}
+        FROM noetl.event {alias}
+        WHERE execution_id = %s
+          AND {event_type_predicate}
+          AND meta ? 'command_id'
+          AND meta->>'command_id' = %s
         ORDER BY event_id DESC
         LIMIT 1
     """
 
 
 def _command_id_lookup_params(execution_id: int, command_id: str) -> tuple[Any, ...]:
-    return (execution_id, command_id, execution_id, command_id)
+    return (execution_id, command_id)
 
 
 _CLAIM_TERMINAL_LOOKUP_SQL = _build_command_id_latest_lookup_sql(
@@ -739,17 +724,11 @@ async def _command_has_claim_or_terminal(
                       AND (
                           (
                               e.event_type = 'command.claimed'
-                              AND (
-                                  e.meta->>'command_id' = %s
-                                  OR e.result->'data'->>'command_id' = %s
-                              )
+                              AND e.meta->>'command_id' = %s
                           )
                           OR (
                               e.event_type = ANY(%s)
-                              AND (
-                                  e.meta->>'command_id' = %s
-                                  OR e.result->'data'->>'command_id' = %s
-                              )
+                              AND e.meta->>'command_id' = %s
                           )
                           OR e.event_type = ANY(%s)
                       )
@@ -758,9 +737,7 @@ async def _command_has_claim_or_terminal(
                 (
                     execution_id,
                     command_id,
-                    command_id,
                     _COMMAND_TERMINAL_EVENT_TYPES,
-                    command_id,
                     command_id,
                     _EXECUTION_TERMINAL_EVENT_TYPES,
                 ),
@@ -951,7 +928,6 @@ async def _store_command_context_if_needed(
                 "step": step,
             },
         )
-        preview = create_preview(context, max_bytes=1024)
         logger.info(
             "[COMMAND-CONTEXT] Externalized command context execution_id=%s step=%s command_id=%s bytes=%s store=%s",
             execution_id,
@@ -965,7 +941,6 @@ async def _store_command_context_if_needed(
             "ref": ref.ref,
             "store": ref.store.value,
             "scope": ref.scope.value,
-            "preview": preview,
             "meta": ref.meta.model_dump(mode="json"),
             "correlation": ref.correlation,
         }
@@ -1134,7 +1109,7 @@ class EventRequest(BaseModel):
     payload: dict[str, Any] = Field(default_factory=dict)
     meta: Optional[dict[str, Any]] = None
     worker_id: Optional[str] = None
-    # ResultRef pattern
+    # Legacy result transport hints (normalized into reference-only result shape)
     result_kind: Literal["data", "ref", "refs"] = "data"
     result_uri: Optional[str] = None  # For kind=ref
     event_ids: Optional[list[int]] = None  # For kind=refs
@@ -1204,7 +1179,7 @@ async def execute(req: ExecuteRequest) -> ExecuteResponse:
     Start playbook execution.
 
     Creates playbook.initialized event, emits command.issued events.
-    All state in event table - result column has kind: data|ref|refs.
+    All state in event table - result column is reference-only (status + optional reference/context).
     """
     try:
         engine = get_engine()
@@ -1685,7 +1660,10 @@ async def claim_command(event_id: int, req: ClaimRequest):
                     claim_meta["reclaimed_from_worker"] = reclaimed_from_worker
                     if reclaimed_reason:
                         claim_meta["reclaimed_reason"] = reclaimed_reason
-                result_obj = {"kind": "data", "data": {"command_id": command_id}}
+                result_obj = _build_reference_only_result(
+                    payload={"command_id": command_id},
+                    status="RUNNING",
+                )
 
                 # Guard against a concurrent terminal execution event that arrived
                 # between the pre-lock terminal check (above) and this INSERT.
@@ -1854,7 +1832,13 @@ async def handle_event(req: EventRequest) -> EventResponse:
                         if req.worker_id:
                             meta_obj["worker_id"] = req.worker_id
 
-                        result_obj = {"kind": "data", "data": req.payload}
+                        result_obj = _build_reference_only_result(
+                            payload=req.payload,
+                            status="RUNNING",
+                            result_kind=req.result_kind,
+                            result_uri=req.result_uri,
+                            event_ids=req.event_ids,
+                        )
 
                         await cur.execute("""
                             INSERT INTO noetl.event (
@@ -1872,25 +1856,22 @@ async def handle_event(req: EventRequest) -> EventResponse:
                         logger.info(f"[CLAIM-SUCCESS] Command {command_id} claimed by worker {req.worker_id}")
                         return EventResponse(status="ok", event_id=evt_id, commands_generated=0)
 
-        # Build result based on kind
-        if req.result_kind == "ref" and req.result_uri:
-            result_obj = {
-                "kind": "ref",
-                "store_tier": "gcs" if req.result_uri.startswith("gs://") else 
-                              "s3" if req.result_uri.startswith("s3://") else "artifact",
-                "logical_uri": req.result_uri,
-            }
-        elif req.result_kind == "refs" and req.event_ids:
-            result_obj = {
-                "kind": "refs",
-                "event_ids": req.event_ids,
-                "total_parts": len(req.event_ids),
-            }
-        else:
-            result_obj = {
-                "kind": "data",
-                "data": req.payload,
-            }
+        status = _status_from_event_name(req.name)
+        result_obj = _build_reference_only_result(
+            payload=req.payload,
+            status=status,
+            result_kind=req.result_kind,
+            result_uri=req.result_uri,
+            event_ids=req.event_ids,
+        )
+        command_id = _extract_event_command_id(req)
+        event_meta = dict(req.meta or {})
+        event_meta["actionable"] = req.actionable
+        event_meta["informative"] = req.informative
+        if req.worker_id:
+            event_meta["worker_id"] = req.worker_id
+        if command_id:
+            event_meta["command_id"] = command_id
         
         # Persist worker event
         async with get_pool_connection() as conn:
@@ -1903,21 +1884,8 @@ async def handle_event(req: EventRequest) -> EventResponse:
                 row = await cur.fetchone()
                 catalog_id = row['catalog_id'] if row else None
                 
-                # Store control flags in meta column (not separate columns)
-                meta_obj = dict(req.meta or {})
-                meta_obj["actionable"] = req.actionable
-                meta_obj["informative"] = req.informative
-                if req.worker_id:
-                    meta_obj["worker_id"] = req.worker_id
-                
                 # Determine status based on event name
-                # "error"/"failed" -> FAILED, "done"/"exit"/"completed" -> COMPLETED, else -> RUNNING
-                if "error" in req.name or "failed" in req.name:
-                    status = "FAILED"
-                elif "done" in req.name or "exit" in req.name or "completed" in req.name:
-                    status = "COMPLETED"
-                else:
-                    status = "RUNNING"
+                status = _status_from_event_name(req.name)
 
                 await cur.execute("""
                     INSERT INTO noetl.event (
@@ -1927,13 +1895,12 @@ async def handle_event(req: EventRequest) -> EventResponse:
                 """, (
                     evt_id, int(req.execution_id), catalog_id, req.name,
                     req.step, req.step, status,
-                    Json(result_obj), Json(meta_obj), datetime.now(timezone.utc)
+                    Json(result_obj), Json(event_meta), datetime.now(timezone.utc)
                 ))
                 await conn.commit()
                 _record_db_operation_success()
 
         if req.name in {"command.completed", "command.failed"}:
-            command_id = _extract_event_command_id(req)
             if command_id:
                 _active_claim_cache_invalidate(command_id=command_id)
         
@@ -1943,10 +1910,10 @@ async def handle_event(req: EventRequest) -> EventResponse:
             step=req.step,
             name=req.name,
             payload=req.payload,
-            meta=req.meta or {},
+            meta=event_meta,
             timestamp=datetime.now(timezone.utc),
             worker_id=req.worker_id,
-            attempt=(req.meta or {}).get("attempt", 1)
+            attempt=event_meta.get("attempt", 1)
         )
         
         # CRITICAL: Only process through engine for workflow-driving events
@@ -2112,6 +2079,134 @@ def _status_from_event_name(event_name: str) -> str:
     return "RUNNING"
 
 
+def _reference_from_uri(uri: str) -> dict[str, Any]:
+    lowered = uri.lower()
+    if lowered.startswith(("gs://", "s3://", "http://", "https://")):
+        return {"type": "object_store", "url": uri}
+    if lowered.startswith("nats://"):
+        return {"type": "nats", "locator": uri}
+    if lowered.startswith(("postgres://", "postgresql://")):
+        return {"type": "relational", "db_url": uri}
+    return {"type": "external", "locator": uri}
+
+
+def _extract_reference_from_payload(
+    payload: dict[str, Any],
+    *,
+    result_kind: str = "data",
+    result_uri: Optional[str] = None,
+    event_ids: Optional[list[int]] = None,
+) -> Optional[dict[str, Any]]:
+    if result_kind == "ref" and result_uri:
+        return _reference_from_uri(result_uri)
+    if result_kind == "refs" and event_ids:
+        return {"type": "event_refs", "event_ids": [int(x) for x in event_ids if isinstance(x, int)]}
+
+    direct_reference = payload.get("reference")
+    if isinstance(direct_reference, dict):
+        return direct_reference
+
+    candidates = [
+        payload.get("response"),
+        payload.get("result"),
+        payload.get("context"),
+        payload.get("inputs"),
+        payload.get("data_reference"),
+    ]
+    for candidate in candidates:
+        if not isinstance(candidate, dict):
+            continue
+        ref_wrapper = candidate.get("_ref")
+        if not isinstance(ref_wrapper, dict):
+            continue
+
+        ref_value = str(ref_wrapper.get("ref") or "")
+        store = str(ref_wrapper.get("store") or "").lower()
+        meta = ref_wrapper.get("meta") if isinstance(ref_wrapper.get("meta"), dict) else {}
+        reference: dict[str, Any]
+        if store in {"kv", "nats", "nats_kv", "nats_object", "object"}:
+            reference = {"type": "nats", "locator": ref_value}
+        elif store in {"db", "postgres", "postgresql", "relational"}:
+            reference = {"type": "relational", "record_id": ref_value}
+        else:
+            reference = {"type": "object_store", "url": ref_value or meta.get("physical_uri") or ""}
+
+        if "bytes" in meta:
+            reference["bytes"] = meta.get("bytes")
+        if "sha256" in meta:
+            reference["sha256"] = meta.get("sha256")
+        if "content_type" in meta:
+            reference["content_type"] = meta.get("content_type")
+        if "compression" in meta:
+            reference["compression"] = meta.get("compression")
+        return reference
+    return None
+
+
+def _extract_context_from_payload(payload: dict[str, Any]) -> Optional[dict[str, Any]]:
+    context_obj = payload.get("context")
+    if isinstance(context_obj, dict):
+        filtered = {
+            key: value
+            for key, value in context_obj.items()
+            if key not in {
+                "_ref",
+                "_preview",
+                "_size_bytes",
+                "_store",
+                "_store_failed",
+                "_store_error",
+                "_inline",
+                "preview",
+                "extracted",
+            }
+        }
+        if not filtered:
+            return None
+        if _estimate_json_size(filtered) > _EVENT_RESULT_CONTEXT_MAX_BYTES:
+            return None
+        return filtered
+
+    compact: dict[str, Any] = {}
+    for key in (
+        "command_id",
+        "loop_event_id",
+        "request_id",
+        "event_ids",
+        "commands_generated",
+        "error_code",
+        "message",
+        "worker_id",
+        "batch_request_id",
+    ):
+        if key in payload and payload[key] is not None:
+            compact[key] = payload[key]
+    return compact or None
+
+
+def _build_reference_only_result(
+    *,
+    payload: dict[str, Any],
+    status: str,
+    result_kind: str = "data",
+    result_uri: Optional[str] = None,
+    event_ids: Optional[list[int]] = None,
+) -> dict[str, Any]:
+    result_obj: dict[str, Any] = {"status": status}
+    reference = _extract_reference_from_payload(
+        payload,
+        result_kind=result_kind,
+        result_uri=result_uri,
+        event_ids=event_ids,
+    )
+    if reference:
+        result_obj["reference"] = reference
+    context = _extract_context_from_payload(payload)
+    if context:
+        result_obj["context"] = context
+    return result_obj
+
+
 async def _persist_batch_status_event(
     execution_id: int,
     catalog_id: Optional[int],
@@ -2151,7 +2246,12 @@ async def _persist_batch_status_event(
                     "events.batch",
                     "events.batch",
                     status,
-                    Json({"kind": "data", "data": payload}),
+                    Json(
+                        _build_reference_only_result(
+                            payload=payload,
+                            status=status,
+                        )
+                    ),
                     Json(meta_obj),
                     worker_id,
                     error,
@@ -2229,9 +2329,9 @@ async def _persist_batch_acceptance(
                 if existing:
                     existing_meta = existing.get("meta") or {}
                     existing_result = existing.get("result") or {}
-                    existing_data = existing_result.get("data") if isinstance(existing_result, dict) else {}
-                    request_id = str(existing_meta.get("batch_request_id") or existing_data.get("request_id"))
-                    existing_event_ids = existing_data.get("event_ids") or []
+                    existing_context = existing_result.get("context") if isinstance(existing_result, dict) else {}
+                    request_id = str(existing_meta.get("batch_request_id") or existing_context.get("request_id"))
+                    existing_event_ids = existing_context.get("event_ids") or []
                     if request_id:
                         noop_job = _BatchAcceptJob(
                             request_id=request_id,
@@ -2285,7 +2385,12 @@ async def _persist_batch_acceptance(
                         item.step,
                         item.step,
                         _status_from_event_name(item.name),
-                        Json({"kind": "data", "data": item.payload}),
+                        Json(
+                            _build_reference_only_result(
+                                payload=item.payload,
+                                status=_status_from_event_name(item.name),
+                            )
+                        ),
                         Json(meta_obj),
                         req.worker_id,
                         datetime.now(timezone.utc),
@@ -2333,14 +2438,14 @@ async def _persist_batch_acceptance(
                     "events.batch",
                     "PENDING",
                     Json(
-                        {
-                            "kind": "data",
-                            "data": {
+                        _build_reference_only_result(
+                            payload={
                                 "request_id": request_id,
                                 "event_ids": event_ids,
                                 "commands_generated": 0,
                             },
-                        }
+                            status="PENDING",
+                        )
                     ),
                     Json(accepted_meta),
                     req.worker_id,
@@ -2689,9 +2794,9 @@ async def _get_batch_request_state(request_id: str) -> dict[str, Any]:
         state = "accepted"
 
     result_obj = row.get("result") or {}
-    result_data = result_obj.get("data") if isinstance(result_obj, dict) else {}
-    error_code = result_data.get("error_code")
-    message = result_data.get("message") or row.get("error")
+    result_context = result_obj.get("context") if isinstance(result_obj, dict) else {}
+    error_code = result_context.get("error_code")
+    message = result_context.get("message") or row.get("error")
     meta = row.get("meta") or {}
 
     return {
@@ -2701,7 +2806,7 @@ async def _get_batch_request_state(request_id: str) -> dict[str, Any]:
         "status": row["status"],
         "error_code": error_code,
         "message": message,
-        "commands_generated": result_data.get("commands_generated"),
+        "commands_generated": result_context.get("commands_generated"),
         "idempotency_key": meta.get("idempotency_key"),
         "updated_at": _iso_timestamp(row.get("created_at")),
     }
