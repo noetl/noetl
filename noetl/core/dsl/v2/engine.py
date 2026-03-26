@@ -57,6 +57,10 @@ _LOOP_STALL_RECOVERY_COOLDOWN_SECONDS = max(
     0.0,
     float(os.getenv("NOETL_LOOP_STALL_RECOVERY_COOLDOWN_SECONDS", "15")),
 )
+_STATE_CACHE_ALLOWED_MISSING_EVENTS = max(
+    1,
+    int(os.getenv("NOETL_STATE_CACHE_ALLOWED_MISSING_EVENTS", "3")),
+)
 _EXECUTION_TERMINAL_EVENT_TYPES = {
     "playbook.completed",
     "playbook.failed",
@@ -774,9 +778,10 @@ class StateStore:
             ttl_seconds=cache_ttl_seconds,
         )
         logger.info(
-            "[STATE-CACHE] max_executions=%s ttl_seconds=%s",
+            "[STATE-CACHE] max_executions=%s ttl_seconds=%s allowed_missing_events=%s",
             cache_max_size,
             cache_ttl_seconds,
+            _STATE_CACHE_ALLOWED_MISSING_EVENTS,
         )
         self.playbook_repo = playbook_repo
 
@@ -3345,7 +3350,7 @@ class ControlFlowEngine:
                 and await self.state_store.should_refresh_cached_state(
                     event.execution_id,
                     cached_state.last_event_id,
-                    allowed_missing_events=1,
+                    allowed_missing_events=_STATE_CACHE_ALLOWED_MISSING_EVENTS,
                 )
             ):
                 await self.state_store.invalidate_state(
