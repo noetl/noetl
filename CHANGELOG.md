@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.12.0](https://github.com/noetl/noetl/compare/v2.11.0...v2.12.0) (2026-03-26)
+
+### Features
+
+* **task-sequence:** add previous-jump replay for missing references ([8b380eb](https://github.com/noetl/noetl/commit/8b380eb98a870ad3b31797821574d19fde51a8c7))
+
+### Bug Fixes
+
+* **copilot:** harden context sizing and reference detection ([13fd313](https://github.com/noetl/noetl/commit/13fd3138e5d2616bd1da653b8655aed1dd7f5cb5))
+* **server:** bound derived context rows and retain compact routing keys ([87a62d8](https://github.com/noetl/noetl/commit/87a62d8ff07b49717497d8d68463ef104d54cbf1))
+* **server:** derive bounded context from response envelope for reference-only events ([659622c](https://github.com/noetl/noetl/commit/659622c83f4c8078fc254a6066b365c352be7767))
+
 ## [2.11.0](https://github.com/noetl/noetl/compare/v2.10.42...v2.11.0) (2026-03-26)
 
 ### Features
