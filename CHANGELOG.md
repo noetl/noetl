@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.12.3](https://github.com/noetl/noetl/compare/v2.12.2...v2.12.3) (2026-03-26)
+
+### Bug Fixes
+
+* **loop:** allow valid 1-item parallel snapshot restore ([ddcd425](https://github.com/noetl/noetl/commit/ddcd425440da4593fda950e52142f413b8442774))
+* **loop:** prevent tiny snapshot restore from collapsing parallel loops ([e965283](https://github.com/noetl/noetl/commit/e965283efbb52aae5f2b4ae47efca561f6acbce1))
+
 ## [2.12.2](https://github.com/noetl/noetl/compare/v2.12.1...v2.12.2) (2026-03-26)
 
 ### Bug Fixes
