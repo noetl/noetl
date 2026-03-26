@@ -903,7 +903,7 @@ def _validate_postgres_command_context(*, step: str, tool_kind: str, context: di
     """
     Enforce postgres command contract before command.issued is persisted.
 
-    Postgres execution must use auth references, not inline db_* fields.
+    Postgres execution must include auth and must not pass direct db_* fields.
     """
     if str(tool_kind).lower() != "postgres":
         return
@@ -915,8 +915,48 @@ def _validate_postgres_command_context(*, step: str, tool_kind: str, context: di
     if auth_cfg in (None, "", {}):
         raise ValueError(
             f"Postgres command for step '{step}' is missing auth in command context. "
-            "Use tool.auth and avoid direct db_* connection variables."
+            "Use tool.auth."
         )
+
+    forbidden_fields = {
+        "db_host",
+        "db_port",
+        "db_user",
+        "db_password",
+        "db_name",
+        "db_conn_string",
+    }
+    direct_fields: set[str] = set()
+    if isinstance(tool_config, dict):
+        direct_fields.update(
+            key for key in forbidden_fields if tool_config.get(key) not in (None, "")
+        )
+    if isinstance(args, dict):
+        direct_fields.update(
+            key for key in forbidden_fields if args.get(key) not in (None, "")
+        )
+    if direct_fields:
+        raise ValueError(
+            f"Postgres command for step '{step}' includes forbidden direct connection fields: "
+            f"{', '.join(sorted(direct_fields))}. Use auth references only."
+        )
+
+
+def _validate_postgres_command_context_or_422(
+    *,
+    step: str,
+    tool_kind: str,
+    context: dict[str, Any],
+) -> None:
+    try:
+        _validate_postgres_command_context(step=step, tool_kind=tool_kind, context=context)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"Invalid command context for step '{step}' and tool '{tool_kind}': {exc}"
+            ),
+        ) from exc
 
 
 async def _store_command_context_if_needed(
@@ -1280,7 +1320,7 @@ async def execute(req: ExecuteRequest) -> ExecuteResponse:
                         "pipeline": cmd.pipeline,  # Canonical v2: task pipeline
                         "spec": cmd.spec.model_dump() if cmd.spec else None,  # Step behavior (next_mode)
                     }
-                    _validate_postgres_command_context(
+                    _validate_postgres_command_context_or_422(
                         step=cmd.step,
                         tool_kind=cmd.tool.kind,
                         context=context,
@@ -1984,7 +2024,7 @@ async def handle_event(req: EventRequest) -> EventResponse:
                         "pipeline": cmd.pipeline,  # Canonical v2: task pipeline
                         "spec": cmd.spec.model_dump() if cmd.spec else None,  # Step behavior (next_mode)
                     }
-                    _validate_postgres_command_context(
+                    _validate_postgres_command_context_or_422(
                         step=cmd.step,
                         tool_kind=cmd.tool.kind,
                         context=context,
@@ -2659,7 +2699,7 @@ async def _issue_commands_for_batch(job: _BatchAcceptJob, commands: list) -> Non
                     "pipeline": cmd.pipeline,
                     "spec": cmd.spec.model_dump() if cmd.spec else None,
                 }
-                _validate_postgres_command_context(
+                _validate_postgres_command_context_or_422(
                     step=cmd.step,
                     tool_kind=cmd.tool.kind,
                     context=context,

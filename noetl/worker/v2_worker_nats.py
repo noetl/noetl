@@ -1566,7 +1566,29 @@ class V2Worker:
                 if postgres_auth in (None, "", {}):
                     raise ValueError(
                         f"Postgres step '{step}' is missing auth in command context. "
-                        "Use tool.auth and do not rely on direct db_* variables."
+                        "Use tool.auth."
+                    )
+                forbidden_fields = {
+                    "db_host",
+                    "db_port",
+                    "db_user",
+                    "db_password",
+                    "db_name",
+                    "db_conn_string",
+                }
+                direct_fields = set()
+                if isinstance(tool_config, dict):
+                    direct_fields.update(
+                        key for key in forbidden_fields if tool_config.get(key) not in (None, "")
+                    )
+                if isinstance(args, dict):
+                    direct_fields.update(
+                        key for key in forbidden_fields if args.get(key) not in (None, "")
+                    )
+                if direct_fields:
+                    raise ValueError(
+                        f"Postgres step '{step}' includes forbidden direct connection fields: "
+                        f"{', '.join(sorted(direct_fields))}. Use auth references only."
                     )
 
             # Execute tool

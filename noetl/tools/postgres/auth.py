@@ -16,15 +16,9 @@ from noetl.core.dsl.render import render_template
 from noetl.worker.secrets import fetch_credential_by_key
 from noetl.worker.auth_resolver import resolve_auth
 from noetl.worker.auth_compatibility import transform_credentials_to_auth, validate_auth_transition
+from .env import env_bool
 
 logger = setup_logger(__name__, include_location=True)
-
-
-def _env_bool(name: str, default: bool) -> bool:
-    raw = os.getenv(name)
-    if raw is None:
-        return default
-    return raw.strip().lower() in {"1", "true", "yes", "on"}
 
 
 def _has_non_empty_auth(task_config: Dict, task_with: Dict) -> bool:
@@ -50,7 +44,7 @@ def resolve_postgres_auth(task_config: Dict, task_with: Dict, jinja_env: Environ
     # Apply backwards compatibility transformation for deprecated 'credentials' field
     validate_auth_transition(task_config, task_with)
     task_config, task_with = transform_credentials_to_auth(task_config, task_with)
-    auth_required = _env_bool("NOETL_POSTGRES_AUTH_REQUIRED", True)
+    auth_required = env_bool("NOETL_POSTGRES_AUTH_REQUIRED", True)
     has_auth_config = _has_non_empty_auth(task_config, task_with)
 
     if auth_required and not has_auth_config:
@@ -216,7 +210,10 @@ def validate_and_render_connection_params(task_with: Dict, jinja_env: Environmen
     if _missing:
         raise ValueError(
             "Postgres connection is not configured. Missing: " + ", ".join(_missing) +
-            ". Use `auth: <credential_key>` or `auth: {type: postgres, host: ..., user: ..., password: ..., database: ...}` on the step."
+            ". Use `auth: <credential_key>`, `auth: {type: postgres, credential: <key>}`, "
+            "or inline fields via "
+            "`auth: {type: postgres, source: inline, fields: {host: ..., user: ..., password: ..., database: ...}}` "
+            "on the step."
         )
 
     # Build a rendering context that includes a 'workload' alias for compatibility
@@ -255,7 +252,7 @@ def validate_and_render_connection_params(task_with: Dict, jinja_env: Environmen
     if not pg_db or str(pg_db).strip() == '':
         raise ValueError("Database name is empty after rendering")
 
-    enforce_pgbouncer = _env_bool("NOETL_POSTGRES_ENFORCE_PGBOUNCER", False)
+    enforce_pgbouncer = env_bool("NOETL_POSTGRES_ENFORCE_PGBOUNCER", False)
     if enforce_pgbouncer:
         pgbouncer_host = (os.getenv("NOETL_POSTGRES_PGBOUNCER_HOST") or "").strip()
         pgbouncer_port = (os.getenv("NOETL_POSTGRES_PGBOUNCER_PORT") or "").strip()
@@ -267,7 +264,7 @@ def validate_and_render_connection_params(task_with: Dict, jinja_env: Environmen
         pg_host = pgbouncer_host
         if pgbouncer_port:
             pg_port = pgbouncer_port
-        logger.info(
+        logger.debug(
             "POSTGRES: Enforcing pgbouncer route host=%s port=%s (auth host=%s port=%s)",
             pg_host,
             pg_port,

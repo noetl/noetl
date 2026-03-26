@@ -21,18 +21,12 @@ from noetl.worker.keychain_resolver import populate_keychain_context
 
 from .auth import resolve_postgres_auth, validate_and_render_connection_params
 from .command import escape_task_with_params, decode_base64_commands, render_and_split_commands
+from .env import env_bool
 from .execution import execute_sql_with_connection
 from .response import process_results, format_success_response, format_error_response, format_exception_response
 from .models import validate_pool_config
 
 logger = setup_logger(__name__, include_location=True)
-
-
-def _env_bool(name: str, default: bool) -> bool:
-    raw = os.getenv(name)
-    if raw is None:
-        return default
-    return raw.strip().lower() in {"1", "true", "yes", "on"}
 
 
 def _env_int(name: str, default: int) -> int:
@@ -247,14 +241,14 @@ async def _execute_postgres_task_async(
         # Step 6: Resolve connection mode and pool configuration.
         # Default mode is pooled for stable DB pressure in distributed runs.
         pool_config = task_config.get('pool')
-        use_pool = _env_bool("NOETL_POSTGRES_USE_POOL_DEFAULT", True)
+        use_pool = env_bool("NOETL_POSTGRES_USE_POOL_DEFAULT", True)
         pool_params = {}
         pool_name = None
 
         if isinstance(pool_config, bool):
             use_pool = pool_config
         elif pool_config is None:
-            use_pool = _env_bool("NOETL_POSTGRES_USE_POOL_DEFAULT", True)
+            use_pool = env_bool("NOETL_POSTGRES_USE_POOL_DEFAULT", True)
         elif isinstance(pool_config, dict):
             use_pool = True
             try:
