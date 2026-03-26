@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.12.2](https://github.com/noetl/noetl/compare/v2.12.1...v2.12.2) (2026-03-26)
+
+### Bug Fixes
+
+* **loop:** address review findings for snapshot restore safety ([e0ce2e9](https://github.com/noetl/noetl/commit/e0ce2e94dd4d90c6bff900a3649923f9cb5680fe))
+* **loop:** preserve loop collections across stale-cache replay ([ffb069d](https://github.com/noetl/noetl/commit/ffb069d9b46ef8dd3fdffaf8b01767cb8c7ddea6))
+
 ## [2.12.1](https://github.com/noetl/noetl/compare/v2.12.0...v2.12.1) (2026-03-26)
 
 ### Bug Fixes
