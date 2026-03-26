@@ -63,6 +63,13 @@ _EXECUTION_TERMINAL_EVENT_TYPES = {
     "workflow.completed",
     "workflow.failed",
     "execution.cancelled",
+    # NOTE: "command.failed" is intentionally NOT in this set.
+    # command.failed is an infrastructure-level event (retries exhausted) that may arrive
+    # after a call.error arc has already issued recovery steps. It does not by itself make
+    # an execution terminal — only workflow.failed/playbook.failed do. This means that when
+    # the command.failed handler skips terminal emission (recovery in-flight), the status
+    # API will NOT report the execution as completed/failed based on the command.failed
+    # event alone. The execution remains in-progress until a true terminal event is emitted.
 }
 _EXECUTION_FAILURE_EVENT_TYPES = {
     "playbook.failed",
@@ -4621,9 +4628,21 @@ class ControlFlowEngine:
 
             if event.name == "command.failed":
                 state.failed = True  # Track failure for final status
-                logger.error(f"[FAILURE] Received command.failed event for step {event.step}, stopping execution")
-                await _emit_failed_terminal_events(event.step or "workflow")
-                return []  # Return empty commands list to stop workflow
+                # Only emit terminal events if the execution has NOT already recovered via a
+                # call.error arc. If a prior call.error handler issued recovery steps (e.g., a
+                # retry or fallback arc), has_pending_commands reflects those in-flight steps.
+                # Emitting workflow.failed while recovery commands are pending would cut the
+                # execution short and mark it failed even though it was progressing normally.
+                if has_pending_commands:
+                    logger.warning(
+                        "[FAILURE] command.failed for step %s but execution has pending recovery "
+                        "commands — skipping terminal emission to allow recovery to complete",
+                        event.step,
+                    )
+                else:
+                    logger.error(f"[FAILURE] Received command.failed event for step {event.step}, stopping execution")
+                    await _emit_failed_terminal_events(event.step or "workflow")
+                    return []  # Return empty commands list to stop workflow
 
             if event.name == "step.exit":
                 step_status = event.payload.get("status", "").upper()
