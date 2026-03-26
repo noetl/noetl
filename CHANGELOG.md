@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.10.42](https://github.com/noetl/noetl/compare/v2.10.41...v2.10.42) (2026-03-26)
+
+### Bug Fixes
+
+* **engine:** skip workflow.failed when command.failed arrives with pending recovery ([5a38cae](https://github.com/noetl/noetl/commit/5a38cae1f36a332eb4115999d6e3111bcd119e14))
+
 ## [2.10.41](https://github.com/noetl/noetl/compare/v2.10.40...v2.10.41) (2026-03-25)
 
 ### Bug Fixes
