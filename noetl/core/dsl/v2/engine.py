@@ -425,6 +425,23 @@ class ExecutionState:
         """
         self.completed_steps.add(step_name)
         if result is not None:
+            if isinstance(result, dict):
+                # Reference-only compatibility:
+                # worker/server store compact step output under result.context, while
+                # many existing templates still read step.command_0.*.
+                # Promote context keys to the top-level in-memory render object.
+                context_obj = result.get("context")
+                if isinstance(context_obj, dict):
+                    for key, value in context_obj.items():
+                        result.setdefault(key, value)
+                else:
+                    # Also support templates that expect step.context.* when the
+                    # payload is already a plain dict of compact fields.
+                    result["context"] = {
+                        k: v
+                        for k, v in result.items()
+                        if k not in {"reference", "_ref", "context"}
+                    }
             self.step_results[step_name] = result
             self.variables[step_name] = result
 

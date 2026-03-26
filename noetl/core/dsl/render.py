@@ -30,23 +30,44 @@ class TaskResultProxy:
             return self
         if name == "is_defined":
             return True
-        if isinstance(data, dict) and name in data:
-            val = data[name]
+        def _wrap(val: Any):
             # Wrap nested dicts so chained attribute access works (e.g., iter.batch.offset)
             if isinstance(val, dict):
                 return TaskResultProxy(val, name=name)
             return val
+        if isinstance(data, dict) and name in data:
+            return _wrap(data[name])
+        # Backward-compatibility shim for reference-only contract:
+        # step results are often persisted as {"status": "...", "context": {...}}
+        # while legacy templates still access top-level command_* keys
+        # (e.g., {{ step.command_0.rows[0].id }}). Resolve those from
+        # result.context when not present at top level.
+        if isinstance(data, dict):
+            context = data.get("context")
+            if isinstance(context, dict) and name in context:
+                return _wrap(context[name])
         raise AttributeError(f"'{type(data).__name__}' object has no attribute '{name}'")
 
     def __getitem__(self, key):
         try:
-            return object.__getattribute__(self, "_data")[key]
+            data = object.__getattribute__(self, "_data")
+            if key in data:
+                return data[key]
+            context = data.get("context") if isinstance(data, dict) else None
+            if isinstance(context, dict) and key in context:
+                return context[key]
+            return data[key]
         except Exception as e:
             raise KeyError(key) from e
 
     def get(self, key, default=None):
         data = object.__getattribute__(self, "_data")
         if isinstance(data, dict):
+            if key in data:
+                return data.get(key, default)
+            context = data.get("context")
+            if isinstance(context, dict):
+                return context.get(key, default)
             return data.get(key, default)
         return default
 
@@ -57,7 +78,11 @@ class TaskResultProxy:
         return json.dumps(object.__getattribute__(self, "_data"), default=str)
 
     def __contains__(self, key):
-        return key in object.__getattribute__(self, "_data")
+        data = object.__getattribute__(self, "_data")
+        if key in data:
+            return True
+        context = data.get("context") if isinstance(data, dict) else None
+        return isinstance(context, dict) and key in context
 
     def __iter__(self):
         return iter(object.__getattribute__(self, "_data"))
