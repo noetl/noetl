@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.12.1](https://github.com/noetl/noetl/compare/v2.12.0...v2.12.1) (2026-03-26)
+
+### Bug Fixes
+
+* **dsl:** narrow context promotion and wrap proxy getitem dicts ([4f1cfd6](https://github.com/noetl/noetl/commit/4f1cfd6c4f76995f145223ce9fcf485f8b11ddea))
+* **dsl:** restore set_ctx compatibility for reference-only context results ([386b3e2](https://github.com/noetl/noetl/commit/386b3e283713072efd744b5e19bb039712d9fce0))
+
 ## [2.12.0](https://github.com/noetl/noetl/compare/v2.11.0...v2.12.0) (2026-03-26)
 
 ### Features
