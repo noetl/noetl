@@ -37,6 +37,7 @@ CREATE TABLE noetl.event (
             OR (
                 jsonb_typeof(result) = 'object'
                 AND result ? 'status'
+                AND jsonb_typeof(result->'status') = 'string'
                 AND (result - 'status' - 'reference' - 'context') = '{}'::jsonb
                 AND (NOT (result ? 'reference') OR jsonb_typeof(result->'reference') = 'object')
                 AND (NOT (result ? 'context') OR jsonb_typeof(result->'context') = 'object')

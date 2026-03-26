@@ -95,6 +95,7 @@ CREATE TABLE IF NOT EXISTS noetl.event (
             OR (
                 jsonb_typeof(result) = 'object'
                 AND result ? 'status'
+                AND jsonb_typeof(result->'status') = 'string'
                 AND (result - 'status' - 'reference' - 'context') = '{}'::jsonb
                 AND (NOT (result ? 'reference') OR jsonb_typeof(result->'reference') = 'object')
                 AND (NOT (result ? 'context') OR jsonb_typeof(result->'context') = 'object')
@@ -102,6 +103,37 @@ CREATE TABLE IF NOT EXISTS noetl.event (
         ),
     PRIMARY KEY (execution_id, event_id)
 ) PARTITION BY RANGE (execution_id);
+
+-- Existing installations may already have noetl.event without the new constraint.
+-- Add it idempotently when missing. NOT VALID avoids a long validation scan on startup.
+DO $$
+BEGIN
+    IF to_regclass('noetl.event') IS NOT NULL
+       AND NOT EXISTS (
+           SELECT 1
+           FROM pg_constraint c
+           JOIN pg_namespace n ON n.oid = c.connamespace
+           JOIN pg_class t ON t.oid = c.conrelid
+           WHERE c.conname = 'chk_event_result_shape'
+             AND n.nspname = 'noetl'
+             AND t.relname = 'event'
+       ) THEN
+        ALTER TABLE noetl.event
+            ADD CONSTRAINT chk_event_result_shape
+                CHECK (
+                    result IS NULL
+                    OR (
+                        jsonb_typeof(result) = 'object'
+                        AND result ? 'status'
+                        AND jsonb_typeof(result->'status') = 'string'
+                        AND (result - 'status' - 'reference' - 'context') = '{}'::jsonb
+                        AND (NOT (result ? 'reference') OR jsonb_typeof(result->'reference') = 'object')
+                        AND (NOT (result ? 'context') OR jsonb_typeof(result->'context') = 'object')
+                    )
+                ) NOT VALID;
+    END IF;
+END;
+$$;
 
 -- Partitions — idempotent (IF NOT EXISTS supported on partition tables in PG15)
 CREATE TABLE IF NOT EXISTS noetl.event_pre_2026
@@ -151,8 +183,8 @@ CREATE INDEX IF NOT EXISTS idx_event_command_issued_created_event_id_desc
     ON noetl.event (created_at DESC, event_id DESC, execution_id, ((meta->>'command_id')))
     WHERE event_type = 'command.issued' AND meta ? 'command_id';
 
--- Legacy inline result index (result->data->command_id) is obsolete under reference-only contract
-DROP INDEX IF EXISTS noetl.idx_event_exec_type_result_command_id_event_id_desc;
+-- Legacy inline result index (result->data->command_id) is obsolete under reference-only contract.
+-- Drop it via one-time migration script, not from canonical schema DDL.
 
 -- Reference lookup indexes
 CREATE INDEX IF NOT EXISTS idx_event_result_reference_type
