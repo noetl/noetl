@@ -253,7 +253,13 @@ async def get_execution_status(execution_id: int) -> str:
                 SELECT event_type, status
                 FROM noetl.event
                 WHERE execution_id = %s
-                  AND event_type IN ('playbook.completed', 'playbook.failed', 'execution.cancelled')
+                  AND event_type IN (
+                      'playbook.completed',
+                      'workflow.completed',
+                      'playbook.failed',
+                      'workflow.failed',
+                      'execution.cancelled'
+                  )
                 ORDER BY created_at DESC
                 LIMIT 1
                 """,
@@ -261,9 +267,9 @@ async def get_execution_status(execution_id: int) -> str:
             )
             row = await cur.fetchone()
             if row:
-                if row["event_type"] == "playbook.completed":
+                if row["event_type"] in {"playbook.completed", "workflow.completed"}:
                     return "completed"
-                if row["event_type"] == "playbook.failed":
+                if row["event_type"] in {"playbook.failed", "workflow.failed"}:
                     return "failed"
                 if row["event_type"] == "execution.cancelled":
                     return "cancelled"
@@ -308,7 +314,13 @@ async def get_recovery_candidates() -> list[Dict[str, Any]]:
                     SELECT 1
                     FROM noetl.event t
                     WHERE t.execution_id = e.execution_id
-                      AND t.event_type IN ('playbook.completed', 'playbook.failed', 'execution.cancelled')
+                      AND t.event_type IN (
+                          'playbook.completed',
+                          'workflow.completed',
+                          'playbook.failed',
+                          'workflow.failed',
+                          'execution.cancelled'
+                      )
                   )
                 ORDER BY e.created_at DESC
                 LIMIT %s

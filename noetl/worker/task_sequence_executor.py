@@ -222,7 +222,17 @@ class TaskSequenceExecutor:
     NO BACKWARD COMPATIBILITY - rejects eval, expr, set_vars.
     """
     _MISSING_REFERENCE_CODE = "REFERENCE_NOT_AVAILABLE"
+    _NO_PROGRESS_CODE = "TASK_SEQUENCE_NO_PROGRESS"
     _SPECIAL_PREVIOUS_TARGETS = {"previous", "prev", "_previous", "@previous"}
+    _PATIENT_COUNT_KEYS = {
+        "patient_count",
+        "patients_count",
+        "active_patient_count",
+        "active_patients_count",
+        "total_patient_count",
+        "total_patients",
+        "patient_total",
+    }
 
     def __init__(
         self,
@@ -241,6 +251,112 @@ class TaskSequenceExecutor:
         self.tool_executor = tool_executor
         self.render_template = render_template
         self.render_dict = render_dict
+
+    @staticmethod
+    def _coerce_positive_int(value: Any) -> Optional[int]:
+        if isinstance(value, bool):
+            return None
+        if isinstance(value, int):
+            return value if value > 0 else None
+        if isinstance(value, float):
+            value_int = int(value)
+            return value_int if value_int > 0 else None
+        if isinstance(value, str):
+            raw = value.strip()
+            if raw.isdigit():
+                parsed = int(raw)
+                return parsed if parsed > 0 else None
+        return None
+
+    @classmethod
+    def _extract_positive_patient_count(
+        cls,
+        value: Any,
+        *,
+        depth: int = 0,
+        max_depth: int = 8,
+    ) -> Optional[int]:
+        if depth > max_depth:
+            return None
+        max_found: Optional[int] = None
+        if isinstance(value, dict):
+            for key, child in value.items():
+                key_norm = str(key).strip().lower()
+                if key_norm in cls._PATIENT_COUNT_KEYS:
+                    count = cls._coerce_positive_int(child)
+                    if count is not None:
+                        max_found = max(max_found or 0, count)
+            for child in value.values():
+                nested = cls._extract_positive_patient_count(
+                    child,
+                    depth=depth + 1,
+                    max_depth=max_depth,
+                )
+                if nested is not None:
+                    max_found = max(max_found or 0, nested)
+            return max_found
+        if isinstance(value, list):
+            for child in value:
+                nested = cls._extract_positive_patient_count(
+                    child,
+                    depth=depth + 1,
+                    max_depth=max_depth,
+                )
+                if nested is not None:
+                    max_found = max(max_found or 0, nested)
+            return max_found
+        return None
+
+    @staticmethod
+    def _extract_task_name(task_def: Any, idx: int) -> str:
+        if isinstance(task_def, dict):
+            name = task_def.get("name")
+            if isinstance(name, str) and name.strip():
+                return name.strip()
+        return f"task_{idx}"
+
+    @classmethod
+    def _looks_like_fetch_pagination_break(cls, remaining_tasks: list[Any]) -> bool:
+        if not remaining_tasks:
+            return False
+        names = [cls._extract_task_name(task_def, idx) for idx, task_def in enumerate(remaining_tasks)]
+        normalized = {name.strip().lower() for name in names if isinstance(name, str)}
+        has_paginate = "paginate" in normalized
+        has_fetch_or_save = bool({"fetch_page", "save_page"} & normalized)
+        return has_paginate and has_fetch_or_save
+
+    def _build_no_progress_error(
+        self,
+        *,
+        task_name: str,
+        base_context: dict[str, Any],
+        remaining_tasks: list[Any],
+        results: dict[str, Any],
+    ) -> Optional[dict[str, Any]]:
+        if set(results.keys()) != {"init_page"}:
+            return None
+        if not self._looks_like_fetch_pagination_break(remaining_tasks):
+            return None
+        patient_count = self._extract_positive_patient_count(base_context)
+        if patient_count is None:
+            return None
+        remaining_names = [
+            self._extract_task_name(task_def, idx)
+            for idx, task_def in enumerate(remaining_tasks)
+        ]
+        return {
+            "kind": "logic",
+            "code": self._NO_PROGRESS_CODE,
+            "retryable": False,
+            "message": (
+                f"Task sequence broke at '{task_name}' without page fetch progress "
+                f"while patient_count={patient_count}."
+            ),
+            "details": {
+                "patient_count": patient_count,
+                "remaining_tasks": remaining_names,
+            },
+        }
 
     async def execute(
         self,
@@ -547,6 +663,26 @@ class TaskSequenceExecutor:
 
             elif action.action == "break":
                 remaining = tasks[current_idx + 1:] if current_idx + 1 < len(tasks) else []
+                no_progress_error = self._build_no_progress_error(
+                    task_name=task_name,
+                    base_context=base_context,
+                    remaining_tasks=remaining,
+                    results=ctx.results,
+                )
+                if no_progress_error:
+                    logger.error(
+                        "[TASK_SEQ] No-progress break detected at '%s' with patient_count=%s",
+                        task_name,
+                        no_progress_error.get("details", {}).get("patient_count"),
+                    )
+                    return {
+                        "status": "failed",
+                        "_prev": ctx._prev,
+                        "results": ctx.results,
+                        "ctx": ctx.ctx,
+                        "error": no_progress_error,
+                        "failed_task": task_name,
+                    }
                 logger.info(f"[TASK_SEQ] Breaking from task sequence at '{task_name}'")
                 return {
                     "status": "break",

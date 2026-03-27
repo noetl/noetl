@@ -191,3 +191,64 @@ def test_should_recover_candidate_allows_stale_inflight_execution(monkeypatch):
 
 async def _async_value(value):
     return value
+
+
+class _FakeCursor:
+    def __init__(self, row):
+        self._row = row
+
+    async def execute(self, _query, _params=None):
+        return None
+
+    async def fetchone(self):
+        return self._row
+
+
+class _FakeCursorCtx:
+    def __init__(self, cursor):
+        self._cursor = cursor
+
+    async def __aenter__(self):
+        return self._cursor
+
+    async def __aexit__(self, exc_type, exc, tb):
+        return False
+
+
+class _FakeConn:
+    def __init__(self, row):
+        self._row = row
+
+    def cursor(self, row_factory=None):
+        return _FakeCursorCtx(_FakeCursor(self._row))
+
+
+class _FakeConnCtx:
+    def __init__(self, row):
+        self._row = row
+
+    async def __aenter__(self):
+        return _FakeConn(self._row)
+
+    async def __aexit__(self, exc_type, exc, tb):
+        return False
+
+
+@pytest.mark.asyncio
+async def test_get_execution_status_treats_workflow_completed_as_completed(monkeypatch):
+    row = {"event_type": "workflow.completed", "status": "COMPLETED"}
+    monkeypatch.setattr(auto_resume, "get_pool_connection", lambda *args, **kwargs: _FakeConnCtx(row))
+
+    status = await auto_resume.get_execution_status(123)
+
+    assert status == "completed"
+
+
+@pytest.mark.asyncio
+async def test_get_execution_status_treats_workflow_failed_as_failed(monkeypatch):
+    row = {"event_type": "workflow.failed", "status": "FAILED"}
+    monkeypatch.setattr(auto_resume, "get_pool_connection", lambda *args, **kwargs: _FakeConnCtx(row))
+
+    status = await auto_resume.get_execution_status(456)
+
+    assert status == "failed"
