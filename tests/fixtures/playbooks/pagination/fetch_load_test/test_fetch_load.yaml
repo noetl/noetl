@@ -71,95 +71,56 @@ workflow:
       spec:
         mode: parallel
         max_in_flight: 5
-        policy:
-          exec: distributed
     tool:
-      - name: fetch_patient_pages
-        kind: python
-        libs:
-          - requests
-        args:
-          patient_id: '{{ iter.item.patient_id }}'
-          api_url: '{{ api_url }}'
-          page_size: '{{ page_size }}'
-        code: |
-          import requests
-          import time
-          from urllib.parse import urlparse, parse_qs
-
-          pid = str(patient_id)
-          base = str(api_url).rstrip("/")
-          ps = int(page_size or 10)
-
-          total_pages = 0
-          total_records = 0
-          page = 1
-          max_retries = 5
-
-          while True:
-              params = {"patientId": pid, "page": page, "pageSize": ps}
-
-              resp = None
-              for attempt in range(max_retries):
-                  r = requests.get(
-                      f"{base}/api/v1/patient-records",
-                      params=params,
-                      timeout=60,
-                  )
-                  if r.status_code == 429:
-                      retry_after = int(r.headers.get("Retry-After", "1"))
-                      time.sleep(retry_after + 0.5)
-                      continue
-                  r.raise_for_status()
-                  resp = r
-                  break
-
-              if resp is None:
-                  raise RuntimeError(
-                      f"Rate limit exceeded after {max_retries} retries "
-                      f"for patient {pid} page {page}"
-                  )
-
-              data = resp.json()
-              entries = data.get("entry", [])
-              total_records += len(entries)
-              total_pages += 1
-
-              # Follow link.next if present
-              next_page = None
-              for link in data.get("link", []):
-                  if link.get("relation") == "next":
-                      parsed = urlparse(link["url"])
-                      qs = parse_qs(parsed.query)
-                      next_page = int(qs.get("page", [page + 1])[0])
-                      break
-
-              if next_page is None:
-                  break
-              page = next_page
-
-          result = {
-              "patient_id": pid,
-              "pages_fetched": total_pages,
-              "records_fetched": total_records,
-              "completed": True,
-          }
+      - name: init_page
+        kind: noop
         spec:
           policy:
             rules:
-              - when: '{{ outcome.error.retryable }}'
-                then:
-                  do: retry
-                  attempts: 3
-                  backoff: exponential
-                  delay: 2.0
-              - when: '{{ outcome.status == "error" }}'
-                then:
-                  do: fail
               - else:
                   then:
                     do: continue
-
+                    set_iter:
+                      page: 1
+                      pages_fetched: 0
+                      records_fetched: 0
+      - name: fetch_page
+        kind: http
+        method: GET
+        url: "{{ api_url }}/api/v1/patient-records"
+        params:
+          patientId: "{{ iter.item.patient_id }}"
+          page: "{{ iter.page }}"
+          pageSize: "{{ page_size }}"
+        spec:
+          policy:
+            rules:
+              - when: "{{ outcome.status == 'error' and outcome.http.status == 429 }}"
+                then: { do: retry, attempts: 30, backoff: fixed, delay: 1.0 }
+              - when: "{{ outcome.status == 'error' and outcome.http.status == 404 }}"
+                then: { do: break }
+              - when: "{{ outcome.status == 'error' }}"
+                then: { do: retry, attempts: 3, backoff: exponential, delay: 5.0 }
+              - else:
+                  then:
+                    do: continue
+                    set_iter:
+                      has_more: "{{ outcome.result.data.meta.page < outcome.result.data.meta.totalPages }}"
+                      pages_fetched: "{{ (iter.pages_fetched | int) + 1 }}"
+                      records_fetched: "{{ (iter.records_fetched | int) + (outcome.result.data.entry | length) }}"
+      - name: paginate
+        kind: noop
+        spec:
+          policy:
+            rules:
+              - when: "{{ iter.has_more | string | lower == 'true' }}"
+                then:
+                  do: jump
+                  to: fetch_page
+                  set_iter:
+                    page: "{{ (iter.page | int) + 1 }}"
+              - else:
+                  then: { do: continue }
       - name: save_result
         kind: postgres
         auth: pg_k8s
@@ -173,10 +134,10 @@ workflow:
           )
           VALUES (
             '{{ execution_id }}',
-            '{{ fetch_patient_pages.patient_id }}',
-            {{ fetch_patient_pages.pages_fetched }},
-            {{ fetch_patient_pages.records_fetched }},
-            {{ 'true' if fetch_patient_pages.completed else 'false' }}
+            '{{ iter.item.patient_id }}',
+            {{ iter.pages_fetched }},
+            {{ iter.records_fetched }},
+            true
           )
           ON CONFLICT (execution_id, patient_id) DO UPDATE SET
             pages_fetched   = EXCLUDED.pages_fetched,
@@ -186,18 +147,12 @@ workflow:
         spec:
           policy:
             rules:
-              - when: '{{ outcome.error.retryable }}'
-                then:
-                  do: retry
-                  attempts: 3
-                  backoff: linear
-                  delay: 1.0
-              - when: '{{ outcome.status == "error" }}'
-                then:
-                  do: fail
+              - when: "{{ outcome.status == 'error' and outcome.error.retryable }}"
+                then: { do: retry, attempts: 3, backoff: linear, delay: 1.0 }
+              - when: "{{ outcome.status == 'error' }}"
+                then: { do: fail }
               - else:
-                  then:
-                    do: continue
+                  then: { do: continue }
     next:
       spec:
         mode: exclusive
