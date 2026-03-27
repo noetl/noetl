@@ -443,31 +443,6 @@ class ExecutionState:
         """
         self.completed_steps.add(step_name)
         if result is not None:
-            if isinstance(result, dict):
-                # Reference-only compatibility:
-                # worker/server store compact step output under result.context, while
-                # many existing templates still read step.command_0.*.
-                # Promote only known command keys to avoid flattening arbitrary
-                # user payloads that may legitimately use a nested "context".
-                context_obj = result.get("context")
-                if isinstance(context_obj, dict):
-                    has_reference_shape = "reference" in result or "_ref" in result
-                    has_command_context = any(
-                        str(key).startswith("command_") for key in context_obj.keys()
-                    )
-                    if has_reference_shape or has_command_context:
-                        for key, value in context_obj.items():
-                            key_str = str(key)
-                            if key_str.startswith("command_") or key_str == "command_id":
-                                result.setdefault(key, value)
-                else:
-                    # Also support templates that expect step.context.* when the
-                    # payload is already a plain dict of compact fields.
-                    result["context"] = {
-                        k: v
-                        for k, v in result.items()
-                        if k not in {"reference", "_ref", "context"}
-                    }
             self.step_results[step_name] = result
             self.variables[step_name] = result
 
@@ -689,29 +664,15 @@ class ExecutionState:
             }
             # Note: Iterator variable itself (e.g., {{ num }}) comes from state.variables
         
-        # Add event-specific data
-        if isinstance(event_payload, dict) and "response" in event_payload:
-            context["response"] = event_payload["response"]
-        elif isinstance(event_payload, dict) and "result" in event_payload:
-            # Fallback: expose result as response for templates that expect {{ response.* }} on step.exit
-            context["response"] = event_payload["result"]
-        if isinstance(event_payload, dict) and "error" in event_payload:
-            context["error"] = event_payload["error"]
-        if isinstance(event_payload, dict) and "result" in event_payload:
-            context["result"] = event_payload["result"]
-        else:
-            # CRITICAL FIX: For call.done events, the worker sends the tool response
-            # directly as the payload (not wrapped in a "result" key). Make the entire
-            # payload available as "result" so case conditions like
-            # {{ result.sub is defined }} work correctly.
-            if event.name == "call.done" and event_payload:
-                context["result"] = event_payload
-                # Only set response if not already extracted from "response" key
-                # Worker may send {"response": actual_response} where actual_response
-                # was already extracted at line 413
-                if "response" not in context:
-                    context["response"] = event_payload
-                logger.debug(f"[RENDER_CTX] Set result/response from call.done payload for {event.step}")
+        # Add event-specific data (strict reference-only contract).
+        if isinstance(event_payload, dict):
+            if "error" in event_payload:
+                context["error"] = event_payload["error"]
+            if "result" in event_payload:
+                context["result"] = event_payload["result"]
+                # Keep response alias for existing condition expressions, but only
+                # from strict result envelope (never raw tool response payload).
+                context["response"] = event_payload["result"]
 
         return context
 
@@ -1058,17 +1019,13 @@ class StateStore:
                                 event_type,
                             )
 
-                    # Compatibility: older rows may still use {"kind":"...","data":...} wrappers.
-                    # Replay should work against payload semantics, not storage transport details.
                     event_payload = result_data
-                    if isinstance(result_data, dict) and "kind" in result_data and "data" in result_data:
-                        event_payload = result_data.get("data")
 
                     # Task-sequence policy rules can mutate ctx on the worker. Replay must
                     # restore those execution-scoped variables from persisted call.done events
                     # so a cache miss on another server does not lose them.
                     if event_type == 'call.done' and isinstance(event_payload, dict) and isinstance(node_name, str) and node_name.endswith(":task_sequence"):
-                        response_data = event_payload.get("response", event_payload)
+                        response_data = event_payload.get("result", event_payload)
                         if isinstance(response_data, dict):
                             task_ctx = response_data.get("ctx", {})
                             if isinstance(task_ctx, dict):
@@ -2410,13 +2367,11 @@ class ControlFlowEngine:
                         "pending_retry": False
                     }
 
-                # Extract data from response using path
-                result_data = event.payload.get("response")
-                if result_data is None and "result" in event.payload:
-                    result_data = event.payload["result"]
+                # Extract data from strict result envelope.
+                result_data = event.payload.get("result")
 
                 if result_data is None:
-                    logger.warning(f"[COLLECT] No response or result payload to collect for step {step_name}")
+                    logger.warning(f"[COLLECT] No result payload to collect for step {step_name}")
                 else:
                     data_to_collect = result_data
                     if path and isinstance(result_data, dict):
@@ -3794,7 +3749,7 @@ class ControlFlowEngine:
         if event.step.endswith(":task_sequence") and event.name == "call.done":
             parent_step = event.step.rsplit(":", 1)[0]
             response_data = (
-                normalized_payload.get("response", normalized_payload)
+                normalized_payload.get("result", normalized_payload)
                 if isinstance(normalized_payload, dict)
                 else normalized_payload
             )
@@ -4170,17 +4125,16 @@ class ControlFlowEngine:
         worker_eval_action = normalized_payload.get("eval_action") if isinstance(normalized_payload, dict) else None
         has_worker_retry = worker_eval_action and worker_eval_action.get("type") == "retry"
 
-        # CRITICAL: Store call.done/call.error response in state BEFORE evaluating next transitions
+        # CRITICAL: Store call.done/call.error result in state BEFORE evaluating next transitions
         # This ensures the result is available in render context for subsequent steps
-        # Worker sends response directly as payload (not wrapped in "response" key)
         if event.name == "call.done":
             response_data = (
-                normalized_payload.get("response", normalized_payload)
+                normalized_payload.get("result", normalized_payload)
                 if isinstance(normalized_payload, dict)
                 else normalized_payload
             )
             state.mark_step_completed(event.step, response_data)
-            logger.debug(f"[CALL.DONE] Stored response for step {event.step} in state BEFORE next evaluation")
+            logger.debug(f"[CALL.DONE] Stored result for step {event.step} in state BEFORE next evaluation")
         elif event.name == "call.error":
             # Mark step as completed even on error - it finished executing (with failure)
             error_data = (
@@ -4243,7 +4197,7 @@ class ControlFlowEngine:
         # never triggers handle_event().
         if event.name == "call.done" and is_loop_step:
             response_data = (
-                normalized_payload.get("response", normalized_payload)
+                normalized_payload.get("result", normalized_payload)
                 if isinstance(normalized_payload, dict)
                 else normalized_payload
             )
@@ -5169,8 +5123,17 @@ class ControlFlowEngine:
                     if event.step in state.step_event_ids:
                         meta["previous_step_event_id"] = str(state.step_event_ids[event.step])
                 
-                # Merge with existing context metadata
-                context_data = event.payload.get("context", {})
+                # Merge with existing context metadata from strict result envelope.
+                context_data = {}
+                payload_result = event.payload.get("result")
+                if isinstance(payload_result, dict):
+                    payload_context = payload_result.get("context")
+                    if isinstance(payload_context, dict):
+                        context_data = dict(payload_context)
+                elif isinstance(event.payload.get("context"), dict):
+                    # Transitional guard for non-step events that may still provide top-level context.
+                    context_data = dict(event.payload.get("context") or {})
+
                 if isinstance(context_data, dict):
                     # CRITICAL: Convert all IDs to strings to prevent JavaScript precision loss with Snowflake IDs
                     context_data["execution_id"] = str(event.execution_id)
@@ -5178,15 +5141,6 @@ class ControlFlowEngine:
                     context_data["root_event_id"] = str(state.root_event_id) if state.root_event_id else None
                 else:
                     context_data = {}
-
-                # Persist payload result details in context column (not event.result).
-                # event.result is reserved for control-plane status + optional reference/context.
-                payload_result = event.payload.get("result")
-                if isinstance(payload_result, dict):
-                    for key, value in payload_result.items():
-                        context_data.setdefault(key, value)
-                elif payload_result is not None:
-                    context_data.setdefault("result_value", payload_result)
                 
                 # Determine status: Use payload status if provided, otherwise infer from event name
                 payload_status = event.payload.get("status")
@@ -5198,7 +5152,11 @@ class ControlFlowEngine:
                     status = "FAILED" if "failed" in event.name else "COMPLETED" if ("step.exit" == event.name or "completed" in event.name) else "RUNNING"
 
                 result_obj: dict[str, Any] = {"status": status}
-                payload_reference = event.payload.get("reference")
+                payload_reference = None
+                if isinstance(payload_result, dict):
+                    payload_reference = payload_result.get("reference")
+                if not isinstance(payload_reference, dict):
+                    payload_reference = event.payload.get("reference")
                 if isinstance(payload_reference, dict):
                     result_obj["reference"] = payload_reference
 

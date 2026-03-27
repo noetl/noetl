@@ -851,21 +851,19 @@ workflow:
     assert step_result["context"]["ctx_vars"]["foo"] == "bar"
 
 
-def test_task_result_proxy_getitem_wraps_context_dict_values():
+def test_task_result_proxy_keeps_context_scoped_access_only():
     proxy = TaskResultProxy(
         {
             "status": "COMPLETED",
             "context": {
-                "command_0": {
-                    "rows": [{"facility_mapping_id": 42}],
-                    "row_count": 1,
-                }
+                "facility_mapping_id": 42,
             },
         }
     )
-    command_result = proxy["command_0"]
-    assert isinstance(command_result, TaskResultProxy)
-    assert command_result.rows[0]["facility_mapping_id"] == 42
+    with pytest.raises(KeyError):
+        _ = proxy["facility_mapping_id"]
+
+    assert proxy.context.facility_mapping_id == 42
 
 
 @pytest.mark.asyncio

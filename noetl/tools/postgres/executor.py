@@ -23,7 +23,13 @@ from .auth import resolve_postgres_auth, validate_and_render_connection_params
 from .command import escape_task_with_params, decode_base64_commands, render_and_split_commands
 from .env import env_bool
 from .execution import execute_sql_with_connection
-from .response import process_results, format_success_response, format_error_response, format_exception_response
+from .response import (
+    process_results,
+    collapse_results_to_last_command,
+    format_success_response,
+    format_error_response,
+    format_exception_response,
+)
 from .models import validate_pool_config
 
 logger = setup_logger(__name__, include_location=True)
@@ -309,6 +315,7 @@ async def _execute_postgres_task_async(
         end_time = datetime.datetime.now()
         duration = (end_time - start_time).total_seconds()
         has_error, error_message = process_results(results)
+        collapsed_result = collapse_results_to_last_command(results)
         task_status = 'error' if has_error else 'success'
 
         # Step 10: Log completion event
@@ -322,9 +329,9 @@ async def _execute_postgres_task_async(
 
         # Step 11: Return error response if any (error logged via event system)
         if has_error:
-            return format_error_response(task_id, error_message, results)
+            return format_error_response(task_id, error_message, collapsed_result)
         else:
-            return format_success_response(task_id, results)
+            return format_success_response(task_id, collapsed_result)
 
     except Exception as e:
         # Handle unexpected errors
