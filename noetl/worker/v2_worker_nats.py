@@ -399,6 +399,14 @@ class V2Worker:
             logger.info("Closed all Postgres connection pools")
         except Exception as e:
             logger.warning(f"Error closing connection pools: {e}")
+
+        # Close shared async HTTP clients
+        try:
+            from noetl.tools.http import close_shared_async_http_clients
+            await close_shared_async_http_clients()
+            logger.info("Closed shared async HTTP clients")
+        except Exception as e:
+            logger.warning(f"Error closing shared HTTP clients: {e}")
         
         logger.info(f"Worker {self.worker_id} stopped")
     
@@ -1860,37 +1868,16 @@ class V2Worker:
             logger.debug(f"HTTP TOOL: config_keys={list(config.keys()) if isinstance(config, dict) else 'not dict'} | retry={retry_config is not None} | policies={len(retry_config) if isinstance(retry_config, list) else 0} | has_pagination={has_pagination_retry}")
 
             if has_pagination_retry:
-                logger.info("HTTP tool using execute_with_retry for pagination support")
-                # Use retry-aware executor which handles per-iteration retries
-                from noetl.core.runtime.retry import execute_with_retry
-                
-                # Create executor function that wraps async execute_http_task
-                def http_executor(cfg, ctx, env, task_w):
-                    import asyncio
-                    try:
-                        loop = asyncio.get_running_loop()
-                    except RuntimeError:
-                        # No running loop - create one
-                        return asyncio.run(execute_http_task(cfg, ctx, env, task_w or {}))
-                    else:
-                        # Running in existing loop - run in executor to avoid blocking
-                        import concurrent.futures
-                        with concurrent.futures.ThreadPoolExecutor() as pool:
-                            future = pool.submit(
-                                lambda: asyncio.run(execute_http_task(cfg, ctx, env, task_w or {}))
-                            )
-                            return future.result()
-                
-                # Execute with retry handler (supports pagination)
-                result = execute_with_retry(
-                    http_executor,
+                logger.info("HTTP tool using execute_with_retry_async for pagination support")
+                from noetl.core.runtime.retry import execute_with_retry_async
+                result = await execute_with_retry_async(
+                    execute_http_task,
                     task_config,
                     step,
                     context,
                     jinja_env,
                     args
                 )
-                
                 # Check if retry handler returned error status
                 if isinstance(result, dict) and result.get('status') == 'error':
                     return result
@@ -1900,10 +1887,6 @@ class V2Worker:
                 return result
             else:
                 # No pagination retry - use direct execution (original path)
-                # Use plugin's execute_http_task which includes:
-                # - Auth resolution and credential caching
-                # - Template rendering
-                # - Response processing
                 task_with = args  # Plugin uses 'task_with' for rendered params
                 result = await execute_http_task(task_config, context, jinja_env, task_with)
                 # Check if plugin returned error status

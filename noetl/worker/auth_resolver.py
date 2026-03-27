@@ -17,7 +17,7 @@ from collections.abc import Mapping
 from jinja2 import Environment
 
 # Import existing credential fetching functions
-from .secrets import fetch_credential_by_key
+from .secrets import fetch_credential_by_key, fetch_credential_by_key_async
 
 from noetl.core.logger import setup_logger
 logger = setup_logger(__name__, include_location=True)
@@ -183,12 +183,38 @@ def _fetch_credential_data(key: str) -> Dict[str, Any]:
         raise ValueError(f"Credential '{key}' fetch failed: {e}")
 
 
+async def _fetch_credential_data_async(key: str) -> Dict[str, Any]:
+    """
+    Async version of _fetch_credential_data.
+
+    Uses fetch_credential_by_key_async so the event loop is never blocked
+    during network I/O or backoff delays.
+    """
+    try:
+        credential = await fetch_credential_by_key_async(key)
+        if not credential:
+            raise ValueError(f"Credential '{key}' not found")
+
+        data = credential.get('data', {})
+        if isinstance(data, dict) and 'data' in data:
+            data = data['data']
+
+        service = credential.get('service') or credential.get('type')
+        if service:
+            data['service'] = service.lower()
+
+        return data
+    except Exception as e:
+        logger.error(f"Failed to fetch credential '{key}': {e}")
+        raise ValueError(f"Credential '{key}' fetch failed: {e}")
+
+
 def _fetch_secret_data(name: str) -> Dict[str, Any]:
     """
     Fetch secret data by name.
-    
+
     Current implementation checks environment variables with NOETL_SECRET_ prefix.
-    
+
     For production deployments, integrate with your secret management system:
     - AWS Secrets Manager
     - Azure Key Vault

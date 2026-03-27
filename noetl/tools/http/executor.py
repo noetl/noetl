@@ -4,11 +4,11 @@ HTTP task executor for NoETL jobs.
 Main execution logic for HTTP plugin actions.
 """
 
+import asyncio
 import uuid
 import datetime
 import httpx
 import os
-import threading
 import math
 from urllib.parse import urlparse
 from typing import Dict, Any, Optional, Callable
@@ -119,20 +119,27 @@ def _resolve_http_timeout_seconds(task_timeout_value: Any) -> float:
     return min(bounded, max_timeout)
 
 
-_HTTP_CLIENT_LOCK = threading.Lock()
-_HTTP_CLIENTS: Dict[tuple[bool, bool], httpx.Client] = {}
+_ASYNC_HTTP_CLIENTS: Dict[tuple[bool, bool], httpx.AsyncClient] = {}
+_ASYNC_HTTP_CLIENT_LOCK: Optional[asyncio.Lock] = None
 
 
-def _get_shared_http_client(verify_ssl: bool, follow_redirects: bool) -> httpx.Client:
+def _get_async_lock() -> asyncio.Lock:
+    global _ASYNC_HTTP_CLIENT_LOCK
+    if _ASYNC_HTTP_CLIENT_LOCK is None:
+        _ASYNC_HTTP_CLIENT_LOCK = asyncio.Lock()
+    return _ASYNC_HTTP_CLIENT_LOCK
+
+
+async def _get_shared_async_http_client(verify_ssl: bool, follow_redirects: bool) -> httpx.AsyncClient:
     """
-    Return a shared keep-alive HTTP client for this worker process.
+    Return a shared keep-alive async HTTP client for this worker process.
 
-    This avoids creating/tearing down a client per HTTP task call, which is
+    Avoids creating/tearing down a client per HTTP task call, which is
     especially expensive for high-volume task_sequence loops.
     """
     key = (bool(verify_ssl), bool(follow_redirects))
-    with _HTTP_CLIENT_LOCK:
-        existing = _HTTP_CLIENTS.get(key)
+    async with _get_async_lock():
+        existing = _ASYNC_HTTP_CLIENTS.get(key)
         if existing is not None and not existing.is_closed:
             return existing
 
@@ -143,7 +150,7 @@ def _get_shared_http_client(verify_ssl: bool, follow_redirects: bool) -> httpx.C
         )
         http2_enabled = _read_bool_env("NOETL_HTTP_ENABLE_HTTP2", True)
         try:
-            client = httpx.Client(
+            client = httpx.AsyncClient(
                 verify=verify_ssl,
                 follow_redirects=follow_redirects,
                 limits=limits,
@@ -156,7 +163,7 @@ def _get_shared_http_client(verify_ssl: bool, follow_redirects: bool) -> httpx.C
                     "HTTP/2 requested but h2 extras are unavailable; falling back to HTTP/1.1. "
                     "Set NOETL_HTTP_ENABLE_HTTP2=false to suppress this warning."
                 )
-                client = httpx.Client(
+                client = httpx.AsyncClient(
                     verify=verify_ssl,
                     follow_redirects=follow_redirects,
                     limits=limits,
@@ -164,8 +171,19 @@ def _get_shared_http_client(verify_ssl: bool, follow_redirects: bool) -> httpx.C
                 )
             else:
                 raise
-        _HTTP_CLIENTS[key] = client
+        _ASYNC_HTTP_CLIENTS[key] = client
         return client
+
+
+async def close_shared_async_http_clients() -> None:
+    """Close all shared async HTTP clients. Call during worker shutdown."""
+    async with _get_async_lock():
+        for client in _ASYNC_HTTP_CLIENTS.values():
+            try:
+                await client.aclose()
+            except Exception:
+                pass
+        _ASYNC_HTTP_CLIENTS.clear()
 
 
 async def execute_http_task(
@@ -324,8 +342,8 @@ async def execute_http_task(
                     method, endpoint, task_with, mocked=True, sink_config=sink_config
                 )
 
-            # Execute the actual HTTP request using shared keep-alive client
-            client = _get_shared_http_client(bool(verify_ssl), follow_redirects)
+            # Execute the actual HTTP request using shared keep-alive async client
+            client = await _get_shared_async_http_client(bool(verify_ssl), follow_redirects)
             request_args = build_request_args(
                 endpoint, method, headers, data_map, params, payload
             )
@@ -342,7 +360,7 @@ async def execute_http_task(
                 _request_shape_summary(request_args),
             )
 
-            response = client.request(method, timeout=timeout, **request_args)
+            response = await client.request(method, timeout=timeout, **request_args)
 
             response_data = process_response(response)
             is_success = response.is_success

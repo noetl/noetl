@@ -159,28 +159,13 @@ def execute_task(
                 needs_worker_retry = 'on_success' in retry_config
         
         if needs_worker_retry:
-            # Use worker-side retry wrapper for pagination/polling
-            from noetl.core.runtime.retry import execute_with_retry
-            return execute_with_retry(
-                lambda cfg, ctx, env, a: asyncio.run(execute_http_task(cfg, ctx, env, a or {})),
-                task_config,
-                task_name,
-                wrapped_context,
-                jinja_env,
-                args
+            # Use async retry wrapper — runs a new event loop since execute_task is sync
+            from noetl.core.runtime.retry import execute_with_retry_async
+            return asyncio.run(
+                execute_with_retry_async(execute_http_task, task_config, task_name, wrapped_context, jinja_env, args)
             )
-        # HTTP plugin is async - run directly without retry wrapper
-        # on_error retry is handled server-side through event-driven control loop
-        try:
-            loop = asyncio.get_running_loop()
-            import concurrent.futures
-            with concurrent.futures.ThreadPoolExecutor() as pool:
-                future = pool.submit(
-                    lambda: asyncio.run(execute_http_task(task_config, wrapped_context, jinja_env, args or {}))
-                )
-                return future.result()
-        except RuntimeError:
-            return asyncio.run(execute_http_task(task_config, wrapped_context, jinja_env, args or {}))
+        # HTTP plugin is truly async — run a fresh event loop (this function is sync)
+        return asyncio.run(execute_http_task(task_config, wrapped_context, jinja_env, args or {}))
     elif task_type == "python":
         return execute_python_task(
             task_config, wrapped_context, jinja_env, args or {}

@@ -159,4 +159,62 @@ def fetch_credentials_by_keys(keys: List[str]) -> Dict[str, Dict]:
     return res
 
 
-__all__ = ['fetch_credential_by_key', 'fetch_credentials_by_keys']
+async def fetch_credential_by_key_async(key: str) -> Dict:
+    """
+    Async version of fetch_credential_by_key.
+
+    Uses httpx.AsyncClient and await asyncio.sleep() so the event loop
+    is never blocked during network I/O or backoff delays.
+    Shares the same in-memory cache as the sync variant.
+    """
+    import asyncio
+    if not key:
+        return {}
+    cached = _get_cached_credential(key)
+    if cached:
+        return cached
+
+    try:
+        worker_settings = get_worker_settings()
+        url = worker_settings.endpoint_credential_by_key(key, include_data=True)
+    except Exception:
+        url = f"{_server_base()}/credentials/{key}?include_data=true"
+
+    last_error: Optional[str] = None
+    async with httpx.AsyncClient(timeout=_FETCH_TIMEOUT_SECONDS) as c:
+        for attempt in range(1, _FETCH_RETRIES + 1):
+            try:
+                r = await c.get(url)
+                if r.status_code == 200:
+                    body = r.json() or {}
+                    rec = _normalize_credential_record(key, body)
+                    _set_cached_credential(key, rec)
+                    return rec
+                if r.status_code == 404:
+                    last_error = "not_found"
+                    break
+                last_error = f"http_{r.status_code}"
+            except Exception as exc:
+                last_error = type(exc).__name__
+
+            if attempt < _FETCH_RETRIES and _FETCH_BACKOFF_SECONDS > 0:
+                await asyncio.sleep(_FETCH_BACKOFF_SECONDS * (2 ** (attempt - 1)))
+
+    stale = _get_cached_credential(key, allow_stale=True)
+    if stale:
+        logger.warning(
+            "Credential fetch failed for key=%s (reason=%s); using stale cache entry",
+            key,
+            last_error or "unknown",
+        )
+        return stale
+
+    logger.warning(
+        "Credential fetch failed for key=%s (reason=%s)",
+        key,
+        last_error or "unknown",
+    )
+    return {}
+
+
+__all__ = ['fetch_credential_by_key', 'fetch_credential_by_key_async', 'fetch_credentials_by_keys']
