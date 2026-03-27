@@ -57,6 +57,10 @@ _LOOP_STALL_RECOVERY_COOLDOWN_SECONDS = max(
     0.0,
     float(os.getenv("NOETL_LOOP_STALL_RECOVERY_COOLDOWN_SECONDS", "15")),
 )
+_LOOP_COUNTER_RECONCILE_COOLDOWN_SECONDS = max(
+    0.0,
+    float(os.getenv("NOETL_LOOP_COUNTER_RECONCILE_COOLDOWN_SECONDS", "10")),
+)
 _STATE_CACHE_ALLOWED_MISSING_EVENTS = max(
     1,
     int(os.getenv("NOETL_STATE_CACHE_ALLOWED_MISSING_EVENTS", "3")),
@@ -223,6 +227,20 @@ def _pending_step_key(step_name: Optional[str]) -> str:
     if isinstance(step_name, str) and step_name.endswith(":task_sequence"):
         return step_name.rsplit(":", 1)[0]
     return str(step_name)
+
+
+def _node_name_candidates(node_name: str) -> tuple[str, ...]:
+    """Return canonical event node-name aliases for step and task-sequence rows."""
+    normalized = str(node_name)
+    candidates: list[str] = [normalized]
+    if normalized.endswith(":task_sequence"):
+        parent = normalized.rsplit(":", 1)[0]
+        if parent:
+            candidates.append(parent)
+    else:
+        candidates.append(f"{normalized}:task_sequence")
+    # Preserve order while removing duplicates.
+    return tuple(dict.fromkeys(candidates))
 
 
 # Type variable for generic BoundedCache
@@ -1705,6 +1723,7 @@ class ControlFlowEngine:
     ) -> int:
         """Count persisted events for a node/event pair (best-effort fallback path)."""
         try:
+            node_names = list(_node_name_candidates(node_name))
             async with get_pool_connection() as conn:
                 async with conn.cursor(row_factory=dict_row) as cur:
                     await cur.execute(
@@ -1712,10 +1731,10 @@ class ControlFlowEngine:
                         SELECT COUNT(*) AS cnt
                         FROM noetl.event
                         WHERE execution_id = %s
-                          AND node_name = %s
+                          AND node_name = ANY(%s)
                           AND event_type = %s
                         """,
-                        (int(execution_id), node_name, event_type),
+                        (int(execution_id), node_names, event_type),
                     )
                     row = await cur.fetchone()
                     return int((row or {}).get("cnt", 0) or 0)
@@ -1742,7 +1761,8 @@ class ControlFlowEngine:
 
         try:
             loop_filter = ""
-            issued_params: list[Any] = [int(execution_id), node_name]
+            node_names = list(_node_name_candidates(node_name))
+            issued_params: list[Any] = [int(execution_id), node_names]
             if loop_event_id:
                 loop_filter = "AND meta->>'loop_event_id' = %s"
                 issued_params.append(str(loop_event_id))
@@ -1750,7 +1770,7 @@ class ControlFlowEngine:
             params: list[Any] = [
                 *issued_params,
                 int(execution_id),
-                node_name,
+                node_names,
                 int(limit),
             ]
 
@@ -1764,7 +1784,7 @@ class ControlFlowEngine:
                                 NULLIF(meta->>'loop_iteration_index', '')::int AS loop_iteration_index
                             FROM noetl.event
                             WHERE execution_id = %s
-                              AND node_name = %s
+                              AND node_name = ANY(%s)
                               AND event_type = 'command.issued'
                               {loop_filter}
                         ),
@@ -1772,7 +1792,7 @@ class ControlFlowEngine:
                             SELECT DISTINCT meta->>'command_id' AS command_id
                             FROM noetl.event
                             WHERE execution_id = %s
-                              AND node_name = %s
+                              AND node_name = ANY(%s)
                               AND event_type IN ('command.completed', 'command.failed', 'command.cancelled')
                               AND meta ? 'command_id'
                         )
@@ -1815,7 +1835,8 @@ class ControlFlowEngine:
 
         try:
             loop_filter = ""
-            issued_params: list[Any] = [int(execution_id), node_name]
+            node_names = list(_node_name_candidates(node_name))
+            issued_params: list[Any] = [int(execution_id), node_names]
             if loop_event_id:
                 loop_filter = "AND meta->>'loop_event_id' = %s"
                 issued_params.append(str(loop_event_id))
@@ -1823,9 +1844,9 @@ class ControlFlowEngine:
             params: list[Any] = [
                 *issued_params,
                 int(execution_id),
-                node_name,
+                node_names,
                 int(execution_id),
-                node_name,
+                node_names,
                 int(limit),
             ]
 
@@ -1839,7 +1860,7 @@ class ControlFlowEngine:
                                 NULLIF(meta->>'loop_iteration_index', '')::int AS loop_iteration_index
                             FROM noetl.event
                             WHERE execution_id = %s
-                              AND node_name = %s
+                              AND node_name = ANY(%s)
                               AND event_type = 'command.issued'
                               {loop_filter}
                         ),
@@ -1847,7 +1868,7 @@ class ControlFlowEngine:
                             SELECT DISTINCT meta->>'command_id' AS command_id
                             FROM noetl.event
                             WHERE execution_id = %s
-                              AND node_name = %s
+                              AND node_name = ANY(%s)
                               AND event_type = 'command.started'
                               AND meta ? 'command_id'
                         ),
@@ -1855,7 +1876,7 @@ class ControlFlowEngine:
                             SELECT DISTINCT meta->>'command_id' AS command_id
                             FROM noetl.event
                             WHERE execution_id = %s
-                              AND node_name = %s
+                              AND node_name = ANY(%s)
                               AND event_type IN ('command.completed', 'command.failed', 'command.cancelled')
                               AND meta ? 'command_id'
                         )
@@ -3208,6 +3229,95 @@ class ControlFlowEngine:
                 )
                 in_flight = max(0, scheduled_hint - completed_count)
 
+                # Fast counter reconciliation:
+                # If distributed counters report no claimable slot but persisted state shows
+                # no in-flight command rows, advance completed_count from durable events and
+                # retry claim immediately. This avoids silent loop stalls waiting for another
+                # unrelated event to trigger watchdog recovery.
+                if (
+                    claimed_index is None
+                    and nats_loop_state
+                    and collection_size_hint > completed_count
+                    and (
+                        scheduled_hint >= collection_size_hint
+                        or in_flight >= max_in_flight
+                    )
+                ):
+                    now_utc = datetime.now(timezone.utc)
+                    last_counter_reconcile = _parse_iso_utc(
+                        nats_loop_state.get("last_counter_reconcile_at")
+                    ) or _parse_iso_utc(loop_state.get("last_counter_reconcile_at"))
+                    reconcile_cooldown_elapsed = (
+                        last_counter_reconcile is None
+                        or (now_utc - last_counter_reconcile).total_seconds()
+                        >= _LOOP_COUNTER_RECONCILE_COOLDOWN_SECONDS
+                    )
+                    if reconcile_cooldown_elapsed:
+                        missing_indexes = await self._find_missing_loop_iteration_indices(
+                            str(state.execution_id),
+                            step.step,
+                            loop_event_id=resolved_loop_event_id,
+                            limit=1,
+                        )
+                        if not missing_indexes:
+                            persisted_completed = await self._count_step_events(
+                                state.execution_id,
+                                step.step,
+                                "call.done",
+                            )
+                            if persisted_completed >= 0:
+                                persisted_completed = min(
+                                    persisted_completed,
+                                    collection_size_hint,
+                                )
+                                if persisted_completed > completed_count:
+                                    repaired_completed = persisted_completed
+                                    repaired_scheduled = max(
+                                        int(
+                                            (nats_loop_state or {}).get(
+                                                "scheduled_count",
+                                                scheduled_hint,
+                                            )
+                                            or scheduled_hint
+                                        ),
+                                        repaired_completed,
+                                    )
+                                    repaired_at = now_utc.isoformat()
+                                    nats_loop_state["completed_count"] = repaired_completed
+                                    nats_loop_state["scheduled_count"] = repaired_scheduled
+                                    nats_loop_state["last_counter_reconcile_at"] = repaired_at
+                                    nats_loop_state["last_progress_at"] = repaired_at
+                                    nats_loop_state["updated_at"] = repaired_at
+                                    loop_state["scheduled_count"] = repaired_scheduled
+                                    loop_state["last_counter_reconcile_at"] = repaired_at
+                                    await nats_cache.set_loop_state(
+                                        str(state.execution_id),
+                                        step.step,
+                                        nats_loop_state,
+                                        event_id=resolved_loop_event_id,
+                                    )
+                                    completed_count = repaired_completed
+                                    scheduled_hint = repaired_scheduled
+                                    in_flight = max(0, scheduled_hint - completed_count)
+                                    claimed_index = await nats_cache.claim_next_loop_index(
+                                        str(state.execution_id),
+                                        step.step,
+                                        collection_size=len(collection),
+                                        max_in_flight=max_in_flight,
+                                        event_id=resolved_loop_event_id,
+                                    )
+                                    if claimed_index is not None:
+                                        logger.warning(
+                                            "[LOOP-COUNTER-RECONCILE] Recovered claim slot for %s "
+                                            "(event_id=%s completed=%s scheduled=%s size=%s claimed=%s)",
+                                            step.step,
+                                            resolved_loop_event_id,
+                                            completed_count,
+                                            scheduled_hint,
+                                            collection_size_hint,
+                                            claimed_index,
+                                        )
+
                 # Runtime loop-stall watchdog:
                 # If there is pending work but no claimable slot is available, stale
                 # distributed loop metadata can leave the loop parked indefinitely.
@@ -3217,7 +3327,8 @@ class ControlFlowEngine:
                 # In both cases, look for orphaned iteration indexes and replay one when
                 # progress has been stale long enough.
                 if (
-                    nats_loop_state
+                    claimed_index is None
+                    and nats_loop_state
                     and collection_size_hint > completed_count
                     and (
                         scheduled_hint >= collection_size_hint
