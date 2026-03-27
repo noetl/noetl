@@ -43,6 +43,17 @@ def test_build_reference_only_result_keeps_compact_top_level_context_fields():
     assert result["context"]["commands_generated"] == 3
 
 
+def test_build_reference_only_result_normalizes_status_aliases():
+    success_payload = {"result": {"status": "success"}}
+    failed_payload = {"result": {"status": "error"}}
+
+    success_result = v2_api._build_reference_only_result(payload=success_payload, status="running")
+    failed_result = v2_api._build_reference_only_result(payload=failed_payload, status="running")
+
+    assert success_result["status"] == "COMPLETED"
+    assert failed_result["status"] == "FAILED"
+
+
 def test_validate_reference_only_payload_rejects_legacy_response_key():
     with pytest.raises(ValueError, match="forbidden inline output keys"):
         v2_api._validate_reference_only_payload(

@@ -2264,18 +2264,29 @@ def _bounded_context(context_obj: Optional[dict[str, Any]]) -> Optional[dict[str
     return context_obj
 
 
+def _normalize_result_status(value: Any) -> str:
+    raw = str(value or "").strip().upper()
+    if raw in {"OK", "SUCCESS"}:
+        return "COMPLETED"
+    if raw in {"ERROR", "FAILED"}:
+        return "FAILED"
+    if raw:
+        return raw
+    return "UNKNOWN"
+
+
 def _build_reference_only_result(
     *,
     payload: dict[str, Any],
     status: str,
 ) -> dict[str, Any]:
-    result_obj: dict[str, Any] = {"status": status}
+    result_obj: dict[str, Any] = {"status": _normalize_result_status(status)}
     payload_result = payload.get("result")
 
     if isinstance(payload_result, dict):
         payload_status = payload_result.get("status")
         if isinstance(payload_status, str) and payload_status.strip():
-            result_obj["status"] = payload_status.strip().upper()
+            result_obj["status"] = _normalize_result_status(payload_status)
         reference = payload_result.get("reference")
         if isinstance(reference, dict):
             result_obj["reference"] = reference
