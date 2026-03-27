@@ -829,7 +829,10 @@ async def get_executions(
                             le.node_name,
                             le.status,
                             le.created_at AS end_time,
-                            le.error
+                            le.error,
+                            te.event_type AS terminal_event_type,
+                            te.status AS terminal_status,
+                            te.created_at AS terminal_end_time
                         FROM recent_executions re
                         JOIN LATERAL (
                             SELECT
@@ -843,6 +846,24 @@ async def get_executions(
                             ORDER BY e.event_id DESC
                             LIMIT 1
                         ) le ON TRUE
+                        LEFT JOIN LATERAL (
+                            SELECT
+                                e.event_type,
+                                e.status,
+                                e.created_at
+                            FROM noetl.event e
+                            WHERE e.execution_id = re.execution_id
+                              AND e.event_type IN (
+                                'execution.cancelled',
+                                'playbook.failed',
+                                'workflow.failed',
+                                'command.failed',
+                                'playbook.completed',
+                                'workflow.completed'
+                              )
+                            ORDER BY e.event_id DESC
+                            LIMIT 1
+                        ) te ON TRUE
                     )
                     SELECT
                         le.execution_id,
@@ -856,6 +877,9 @@ async def get_executions(
                         NULL::jsonb AS result,
                         le.error,
                         le.parent_execution_id,
+                        le.terminal_event_type,
+                        le.terminal_status,
+                        le.terminal_end_time,
                         COALESCE(c.path, 'unknown') AS path,
                         COALESCE(c.version, 0) AS version
                     FROM latest_event le
@@ -868,6 +892,7 @@ async def get_executions(
                     for row in rows
                     if row.get("derived_event_type") == "batch.completed"
                     and str(row.get("status") or "").upper() == "COMPLETED"
+                    and row.get("terminal_event_type") is None
                 ]
                 pending_counts = await _fetch_pending_command_counts_for_executions(
                     cursor,
@@ -889,19 +914,12 @@ async def get_executions(
                     "status": row_dict.get("status"),
                 }
                 terminal_event = None
-                derived_event_type = row_dict.get("derived_event_type")
-                if derived_event_type in {
-                    "execution.cancelled",
-                    "playbook.failed",
-                    "workflow.failed",
-                    "command.failed",
-                    "playbook.completed",
-                    "workflow.completed",
-                }:
+                terminal_event_type = row_dict.get("terminal_event_type")
+                if terminal_event_type:
                     terminal_event = {
-                        "event_type": derived_event_type,
-                        "created_at": row_dict.get("end_time"),
-                        "status": row_dict.get("status"),
+                        "event_type": terminal_event_type,
+                        "created_at": row_dict.get("terminal_end_time"),
+                        "status": row_dict.get("terminal_status"),
                     }
                 derived_status, inferred_end_time = _infer_execution_completion_from_events(
                     latest_event,
