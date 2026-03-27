@@ -557,6 +557,79 @@ async def test_loop_watchdog_recovers_stale_inflight_saturation(monkeypatch):
     assert int(state.loop_state["run_batch_workers"].get("watchdog_repair_count", 0)) >= 1
 
 
+@pytest.mark.asyncio
+async def test_loop_counter_reconcile_recovers_no_slot_without_watchdog(monkeypatch):
+    fixture = Path(
+        "tests/fixtures/playbooks/batch_execution/heavy_payload_pipeline_in_step_parallel/"
+        "heavy_payload_pipeline_in_step_parallel.yaml"
+    )
+    playbook = yaml.safe_load(fixture.read_text(encoding="utf-8"))
+    run_batch_workers = next(
+        step for step in playbook["workflow"] if step.get("step") == "run_batch_workers"
+    )
+    run_batch_workers["args"] = {
+        "claimed_batch": "{{ iter.batch.batch_number }}",
+        "claimed_index": "{{ loop_index }}",
+    }
+
+    parsed_playbook = engine_module.Playbook(**playbook)
+    playbook_repo = PlaybookRepo()
+    state_store = StateStore(playbook_repo)
+    engine = ControlFlowEngine(playbook_repo, state_store)
+    state = ExecutionState(
+        "9403c",
+        parsed_playbook,
+        payload={
+            "build_batch_plan": {
+                "batches": [
+                    {"batch_number": 1},
+                    {"batch_number": 2},
+                    {"batch_number": 3},
+                    {"batch_number": 4},
+                    {"batch_number": 5},
+                    {"batch_number": 6},
+                ]
+            }
+        },
+    )
+
+    recent_progress_at = datetime.now(timezone.utc).isoformat()
+    fake_cache = RepairingNATSCache(
+        {
+            "collection_size": 6,
+            "completed_count": 2,
+            "scheduled_count": 5,
+            "last_progress_at": recent_progress_at,
+        }
+    )
+
+    async def fake_get_nats_cache():
+        return fake_cache
+
+    async def fake_find_missing(*_args, **_kwargs):
+        return []
+
+    async def fake_count_step_events(*_args, **_kwargs):
+        return 4
+
+    monkeypatch.setattr(engine_module, "get_nats_cache", fake_get_nats_cache)
+    monkeypatch.setattr(engine, "_find_missing_loop_iteration_indices", fake_find_missing)
+    monkeypatch.setattr(engine, "_count_step_events", fake_count_step_events)
+    monkeypatch.setattr(engine_module, "_LOOP_COUNTER_RECONCILE_COOLDOWN_SECONDS", 0.0)
+    monkeypatch.setattr(engine_module, "_LOOP_STALL_WATCHDOG_SECONDS", 300.0)
+
+    step_def = state.get_step("run_batch_workers")
+    step_def.loop.spec.max_in_flight = 3
+    command = await engine._create_command_for_step(state, step_def, {})
+
+    assert command is not None
+    assert command.args.get("claimed_batch") == 6
+    assert command.args.get("claimed_index") == 5
+    assert int(fake_cache.state.get("completed_count", 0)) == 4
+    assert int(fake_cache.state.get("scheduled_count", 0)) == 6
+    assert fake_cache.state.get("last_counter_reconcile_at")
+
+
 def test_restore_loop_collection_snapshot_when_replay_shrinks_collection():
     fixture = Path(
         "tests/fixtures/playbooks/batch_execution/heavy_payload_pipeline_in_step_parallel/"
@@ -671,6 +744,17 @@ def test_loop_event_ids_compatible_does_not_treat_exec_as_wildcard():
     assert (
         ControlFlowEngine._loop_event_ids_compatible("exec_123", "987654")
         is False
+    )
+
+
+def test_node_name_candidates_include_task_sequence_alias():
+    assert engine_module._node_name_candidates("load_data") == (
+        "load_data",
+        "load_data:task_sequence",
+    )
+    assert engine_module._node_name_candidates("load_data:task_sequence") == (
+        "load_data:task_sequence",
+        "load_data",
     )
 
 
