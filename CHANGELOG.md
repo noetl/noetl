@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.12.5](https://github.com/noetl/noetl/compare/v2.12.4...v2.12.5) (2026-03-27)
+
+### Bug Fixes
+
+* **engine:** recover loop no-slot stalls via counter reconcile ([870a16d](https://github.com/noetl/noetl/commit/870a16ddf4d42b6cdc287ef116391b13ef3dae4c))
+
 ## [2.12.4](https://github.com/noetl/noetl/compare/v2.12.3...v2.12.4) (2026-03-26)
 
 ### Bug Fixes
