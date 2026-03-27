@@ -7,7 +7,7 @@ from typing import Dict, Any
 from jinja2 import Environment
 
 from noetl.core.logger import setup_logger
-from noetl.worker.secrets import fetch_credential_by_key
+from noetl.worker.secrets import fetch_credential_by_key, fetch_credential_by_key_async
 from .constants import AUTH_TYPES
 from .utils import deep_render_template, redact_dict, fetch_secret_manager_value
 from .normalize import normalize_postgres_fields, normalize_hmac_fields
@@ -139,7 +139,7 @@ async def resolve_auth_map(
         
         if key and provider == 'credential_store':
             try:
-                record = fetch_credential_by_key(str(key))
+                record = await fetch_credential_by_key_async(str(key))
                 if record and isinstance(record, dict):
                     # Extract the actual credential data
                     record_data = record

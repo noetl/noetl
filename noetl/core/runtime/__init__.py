@@ -19,7 +19,7 @@ from noetl.core.runtime.events import report_event, report_event_async
 from noetl.core.runtime.execution import execute_task, execute_task_resolved
 
 # Retry logic
-from noetl.core.runtime.retry import execute_with_retry
+from noetl.core.runtime.retry import execute_with_retry, execute_with_retry_async
 
 # Context
 from noetl.core.runtime.context import ExecutionContext
@@ -35,6 +35,7 @@ __all__ = [
     "execute_task_resolved",
     # Retry logic
     "execute_with_retry",
+    "execute_with_retry_async",
     # Context
     "ExecutionContext",
 ]

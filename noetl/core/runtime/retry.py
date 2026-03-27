@@ -28,6 +28,7 @@ Retry configuration format:
            path: data
 """
 
+import asyncio
 import time
 from typing import Dict, Any, Optional, Callable, List
 from jinja2 import Environment
@@ -523,3 +524,272 @@ def _execute_per_iteration_effects(
             f"Deprecated: 'sink' in per-iteration config is no longer supported. "
             f"Use inline task commands in playbook case conditions instead."
         )
+
+
+# ---------------------------------------------------------------------------
+# Async variants — use these from async contexts (worker event loop).
+# The sync variants above are kept for legacy non-async callsites.
+# ---------------------------------------------------------------------------
+
+async def execute_with_retry_async(
+    executor_func: Callable,
+    task_config: Dict[str, Any],
+    task_name: str,
+    context: Dict[str, Any],
+    jinja_env: Environment,
+    task_with: Optional[Dict[str, Any]] = None
+) -> Dict[str, Any]:
+    """
+    Async version of execute_with_retry.
+
+    executor_func must be an async callable: async def f(cfg, ctx, env, task_w) -> dict.
+    Uses await asyncio.sleep() for backoff — never blocks the event loop.
+    CancelledError propagates immediately without being swallowed.
+    """
+    retry_config = task_config.get('retry')
+    if not retry_config:
+        return await executor_func(task_config, context, jinja_env, task_with or {})
+
+    if isinstance(retry_config, bool):
+        if not retry_config:
+            return await executor_func(task_config, context, jinja_env, task_with or {})
+        retry_config = [{'when': '{{ error is defined }}', 'then': {'max_attempts': 3}}]
+    elif isinstance(retry_config, int):
+        retry_config = [{'when': '{{ error is defined }}', 'then': {'max_attempts': retry_config}}]
+    elif not isinstance(retry_config, list):
+        logger.error(f"Invalid retry configuration: {retry_config}. Must be a list of when/then policies")
+        return await executor_func(task_config, context, jinja_env, task_with or {})
+
+    policies = []
+    for idx, policy in enumerate(retry_config):
+        if 'when' not in policy or 'then' not in policy:
+            logger.warning(f"Retry policy {idx} missing 'when' or 'then', skipping")
+            continue
+        policies.append({'when': policy['when'], 'then': policy['then'], 'index': idx})
+
+    if not policies:
+        logger.warning("No valid retry policies found, executing without retry")
+        return await executor_func(task_config, context, jinja_env, task_with or {})
+
+    has_pagination = any('collect' in p['then'] or 'next_call' in p['then'] for p in policies)
+
+    if has_pagination:
+        logger.info(f"Executing '{task_name}' with pagination retry policies (async)")
+        return await _execute_with_pagination_async(
+            executor_func, task_config, task_name, context, jinja_env, policies, task_with
+        )
+    else:
+        logger.info(f"Executing '{task_name}' with simple retry policies (async)")
+        return await _execute_with_simple_retry_async(
+            executor_func, task_config, task_name, context, jinja_env, policies, task_with
+        )
+
+
+async def _execute_with_simple_retry_async(
+    executor_func: Callable,
+    task_config: Dict[str, Any],
+    task_name: str,
+    context: Dict[str, Any],
+    jinja_env: Environment,
+    policies: List[Dict[str, Any]],
+    task_with: Optional[Dict[str, Any]] = None
+) -> Dict[str, Any]:
+    max_overall_attempts = max((p['then'].get('max_attempts', 3) for p in policies), default=3)
+    attempt = 0
+    last_error = None
+    last_result = None
+
+    while attempt < max_overall_attempts:
+        attempt += 1
+        logger.info(f"Executing task '{task_name}' (attempt {attempt}/{max_overall_attempts})")
+
+        try:
+            result = await executor_func(task_config, context, jinja_env, task_with or {})
+            last_result = result
+            last_error = None
+
+            matched_policy = _evaluate_policies(policies, result, None, attempt, context, jinja_env)
+
+            if not matched_policy:
+                logger.info(f"Task '{task_name}' succeeded, no retry policy matched")
+                return result
+
+            policy_max = matched_policy['then'].get('max_attempts', 3)
+            if attempt >= policy_max:
+                logger.info(f"Task '{task_name}' reached max_attempts for policy {matched_policy['index']}")
+                return result
+
+            delay = _calculate_delay(matched_policy['then'], attempt)
+            logger.info(f"Policy {matched_policy['index']} matched, retrying after {delay:.2f}s")
+            await asyncio.sleep(delay)
+
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            logger.warning(f"Task '{task_name}' failed on attempt {attempt}: {e}")
+            last_error = e
+            last_result = {'success': False, 'error': str(e), 'error_type': type(e).__name__}
+
+            matched_policy = _evaluate_policies(policies, last_result, e, attempt, context, jinja_env)
+
+            if not matched_policy:
+                logger.error(f"Task '{task_name}' failed and no retry policy matched")
+                raise
+
+            policy_max = matched_policy['then'].get('max_attempts', 3)
+            if attempt >= policy_max:
+                logger.error(f"Task '{task_name}' reached max_attempts for policy {matched_policy['index']}")
+                raise
+
+            delay = _calculate_delay(matched_policy['then'], attempt)
+            logger.info(f"Policy {matched_policy['index']} matched, retrying after {delay:.2f}s")
+            await asyncio.sleep(delay)
+
+    if last_error:
+        raise last_error
+    return last_result
+
+
+async def _execute_with_pagination_async(
+    executor_func: Callable,
+    task_config: Dict[str, Any],
+    task_name: str,
+    context: Dict[str, Any],
+    jinja_env: Environment,
+    policies: List[Dict[str, Any]],
+    task_with: Optional[Dict[str, Any]] = None
+) -> Dict[str, Any]:
+    pagination_policy = None
+    for p in policies:
+        if 'collect' in p['then'] or 'next_call' in p['then']:
+            pagination_policy = p
+            break
+
+    if not pagination_policy:
+        return await _execute_with_simple_retry_async(
+            executor_func, task_config, task_name, context, jinja_env, policies, task_with
+        )
+
+    then_config = pagination_policy['then']
+    collect_config = then_config.get('collect', {})
+    collect_strategy = collect_config.get('strategy', 'append')
+    collect_path = collect_config.get('path')
+    collect_into = collect_config.get('into', 'pages')
+    max_attempts = then_config.get('max_attempts', 100)
+    next_call_config = then_config.get('next_call', {})
+    per_iteration_config = then_config.get('per_iteration', {})
+
+    # collect_responses: opt-in to storing full page responses in meta.
+    # Disabled by default to avoid unbounded memory growth for large paginations.
+    collect_responses = bool(then_config.get('collect_responses', False))
+
+    accumulated = None
+    iteration = 0
+    sampled_responses: list = []  # only populated when collect_responses=True
+    current_config = dict(task_config)
+    response = None
+
+    while iteration < max_attempts:
+        iteration += 1
+        logger.info(f"Pagination iteration {iteration} for '{task_name}'")
+
+        retry_context = dict(context)
+        retry_context['_retry'] = {'index': iteration, 'count': iteration}
+        if accumulated is not None:
+            retry_context[collect_into] = accumulated
+
+        try:
+            response = await _execute_iteration_with_error_retry_async(
+                executor_func, current_config, task_name, retry_context,
+                jinja_env, policies, task_with
+            )
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            logger.error(f"Pagination iteration {iteration} failed: {e}")
+            raise
+
+        if collect_responses:
+            sampled_responses.append(response)
+
+        page_data = _extract_page_data(response, collect_path)
+        accumulated = _aggregate_results(accumulated, page_data, collect_strategy)
+
+        if per_iteration_config:
+            _execute_per_iteration_effects(
+                per_iteration_config, response, page_data, iteration,
+                retry_context, jinja_env
+            )
+
+        matched_policy = _evaluate_policies([pagination_policy], response, None, iteration, retry_context, jinja_env)
+
+        if not matched_policy:
+            logger.info(f"Pagination stopping after {iteration} iterations")
+            break
+
+        current_config = _build_next_request(
+            current_config, next_call_config, response, retry_context, jinja_env
+        )
+
+    return {
+        'id': response.get('id') if response else None,
+        'status': 'success',
+        'data': accumulated,
+        'meta': {
+            'iterations': iteration,
+            'collect_strategy': collect_strategy,
+            'responses': sampled_responses,
+        }
+    }
+
+
+async def _execute_iteration_with_error_retry_async(
+    executor_func: Callable,
+    task_config: Dict[str, Any],
+    task_name: str,
+    context: Dict[str, Any],
+    jinja_env: Environment,
+    policies: List[Dict[str, Any]],
+    task_with: Optional[Dict[str, Any]] = None
+) -> Dict[str, Any]:
+    max_attempts = max((p['then'].get('max_attempts', 3) for p in policies), default=3)
+    attempt = 0
+    last_exc: Optional[Exception] = None
+
+    while attempt < max_attempts:
+        attempt += 1
+        try:
+            result = await executor_func(task_config, context, jinja_env, task_with or {})
+
+            matched_policy = _evaluate_policies(policies, result, None, attempt, context, jinja_env)
+
+            if matched_policy and ('collect' in matched_policy['then'] or 'next_call' in matched_policy['then']):
+                return result
+
+            if not matched_policy:
+                return result
+
+            policy_max = matched_policy['then'].get('max_attempts', 3)
+            if attempt >= policy_max:
+                return result
+
+            delay = _calculate_delay(matched_policy['then'], attempt)
+            await asyncio.sleep(delay)
+
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            last_exc = e
+            logger.error(f"Iteration attempt {attempt}: {e}")
+            last_result = {'success': False, 'error': str(e)}
+            matched_policy = _evaluate_policies(policies, last_result, e, attempt, context, jinja_env)
+
+            if not matched_policy or attempt >= matched_policy['then'].get('max_attempts', 3):
+                raise
+
+            delay = _calculate_delay(matched_policy['then'], attempt)
+            await asyncio.sleep(delay)
+
+    if last_exc is not None:
+        raise last_exc
+    raise RuntimeError(f"Retry loop exhausted after {max_attempts} attempts with no recorded exception")

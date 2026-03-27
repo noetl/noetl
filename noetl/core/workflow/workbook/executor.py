@@ -156,13 +156,7 @@ async def execute_workbook_task(
         result = await execute_python_task_async(action_config, context, jinja_env, action_args)
     elif tool_type == "http":
         from noetl.tools.http import execute_http_task
-        # execute_http_task is sync, run in executor
-        import asyncio
-        loop = asyncio.get_running_loop()
-        result = await loop.run_in_executor(
-            None,
-            lambda: execute_http_task(action_config, context, jinja_env, action_args)
-        )
+        result = await execute_http_task(action_config, context, jinja_env, action_args)
     elif tool_type == "postgres":
         from noetl.tools.postgres import execute_postgres_task_async
         # Call async postgres executor directly - avoids asyncio.run() pool leak

@@ -158,29 +158,33 @@ def execute_task(
             elif isinstance(retry_config, dict):
                 needs_worker_retry = 'on_success' in retry_config
         
-        if needs_worker_retry:
-            # Use worker-side retry wrapper for pagination/polling
-            from noetl.core.runtime.retry import execute_with_retry
-            return execute_with_retry(
-                lambda cfg, ctx, env, a: asyncio.run(execute_http_task(cfg, ctx, env, a or {})),
-                task_config,
-                task_name,
-                wrapped_context,
-                jinja_env,
-                args
-            )
-        # HTTP plugin is async - run directly without retry wrapper
-        # on_error retry is handled server-side through event-driven control loop
+        # execute_task is a sync function. Build a factory that creates the
+        # coroutine and closes the short-lived loop's shared HTTP clients after
+        # the call completes. The factory is called inside the target thread so
+        # the coroutine object is never transferred across thread boundaries.
+        from noetl.core.runtime.retry import execute_with_retry_async
+        from noetl.tools.http import close_shared_async_http_clients
+
+        async def _http_coro_with_cleanup():
+            try:
+                if needs_worker_retry:
+                    return await execute_with_retry_async(
+                        execute_http_task, task_config, task_name, wrapped_context, jinja_env, args
+                    )
+                return await execute_http_task(task_config, wrapped_context, jinja_env, args or {})
+            finally:
+                await close_shared_async_http_clients()
+
+        # Guard against calling asyncio.run() from an already-running loop
+        # (e.g. notebook or test harness).  The expected path (run_in_executor
+        # thread) has no running loop, so asyncio.get_running_loop() raises.
         try:
-            loop = asyncio.get_running_loop()
+            asyncio.get_running_loop()
             import concurrent.futures
-            with concurrent.futures.ThreadPoolExecutor() as pool:
-                future = pool.submit(
-                    lambda: asyncio.run(execute_http_task(task_config, wrapped_context, jinja_env, args or {}))
-                )
-                return future.result()
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+                return pool.submit(lambda: asyncio.run(_http_coro_with_cleanup())).result()
         except RuntimeError:
-            return asyncio.run(execute_http_task(task_config, wrapped_context, jinja_env, args or {}))
+            return asyncio.run(_http_coro_with_cleanup())
     elif task_type == "python":
         return execute_python_task(
             task_config, wrapped_context, jinja_env, args or {}
