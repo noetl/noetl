@@ -439,6 +439,190 @@ class V2Worker:
             )
             return value
 
+    @staticmethod
+    def _event_status_default(event_name: str, payload: Optional[dict[str, Any]] = None) -> str:
+        payload = payload or {}
+        explicit_status = payload.get("status")
+        if isinstance(explicit_status, str) and explicit_status.strip():
+            return explicit_status.strip().upper()
+        lowered = (event_name or "").lower()
+        if "error" in lowered or "failed" in lowered:
+            return "FAILED"
+        if lowered in {"call.done", "step.exit", "command.completed"} or "completed" in lowered:
+            return "COMPLETED"
+        return "RUNNING"
+
+    @staticmethod
+    def _reference_type_from_store(store: str) -> str:
+        normalized = (store or "").strip().lower()
+        if normalized in {"db", "postgres", "postgresql", "relational"}:
+            return "relational"
+        if normalized in {"s3", "gcs", "object_store"}:
+            return "object_store"
+        return "nats"
+
+    def _extract_reference_from_value(self, value: Any) -> Optional[dict[str, Any]]:
+        if not isinstance(value, dict):
+            return None
+
+        direct = value.get("reference")
+        if isinstance(direct, dict):
+            return direct
+
+        ref_wrapper = value.get("_ref")
+        if isinstance(ref_wrapper, dict):
+            ref_value = str(ref_wrapper.get("ref") or "").strip()
+            store_name = str(value.get("_store") or ref_wrapper.get("store") or "").strip()
+            reference: dict[str, Any] = {
+                "type": self._reference_type_from_store(store_name),
+                "locator": ref_value,
+            }
+            if store_name:
+                reference["store"] = store_name
+            meta = ref_wrapper.get("meta")
+            if isinstance(meta, dict):
+                for key in ("bytes", "sha256", "content_type", "compression"):
+                    if key in meta and meta.get(key) is not None:
+                        reference[key] = meta.get(key)
+            return reference
+
+        data_reference = value.get("data_reference")
+        if isinstance(data_reference, dict):
+            sink_type = str(data_reference.get("sink_type") or "").lower()
+            if sink_type in {"postgres", "postgresql", "db", "relational"}:
+                ref_type = "relational"
+            elif sink_type in {"s3", "gcs", "object_store"}:
+                ref_type = "object_store"
+            else:
+                ref_type = "nats"
+            return {"type": ref_type, **data_reference}
+        return None
+
+    @staticmethod
+    def _is_scalar(value: Any) -> bool:
+        return isinstance(value, (str, int, float, bool)) or value is None
+
+    def _extract_control_context(self, value: Any) -> Optional[dict[str, Any]]:
+        if not isinstance(value, dict):
+            return None
+
+        if isinstance(value.get("context"), dict):
+            candidate = value.get("context") or {}
+        else:
+            candidate = value
+
+        context: dict[str, Any] = {}
+        blocked_keys = {
+            "_ref",
+            "_preview",
+            "_size_bytes",
+            "_store",
+            "_store_failed",
+            "_store_error",
+            "_inline",
+            "_internal_data",
+            "data",
+            "response",
+            "result",
+            "payload",
+            "rows",
+            "columns",
+        }
+
+        for key, child in candidate.items():
+            key_str = str(key)
+            if key_str in blocked_keys:
+                continue
+            if key_str.startswith("command_"):
+                # Strict contract: command-indexed payloads are legacy transport shape.
+                continue
+            if self._is_scalar(child):
+                context[key_str] = child
+                continue
+            if isinstance(child, dict):
+                nested = {
+                    str(nk): nv
+                    for nk, nv in child.items()
+                    if self._is_scalar(nv) and str(nk) not in blocked_keys
+                }
+                if nested:
+                    context[key_str] = nested
+
+        if not context:
+            return None
+
+        max_context_bytes = max(
+            1024,
+            int(os.getenv("NOETL_EVENT_RESULT_CONTEXT_MAX_BYTES", "16384")),
+        )
+        try:
+            if estimate_size(context) <= max_context_bytes:
+                return context
+        except Exception:
+            pass
+        return None
+
+    def _build_strict_result_envelope(
+        self,
+        *,
+        value: Any,
+        event_name: str,
+        payload: Optional[dict[str, Any]] = None,
+        error: Optional[Any] = None,
+    ) -> dict[str, Any]:
+        status = self._event_status_default(event_name, payload)
+        envelope: dict[str, Any] = {"status": status}
+        reference = self._extract_reference_from_value(value)
+        if isinstance(reference, dict):
+            envelope["reference"] = reference
+        context = self._extract_control_context(value)
+        if isinstance(context, dict):
+            envelope["context"] = context
+        if error is not None:
+            envelope["error"] = error
+        return envelope
+
+    def _normalize_payload_reference_only(
+        self,
+        *,
+        event_name: str,
+        payload: dict[str, Any],
+    ) -> dict[str, Any]:
+        normalized = dict(payload or {})
+        result_source = None
+        if isinstance(normalized.get("result"), dict):
+            result_source = normalized.get("result")
+        elif isinstance(normalized.get("response"), dict):
+            result_source = normalized.get("response")
+
+        if result_source is not None:
+            normalized["result"] = self._build_strict_result_envelope(
+                value=result_source,
+                event_name=event_name,
+                payload=normalized,
+                error=normalized.get("error"),
+            )
+        elif event_name in {"call.done", "step.exit", "call.error", "command.completed", "command.failed"}:
+            normalized["result"] = self._build_strict_result_envelope(
+                value={},
+                event_name=event_name,
+                payload=normalized,
+                error=normalized.get("error"),
+            )
+
+        top_level_context = normalized.pop("context", None)
+        if isinstance(top_level_context, dict) and isinstance(normalized.get("result"), dict):
+            safe_context = self._extract_control_context({"context": top_level_context})
+            if isinstance(safe_context, dict) and safe_context:
+                merged_context = dict(normalized["result"].get("context") or {})
+                merged_context.update(safe_context)
+                normalized["result"]["context"] = merged_context
+
+        # Strict reference-only contract: inline payload keys are never transported.
+        for field_name in ("response", "inputs", "data", "data_reference", "_internal_data", "_inline"):
+            normalized.pop(field_name, None)
+        return normalized
+
     async def _prepare_event_payload_for_transport(
         self,
         *,
@@ -448,21 +632,11 @@ class V2Worker:
         payload: dict[str, Any],
     ) -> dict[str, Any]:
         if not isinstance(payload, dict):
-            return payload
-
-        prepared = dict(payload)
-        bulky_fields = ("response", "result", "context", "inputs")
-        for field_name in bulky_fields:
-            if field_name not in prepared:
-                continue
-            prepared[field_name] = await self._externalize_event_value_if_needed(
-                execution_id=execution_id,
-                step=step,
+            return self._normalize_payload_reference_only(
                 event_name=event_name,
-                field_name=field_name,
-                value=prepared.get(field_name),
+                payload={"result": {"status": self._event_status_default(event_name)}},
             )
-        return prepared
+        return self._normalize_payload_reference_only(event_name=event_name, payload=payload)
     
     async def _register_worker(self, server_url: str) -> bool:
         """Register this worker in the runtime table via API."""

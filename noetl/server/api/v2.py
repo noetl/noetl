@@ -446,11 +446,87 @@ def _extract_event_command_id(req: "EventRequest") -> Optional[str]:
     payload_context = payload.get("context")
     if isinstance(payload_context, dict):
         candidates.append(payload_context.get("command_id"))
+    payload_result = payload.get("result")
+    if isinstance(payload_result, dict):
+        candidates.append(payload_result.get("command_id"))
+        result_context = payload_result.get("context")
+        if isinstance(result_context, dict):
+            candidates.append(result_context.get("command_id"))
 
     for value in candidates:
         if isinstance(value, str) and value.strip():
             return value.strip()
     return None
+
+
+_STRICT_RESULT_ALLOWED_KEYS = {"status", "error", "reference", "context", "meta", "command_id"}
+_STRICT_PAYLOAD_FORBIDDEN_KEYS = {"response", "inputs", "data", "data_reference", "_internal_data", "_inline"}
+_STRICT_CONTEXT_FORBIDDEN_KEYS = {"response", "result", "payload", "data", "_ref", "_inline", "_internal_data"}
+
+
+def _contains_forbidden_payload_keys(value: Any, forbidden_keys: set[str], *, depth: int = 0) -> bool:
+    if depth > 8:
+        return False
+    if isinstance(value, dict):
+        for key, child in value.items():
+            if str(key) in forbidden_keys:
+                return True
+            if _contains_forbidden_payload_keys(child, forbidden_keys, depth=depth + 1):
+                return True
+    elif isinstance(value, list):
+        for child in value:
+            if _contains_forbidden_payload_keys(child, forbidden_keys, depth=depth + 1):
+                return True
+    return False
+
+
+def _contains_legacy_command_keys(value: Any, *, depth: int = 0) -> bool:
+    if depth > 8:
+        return False
+    if isinstance(value, dict):
+        for key, child in value.items():
+            if str(key).startswith("command_"):
+                return True
+            if _contains_legacy_command_keys(child, depth=depth + 1):
+                return True
+    elif isinstance(value, list):
+        for child in value:
+            if _contains_legacy_command_keys(child, depth=depth + 1):
+                return True
+    return False
+
+
+def _validate_reference_only_payload(payload: dict[str, Any]) -> None:
+    if not isinstance(payload, dict):
+        raise ValueError("event payload must be an object")
+
+    if any(key in payload for key in _STRICT_PAYLOAD_FORBIDDEN_KEYS):
+        bad = sorted(key for key in payload.keys() if key in _STRICT_PAYLOAD_FORBIDDEN_KEYS)
+        raise ValueError(f"payload includes forbidden inline output keys: {', '.join(bad)}")
+
+    result_obj = payload.get("result")
+    if result_obj is None:
+        return
+
+    if not isinstance(result_obj, dict):
+        raise ValueError("payload.result must be an object")
+
+    unknown = sorted(str(k) for k in result_obj.keys() if str(k) not in _STRICT_RESULT_ALLOWED_KEYS)
+    if unknown:
+        raise ValueError(f"payload.result includes unsupported keys: {', '.join(unknown)}")
+
+    reference_obj = result_obj.get("reference")
+    if reference_obj is not None and not isinstance(reference_obj, dict):
+        raise ValueError("payload.result.reference must be an object")
+
+    context_obj = result_obj.get("context")
+    if context_obj is not None:
+        if not isinstance(context_obj, dict):
+            raise ValueError("payload.result.context must be an object")
+        if _contains_forbidden_payload_keys(context_obj, _STRICT_CONTEXT_FORBIDDEN_KEYS):
+            raise ValueError("payload.result.context includes forbidden inline data keys")
+        if _contains_legacy_command_keys(context_obj):
+            raise ValueError("payload.result.context includes legacy command_* keys")
 
 
 _EVENT_TYPE_TERMINAL_PREDICATE = (
@@ -1173,10 +1249,6 @@ class EventRequest(BaseModel):
     payload: dict[str, Any] = Field(default_factory=dict)
     meta: Optional[dict[str, Any]] = None
     worker_id: Optional[str] = None
-    # Legacy result transport hints (normalized into reference-only result shape)
-    result_kind: Literal["data", "ref", "refs"] = "data"
-    result_uri: Optional[str] = None  # For kind=ref
-    event_ids: Optional[list[int]] = None  # For kind=refs
     # Control flags (stored in meta column)
     actionable: bool = True  # If True, server should take action (evaluate case, route)
     informative: bool = True  # If True, event is for logging/observability
@@ -1851,6 +1923,13 @@ async def handle_event(req: EventRequest) -> EventResponse:
         
         # For command.claimed, use fully atomic claiming with advisory lock + insert in same transaction
         if req.name == "command.claimed":
+            try:
+                _validate_reference_only_payload(req.payload)
+            except ValueError as exc:
+                raise HTTPException(
+                    status_code=422,
+                    detail=f"Invalid reference-only event payload for step '{req.step}' event '{req.name}': {exc}",
+                ) from exc
             command_id = req.payload.get("command_id") or (req.meta or {}).get("command_id")
             if command_id:
                 async with get_pool_connection() as conn:
@@ -1904,9 +1983,6 @@ async def handle_event(req: EventRequest) -> EventResponse:
                         result_obj = _build_reference_only_result(
                             payload=req.payload,
                             status="RUNNING",
-                            result_kind=req.result_kind,
-                            result_uri=req.result_uri,
-                            event_ids=req.event_ids,
                         )
 
                         await cur.execute("""
@@ -1926,12 +2002,17 @@ async def handle_event(req: EventRequest) -> EventResponse:
                         return EventResponse(status="ok", event_id=evt_id, commands_generated=0)
 
         status = _status_from_event_name(req.name)
+        try:
+            _validate_reference_only_payload(req.payload)
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=422,
+                detail=f"Invalid reference-only event payload for step '{req.step}' event '{req.name}': {exc}",
+            ) from exc
+
         result_obj = _build_reference_only_result(
             payload=req.payload,
             status=status,
-            result_kind=req.result_kind,
-            result_uri=req.result_uri,
-            event_ids=req.event_ids,
         )
         command_id = _extract_event_command_id(req)
         event_meta = dict(req.meta or {})
@@ -2153,183 +2234,7 @@ def _status_from_event_name(event_name: str) -> str:
     return "RUNNING"
 
 
-def _reference_from_uri(uri: str) -> dict[str, Any]:
-    lowered = uri.lower()
-    if lowered.startswith(("gs://", "s3://", "http://", "https://")):
-        return {"type": "object_store", "url": uri}
-    if lowered.startswith("nats://"):
-        return {"type": "nats", "locator": uri}
-    if lowered.startswith(("postgres://", "postgresql://")):
-        return {"type": "relational", "db_url": uri}
-    return {"type": "external", "locator": uri}
-
-
-def _extract_reference_from_payload(
-    payload: dict[str, Any],
-    *,
-    result_kind: str = "data",
-    result_uri: Optional[str] = None,
-    event_ids: Optional[list[int]] = None,
-) -> Optional[dict[str, Any]]:
-    if result_kind == "ref" and result_uri:
-        return _reference_from_uri(result_uri)
-    if result_kind == "refs" and event_ids:
-        return {"type": "event_refs", "event_ids": [int(x) for x in event_ids if isinstance(x, int)]}
-
-    direct_reference = payload.get("reference")
-    if isinstance(direct_reference, dict):
-        return direct_reference
-
-    candidates = [
-        payload.get("response"),
-        payload.get("result"),
-        payload.get("context"),
-        payload.get("inputs"),
-        payload.get("data_reference"),
-    ]
-    for candidate in candidates:
-        if not isinstance(candidate, dict):
-            continue
-        ref_wrapper = candidate.get("_ref")
-        if not isinstance(ref_wrapper, dict):
-            continue
-
-        ref_value = str(ref_wrapper.get("ref") or "")
-        store = str(ref_wrapper.get("store") or "").lower()
-        meta = ref_wrapper.get("meta") if isinstance(ref_wrapper.get("meta"), dict) else {}
-        reference: dict[str, Any]
-        if store in {"kv", "nats", "nats_kv", "nats_object", "object"}:
-            reference = {"type": "nats", "locator": ref_value}
-        elif store in {"db", "postgres", "postgresql", "relational"}:
-            reference = {"type": "relational", "record_id": ref_value}
-        else:
-            reference = {"type": "object_store", "url": ref_value or meta.get("physical_uri") or ""}
-
-        if "bytes" in meta:
-            reference["bytes"] = meta.get("bytes")
-        if "sha256" in meta:
-            reference["sha256"] = meta.get("sha256")
-        if "content_type" in meta:
-            reference["content_type"] = meta.get("content_type")
-        if "compression" in meta:
-            reference["compression"] = meta.get("compression")
-        return reference
-    return None
-
-
-def _extract_context_from_payload(payload: dict[str, Any]) -> Optional[dict[str, Any]]:
-    def _json_size(obj: dict[str, Any]) -> int:
-        # Context dicts are mutated while being bounded; avoid stale cache-by-id sizing.
-        return _estimate_json_size(obj)
-
-    def _filter_context_obj(context_obj: dict[str, Any]) -> Optional[dict[str, Any]]:
-        filtered = {
-            key: value
-            for key, value in context_obj.items()
-            if key not in {
-                "_ref",
-                "_preview",
-                "_size_bytes",
-                "_store",
-                "_store_failed",
-                "_store_error",
-                "_inline",
-                "preview",
-                "extracted",
-            }
-        }
-        return filtered or None
-
-    def _bound_command_rows(
-        context_obj: Optional[dict[str, Any]],
-    ) -> Optional[dict[str, Any]]:
-        if not context_obj:
-            return None
-
-        bounded: dict[str, Any] = {}
-        for key, value in context_obj.items():
-            if (
-                isinstance(key, str)
-                and key.startswith("command_")
-                and isinstance(value, dict)
-            ):
-                command_obj = dict(value)
-                rows = command_obj.get("rows")
-                if isinstance(rows, list):
-                    max_rows = min(len(rows), _EVENT_RESULT_CONTEXT_MAX_ROWS_PER_COMMAND)
-                    command_obj["rows"] = rows[:max_rows]
-                bounded[key] = command_obj
-            else:
-                bounded[key] = value
-        return bounded
-
-    def _compact_response_for_context(response_obj: dict[str, Any]) -> Optional[dict[str, Any]]:
-        if not isinstance(response_obj, dict):
-            return None
-
-        # Postgres and several plugins wrap results in {"status", "data": {...}}.
-        source_obj = response_obj.get("data")
-        source = source_obj if isinstance(source_obj, dict) else response_obj
-        compact: dict[str, Any] = {}
-
-        for command_key, command_value in source.items():
-            if not isinstance(command_key, str) or not command_key.startswith("command_"):
-                continue
-            if not isinstance(command_value, dict):
-                continue
-
-            command_compact: dict[str, Any] = {}
-            for field in ("status", "row_count", "message", "error"):
-                value = command_value.get(field)
-                if value is not None:
-                    command_compact[field] = value
-
-            rows = command_value.get("rows")
-            if isinstance(rows, list):
-                max_rows = min(len(rows), _EVENT_RESULT_CONTEXT_MAX_ROWS_PER_COMMAND)
-                command_compact["rows"] = rows[:max_rows]
-
-            if command_compact:
-                compact[command_key] = command_compact
-
-        return compact or None
-
-    def _merge_and_bound_context(
-        candidate: Optional[dict[str, Any]],
-        compact_fields: dict[str, Any],
-    ) -> Optional[dict[str, Any]]:
-        if candidate:
-            merged = dict(candidate)
-            for key, value in compact_fields.items():
-                merged.setdefault(key, value)
-            if _json_size(merged) <= _EVENT_RESULT_CONTEXT_MAX_BYTES:
-                return merged
-
-            if not compact_fields:
-                if _json_size(candidate) <= _EVENT_RESULT_CONTEXT_MAX_BYTES:
-                    return candidate
-                return None
-
-            # Keep compact routing keys even when candidate is too large.
-            bounded = dict(compact_fields)
-            for key, value in candidate.items():
-                if key in bounded:
-                    continue
-                bounded[key] = value
-                if _json_size(bounded) > _EVENT_RESULT_CONTEXT_MAX_BYTES:
-                    del bounded[key]
-                    break
-            if bounded:
-                return bounded
-
-            if _json_size(compact_fields) <= _EVENT_RESULT_CONTEXT_MAX_BYTES:
-                return compact_fields
-            if not compact_fields and _json_size(candidate) <= _EVENT_RESULT_CONTEXT_MAX_BYTES:
-                return candidate
-        if compact_fields and _json_size(compact_fields) <= _EVENT_RESULT_CONTEXT_MAX_BYTES:
-            return compact_fields
-        return None
-
+def _collect_compact_context(payload: dict[str, Any]) -> Optional[dict[str, Any]]:
     compact: dict[str, Any] = {}
     for key in (
         "command_id",
@@ -2344,67 +2249,66 @@ def _extract_context_from_payload(payload: dict[str, Any]) -> Optional[dict[str,
     ):
         if key in payload and payload[key] is not None:
             compact[key] = payload[key]
-
-    context_obj = payload.get("context")
-    if isinstance(context_obj, dict):
-        filtered = _bound_command_rows(_filter_context_obj(context_obj))
-        return _merge_and_bound_context(filtered, compact)
-
-    # Reference-only contract persists context in event.result.context.
-    # If worker payload omits explicit context, try deriving a bounded context
-    # from response/result envelopes to preserve routing-critical fields.
-    for key in ("response", "result"):
-        candidate_obj = payload.get(key)
-        if not isinstance(candidate_obj, dict):
-            continue
-
-        # Prefer response.data/result.data when present so postgres-style
-        # payloads keep command_0/command_1 at the top level for templates.
-        source_obj = candidate_obj.get("data")
-        source_context = source_obj if isinstance(source_obj, dict) else candidate_obj
-
-        filtered_source = _bound_command_rows(_filter_context_obj(source_context))
-        if filtered_source:
-            merged_source = _merge_and_bound_context(filtered_source, compact)
-            if merged_source:
-                return merged_source
-
-        # Fallback to the full envelope if source-only extraction didn't fit.
-        if source_context is not candidate_obj:
-            filtered_envelope = _bound_command_rows(_filter_context_obj(candidate_obj))
-            if filtered_envelope:
-                merged_envelope = _merge_and_bound_context(filtered_envelope, compact)
-                if merged_envelope:
-                    return merged_envelope
-
-        compact_candidate = _compact_response_for_context(candidate_obj)
-        merged_compact = _merge_and_bound_context(compact_candidate, compact)
-        if merged_compact:
-            return merged_compact
-
     return compact or None
+
+
+def _bounded_context(context_obj: Optional[dict[str, Any]]) -> Optional[dict[str, Any]]:
+    if not isinstance(context_obj, dict):
+        return None
+    if _contains_forbidden_payload_keys(context_obj, _STRICT_CONTEXT_FORBIDDEN_KEYS):
+        return None
+    if _contains_legacy_command_keys(context_obj):
+        return None
+    if _estimate_json_size(context_obj) > _EVENT_RESULT_CONTEXT_MAX_BYTES:
+        return None
+    return context_obj
 
 
 def _build_reference_only_result(
     *,
     payload: dict[str, Any],
     status: str,
-    result_kind: str = "data",
-    result_uri: Optional[str] = None,
-    event_ids: Optional[list[int]] = None,
 ) -> dict[str, Any]:
     result_obj: dict[str, Any] = {"status": status}
-    reference = _extract_reference_from_payload(
-        payload,
-        result_kind=result_kind,
-        result_uri=result_uri,
-        event_ids=event_ids,
-    )
-    if reference:
-        result_obj["reference"] = reference
-    context = _extract_context_from_payload(payload)
-    if context:
-        result_obj["context"] = context
+    payload_result = payload.get("result")
+
+    if isinstance(payload_result, dict):
+        payload_status = payload_result.get("status")
+        if isinstance(payload_status, str) and payload_status.strip():
+            result_obj["status"] = payload_status.strip().upper()
+        reference = payload_result.get("reference")
+        if isinstance(reference, dict):
+            result_obj["reference"] = reference
+        context = _bounded_context(payload_result.get("context"))
+        if isinstance(context, dict):
+            result_obj["context"] = context
+        error_obj = payload_result.get("error")
+        if error_obj is not None:
+            result_obj["error"] = error_obj
+        meta_obj = payload_result.get("meta")
+        if isinstance(meta_obj, dict):
+            result_obj["meta"] = meta_obj
+    else:
+        direct_reference = payload.get("reference")
+        if isinstance(direct_reference, dict):
+            result_obj["reference"] = direct_reference
+        direct_context = _bounded_context(payload.get("context"))
+        if isinstance(direct_context, dict):
+            result_obj["context"] = direct_context
+
+    compact = _collect_compact_context(payload)
+    if compact:
+        existing_context = result_obj.get("context")
+        if isinstance(existing_context, dict):
+            merged = {**compact, **existing_context}
+            if _estimate_json_size(merged) <= _EVENT_RESULT_CONTEXT_MAX_BYTES:
+                result_obj["context"] = merged
+        else:
+            if _estimate_json_size(compact) <= _EVENT_RESULT_CONTEXT_MAX_BYTES:
+                result_obj["context"] = compact
+
+    if "error" in payload and "error" not in result_obj:
+        result_obj["error"] = payload.get("error")
     return result_obj
 
 
@@ -2559,6 +2463,16 @@ async def _persist_batch_acceptance(
             last_actionable_event: Optional[Event] = None
             last_actionable_evt_id: Optional[int] = None
             for item in req.events:
+                try:
+                    _validate_reference_only_payload(item.payload)
+                except ValueError as exc:
+                    raise HTTPException(
+                        status_code=422,
+                        detail=(
+                            f"Invalid reference-only batch event payload for step '{item.step}' "
+                            f"event '{item.name}': {exc}"
+                        ),
+                    ) from exc
                 evt_id = await _next_snowflake_id(cur)
                 event_ids.append(evt_id)
                 meta_obj: dict[str, Any] = {

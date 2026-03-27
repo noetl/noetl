@@ -3,7 +3,6 @@ import pytest
 
 import noetl.worker.v2_worker_nats as worker_module
 from noetl.worker.v2_worker_nats import V2Worker
-from noetl.core.storage.models import ResultRef, ResultRefMeta, Scope, StoreTier
 
 
 class _FakeResponse:
@@ -77,24 +76,22 @@ async def test_emit_batch_events_externalizes_large_response_payload(monkeypatch
         [_FakeResponse(202, payload={"status": "accepted", "request_id": "req-2"})]
     )
 
-    async def _fake_put(**kwargs):
-        return ResultRef.create(
-            execution_id=str(kwargs["execution_id"]),
-            name=str(kwargs["name"]),
-            store=StoreTier.KV,
-            scope=Scope.EXECUTION,
-            meta=ResultRefMeta(bytes=4096),
-        )
-
-    monkeypatch.setenv("NOETL_EVENT_INLINE_MAX_BYTES", "128")
-    monkeypatch.setattr(worker_module.default_store, "put", _fake_put)
-
     events = [
         {"step": "s1", "name": "command.started", "payload": {}, "actionable": False, "informative": True},
         {
             "step": "s1",
             "name": "call.done",
-            "payload": {"response": {"rows": ["x" * 8192]}},
+            "payload": {
+                "response": {
+                    "_ref": {
+                        "kind": "result_ref",
+                        "ref": "noetl://execution/123/result/s1/abcd1234",
+                        "store": "kv",
+                    },
+                    "_store": "kv",
+                    "_size_bytes": 8192,
+                }
+            },
             "actionable": True,
             "informative": True,
         },
@@ -110,10 +107,11 @@ async def test_emit_batch_events_externalizes_large_response_payload(monkeypatch
 
     assert ok is True
     sent = worker._http_client.json_seen[0]
-    response_payload = sent["events"][1]["payload"]["response"]
-    assert "_ref" in response_payload
-    assert response_payload["_ref"]["kind"] == "result_ref"
-    assert response_payload["_store"] == "kv"
+    result_payload = sent["events"][1]["payload"]["result"]
+    assert "response" not in sent["events"][1]["payload"]
+    assert result_payload["status"] == "COMPLETED"
+    assert result_payload["reference"]["locator"] == "noetl://execution/123/result/s1/abcd1234"
+    assert result_payload["reference"]["type"] == "nats"
 
 
 @pytest.mark.asyncio
