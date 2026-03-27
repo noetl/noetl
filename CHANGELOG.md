@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.12.8](https://github.com/noetl/noetl/compare/v2.12.7...v2.12.8) (2026-03-27)
+
+### Bug Fixes
+
+* normalize reference-only result status aliases ([8f6326a](https://github.com/noetl/noetl/commit/8f6326a1f2bcb91d0e735ad3939f2ef9b95dd8fb))
+
 ## [2.12.7](https://github.com/noetl/noetl/compare/v2.12.6...v2.12.7) (2026-03-27)
 
 ### Bug Fixes
