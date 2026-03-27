@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.13.0](https://github.com/noetl/noetl/compare/v2.12.8...v2.13.0) (2026-03-27)
+
+### Features
+
+* add patient-records mock endpoint and fetch-step load test playbook ([42a5d8b](https://github.com/noetl/noetl/commit/42a5d8bb6ea16014c0d6c98a3b0b29a59a0a56e4))
+* **playbook:** refactor test_fetch_load to use native http step with pagination ([a63379a](https://github.com/noetl/noetl/commit/a63379a284a7b4dd586104c6d19ed7c7e53495d6))
+
+### Bug Fixes
+
+* **load-test:** address Copilot review comments ([85db5c2](https://github.com/noetl/noetl/commit/85db5c2ac8333284b38aea8a5cf790a9b2cfe522))
+* remove duplicate hashlib import in paginated_api.py ([650b262](https://github.com/noetl/noetl/commit/650b2628059a219fe5700a6193c0a9b232c59839))
+
 ## [2.12.8](https://github.com/noetl/noetl/compare/v2.12.7...v2.12.8) (2026-03-27)
 
 ### Bug Fixes
