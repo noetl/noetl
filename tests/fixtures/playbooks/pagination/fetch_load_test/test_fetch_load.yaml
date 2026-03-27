@@ -1,0 +1,287 @@
+apiVersion: noetl.io/v2
+kind: Playbook
+metadata:
+  name: test_fetch_load
+  path: tests/fixtures/playbooks/pagination/fetch_load_test
+  description: |
+    Fetch-step load test: 500 patients, paginated FHIR-like responses (~100KB/page, 2-5 pages each).
+
+    Validates that max_in_flight: 5 on fetch steps holds under realistic load without
+    worker crash or OOM — reproducing the structure of fetch_medications in
+    state_report_generation_prod_v10.yaml that caused CrashLoopBackOff at max_in_flight: 20.
+
+    Go/no-go criterion: all 500 patients processed, no worker restart, final record count matches.
+    Target execution time at max_in_flight: 5 — see README.md for timing expectations.
+
+workload:
+  api_url: http://paginated-api.test-server.svc.cluster.local:5555
+  num_patients: 500
+  page_size: 10
+  max_in_flight: 5
+
+workflow:
+  - step: start
+    desc: Create tracking table and initialize execution context
+    tool:
+      kind: postgres
+      auth: pg_k8s
+      query: |
+        CREATE TABLE IF NOT EXISTS public.fetch_load_test_results (
+          execution_id    TEXT        NOT NULL,
+          patient_id      TEXT        NOT NULL,
+          pages_fetched   INTEGER     NOT NULL DEFAULT 0,
+          records_fetched INTEGER     NOT NULL DEFAULT 0,
+          completed       BOOLEAN     NOT NULL DEFAULT FALSE,
+          error_message   TEXT,
+          processed_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          PRIMARY KEY (execution_id, patient_id)
+        );
+
+        DELETE FROM public.fetch_load_test_results
+        WHERE execution_id = '{{ execution_id }}';
+
+        SELECT 'table ready' AS status;
+    next:
+      spec:
+        mode: exclusive
+      arcs:
+        - step: generate_patients
+
+  - step: generate_patients
+    desc: Generate list of 500 synthetic patient IDs
+    tool:
+      kind: python
+      args:
+        num_patients: '{{ num_patients }}'
+      code: |
+        n = int(num_patients or 500)
+        patients = [{"patient_id": f"P-{i:04d}"} for i in range(1, n + 1)]
+        result = {"patients": patients, "count": len(patients)}
+    next:
+      spec:
+        mode: exclusive
+      arcs:
+        - step: fetch_all_patients
+
+  - step: fetch_all_patients
+    desc: "Fetch all pages for each patient in parallel (max_in_flight: 5)"
+    loop:
+      in: '{{ generate_patients.patients }}'
+      iterator: item
+      spec:
+        mode: parallel
+        max_in_flight: 5
+        policy:
+          exec: distributed
+    tool:
+      - name: fetch_patient_pages
+        kind: python
+        libs:
+          - requests
+        args:
+          patient_id: '{{ iter.item.patient_id }}'
+          api_url: '{{ api_url }}'
+          page_size: '{{ page_size }}'
+        code: |
+          import requests
+          import time
+          from urllib.parse import urlparse, parse_qs
+
+          pid = str(patient_id)
+          base = str(api_url).rstrip("/")
+          ps = int(page_size or 10)
+
+          total_pages = 0
+          total_records = 0
+          page = 1
+          max_retries = 5
+
+          while True:
+              params = {"patientId": pid, "page": page, "pageSize": ps}
+
+              resp = None
+              for attempt in range(max_retries):
+                  r = requests.get(
+                      f"{base}/api/v1/patient-records",
+                      params=params,
+                      timeout=60,
+                  )
+                  if r.status_code == 429:
+                      retry_after = int(r.headers.get("Retry-After", "1"))
+                      time.sleep(retry_after + 0.5)
+                      continue
+                  r.raise_for_status()
+                  resp = r
+                  break
+
+              if resp is None:
+                  raise RuntimeError(
+                      f"Rate limit exceeded after {max_retries} retries "
+                      f"for patient {pid} page {page}"
+                  )
+
+              data = resp.json()
+              entries = data.get("entry", [])
+              total_records += len(entries)
+              total_pages += 1
+
+              # Follow link.next if present
+              next_page = None
+              for link in data.get("link", []):
+                  if link.get("relation") == "next":
+                      parsed = urlparse(link["url"])
+                      qs = parse_qs(parsed.query)
+                      next_page = int(qs.get("page", [page + 1])[0])
+                      break
+
+              if next_page is None:
+                  break
+              page = next_page
+
+          result = {
+              "patient_id": pid,
+              "pages_fetched": total_pages,
+              "records_fetched": total_records,
+              "completed": True,
+          }
+        spec:
+          policy:
+            rules:
+              - when: '{{ outcome.error.retryable }}'
+                then:
+                  do: retry
+                  attempts: 3
+                  backoff: exponential
+                  delay: 2.0
+              - when: '{{ outcome.status == "error" }}'
+                then:
+                  do: fail
+              - else:
+                  then:
+                    do: continue
+
+      - name: save_result
+        kind: postgres
+        auth: pg_k8s
+        query: |
+          INSERT INTO public.fetch_load_test_results (
+            execution_id,
+            patient_id,
+            pages_fetched,
+            records_fetched,
+            completed
+          )
+          VALUES (
+            '{{ execution_id }}',
+            '{{ fetch_patient_pages.patient_id }}',
+            {{ fetch_patient_pages.pages_fetched }},
+            {{ fetch_patient_pages.records_fetched }},
+            {{ 'true' if fetch_patient_pages.completed else 'false' }}
+          )
+          ON CONFLICT (execution_id, patient_id) DO UPDATE SET
+            pages_fetched   = EXCLUDED.pages_fetched,
+            records_fetched = EXCLUDED.records_fetched,
+            completed       = EXCLUDED.completed,
+            processed_at    = NOW();
+        spec:
+          policy:
+            rules:
+              - when: '{{ outcome.error.retryable }}'
+                then:
+                  do: retry
+                  attempts: 3
+                  backoff: linear
+                  delay: 1.0
+              - when: '{{ outcome.status == "error" }}'
+                then:
+                  do: fail
+              - else:
+                  then:
+                    do: continue
+    next:
+      spec:
+        mode: exclusive
+      arcs:
+        - step: validate_results
+          when: '{{ event.name == "loop.done" }}'
+
+  - step: validate_results
+    desc: Query completion stats and surface any missing patients
+    tool:
+      kind: postgres
+      auth: pg_k8s
+      query: |
+        SELECT
+          COUNT(*)                                  AS total_patients,
+          SUM(pages_fetched)                        AS total_pages,
+          SUM(records_fetched)                      AS total_records,
+          COUNT(*) FILTER (WHERE completed = TRUE)  AS completed_count,
+          COUNT(*) FILTER (WHERE completed = FALSE) AS failed_count
+        FROM public.fetch_load_test_results
+        WHERE execution_id = '{{ execution_id }}';
+
+        SELECT patient_id, error_message
+        FROM public.fetch_load_test_results
+        WHERE execution_id = '{{ execution_id }}'
+          AND completed = FALSE
+        ORDER BY patient_id
+        LIMIT 20;
+    next:
+      spec:
+        mode: exclusive
+      arcs:
+        - step: check_results
+
+  - step: check_results
+    desc: Assert all 500 patients completed; fail loudly if any are missing
+    tool:
+      kind: python
+      args:
+        stats: '{{ validate_results.data.result.command_0.rows }}'
+        failed: '{{ validate_results.data.result.command_1.rows }}'
+        expected: '{{ num_patients }}'
+      code: |
+        row = stats[0] if isinstance(stats, list) and stats else {}
+        total     = int(row.get("total_patients", 0) or 0)
+        completed = int(row.get("completed_count", 0) or 0)
+        failed    = int(row.get("failed_count", 0) or 0)
+        exp       = int(expected or 500)
+        failed_rows = failed if isinstance(failed, list) else []
+        failed_ids = [r["patient_id"] for r in failed_rows]
+
+        assert total == exp, (
+            f"Expected {exp} patients in results, got {total}. "
+            "Some patients may not have been processed."
+        )
+        assert completed == exp, (
+            f"Expected {exp} completed patients, got {completed}. "
+            f"Failed patients ({failed}): {failed_ids[:10]}"
+        )
+
+        result = {
+            "status": "passed",
+            "total_patients": total,
+            "completed": completed,
+            "total_pages": int(row.get("total_pages", 0) or 0),
+            "total_records": int(row.get("total_records", 0) or 0),
+            "avg_pages_per_patient": round(
+                int(row.get("total_pages", 0) or 0) / max(total, 1), 2
+            ),
+        }
+    next:
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
+
+  - step: end
+    desc: Load test complete — all 500 patients processed without worker crash
+    tool:
+      kind: python
+      args:
+        summary: '{{ check_results }}'
+      code: |
+        result = {
+            "status": "completed",
+            "summary": summary,
+        }
