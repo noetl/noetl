@@ -183,17 +183,20 @@ async def _get_shared_async_http_client(verify_ssl: bool, follow_redirects: bool
 async def close_shared_async_http_clients() -> None:
     """Close all shared async HTTP clients for the current event loop.
 
-    Snapshots and clears the client map inside the lock, then closes clients
-    outside the lock to avoid holding it during potentially-slow aclose() calls.
+    Snapshots and clears the client map inside the lock (so no new clients for
+    this loop can be missed), then closes clients outside the lock to avoid
+    holding it during potentially-slow aclose() calls.
     """
     loop_id = id(asyncio.get_running_loop())
     lock = _ASYNC_HTTP_CLIENT_LOCKS.get(loop_id)
     if lock is None:
         return
 
-    keys_to_remove = [k for k in _ASYNC_HTTP_CLIENTS if k[0] == loop_id]
     clients_to_close: list[httpx.AsyncClient] = []
     async with lock:
+        # Compute and remove keys inside the lock so any client created between
+        # the function entry and lock acquisition is included.
+        keys_to_remove = [k for k in _ASYNC_HTTP_CLIENTS if k[0] == loop_id]
         for k in keys_to_remove:
             client = _ASYNC_HTTP_CLIENTS.pop(k, None)
             if client is not None:
@@ -203,8 +206,8 @@ async def close_shared_async_http_clients() -> None:
     for client in clients_to_close:
         try:
             await client.aclose()
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug("Failed to close shared AsyncClient: %r", exc, exc_info=exc)
 
 
 async def execute_http_task(
