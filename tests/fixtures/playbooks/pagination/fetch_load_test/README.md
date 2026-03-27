@@ -67,7 +67,7 @@ These env vars can be set on the `paginated-api` Deployment to tune server behav
 | `PATIENT_RECORDS_MAX_PAGES`    | `5`     | Max pages per patient                  |
 | `PATIENT_RECORDS_PAYLOAD_KB`   | `100`   | Target response size per page (KB)     |
 
-All parameters are also overridable per-request via query params of the same name (lowercase).
+The delay, payload size, and rate limit parameters are also overridable per-request via lowercase query params (for example, `min_delay`, `max_delay`, `payload_kb`, `rate_limit`).
 
 ## Files
 
