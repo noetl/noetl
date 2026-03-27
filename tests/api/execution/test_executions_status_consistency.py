@@ -195,6 +195,43 @@ async def test_get_executions_keeps_terminal_completed(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_get_executions_prefers_terminal_event_even_if_latest_is_non_terminal(monkeypatch):
+    start = datetime(2026, 3, 21, 7, 0, 0, tzinfo=timezone.utc)
+    latest = datetime(2026, 3, 21, 7, 5, 0, tzinfo=timezone.utc)
+    terminal = datetime(2026, 3, 21, 7, 4, 30, tzinfo=timezone.utc)
+    rows = [
+        {
+            "execution_id": "123",
+            "catalog_id": "321",
+            "event_type": "batch.completed",
+            "status": "COMPLETED",
+            "derived_event_type": "batch.completed",
+            "start_time": start,
+            "end_time": latest,
+            "result": None,
+            "error": None,
+            "parent_execution_id": None,
+            "terminal_event_type": "execution.cancelled",
+            "terminal_status": "CANCELLED",
+            "terminal_end_time": terminal,
+            "path": "bhs/state_report_generation_prod_v10",
+            "version": 1,
+        }
+    ]
+
+    monkeypatch.setattr(
+        execution_api,
+        "get_pool_connection",
+        lambda: _ConnCtx(_FakeConn(_FakeCursor(rows))),
+    )
+
+    result = await execution_api.get_executions()
+    assert len(result) == 1
+    assert result[0].status == "CANCELLED"
+    assert result[0].end_time == terminal
+
+
+@pytest.mark.asyncio
 async def test_get_executions_infers_completed_from_batch_done_without_pending(monkeypatch):
     now = datetime(2026, 3, 21, 7, 0, 0, tzinfo=timezone.utc)
     rows = [
