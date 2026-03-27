@@ -5,14 +5,16 @@ Provides realistic pagination patterns for integration testing.
 Includes heavy payload endpoints for load testing pipeline execution.
 """
 
-from fastapi import FastAPI, Query, Response, HTTPException
+from fastapi import FastAPI, Query, Request, Response, HTTPException
 from fastapi.responses import JSONResponse
+import asyncio
+import hashlib
+import os
 import uvicorn
 import sys
 import time
 import random
 import string
-import hashlib
 from collections import defaultdict
 import logging
 
@@ -27,9 +29,18 @@ HEAVY_TOTAL_ITEMS = 100  # More items for heavy payload tests
 REFERENCE_CHAIN_TOTAL_ITEMS = 382  # Neutral large-loop fixture
 REFERENCE_CHAIN_MAX_DETAIL_ID = 20000
 
+# Patient records endpoint configuration (AHM-4287)
+PATIENT_RECORDS_MIN_DELAY = float(os.getenv("PATIENT_RECORDS_MIN_DELAY", "2.0"))
+PATIENT_RECORDS_MAX_DELAY = float(os.getenv("PATIENT_RECORDS_MAX_DELAY", "4.0"))
+PATIENT_RECORDS_RATE_LIMIT = int(os.getenv("PATIENT_RECORDS_RATE_LIMIT", "50"))
+PATIENT_RECORDS_MIN_PAGES = int(os.getenv("PATIENT_RECORDS_MIN_PAGES", "2"))
+PATIENT_RECORDS_MAX_PAGES = int(os.getenv("PATIENT_RECORDS_MAX_PAGES", "5"))
+PATIENT_RECORDS_PAYLOAD_KB = int(os.getenv("PATIENT_RECORDS_PAYLOAD_KB", "100"))
+
 # Track request attempts per page for flaky endpoint
 flaky_attempts = defaultdict(int)
 rate_limit_tracker = defaultdict(list)  # Track requests per second
+patient_records_rate_tracker: list = []  # Global rate tracker for /patient-records
 
 
 @app.get('/api/v1/assessments')
@@ -598,6 +609,153 @@ def get_rate_limited(
     }
 
 
+# ============================================================================
+# Patient Records Endpoint - FHIR-like paginated API for fetch-step load testing
+# Reproduces fetch_medications behavior: ~100KB pages, 2-4s latency, 50 req/s cap
+# See AHM-4287 for spec details.
+# ============================================================================
+
+def _patient_page_count(patient_id: str, min_pages: int, max_pages: int) -> int:
+    """Return deterministic page count (min_pages..max_pages) for a given patientId."""
+    seed = int(hashlib.md5(patient_id.encode()).hexdigest(), 16)
+    return min_pages + (seed % (max_pages - min_pages + 1))
+
+
+def _fhir_entry(patient_id: str, entry_index: int, page: int, padding_chars: int) -> dict:
+    """Generate a single FHIR MedicationStatement entry with deterministic ID and padding."""
+    entry_id = f"{patient_id}-p{page}-e{entry_index}"
+    return {
+        "fullUrl": f"MedicationStatement/{entry_id}",
+        "resource": {
+            "resourceType": "MedicationStatement",
+            "id": entry_id,
+            "status": "active",
+            "subject": {"reference": f"Patient/{patient_id}"},
+            "medicationCodeableConcept": {
+                "coding": [
+                    {
+                        "system": "http://www.nlm.nih.gov/research/umls/rxnorm",
+                        "code": str(1000 + entry_index),
+                        "display": f"Drug-{entry_index}",
+                    }
+                ],
+                "text": f"Medication record for patient {patient_id}",
+            },
+            "effectivePeriod": {"start": "2024-01-01", "end": "2024-12-31"},
+            "dosage": [
+                {
+                    "text": "1 tablet daily",
+                    "timing": {"repeat": {"frequency": 1, "period": 1, "periodUnit": "d"}},
+                }
+            ],
+            # Padding field to reach ~100KB per response (matching real includeOptionalFields=drugclass payload)
+            "_payload": "M" * padding_chars,
+        },
+    }
+
+
+@app.get('/api/v1/patient-records')
+async def get_patient_records(
+    request: Request,
+    patientId: str = Query(..., description="Patient ID"),
+    page: int = Query(default=1, ge=1, description="Page number (1-based)"),
+    pageSize: int = Query(default=10, ge=1, description="Items per page"),
+    min_delay: float = Query(default=None, description="Override min server-side delay in seconds"),
+    max_delay: float = Query(default=None, description="Override max server-side delay in seconds"),
+    payload_kb: int = Query(default=None, description="Override total response payload target in KB"),
+    rate_limit: int = Query(default=None, description="Override requests-per-second rate limit"),
+):
+    """
+    FHIR-like paginated patient medication records endpoint for fetch-step load testing.
+
+    Reproduces the behavior of fetch_medications in state_report_generation_prod_v10.yaml:
+    - 2–5 pages per patient, deterministic per patientId seed (reproducible across reruns)
+    - ~100 KB response per page to trigger GCS externalization pressure
+    - 2–4 second server-side delay per request
+    - Hard cap of 50 requests/second globally; returns 429 + Retry-After: 1 on breach
+    - Runtime behavior (delays, payload size, rate limit, and page-count bounds) overridable via query params and/or env vars for test flexibility
+
+    Response shape (FHIR Bundle):
+    {
+        "resourceType": "Bundle",
+        "type": "searchset",
+        "total": <int>,
+        "link": [
+            {"relation": "self",  "url": "..."},
+            {"relation": "next",  "url": "..."}   // omitted on last page
+        ],
+        "entry": [...],
+        "meta": {...}
+    }
+    """
+    global patient_records_rate_tracker
+
+    # --- Rate limiting (50 req/s hard cap) ---
+    effective_limit = rate_limit if rate_limit is not None else PATIENT_RECORDS_RATE_LIMIT
+    now = time.time()
+    patient_records_rate_tracker = [t for t in patient_records_rate_tracker if now - t < 1.0]
+    if len(patient_records_rate_tracker) >= effective_limit:
+        return JSONResponse(
+            status_code=429,
+            content={"error": "Too Many Requests", "message": "Rate limit exceeded"},
+            headers={"Retry-After": "1"},
+        )
+    patient_records_rate_tracker.append(now)
+
+    # --- Server-side latency simulation ---
+    min_d = min_delay if min_delay is not None else PATIENT_RECORDS_MIN_DELAY
+    max_d = max_delay if max_delay is not None else PATIENT_RECORDS_MAX_DELAY
+    delay = random.uniform(min_d, max_d)
+    await asyncio.sleep(delay)
+
+    # --- Pagination bounds ---
+    total_pages = _patient_page_count(
+        patientId, PATIENT_RECORDS_MIN_PAGES, PATIENT_RECORDS_MAX_PAGES
+    )
+    if page > total_pages:
+        raise HTTPException(status_code=404, detail=f"Page {page} does not exist for patient {patientId}")
+
+    # --- Payload sizing: target ~100KB total per response ---
+    target_kb = payload_kb if payload_kb is not None else PATIENT_RECORDS_PAYLOAD_KB
+    # Reserve ~600 bytes per entry for FHIR structure; rest is padding
+    padding_per_entry = max(100, (target_kb * 1024) // max(pageSize, 1) - 600)
+
+    entries = [
+        _fhir_entry(patientId, (page - 1) * pageSize + i, page, padding_per_entry)
+        for i in range(pageSize)
+    ]
+
+    # --- FHIR link array ---
+    base = str(request.base_url).rstrip("/")
+    self_url = f"{base}/api/v1/patient-records?patientId={patientId}&page={page}&pageSize={pageSize}"
+    links = [{"relation": "self", "url": self_url}]
+    if page < total_pages:
+        next_url = f"{base}/api/v1/patient-records?patientId={patientId}&page={page + 1}&pageSize={pageSize}"
+        links.append({"relation": "next", "url": next_url})
+
+    response_size_estimate = len("M") * padding_per_entry * len(entries)
+    logger.info(
+        f"patient-records: patientId={patientId} page={page}/{total_pages} "
+        f"entries={len(entries)} ~{response_size_estimate // 1024}KB delay={delay:.2f}s"
+    )
+
+    return {
+        "resourceType": "Bundle",
+        "type": "searchset",
+        "total": total_pages * pageSize,
+        "link": links,
+        "entry": entries,
+        "meta": {
+            "patientId": patientId,
+            "page": page,
+            "pageSize": pageSize,
+            "totalPages": total_pages,
+            "delaySeconds": round(delay, 2),
+            "estimatedResponseKB": response_size_estimate // 1024,
+        },
+    }
+
+
 @app.get('/health')
 def health():
     """Health check endpoint."""
@@ -619,6 +777,10 @@ if __name__ == '__main__':
     print("    GET /api/v1/heavy/stats                       - Heavy endpoint configuration")
     print("    GET /api/v1/reference-chain/items              - Large paginated neutral fixture")
     print("    GET /api/v1/reference-chain/detail/{record_id} - Per-record detail with ref modes")
+    print("    GET /api/v1/patient-records?patientId=P&page=N&pageSize=M - FHIR fetch load test")
+    print(f"      defaults: delay={PATIENT_RECORDS_MIN_DELAY}-{PATIENT_RECORDS_MAX_DELAY}s, "
+          f"pages={PATIENT_RECORDS_MIN_PAGES}-{PATIENT_RECORDS_MAX_PAGES}, "
+          f"payload={PATIENT_RECORDS_PAYLOAD_KB}KB, rate_limit={PATIENT_RECORDS_RATE_LIMIT}/s")
     print("  Error Simulation:")
     print("    GET /api/v1/flaky?page=N&fail_on=2,3          - Flaky endpoint (fails first attempt)")
     print("    GET /api/v1/errors?error_type=429|500|503     - Simulate specific errors")
