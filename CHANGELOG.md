@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.13.1](https://github.com/noetl/noetl/compare/v2.13.0...v2.13.1) (2026-03-27)
+
+### Bug Fixes
+
+* address Copilot review findings on PR [#346](https://github.com/noetl/noetl/issues/346) ([e7265ea](https://github.com/noetl/noetl/commit/e7265ea347f85b0f43b80fd22a8d8b532519df0a))
+* address second round of Copilot findings on PR [#346](https://github.com/noetl/noetl/issues/346) ([8e4867e](https://github.com/noetl/noetl/commit/8e4867e4496fad6492705c5f4d2e1487203733ca))
+* replace blocking sync HTTP client with async across worker execution path ([65a7a74](https://github.com/noetl/noetl/commit/65a7a74c3517b10d99e2da7ac5ec1645ccb539ac)), closes [#345](https://github.com/noetl/noetl/issues/345)
+
 ## [2.13.0](https://github.com/noetl/noetl/compare/v2.12.8...v2.13.0) (2026-03-27)
 
 ### Features
