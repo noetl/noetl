@@ -11,7 +11,7 @@ Validates that `max_in_flight: 5` on fetch steps holds under realistic load with
   - 2–5 pages per patient, deterministic per `patientId` (reproducible across runs)
   - ~100 KB per response page to trigger GCS externalization pressure
   - 2–4 second server-side delay to simulate real API latency
-- **Assertion**: all 500 patients processed, final record count matches expected total
+- **Assertion**: all 500 patients processed successfully (patient totals/completions; no explicit record-count assertion)
 - **Go/no-go criterion**: playbook completes without worker crash or OOM kill
 
 ## Dependencies
@@ -38,7 +38,9 @@ noetl exec tests/fixtures/playbooks/pagination/fetch_load_test/test_fetch_load.y
 noetl exec tests/fixtures/playbooks/pagination/fetch_load_test/test_fetch_load.yaml \
   --var num_patients=20
 
-# Reproduce the crash: increase max_in_flight to 20 in workload and run
+# Reproduce the crash: override max_in_flight to 20 via --var
+noetl exec tests/fixtures/playbooks/pagination/fetch_load_test/test_fetch_load.yaml \
+  --var max_in_flight=20
 # Expected: CrashLoopBackOff or OOM kill within the first few minutes
 ```
 

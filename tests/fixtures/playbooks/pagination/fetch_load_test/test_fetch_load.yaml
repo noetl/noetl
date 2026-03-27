@@ -10,7 +10,7 @@ metadata:
     worker crash or OOM — reproducing the structure of fetch_medications in
     state_report_generation_prod_v10.yaml that caused CrashLoopBackOff at max_in_flight: 20.
 
-    Go/no-go criterion: all 500 patients processed, no worker restart, final record count matches.
+    Go/no-go criterion: all 500 patients processed and no worker restart.
     Target execution time at max_in_flight: 5 — see README.md for timing expectations.
 
 workload:
@@ -64,13 +64,13 @@ workflow:
         - step: fetch_all_patients
 
   - step: fetch_all_patients
-    desc: "Fetch all pages for each patient in parallel (max_in_flight: 5)"
+    desc: "Fetch all pages for each patient in parallel (max_in_flight: {{ max_in_flight }})"
     loop:
       in: '{{ generate_patients.patients }}'
       iterator: item
       spec:
         mode: parallel
-        max_in_flight: 5
+        max_in_flight: '{{ max_in_flight }}'
     tool:
       - name: init_page
         kind: noop
@@ -98,7 +98,10 @@ workflow:
               - when: "{{ outcome.status == 'error' and outcome.http.status == 429 }}"
                 then: { do: retry, attempts: 30, backoff: fixed, delay: 1.0 }
               - when: "{{ outcome.status == 'error' and outcome.http.status == 404 }}"
-                then: { do: break }
+                then:
+                  do: continue
+                  set_iter:
+                    has_more: false
               - when: "{{ outcome.status == 'error' }}"
                 then: { do: retry, attempts: 3, backoff: exponential, delay: 5.0 }
               - else:

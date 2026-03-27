@@ -658,8 +658,8 @@ def _fhir_entry(patient_id: str, entry_index: int, page: int, padding_chars: int
 async def get_patient_records(
     request: Request,
     patientId: str = Query(..., description="Patient ID"),
-    page: int = Query(default=1, description="Page number (1-based)"),
-    pageSize: int = Query(default=10, description="Items per page"),
+    page: int = Query(default=1, ge=1, description="Page number (1-based)"),
+    pageSize: int = Query(default=10, ge=1, description="Items per page"),
     min_delay: float = Query(default=None, description="Override min server-side delay in seconds"),
     max_delay: float = Query(default=None, description="Override max server-side delay in seconds"),
     payload_kb: int = Query(default=None, description="Override total response payload target in KB"),
@@ -673,7 +673,7 @@ async def get_patient_records(
     - ~100 KB response per page to trigger GCS externalization pressure
     - 2–4 second server-side delay per request
     - Hard cap of 50 requests/second globally; returns 429 + Retry-After: 1 on breach
-    - All parameters overridable via query params or env vars for test flexibility
+    - Runtime behavior (delays, payload size, rate limit, and page-count bounds) overridable via query params and/or env vars for test flexibility
 
     Response shape (FHIR Bundle):
     {
