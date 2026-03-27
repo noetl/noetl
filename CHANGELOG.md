@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.12.7](https://github.com/noetl/noetl/compare/v2.12.6...v2.12.7) (2026-03-27)
+
+### Bug Fixes
+
+* **runtime:** fail no-progress task sequence and normalize terminal filters ([14b8eb4](https://github.com/noetl/noetl/commit/14b8eb41d8abb65db2c145f37f9e23a9bb5bc568))
+
 ## [2.12.6](https://github.com/noetl/noetl/compare/v2.12.5...v2.12.6) (2026-03-27)
 
 ### Bug Fixes
