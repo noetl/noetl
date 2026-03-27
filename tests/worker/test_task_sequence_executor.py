@@ -373,3 +373,95 @@ def test_task_sequence_missing_reference_detection_avoids_refresh_false_positive
     assert TaskSequenceExecutor._is_missing_reference_error(
         "refresh token missing for upstream auth provider"
     ) is False
+
+
+@pytest.mark.asyncio
+async def test_task_sequence_break_with_only_init_page_fails_when_patient_count_positive():
+    async def fake_tool_executor(_kind: str, _config: dict, _ctx: dict):
+        return {"status": "noop"}
+
+    executor = TaskSequenceExecutor(
+        tool_executor=fake_tool_executor,
+        render_template=_render_template,
+        render_dict=_render_dict,
+    )
+
+    tasks = [
+        {
+            "name": "init_page",
+            "kind": "noop",
+            "spec": {"policy": {"rules": [{"else": {"then": {"do": "break"}}}]}},
+        },
+        {
+            "name": "fetch_page",
+            "kind": "http",
+            "spec": {"policy": {"rules": [{"else": {"then": {"do": "continue"}}}]}},
+        },
+        {
+            "name": "save_page",
+            "kind": "postgres",
+            "spec": {"policy": {"rules": [{"else": {"then": {"do": "continue"}}}]}},
+        },
+        {
+            "name": "paginate",
+            "kind": "noop",
+            "spec": {"policy": {"rules": [{"else": {"then": {"do": "continue"}}}]}},
+        },
+    ]
+
+    result = await executor.execute(
+        tasks=tasks,
+        base_context={"ctx": {"patient_count": 4}},
+    )
+
+    assert result["status"] == "failed"
+    assert result["failed_task"] == "init_page"
+    assert result["error"]["code"] == "TASK_SEQUENCE_NO_PROGRESS"
+    assert result["error"]["retryable"] is False
+
+
+@pytest.mark.asyncio
+async def test_task_sequence_break_with_only_init_page_allows_zero_or_missing_patient_count():
+    async def fake_tool_executor(_kind: str, _config: dict, _ctx: dict):
+        return {"status": "noop"}
+
+    executor = TaskSequenceExecutor(
+        tool_executor=fake_tool_executor,
+        render_template=_render_template,
+        render_dict=_render_dict,
+    )
+
+    tasks = [
+        {
+            "name": "init_page",
+            "kind": "noop",
+            "spec": {"policy": {"rules": [{"else": {"then": {"do": "break"}}}]}},
+        },
+        {
+            "name": "fetch_page",
+            "kind": "http",
+            "spec": {"policy": {"rules": [{"else": {"then": {"do": "continue"}}}]}},
+        },
+        {
+            "name": "save_page",
+            "kind": "postgres",
+            "spec": {"policy": {"rules": [{"else": {"then": {"do": "continue"}}}]}},
+        },
+        {
+            "name": "paginate",
+            "kind": "noop",
+            "spec": {"policy": {"rules": [{"else": {"then": {"do": "continue"}}}]}},
+        },
+    ]
+
+    zero_count_result = await executor.execute(
+        tasks=tasks,
+        base_context={"ctx": {"patient_count": 0}},
+    )
+    missing_count_result = await executor.execute(
+        tasks=tasks,
+        base_context={},
+    )
+
+    assert zero_count_result["status"] == "break"
+    assert missing_count_result["status"] == "break"

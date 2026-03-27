@@ -1845,7 +1845,7 @@ async def cleanup_stuck_executions(request: CleanupStuckExecutionsRequest = Body
     Marks executions as CANCELLED if they:
     - Have a 'playbook.initialized' event
     - Are older than specified minutes (default: 5)
-    - Have no terminal event (playbook.completed, playbook.failed, execution.cancelled)
+    - Have no terminal event (playbook/workflow completed|failed, execution.cancelled)
     
     This is useful for cleaning up executions interrupted by server restarts.
     """
@@ -1867,7 +1867,13 @@ async def cleanup_stuck_executions(request: CleanupStuckExecutionsRequest = Body
                   AND NOT EXISTS (
                     SELECT 1 FROM event e2 
                     WHERE e2.execution_id = e1.execution_id 
-                      AND e2.event_type IN ('playbook.completed', 'playbook.failed', 'execution.cancelled')
+                      AND e2.event_type IN (
+                          'playbook.completed',
+                          'workflow.completed',
+                          'playbook.failed',
+                          'workflow.failed',
+                          'execution.cancelled'
+                      )
                   )
                 ORDER BY e1.execution_id
             """, (request.older_than_minutes,))
