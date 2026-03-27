@@ -119,26 +119,31 @@ def _resolve_http_timeout_seconds(task_timeout_value: Any) -> float:
     return min(bounded, max_timeout)
 
 
-_ASYNC_HTTP_CLIENTS: Dict[tuple[bool, bool], httpx.AsyncClient] = {}
-_ASYNC_HTTP_CLIENT_LOCK: Optional[asyncio.Lock] = None
+# Clients and locks keyed by (loop_id, verify_ssl, follow_redirects).
+# Each event loop gets its own lock and client set so asyncio.Lock is never
+# shared across loops (which raises RuntimeError in Python ≥ 3.10).
+_ASYNC_HTTP_CLIENTS: Dict[tuple, httpx.AsyncClient] = {}
+_ASYNC_HTTP_CLIENT_LOCKS: Dict[int, asyncio.Lock] = {}
 
 
-def _get_async_lock() -> asyncio.Lock:
-    global _ASYNC_HTTP_CLIENT_LOCK
-    if _ASYNC_HTTP_CLIENT_LOCK is None:
-        _ASYNC_HTTP_CLIENT_LOCK = asyncio.Lock()
-    return _ASYNC_HTTP_CLIENT_LOCK
+def _get_loop_lock() -> asyncio.Lock:
+    loop_id = id(asyncio.get_running_loop())
+    if loop_id not in _ASYNC_HTTP_CLIENT_LOCKS:
+        _ASYNC_HTTP_CLIENT_LOCKS[loop_id] = asyncio.Lock()
+    return _ASYNC_HTTP_CLIENT_LOCKS[loop_id]
 
 
 async def _get_shared_async_http_client(verify_ssl: bool, follow_redirects: bool) -> httpx.AsyncClient:
     """
-    Return a shared keep-alive async HTTP client for this worker process.
+    Return a shared keep-alive async HTTP client for the current event loop.
 
-    Avoids creating/tearing down a client per HTTP task call, which is
-    especially expensive for high-volume task_sequence loops.
+    Clients are scoped per event loop so asyncio.Lock is never shared across
+    loops (which raises RuntimeError). Avoids creating/tearing down a client
+    per HTTP task call, especially expensive for high-volume task_sequence loops.
     """
-    key = (bool(verify_ssl), bool(follow_redirects))
-    async with _get_async_lock():
+    loop_id = id(asyncio.get_running_loop())
+    key = (loop_id, bool(verify_ssl), bool(follow_redirects))
+    async with _get_loop_lock():
         existing = _ASYNC_HTTP_CLIENTS.get(key)
         if existing is not None and not existing.is_closed:
             return existing
@@ -176,14 +181,30 @@ async def _get_shared_async_http_client(verify_ssl: bool, follow_redirects: bool
 
 
 async def close_shared_async_http_clients() -> None:
-    """Close all shared async HTTP clients. Call during worker shutdown."""
-    async with _get_async_lock():
-        for client in _ASYNC_HTTP_CLIENTS.values():
-            try:
-                await client.aclose()
-            except Exception:
-                pass
-        _ASYNC_HTTP_CLIENTS.clear()
+    """Close all shared async HTTP clients for the current event loop.
+
+    Snapshots and clears the client map inside the lock, then closes clients
+    outside the lock to avoid holding it during potentially-slow aclose() calls.
+    """
+    loop_id = id(asyncio.get_running_loop())
+    lock = _ASYNC_HTTP_CLIENT_LOCKS.get(loop_id)
+    if lock is None:
+        return
+
+    keys_to_remove = [k for k in _ASYNC_HTTP_CLIENTS if k[0] == loop_id]
+    clients_to_close: list[httpx.AsyncClient] = []
+    async with lock:
+        for k in keys_to_remove:
+            client = _ASYNC_HTTP_CLIENTS.pop(k, None)
+            if client is not None:
+                clients_to_close.append(client)
+    _ASYNC_HTTP_CLIENT_LOCKS.pop(loop_id, None)
+
+    for client in clients_to_close:
+        try:
+            await client.aclose()
+        except Exception:
+            pass
 
 
 async def execute_http_task(

@@ -158,14 +158,23 @@ def execute_task(
             elif isinstance(retry_config, dict):
                 needs_worker_retry = 'on_success' in retry_config
         
+        # Determine the coroutine to run
+        from noetl.core.runtime.retry import execute_with_retry_async
         if needs_worker_retry:
-            # Use async retry wrapper — runs a new event loop since execute_task is sync
-            from noetl.core.runtime.retry import execute_with_retry_async
-            return asyncio.run(
-                execute_with_retry_async(execute_http_task, task_config, task_name, wrapped_context, jinja_env, args)
-            )
-        # HTTP plugin is truly async — run a fresh event loop (this function is sync)
-        return asyncio.run(execute_http_task(task_config, wrapped_context, jinja_env, args or {}))
+            coro = execute_with_retry_async(execute_http_task, task_config, task_name, wrapped_context, jinja_env, args)
+        else:
+            coro = execute_http_task(task_config, wrapped_context, jinja_env, args or {})
+
+        # execute_task is a sync function; run the coroutine in a fresh event loop.
+        # Guard against the rare case where a caller invokes this from an already-running
+        # loop (e.g. notebook or test environment) — in that case delegate to a thread.
+        try:
+            asyncio.get_running_loop()
+            import concurrent.futures
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+                return pool.submit(lambda c=coro: asyncio.run(c)).result()
+        except RuntimeError:
+            return asyncio.run(coro)
     elif task_type == "python":
         return execute_python_task(
             task_config, wrapped_context, jinja_env, args or {}

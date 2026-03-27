@@ -679,9 +679,13 @@ async def _execute_with_pagination_async(
     next_call_config = then_config.get('next_call', {})
     per_iteration_config = then_config.get('per_iteration', {})
 
+    # collect_responses: opt-in to storing full page responses in meta.
+    # Disabled by default to avoid unbounded memory growth for large paginations.
+    collect_responses = bool(then_config.get('collect_responses', False))
+
     accumulated = None
     iteration = 0
-    all_responses = []
+    sampled_responses: list = []  # only populated when collect_responses=True
     current_config = dict(task_config)
     response = None
 
@@ -705,7 +709,8 @@ async def _execute_with_pagination_async(
             logger.error(f"Pagination iteration {iteration} failed: {e}")
             raise
 
-        all_responses.append(response)
+        if collect_responses:
+            sampled_responses.append(response)
 
         page_data = _extract_page_data(response, collect_path)
         accumulated = _aggregate_results(accumulated, page_data, collect_strategy)
@@ -733,7 +738,7 @@ async def _execute_with_pagination_async(
         'meta': {
             'iterations': iteration,
             'collect_strategy': collect_strategy,
-            'responses': all_responses
+            'responses': sampled_responses,
         }
     }
 
@@ -749,6 +754,7 @@ async def _execute_iteration_with_error_retry_async(
 ) -> Dict[str, Any]:
     max_attempts = max((p['then'].get('max_attempts', 3) for p in policies), default=3)
     attempt = 0
+    last_exc: Optional[Exception] = None
 
     while attempt < max_attempts:
         attempt += 1
@@ -773,6 +779,7 @@ async def _execute_iteration_with_error_retry_async(
         except asyncio.CancelledError:
             raise
         except Exception as e:
+            last_exc = e
             logger.error(f"Iteration attempt {attempt}: {e}")
             last_result = {'success': False, 'error': str(e)}
             matched_policy = _evaluate_policies(policies, last_result, e, attempt, context, jinja_env)
@@ -783,4 +790,6 @@ async def _execute_iteration_with_error_retry_async(
             delay = _calculate_delay(matched_policy['then'], attempt)
             await asyncio.sleep(delay)
 
-    raise Exception(f"Failed after {max_attempts} attempts")
+    if last_exc is not None:
+        raise last_exc
+    raise RuntimeError(f"Retry loop exhausted after {max_attempts} attempts with no recorded exception")
