@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.12.6](https://github.com/noetl/noetl/compare/v2.12.5...v2.12.6) (2026-03-27)
+
+### Bug Fixes
+
+* **api:** use terminal lifecycle events in executions list status ([21ee55e](https://github.com/noetl/noetl/commit/21ee55e6652c80bbccb4b7865321735a886ed9a4))
+
 ## [2.12.5](https://github.com/noetl/noetl/compare/v2.12.4...v2.12.5) (2026-03-27)
 
 ### Bug Fixes
