@@ -15,7 +15,6 @@ import sys
 import time
 import random
 import string
-import hashlib
 from collections import defaultdict
 import logging
 
