@@ -21,10 +21,10 @@ workflow:
       code: |
         result = {"status": "initialized"}
     set:
-      offset: "{{ workload.offset }}"
-      limit: "{{ workload.limit }}"
-      collected_users: "{{ workload.collected_users }}"
-      has_more: "{{ workload.has_more }}"
+      ctx.offset: "{{ workload.offset }}"
+      ctx.limit: "{{ workload.limit }}"
+      ctx.collected_users: "{{ workload.collected_users }}"
+      ctx.has_more: "{{ workload.has_more }}"
     next:
       spec:
         mode: exclusive
@@ -87,9 +87,9 @@ workflow:
             'total_collected': len(all_users)
         }
     set:
-      collected_users: "{{ check_pagination.collected_users }}"
-      offset: "{{ check_pagination.next_offset }}"
-      has_more: "{{ check_pagination.has_more }}"
+      ctx.collected_users: "{{ check_pagination.collected_users }}"
+      ctx.offset: "{{ check_pagination.next_offset }}"
+      ctx.has_more: "{{ check_pagination.has_more }}"
     next:
       spec:
         mode: exclusive

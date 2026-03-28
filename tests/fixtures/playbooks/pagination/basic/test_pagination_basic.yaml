@@ -21,10 +21,10 @@ workflow:
       code: |
         result = {"status": "initialized"}
     set:
-      current_page: "{{ workload.current_page }}"
-      page_size: "{{ workload.page_size }}"
-      collected_items: "{{ workload.collected_items }}"
-      has_more: "{{ workload.has_more }}"
+      ctx.current_page: "{{ workload.current_page }}"
+      ctx.page_size: "{{ workload.page_size }}"
+      ctx.collected_items: "{{ workload.collected_items }}"
+      ctx.has_more: "{{ workload.has_more }}"
     next:
       spec:
         mode: exclusive
@@ -87,9 +87,9 @@ workflow:
             'total_collected': len(all_items)
         }
     set:
-      collected_items: "{{ check_pagination.collected_items }}"
-      current_page: "{{ check_pagination.next_page }}"
-      has_more: "{{ check_pagination.has_more }}"
+      ctx.collected_items: "{{ check_pagination.collected_items }}"
+      ctx.current_page: "{{ check_pagination.next_page }}"
+      ctx.has_more: "{{ check_pagination.has_more }}"
     next:
       spec:
         mode: exclusive

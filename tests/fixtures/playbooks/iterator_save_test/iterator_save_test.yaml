@@ -48,7 +48,7 @@ workflow:
   tool:
   - name: process_item
     kind: python
-    args:
+    input:
       item: '{{ iter.item }}'
     code: "result = {\n    'item_name': item.get('name', 'unknown'),\n    'item_value':\
       \ item.get('value', 0)\n}\n"
@@ -58,8 +58,8 @@ workflow:
         - when: true
           then:
             do: continue
-            set_iter:
-              processed_item: '{{ outcome.result }}'
+            set:
+              iter.processed_item: '{{ output.data }}'
   - name: save_item
     kind: postgres
     auth: '{{ pg_auth }}'
@@ -71,7 +71,7 @@ workflow:
     spec:
       policy:
         rules:
-        - when: '{{ outcome.status == ''error'' }}'
+        - when: '{{ output.status == ''error'' }}'
           then:
             do: fail
         - when: true

@@ -19,7 +19,7 @@ workflow:
     desc: Start workflow
     tool:
       kind: python
-      args: {}
+      input: {}
       code: |
         result = {"status": "started"}
     next:
@@ -37,7 +37,7 @@ workflow:
       iterator: num
     tool:
       kind: python
-      args:
+      input:
         num: "{{ num }}"
       code: |
         print(f"Processing: {num}")
@@ -56,6 +56,6 @@ workflow:
     desc: End workflow
     tool:
       kind: python
-      args: {}
+      input: {}
       code: |
         result = {"status": "completed"}

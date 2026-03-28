@@ -14,7 +14,7 @@ workflow:
   tool:
   - name: start_task
     kind: python
-    args: {}
+    input: {}
     code: 'result = {"status": "initialized"}
 
       '
@@ -28,7 +28,7 @@ workflow:
   tool:
   - name: set_vars_task
     kind: python
-    args: {}
+    input: {}
     code: "# Return values that will be extracted via policy rules\nresult = {\n \
       \   \"status\": \"success\",\n    \"counter\": 0,\n    \"status_var\": \"initialized\"\
       ,\n    \"config\": {\"timeout\": 30, \"retries\": 3}\n}\n"
@@ -38,10 +38,10 @@ workflow:
         - else:
             then:
               do: continue
-              set_ctx:
-                counter: '{{ outcome.result.counter }}'
-                status_var: '{{ outcome.result.status_var }}'
-                config: '{{ outcome.result.config }}'
+              set:
+                ctx.counter: '{{ output.data.counter }}'
+                ctx.status_var: '{{ output.data.status_var }}'
+                ctx.config: '{{ output.data.config }}'
   next:
     spec:
       mode: exclusive
@@ -52,7 +52,7 @@ workflow:
   tool:
   - name: get_vars_task
     kind: python
-    args:
+    input:
       counter: '{{ ctx.counter }}'
       status_var: '{{ ctx.status_var }}'
       config: '{{ ctx.config }}'
@@ -72,7 +72,7 @@ workflow:
   tool:
   - name: update_vars_task
     kind: python
-    args: {}
+    input: {}
     code: "# Return updated values\nresult = {\n    \"status\": \"success\",\n   \
       \ \"counter\": 1,\n    \"status_var\": \"processing\"\n}\n"
     spec:
@@ -81,9 +81,9 @@ workflow:
         - else:
             then:
               do: continue
-              set_ctx:
-                counter: '{{ outcome.result.counter }}'
-                status_var: '{{ outcome.result.status_var }}'
+              set:
+                ctx.counter: '{{ output.data.counter }}'
+                ctx.status_var: '{{ output.data.status_var }}'
   next:
     spec:
       mode: exclusive
@@ -94,7 +94,7 @@ workflow:
   tool:
   - name: verify_task
     kind: python
-    args:
+    input:
       counter: '{{ ctx.counter }}'
       status_var: '{{ ctx.status_var }}'
       config: '{{ ctx.config }}'
@@ -114,7 +114,7 @@ workflow:
   tool:
   - name: end_task
     kind: python
-    args: {}
+    input: {}
     code: 'result = {"status": "complete"}
 
       '

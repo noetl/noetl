@@ -165,7 +165,7 @@ workflow:
     desc: Compare both modes and verify they work identically
     tool:
       kind: python
-      args:
+      input:
         sm_status: "{{ test_secret_manager_mode.status_code }}"
         cred_status: "{{ test_credential_table_mode.status_code }}"
       code: |

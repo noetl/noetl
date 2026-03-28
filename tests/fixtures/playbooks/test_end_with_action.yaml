@@ -32,20 +32,19 @@ workflow:
       mode: exclusive
     arcs:
     - step: end
-      args:
-        input_data:
-          temp_table: '{{ process_data.data.temp_table }}'
-          cleanup_required: '{{ cleanup_required }}'
+      set:
+        ctx.temp_table: '{{ process_data.data.temp_table }}'
+        ctx.cleanup_required: '{{ cleanup_required }}'
 - step: end
   desc: End step with cleanup action
   tool:
   - name: cleanup
     kind: python
-    args:
+    input:
       input_data:
-        temp_table: '{{ args.input_data.temp_table | default(process_data.data.temp_table)
+        temp_table: '{{ ctx.temp_table | default(process_data.data.temp_table)
           }}'
-        cleanup_required: '{{ args.input_data.cleanup_required | default(cleanup_required)
+        cleanup_required: '{{ ctx.cleanup_required | default(cleanup_required)
           }}'
     code: "temp_table = input_data.get('temp_table', 'unknown')\ncleanup = input_data.get('cleanup_required',\
       \ False)\n\nresult = {\n    'status': 'completed',\n    'message': f'Cleanup\

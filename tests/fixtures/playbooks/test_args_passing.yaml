@@ -19,17 +19,17 @@ workflow:
       mode: exclusive
     arcs:
     - step: use_vars
-      args:
-        test_var: '{{ initial_value }}'
-        computed: 200
+      set:
+        ctx.test_var: '{{ initial_value }}'
+        ctx.computed: 200
 - step: use_vars
   desc: Test that variables from data block are available
   tool:
   - name: compute
     kind: python
-    args:
-      test_var: '{{ args.test_var }}'
-      computed: '{{ args.computed }}'
+    input:
+      test_var: '{{ ctx.test_var }}'
+      computed: '{{ ctx.computed }}'
     code: '# These should be available from the args passed via next
 
       test_var = input_data.get(''test_var'', 0)

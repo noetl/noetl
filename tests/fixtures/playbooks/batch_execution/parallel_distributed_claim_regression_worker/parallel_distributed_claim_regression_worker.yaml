@@ -19,7 +19,7 @@ workflow:
   - step: start
     tool:
       kind: python
-      args:
+      input:
         batch_number: '{{ batch_number }}'
         offset: '{{ offset }}'
         batch_size: '{{ batch_size }}'
@@ -117,7 +117,7 @@ workflow:
   - step: summarize
     tool:
       kind: python
-      args:
+      input:
         fetched: '{{ fetch_batch }}'
         batch_number: '{{ batch_number }}'
       code: |

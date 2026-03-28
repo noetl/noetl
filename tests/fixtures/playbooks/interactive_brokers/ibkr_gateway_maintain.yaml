@@ -22,7 +22,7 @@ workflow:
     desc: Resolve gateway URL
     tool:
       kind: python
-      args:
+      input:
         credential_name: "{{ credential_name }}"
         override_gateway_url: "{{ gateway_url }}"
         override_base_url: "{{ base_url }}"
@@ -62,7 +62,7 @@ workflow:
     desc: Tickle, decide, and reauthenticate if needed
     tool:
       kind: python
-      args:
+      input:
         base_url: "{{ start.base_url }}"
         gateway_url: "{{ start.gateway_url }}"
       code: |
@@ -142,6 +142,6 @@ workflow:
     desc: Done
     tool:
       kind: python
-      args: {}
+      input: {}
       code: |
         result = {"status": "completed"}

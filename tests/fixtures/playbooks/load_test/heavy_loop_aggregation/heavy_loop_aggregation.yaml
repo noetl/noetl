@@ -33,7 +33,7 @@ workflow:
   desc: Initialize the heavy load test
   tool:
     kind: python
-    args:
+    input:
       item_count: '{{ item_count }}'
     code: "import time\n\n# Generate a list of items to process\nitems = []\nfor i\
       \ in range(int(item_count)):\n    items.append({\n        \"id\": i,\n     \
@@ -44,8 +44,8 @@ workflow:
       ,\n    \"total_items\": len(items),\n    \"items\": items,\n    \"start_time\"\
       : time.time()\n}\nprint(f\"Initialized with {len(items)} items to process\"\
       )\n"
-  set_ctx:
-    loop_results: '{{ workload.loop_results }}'
+  set:
+    ctx.loop_results: '{{ workload.loop_results }}'
   next:
     spec:
       mode: exclusive
@@ -61,7 +61,7 @@ workflow:
   tool:
   - name: process_item
     kind: python
-    args:
+    input:
       item: '{{ iter.item }}'
       padding_size: '{{ result_padding_size }}'
       delay: '{{ processing_delay }}'
@@ -86,21 +86,21 @@ workflow:
         rules:
         - else:
             do: continue
-            set_ctx:
-              loop_results: '{{ outcome.result.loop_results }}'
+            set:
+              ctx.loop_results: '{{ output.data.loop_results }}'
   next:
     spec:
       mode: exclusive
     arcs:
     - step: aggregate_results
-      args:
-        loop_results: '{{ ctx.loop_results }}'
+      set:
+        ctx.loop_results: '{{ ctx.loop_results }}'
 - step: aggregate_results
   desc: Aggregate all loop results and compute statistics
   tool:
     kind: python
-    args:
-      loop_results: '{{ args.loop_results }}'
+    input:
+      loop_results: '{{ ctx.loop_results }}'
       start_time: '{{ start.start_time }}'
     code: "import time\n\n# Extract results from loop aggregation\nresults = loop_results\
       \ if loop_results else []\n\n# Compute aggregation statistics\ntotal_items =\
@@ -138,7 +138,7 @@ workflow:
   desc: Validate that the test completed successfully
   tool:
     kind: python
-    args:
+    input:
       aggregation: '{{ aggregate_results }}'
       expected_count: '{{ item_count }}'
     code: "# Validate test results\nsummary = aggregation.get(\"summary\", {})\ntotal_processed\
@@ -176,7 +176,7 @@ workflow:
   desc: End of heavy load test
   tool:
     kind: python
-    args:
+    input:
       validation: '{{ validate_results }}'
     code: "result = {\n    \"status\": \"completed\",\n    \"test_name\": \"heavy_loop_aggregation\"\
       ,\n    \"test_result\": validation.get(\"status\"),\n    \"all_passed\": validation.get(\"\

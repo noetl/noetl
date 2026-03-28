@@ -61,7 +61,7 @@ workbook:
 - name: prepare_http_payload
   tool:
     kind: python
-    args:
+    input:
       input_data: '{{ test_duckdb_analytics }}'
     code: "# Simulate API payload preparation\nduckdb_result = input_data.get(\"data\"\
       , {})\n\napi_payload = {\n    \"webhook_type\": \"test_completion\",\n    \"\
@@ -115,7 +115,7 @@ workflow:
   tool:
   - name: generate_data
     kind: python
-    args:
+    input:
       input: '{{ start }}'
     code: "# Simple pass-through to test flat save structure\nresult = {\n    \"status\"\
       : \"success\",\n    \"data\": {\n        \"message\": \"Flat postgres save test\
@@ -138,7 +138,7 @@ workflow:
   tool:
   - name: generate_data
     kind: python
-    args:
+    input:
       input: '{{ test_flat_postgres_save }}'
     code: "# Simple pass-through to test nested save structure\nresult = {\n    \"\
       status\": \"success\",\n    \"data\": {\n        \"message\": \"Nested postgres\
@@ -163,7 +163,7 @@ workflow:
   tool:
   - name: generate_data
     kind: python
-    args:
+    input:
       input_data: '{{ test_nested_postgres_save }}'
     code: "result = {\n    \"status\": \"success\",\n    \"data\": {\n        \"summary_type\"\
       : \"department_stats\",\n        \"execution_id\": input_data.get(\"execution_id\"\
@@ -185,7 +185,7 @@ workflow:
   desc: Test python storage with custom processing code
   tool:
     kind: python
-    args:
+    input:
       input_data: '{{ test_postgres_statement_save }}'
     code: "result = {\n    \"status\": \"success\",\n    \"data\": {\n        \"processed_records\"\
       : 3,\n        \"validation_status\": \"passed\",\n        \"next_phase\": \"\
@@ -200,7 +200,7 @@ workflow:
   tool:
   - name: generate_data
     kind: python
-    args:
+    input:
       input: '{{ test_python_save }}'
     code: "result = {\n    \"status\": \"success\",\n    \"data\": {\n        \"analysis_type\"\
       : \"department_summary\",\n        \"test_type\": \"duckdb_analytics\"\n   \
@@ -224,7 +224,7 @@ workflow:
   desc: Test HTTP storage with webhook notification
   tool:
     kind: python
-    args:
+    input:
       input: '{{ test_duckdb_save }}'
     code: "result = {\n    \"status\": \"success\",\n    \"data\": {\n        \"webhook_type\"\
       : \"test_completion\",\n        \"test_type\": \"http_webhook\"\n    }\n}\n"
@@ -239,7 +239,7 @@ workflow:
     kind: python
     libs:
       json: json
-    args:
+    input:
       input_data: '{{ test_http_save }}'
     code: "summary = {\n    \"test_suite\": \"save_storage_comprehensive\",\n    \"\
       execution_id\": input_data.get(\"execution_id\", \"unknown\"),\n    \"storage_types_tested\"\

@@ -38,10 +38,10 @@ workflow:
     code: "result = {\n  \"status\": \"initialized\",\n  \"message\": \"Starting pagination\
       \ test with tool.spec.policy.rules flow control\"\n}\n"
   set:
-    current_page: '{{ workload.current_page }}'
-    page_size: '{{ workload.page_size }}'
-    total_fetched: '{{ workload.total_fetched }}'
-    all_pages_done: '{{ workload.all_pages_done }}'
+    ctx.current_page: '{{ workload.current_page }}'
+    ctx.page_size: '{{ workload.page_size }}'
+    ctx.total_fetched: '{{ workload.total_fetched }}'
+    ctx.all_pages_done: '{{ workload.all_pages_done }}'
   next:
     spec:
       mode: exclusive
@@ -173,7 +173,7 @@ workflow:
       : current_page,\n  \"total_fetched\": total_fetched,\n  \"action\": \"continue\"\
       \ if has_more else \"complete\"\n}\n"
   set:
-    current_page: '{{ (ctx.current_page | int) + 1 }}'
+    ctx.current_page: '{{ (ctx.current_page | int) + 1 }}'
   next:
     spec:
       mode: exclusive

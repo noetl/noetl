@@ -18,9 +18,9 @@ workflow:
 
       '
   set:
-    current_page: '{{ workload.current_page }}'
-    page_size: '{{ workload.page_size }}'
-    collected_data: '{{ workload.collected_data }}'
+    ctx.current_page: '{{ workload.current_page }}'
+    ctx.page_size: '{{ workload.page_size }}'
+    ctx.collected_data: '{{ workload.collected_data }}'
   next:
     spec:
       mode: exclusive
@@ -69,8 +69,8 @@ workflow:
       \    'has_more': paging.get('hasMore', False),\n    'current_page': paging.get('page',\
       \ 1)\n}\n"
   set:
-    collected_data: '{{ fetch_with_retry.collected_data }}'
-    current_page: '{{ (ctx.current_page | int) + 1 }}'
+    ctx.collected_data: '{{ fetch_with_retry.collected_data }}'
+    ctx.current_page: '{{ (ctx.current_page | int) + 1 }}'
   next:
     spec:
       mode: exclusive

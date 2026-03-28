@@ -14,7 +14,7 @@ workflow:
     desc: Start cache test
     tool:
       kind: python
-      args: {}
+      input: {}
       code: |
         result = {"status": "initialized"}
     next:
@@ -75,6 +75,6 @@ workflow:
     desc: End of workflow
     tool:
       kind: python
-      args: {}
+      input: {}
       code: |
         result = {"status": "complete"}

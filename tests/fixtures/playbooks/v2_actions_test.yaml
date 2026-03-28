@@ -38,7 +38,7 @@ workflow:
   tool:
   - name: double_number
     kind: python
-    args:
+    input:
       num: '{{ iter.num }}'
     code: 'num = input_data.get(''num'')
 
@@ -55,8 +55,8 @@ workflow:
         - when: '{{ true }}'
           then:
             do: continue
-            set_iter:
-              loop_result: '{{ outcome.result }}'
+            set:
+              iter.loop_result: '{{ output.data }}'
   next:
     spec:
       mode: exclusive
@@ -67,7 +67,7 @@ workflow:
   tool:
   - name: aggregate_results
     kind: python
-    args:
+    input:
       loop_results: '{{ ctx.loop_results | default([]) }}'
     code: "results = input_data.get('loop_results', [])\nprint(f\"[AGGREGATE] Processing\
       \ {len(results)} results\")\n\ntotal = sum(item['doubled'] for item in results)\n\
@@ -80,18 +80,18 @@ workflow:
     arcs:
     - step: helper
       when: '{{ aggregate.count > 0 }}'
-      args:
-        message: Aggregate completed with {{ aggregate.count }} items
-        data: '{{ aggregate }}'
+      set:
+        ctx.helper_message: Aggregate completed with {{ aggregate.count }} items
+        ctx.helper_data: '{{ aggregate }}'
     - step: test_secrets
 - step: helper
   desc: Helper step to demonstrate call action
   tool:
   - name: helper_action
     kind: python
-    args:
-      message: '{{ args.message | default(''No message'') }}'
-      data: '{{ args.data | default({}) }}'
+    input:
+      message: '{{ ctx.helper_message | default(''No message'') }}'
+      data: '{{ ctx.helper_data | default({}) }}'
     code: 'message = input_data.get(''message'', ''No message'')
 
       data = input_data.get(''data'', {})
@@ -124,7 +124,7 @@ workflow:
   tool:
   - name: verify_actions
     kind: python
-    args:
+    input:
       aggregate: '{{ aggregate | default({}) }}'
       helper: '{{ helper | default({}) }}'
     code: "print(\"[VERIFY] All actions completed successfully\")\n\n# Check if we\
@@ -144,7 +144,7 @@ workflow:
   tool:
   - name: complete
     kind: python
-    args:
+    input:
       verify: '{{ verify }}'
     code: 'verify_result = input_data.get(''verify'', {})
 

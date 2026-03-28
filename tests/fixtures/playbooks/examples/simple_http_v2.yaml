@@ -25,13 +25,13 @@ workflow:
           test: "hello"
         policy:
           rules:
-            - when: "{{ outcome.status == 'error' and outcome.error.retryable }}"
+            - when: "{{ output.status == 'error' and output.error.retryable }}"
               then:
                 do: retry
                 attempts: 3
                 backoff: exponential
                 delay: 0.5
-            - when: "{{ outcome.status == 'error' }}"
+            - when: "{{ output.status == 'error' }}"
               then:
                 do: fail
             - else:
@@ -41,16 +41,16 @@ workflow:
         mode: exclusive
       arcs:
         - step: process
-          args:
-            data: "{{ start.data }}"
+          set:
+            ctx.response_data: "{{ start.data }}"
 
   - step: process
     desc: "Process HTTP response"
     tool:
       kind: python
       spec:
-        args:
-          data: "{{ data }}"
+        input:
+          data: "{{ ctx.response_data }}"
         code: |
           print(f"Processing data: {data}")
           result = {"status": "processed", "data": data}
@@ -65,7 +65,7 @@ workflow:
     tool:
       kind: python
       spec:
-        args: {}
+        input: {}
         code: |
           print("Workflow complete")
           result = {"status": "done"}

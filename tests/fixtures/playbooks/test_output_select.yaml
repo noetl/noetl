@@ -25,7 +25,7 @@ workflow:
   tool:
   - name: generate_data
     kind: python
-    args:
+    input:
       count: '{{ item_count }}'
       size: '{{ item_size }}'
     code: "# Generate large result that exceeds inline threshold (64KB)\nitems = [\n\
@@ -33,7 +33,7 @@ workflow:
       : \"active\"}\n    for i in range(count)\n]\nresult = {\n    \"status\": \"\
       success\",\n    \"count\": len(items),\n    \"total_size\": sum(len(item[\"\
       data\"]) for item in items),\n    \"items\": items\n}\n"
-  result:
+  output:
     store:
       kind: auto
     output_select:
@@ -49,7 +49,7 @@ workflow:
   tool:
   - name: verify
     kind: python
-    args:
+    input:
       status: '{{ start.status }}'
       count: '{{ start.count }}'
       total_size: '{{ start.total_size }}'
@@ -68,7 +68,7 @@ workflow:
   - name: load_artifact
     kind: artifact
     action: get
-    args:
+    input:
       result_ref: '{{ start._ref }}'
   next:
     spec:
@@ -79,7 +79,7 @@ workflow:
   tool:
   - name: process
     kind: python
-    args:
+    input:
       data: '{{ lazy_load_full_data.data }}'
     code: "if isinstance(data, dict) and \"items\" in data:\n    items = data[\"items\"\
       ]\n    active_count = sum(1 for item in items if item.get(\"status\") == \"\
@@ -96,7 +96,7 @@ workflow:
   tool:
   - name: summarize
     kind: python
-    args:
+    input:
       extraction_verified: '{{ verify_extracted_fields.verified }}'
       was_externalized: '{{ verify_extracted_fields.was_externalized }}'
       full_data_processed: '{{ process_full_data.total_items }}'

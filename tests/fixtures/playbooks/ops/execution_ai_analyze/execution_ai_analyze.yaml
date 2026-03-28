@@ -44,7 +44,7 @@ workflow:
     desc: Validate mode and approval gates
     tool:
       kind: python
-      args:
+      input:
         auto_fix_mode: '{{ auto_fix_mode }}'
         approval_required: '{{ approval_required }}'
         approved: '{{ approved }}'
@@ -82,7 +82,7 @@ workflow:
     desc: Return guardrail report when apply mode is not approved
     tool:
       kind: python
-      args:
+      input:
         default_dry_run_commands: '{{ default_dry_run_commands }}'
         default_test_commands: '{{ default_test_commands }}'
       code: |
@@ -135,7 +135,7 @@ workflow:
       kind: python
       libs:
         json: json
-      args:
+      input:
         target_execution_id: '{{ target_execution_id }}'
         target_playbook_path: '{{ target_playbook_path }}'
         target_playbook_status: '{{ target_playbook_status }}'
@@ -348,7 +348,7 @@ workflow:
       libs:
         json: json
         re: re
-      args:
+      input:
         openai_response: '{{ openai_triage }}'
         auto_fix_mode: '{{ start.mode }}'
         include_patch_diff: '{{ include_patch_diff }}'

@@ -21,10 +21,10 @@ workflow:
       code: |
         result = {"status": "initialized"}
     set:
-      cursor: "{{ workload.cursor }}"
-      limit: "{{ workload.limit }}"
-      collected_events: "{{ workload.collected_events }}"
-      has_more: "{{ workload.has_more }}"
+      ctx.cursor: "{{ workload.cursor }}"
+      ctx.limit: "{{ workload.limit }}"
+      ctx.collected_events: "{{ workload.collected_events }}"
+      ctx.has_more: "{{ workload.has_more }}"
     next:
       spec:
         mode: exclusive
@@ -85,9 +85,9 @@ workflow:
             'total_collected': len(all_events)
         }
     set:
-      collected_events: "{{ check_pagination.collected_events }}"
-      cursor: "{{ check_pagination.next_cursor }}"
-      has_more: "{{ check_pagination.has_more }}"
+      ctx.collected_events: "{{ check_pagination.collected_events }}"
+      ctx.cursor: "{{ check_pagination.next_cursor }}"
+      ctx.has_more: "{{ check_pagination.has_more }}"
     next:
       spec:
         mode: exclusive

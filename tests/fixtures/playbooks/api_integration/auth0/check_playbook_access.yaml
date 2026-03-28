@@ -101,7 +101,7 @@ workflow:
     desc: Return allowed
     tool:
       kind: python
-      args:
+      input:
         playbook_path: "{{ playbook_path }}"
         action: "{{ action }}"
         user_id: "{{ get_user_from_session.command_0.rows[0].user_id }}"
@@ -154,7 +154,7 @@ workflow:
     desc: Return denied
     tool:
       kind: python
-      args:
+      input:
         playbook_path: "{{ playbook_path }}"
         action: "{{ action }}"
       code: |

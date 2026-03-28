@@ -29,7 +29,7 @@ workflow:
   tool:
     kind: playbook
     path: tests/fixtures/playbooks/save_storage_test/create_tables
-    args:
+    input:
       pg_auth: '{{ pg_auth }}'
   next:
     spec:
@@ -92,7 +92,7 @@ workflow:
     kind: python
     libs:
       json: json
-    args:
+    input:
       test_data_value: '{{ test_data.value }}'
     code: "# Receive test_data_value as an argument\ntest_data = {\n    \"value\"\
       : test_data_value,\n    \"nested_indicator\": True,\n    \"test_type\": \"nested_structure\"\

@@ -18,7 +18,7 @@ workflow:
     desc: Start data transfer pipeline
     tool:
       kind: python
-      args: {}
+      input: {}
       code: |
         result = {"status": "initialized"}
     next:
@@ -265,6 +265,6 @@ workflow:
     desc: End data transfer test pipeline
     tool:
       kind: python
-      args: {}
+      input: {}
       code: |
         result = {"status": "completed"}

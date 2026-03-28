@@ -15,7 +15,7 @@ workflow:
     desc: Start IB Gateway test
     tool:
       kind: python
-      args: {}
+      input: {}
       code: |
         result = {"status": "initialized"}
     next:
@@ -44,7 +44,7 @@ workflow:
     desc: Parse authentication status
     tool:
       kind: python
-      args:
+      input:
         api_response: "{{ check_gateway_status }}"
       code: |
         """
@@ -129,7 +129,7 @@ workflow:
     desc: Parse account information
     tool:
       kind: python
-      args:
+      input:
         api_response: "{{ get_accounts }}"
       code: |
         """Parse IB accounts."""
@@ -169,7 +169,7 @@ workflow:
     desc: Get portfolio summary for first account
     tool:
       kind: python
-      args:
+      input:
         accounts_data: "{{ parse_accounts }}"
       code: |
         """Extract first account ID."""
@@ -210,7 +210,7 @@ workflow:
     desc: Parse account ledger
     tool:
       kind: python
-      args:
+      input:
         api_response: "{{ get_account_ledger }}"
       code: |
         """Parse IB account ledger."""
@@ -249,7 +249,7 @@ workflow:
     desc: Verify IB Gateway test completed
     tool:
       kind: python
-      args:
+      input:
         auth_status: "{{ parse_auth_status }}"
         accounts: "{{ parse_accounts }}"
         ledger: "{{ parse_ledger }}"
@@ -287,7 +287,7 @@ workflow:
     desc: Gateway not available
     tool:
       kind: python
-      args:
+      input:
         error_info: "{{ parse_auth_status }}"
       code: |
         """Report gateway error."""
@@ -312,6 +312,6 @@ workflow:
     desc: IB Gateway test completed
     tool:
       kind: python
-      args: {}
+      input: {}
       code: |
         result = {"status": "completed"}

@@ -13,7 +13,7 @@ workflow:
   tool:
   - name: start_task
     kind: python
-    args: {}
+    input: {}
     code: 'result = {"status": "initialized"}
 
       '
@@ -27,7 +27,7 @@ workflow:
   tool:
   - name: create_vars_task
     kind: python
-    args: {}
+    input: {}
     code: "result = {\n  \"user_id\": 999,\n  \"username\": \"api_tester\",\n  \"\
       score\": 85,\n  \"metadata\": {\n    \"created\": \"2025-12-01\",\n    \"source\"\
       : \"test_playbook\"\n  }\n}\n"
@@ -37,11 +37,11 @@ workflow:
         - else:
             then:
               do: continue
-              set_ctx:
-                test_user_id: '{{ outcome.result.user_id }}'
-                test_username: '{{ outcome.result.username }}'
-                test_score: '{{ outcome.result.score }}'
-                test_metadata: '{{ outcome.result.metadata }}'
+              set:
+                ctx.test_user_id: '{{ output.data.user_id }}'
+                ctx.test_username: '{{ output.data.username }}'
+                ctx.test_score: '{{ output.data.score }}'
+                ctx.test_metadata: '{{ output.data.metadata }}'
   next:
     spec:
       mode: exclusive
@@ -54,7 +54,7 @@ workflow:
     kind: python
     libs:
       time: time
-    args: {}
+    input: {}
     code: '# Keep execution alive for API testing
 
       # In real test, external scripts will call API endpoints
@@ -74,7 +74,7 @@ workflow:
   tool:
   - name: verify_task
     kind: python
-    args:
+    input:
       user_id: '{{ ctx.test_user_id }}'
       username: '{{ ctx.test_username }}'
       score: '{{ ctx.test_score }}'
@@ -101,7 +101,7 @@ workflow:
   tool:
   - name: end_task
     kind: python
-    args: {}
+    input: {}
     code: 'result = {"status": "complete"}
 
       '

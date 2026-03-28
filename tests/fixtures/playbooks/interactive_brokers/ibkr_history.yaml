@@ -22,7 +22,7 @@ workflow:
     desc: Resolve gateway URL
     tool:
       kind: python
-      args:
+      input:
         credential_name: "{{ credential_name }}"
         override_gateway_url: "{{ gateway_url }}"
         override_base_url: "{{ base_url }}"
@@ -80,7 +80,7 @@ workflow:
     desc: Pick futures contract
     tool:
       kind: python
-      args:
+      input:
         response: "{{ get_futures }}"
         symbol: "{{ symbol }}"
         index: "{{ contract_index }}"
@@ -129,7 +129,7 @@ workflow:
     desc: Summarize historical data
     tool:
       kind: python
-      args:
+      input:
         contract: "{{ pick_contract.contract }}"
         history: "{{ get_history }}"
       code: |
@@ -154,7 +154,7 @@ workflow:
     desc: Done
     tool:
       kind: python
-      args:
+      input:
         summary: "{{ summarize }}"
       code: |
         result = {"status": "completed", "summary": summary}

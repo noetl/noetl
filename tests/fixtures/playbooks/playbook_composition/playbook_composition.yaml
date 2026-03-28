@@ -32,7 +32,7 @@ workflow:
   desc: Initialize user profile processing
   tool:
     kind: python
-    args: {}
+    input: {}
     code: 'result = {"status": "initialized"}
 
       '
@@ -68,7 +68,7 @@ workflow:
     task: process_users
     path: tests/fixtures/playbooks/playbook_composition/user_profile_scorer
     return_step: finalize_result
-    args:
+    input:
       user_data: '{{ user }}'
       execution_context: '{{ execution_id }}'
   - name: store_result
@@ -90,7 +90,7 @@ workflow:
   desc: Validate all profile scores are within expected range and categories are correct
   tool:
     kind: python
-    args:
+    input:
       user_results: '{{ process_users.data }}'
       expected_min_score: 0.0
       expected_max_score: 100.0
@@ -148,7 +148,7 @@ workflow:
   desc: Complete profile processing pipeline
   tool:
     kind: python
-    args:
+    input:
       validation_result: '{{ validate_results.data }}'
       user_count: '{{ users | length }}'
     code: "# Be robust to unexpected types (e.g., during early tracking states)\n\

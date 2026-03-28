@@ -30,7 +30,7 @@ workflow:
   tool:
   - name: process_results
     kind: python
-    args:
+    input:
       query_results: '{{ start }}'
     code: "print(f\"[PROCESS] Processing DuckDB query results\")\nprint(f\"[PROCESS]\
       \ Input data type: {type(input_data).__name__}\")\n\n# Extract query results\
@@ -54,7 +54,7 @@ workflow:
   tool:
   - name: verify_results
     kind: python
-    args:
+    input:
       process_result: '{{ process }}'
     code: "print(f\"[VERIFY] Verifying DuckDB test results\")\n\nprocess_result =\
       \ input_data.get('process_result', {})\n\nif isinstance(process_result, str):\n\
@@ -76,7 +76,7 @@ workflow:
   tool:
   - name: complete
     kind: python
-    args:
+    input:
       verify_result: '{{ verify }}'
     code: "print(f\"[END] DuckDB test completed successfully!\")\n\nverify_result\
       \ = input_data.get('verify_result', {})\n\nif isinstance(verify_result, str):\n\

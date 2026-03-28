@@ -16,14 +16,14 @@ workflow:
   tool:
   - name: generate_data
     kind: python
-    args:
+    input:
       count: '{{ item_count }}'
       size: '{{ item_size }}'
     code: "items = [{\"id\": i, \"data\": \"G\" * size, \"type\": \"gcs_test\"} for\
       \ i in range(count)]\nresult = {\n    \"status\": \"ok\",\n    \"tier\": \"\
       gcs\",\n    \"count\": len(items),\n    \"total_bytes\": count * size,\n   \
       \ \"items\": items\n}\n"
-  result:
+  output:
     store:
       kind: gcs
     output_select:
@@ -40,7 +40,7 @@ workflow:
   tool:
   - name: verify
     kind: python
-    args:
+    input:
       has_ref: '{{ start._ref is defined }}'
       store_type: '{{ start._store | default(''none'') }}'
       status: '{{ start.status }}'
@@ -62,7 +62,7 @@ workflow:
   - name: load_artifact
     kind: artifact
     action: get
-    args:
+    input:
       result_ref: '{{ start._ref }}'
   next:
     spec:
@@ -73,7 +73,7 @@ workflow:
   tool:
   - name: summarize
     kind: python
-    args:
+    input:
       tier_correct: '{{ verify_gcs_storage.correct_tier }}'
       loaded_count: '{{ load_from_gcs.count | default(0) }}'
       expected_count: '{{ item_count }}'

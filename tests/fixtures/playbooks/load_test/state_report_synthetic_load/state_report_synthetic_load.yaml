@@ -38,7 +38,7 @@ workflow:
     desc: Initialize synthetic state-report load test
     tool:
       kind: python
-      args:
+      input:
         total_items: '{{ total_items }}'
         batch_size: '{{ batch_size }}'
       code: |
@@ -352,7 +352,7 @@ workflow:
       spec:
         policy:
           rules:
-            - when: "{{ outcome.status == 'error' }}"
+            - when: "{{ output.status == 'error' }}"
               then: { do: retry, attempts: 5, backoff: exponential, delay: 2.0 }
             - else:
                 then: { do: break }
@@ -365,7 +365,7 @@ workflow:
     desc: Compute batch windows for synthetic patient work
     tool:
       kind: python
-      args:
+      input:
         total_items: '{{ total_items }}'
         batch_size: '{{ batch_size }}'
       code: |
@@ -413,7 +413,7 @@ workflow:
       path: '{{ chunk_worker_path }}'
       return_step: end
       timeout: 900
-      args:
+      input:
         pg_auth: '{{ pg_auth }}'
         parent_execution_id: '{{ job.execution_id }}'
         batch_number: '{{ iter.batch.batch_number }}'
@@ -453,7 +453,7 @@ workflow:
     desc: Return synthetic load summary with throughput metrics
     tool:
       kind: python
-      args:
+      input:
         verify_result: '{{ verify_completion_counts }}'
         batch_plan: '{{ build_batch_plan }}'
         worker_loop: '{{ run_batch_workers | default({}) }}'
@@ -500,7 +500,7 @@ workflow:
     desc: Fail when verification finds missing or mismatched synthetic results
     tool:
       kind: python
-      args:
+      input:
         summary: '{{ summarize }}'
       code: |
         raise RuntimeError(f"synthetic state-report load did not reconcile: {summary}")

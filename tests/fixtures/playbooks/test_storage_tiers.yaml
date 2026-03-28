@@ -31,13 +31,13 @@ workflow:
   tool:
   - name: generate_inline
     kind: python
-    args:
+    input:
       count: '{{ inline_items }}'
       size: '{{ inline_item_size }}'
     code: "items = [{\"id\": i, \"data\": \"x\" * size} for i in range(count)]\nresult\
       \ = {\n    \"status\": \"ok\",\n    \"tier\": \"inline\",\n    \"count\": len(items),\n\
       \    \"total_bytes\": count * size,\n    \"items\": items\n}\n"
-  result:
+  output:
     output_select:
     - status
     - tier
@@ -52,14 +52,14 @@ workflow:
   tool:
   - name: generate_kv
     kind: python
-    args:
+    input:
       count: '{{ kv_items }}'
       size: '{{ kv_item_size }}'
     code: "items = [{\"id\": i, \"data\": \"K\" * size, \"active\": True} for i in\
       \ range(count)]\nresult = {\n    \"status\": \"ok\",\n    \"tier\": \"kv_expected\"\
       ,\n    \"count\": len(items),\n    \"total_bytes\": count * size,\n    \"items\"\
       : items\n}\n"
-  result:
+  output:
     output_select:
     - status
     - tier
@@ -74,14 +74,14 @@ workflow:
   tool:
   - name: generate_object
     kind: python
-    args:
+    input:
       count: '{{ object_items }}'
       size: '{{ object_item_size }}'
     code: "items = [{\"id\": i, \"data\": \"O\" * size, \"active\": True} for i in\
       \ range(count)]\nresult = {\n    \"status\": \"ok\",\n    \"tier\": \"object_expected\"\
       ,\n    \"count\": len(items),\n    \"total_bytes\": count * size,\n    \"items\"\
       : items\n}\n"
-  result:
+  output:
     output_select:
     - status
     - tier
@@ -96,14 +96,14 @@ workflow:
   tool:
   - name: generate_large
     kind: python
-    args:
+    input:
       count: '{{ large_items }}'
       size: '{{ large_item_size }}'
     code: "items = [{\"id\": i, \"data\": \"L\" * size, \"active\": True} for i in\
       \ range(count)]\nresult = {\n    \"status\": \"ok\",\n    \"tier\": \"s3_or_object_expected\"\
       ,\n    \"count\": len(items),\n    \"total_bytes\": count * size,\n    \"items\"\
       : items\n}\n"
-  result:
+  output:
     output_select:
     - status
     - tier
@@ -118,7 +118,7 @@ workflow:
   tool:
   - name: verify_tiers
     kind: python
-    args:
+    input:
       inline_has_ref: '{{ start._ref is defined }}'
       inline_status: '{{ start.status }}'
       inline_bytes: '{{ start.total_bytes }}'
@@ -166,7 +166,7 @@ workflow:
   - name: load_kv
     kind: artifact
     action: get
-    args:
+    input:
       result_ref: '{{ test_nats_kv._ref }}'
   next:
     spec:
@@ -178,7 +178,7 @@ workflow:
   - name: load_object
     kind: artifact
     action: get
-    args:
+    input:
       result_ref: '{{ test_nats_object._ref }}'
   next:
     spec:
@@ -190,7 +190,7 @@ workflow:
   - name: load_large
     kind: artifact
     action: get
-    args:
+    input:
       result_ref: '{{ test_large_storage._ref }}'
   next:
     spec:
@@ -201,7 +201,7 @@ workflow:
   tool:
   - name: summarize
     kind: python
-    args:
+    input:
       tier_results: '{{ verify_storage_tiers.tier_results }}'
       kv_loaded_count: '{{ load_kv_data.count | default(0) }}'
       object_loaded_count: '{{ load_object_data.count | default(0) }}'

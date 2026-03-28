@@ -61,7 +61,7 @@ workflow:
     desc: Initialize test
     tool:
       kind: python
-      args:
+      input:
         batch_size: '{{ batch_size }}'
         item_delay_seconds: '{{ item_delay_seconds }}'
       code: |
@@ -109,8 +109,8 @@ workflow:
                 "row_count": 5000,
             },
         }
-    set_ctx:
-      patients_rows: "{{ ctx_step_02.command_1.rows }}"
+    set:
+      ctx.patients_rows: "{{ ctx_step_02.command_1.rows }}"
     next:
       spec: { mode: exclusive }
       arcs:
@@ -127,8 +127,8 @@ workflow:
                 "row_count": 5000,
             },
         }
-    set_ctx:
-      patients_needing_assessments: "{{ ctx_step_03.command_0.rows }}"
+    set:
+      ctx.patients_needing_assessments: "{{ ctx_step_03.command_0.rows }}"
     next:
       spec: { mode: exclusive }
       arcs:
@@ -145,8 +145,8 @@ workflow:
                 "row_count": 5000,
             },
         }
-    set_ctx:
-      patients_needing_demographics: "{{ ctx_step_04.command_0.rows }}"
+    set:
+      ctx.patients_needing_demographics: "{{ ctx_step_04.command_0.rows }}"
     next:
       spec: { mode: exclusive }
       arcs:
@@ -163,8 +163,8 @@ workflow:
                 "row_count": 5000,
             },
         }
-    set_ctx:
-      patients_needing_conditions: "{{ ctx_step_05.command_0.rows }}"
+    set:
+      ctx.patients_needing_conditions: "{{ ctx_step_05.command_0.rows }}"
     next:
       spec: { mode: exclusive }
       arcs:
@@ -181,8 +181,8 @@ workflow:
                 "row_count": 5000,
             },
         }
-    set_ctx:
-      patients_needing_medications: "{{ ctx_step_06.command_0.rows }}"
+    set:
+      ctx.patients_needing_medications: "{{ ctx_step_06.command_0.rows }}"
     next:
       spec: { mode: exclusive }
       arcs:
@@ -199,8 +199,8 @@ workflow:
                 "row_count": 5000,
             },
         }
-    set_ctx:
-      patients_needing_adt: "{{ ctx_step_07.command_0.rows }}"
+    set:
+      ctx.patients_needing_adt: "{{ ctx_step_07.command_0.rows }}"
     next:
       spec: { mode: exclusive }
       arcs:
@@ -225,13 +225,13 @@ workflow:
       code: |
         result = {"command_0": {"status": "success", "message": "Command executed. 3450 rows affected.", "row_count": 3450},
                   "command_1": {"status": "success", "message": "Command executed. 3450 rows affected.", "row_count": 3450}}
-    set_ctx:
-      patients_rows: ""
-      patients_needing_assessments: ""
-      patients_needing_demographics: ""
-      patients_needing_conditions: ""
-      patients_needing_medications: ""
-      patients_needing_adt: ""
+    set:
+      ctx.patients_rows: ""
+      ctx.patients_needing_assessments: ""
+      ctx.patients_needing_demographics: ""
+      ctx.patients_needing_conditions: ""
+      ctx.patients_needing_medications: ""
+      ctx.patients_needing_adt: ""
     next:
       spec: { mode: exclusive }
       arcs:
@@ -272,7 +272,7 @@ workflow:
       Each batch gets a unique, non-overlapping slice of stress_test_items.
     tool:
       kind: python
-      args:
+      input:
         total_count: "{{ count_items.command_0.rows[0].item_count }}"
         batch_size: '{{ batch_size }}'
       code: |
@@ -343,7 +343,7 @@ workflow:
       path: '{{ chunk_worker_path }}'
       return_step: end
       timeout: 900
-      args:
+      input:
         pg_auth: 'pg_k8s'
         batch_number: '{{ iter.batch.batch_number }}'
         offset: '{{ iter.batch.offset }}'
@@ -378,7 +378,7 @@ workflow:
     desc: Test complete
     tool:
       kind: python
-      args:
+      input:
         result_summary: '{{ summarize }}'
         batch_plan: '{{ build_batch_plan }}'
       code: |

@@ -23,12 +23,12 @@ workflow:
       code: 'result = {"status": "initialized"}
 
         '
-  set_ctx:
-    user_email: '{{ workload.user_email }}'
-    user_status: '{{ workload.user_status }}'
-    user_created: '{{ workload.user_created }}'
-    email_domain: '{{ workload.email_domain }}'
-    user_score: '{{ workload.user_score }}'
+  set:
+    ctx.user_email: '{{ workload.user_email }}'
+    ctx.user_status: '{{ workload.user_status }}'
+    ctx.user_created: '{{ workload.user_created }}'
+    ctx.email_domain: '{{ workload.email_domain }}'
+    ctx.user_score: '{{ workload.user_score }}'
   next:
     spec:
       mode: exclusive
@@ -46,15 +46,15 @@ workflow:
         X-Environment: '{{ environment }}'
       policy:
         rules:
-        - when: '{{ outcome.status == ''error'' }}'
+        - when: '{{ output.status == ''error'' }}'
           then:
             do: fail
         - else:
             do: continue
-            set_ctx:
-              user_email: '{{ outcome.result.email }}'
-              user_status: '{{ outcome.result.status }}'
-              user_created: '{{ outcome.result.created_at }}'
+            set:
+              ctx.user_email: '{{ output.data.email }}'
+              ctx.user_status: '{{ output.data.status }}'
+              ctx.user_created: '{{ output.data.created_at }}'
   next:
     spec:
       mode: exclusive
@@ -65,7 +65,7 @@ workflow:
   tool:
     kind: python
     spec:
-      args:
+      input:
         email: '{{ ctx.user_email }}'
         status: '{{ ctx.user_status }}'
         retry_count: '{{ retry_limit }}'
@@ -77,18 +77,15 @@ workflow:
         rules:
         - else:
             do: continue
-            set_ctx:
-              email_domain: '{{ outcome.result.email_domain }}'
-              user_score: '{{ outcome.result.score }}'
+            set:
+              ctx.email_domain: '{{ output.data.email_domain }}'
+              ctx.user_score: '{{ output.data.score }}'
   next:
     spec:
       mode: exclusive
     arcs:
     - step: active_user_flow
       when: '{{ ctx.user_status == ''active'' }}'
-      args:
-        domain: '{{ ctx.email_domain }}'
-        score: '{{ ctx.user_score }}'
     - step: inactive_user_flow
       when: '{{ ctx.user_status != ''active'' }}'
 - step: active_user_flow
@@ -96,9 +93,9 @@ workflow:
   tool:
     kind: python
     spec:
-      args:
-        domain: '{{ args.domain }}'
-        score: '{{ args.score }}'
+      input:
+        domain: '{{ ctx.email_domain }}'
+        score: '{{ ctx.user_score }}'
         global_env: '{{ environment }}'
       code: "result = {\n    \"message\": f\"Active user in {global_env}\",\n    \"\
         domain\": domain,\n    \"bonus_score\": score + 10\n}\n"
@@ -112,7 +109,7 @@ workflow:
   tool:
     kind: python
     spec:
-      args:
+      input:
         email: '{{ ctx.user_email }}'
         status: '{{ ctx.user_status }}'
       code: "result = {\n    \"message\": f\"Inactive user: {email}\",\n    \"status\"\
@@ -127,7 +124,7 @@ workflow:
   tool:
     kind: python
     spec:
-      args:
+      input:
         user_email: '{{ ctx.user_email }}'
         user_score: '{{ ctx.user_score }}'
         environment: '{{ environment }}'

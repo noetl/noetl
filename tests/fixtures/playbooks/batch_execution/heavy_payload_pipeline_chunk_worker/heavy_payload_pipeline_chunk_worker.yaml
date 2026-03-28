@@ -19,7 +19,7 @@ workflow:
     desc: Initialize worker chunk inputs
     tool:
       kind: python
-      args:
+      input:
         batch_number: '{{ batch_number }}'
         offset: '{{ offset }}'
         batch_size: '{{ batch_size }}'
@@ -66,7 +66,7 @@ workflow:
     desc: Normalize fetched ID rows for loop processing
     tool:
       kind: python
-      args:
+      input:
         db_result: '{{ fetch_batch_ids }}'
       code: |
         rows = db_result.get("command_0", {}).get("rows", []) if isinstance(db_result, dict) else []
@@ -96,7 +96,7 @@ workflow:
     tool:
       - name: build_large_request
         kind: python
-        args:
+        input:
           item: '{{ iter.item }}'
           payload_kb_per_item: '{{ payload_kb_per_item }}'
         code: |
@@ -133,9 +133,9 @@ workflow:
         spec:
           policy:
             rules:
-              - when: '{{ outcome.status == "error" and (outcome.http.status in [429, 500, 502, 503, 504]) }}'
+              - when: '{{ output.status == "error" and (output.http.status in [429, 500, 502, 503, 504]) }}'
                 then: { do: retry, attempts: 4, backoff: exponential, delay: 1.0 }
-              - when: '{{ outcome.status == "error" }}'
+              - when: '{{ output.status == "error" }}'
                 then: { do: fail }
               - else:
                   then: { do: continue }
@@ -143,7 +143,7 @@ workflow:
         kind: python
         libs:
           json: json
-        args:
+        input:
           request_payload: '{{ build_large_request }}'
           http_result: '{{ fetch_detail }}'
           mode: chunked_optimal
@@ -217,7 +217,7 @@ workflow:
             processed_at = NOW();
       - name: finalize
         kind: python
-        args:
+        input:
           projected: '{{ project_result }}'
         code: |
           result = projected
@@ -232,7 +232,7 @@ workflow:
     desc: Return chunk summary
     tool:
       kind: python
-      args:
+      input:
         normalize: '{{ normalize_batch }}'
         processed: '{{ process_batch_pipeline | default({}) }}'
         batch_number: '{{ batch_number }}'

@@ -16,7 +16,7 @@ workflow:
     desc: Start GitHub Metrics Workflow
     tool:
       kind: python
-      args: {}
+      input: {}
       code: |
         result = {"status": "initialized", "message": "Starting GitHub metrics workflow"}
     next:
@@ -169,6 +169,6 @@ workflow:
     desc: End of GitHub metrics workflow
     tool:
       kind: python
-      args: {}
+      input: {}
       code: |
         result = {"status": "completed"}

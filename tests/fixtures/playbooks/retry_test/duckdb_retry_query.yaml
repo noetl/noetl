@@ -12,7 +12,7 @@ workflow:
   - step: start
     tool:
       kind: python
-      args: {}
+      input: {}
       code: |
         result = {"status": "initialized"}
     next:
@@ -29,7 +29,7 @@ workflow:
       spec:
         policy:
           rules:
-            - when: "{{ outcome.status == 'error' }}"
+            - when: "{{ output.status == 'error' }}"
               then: { do: retry, attempts: 3, delay: 0.5, backoff: exponential }
             - else:
                 then: { do: continue }
@@ -43,6 +43,6 @@ workflow:
     desc: End workflow
     tool:
       kind: python
-      args: {}
+      input: {}
       code: |
         result = {"status": "complete"}

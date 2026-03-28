@@ -47,7 +47,7 @@ workflow:
           "name": user["name"],
           "message": f"Processed user {user['name']}"
         }
-    args:
+    input:
       user: "{{ user }}"
     next:
       spec:
@@ -85,7 +85,7 @@ workflow:
           "name": product["name"],
           "message": f"Processed product {product['name']}"
         }
-    args:
+    input:
       product: "{{ product }}"
     next:
       spec:
@@ -112,7 +112,7 @@ workflow:
           "users_results": users_result,
           "products_results": products_result
         }
-    args:
+    input:
       users_result: "{{ process_items_users }}"
       products_result: "{{ process_items_products }}"
     next:

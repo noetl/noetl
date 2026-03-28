@@ -16,7 +16,7 @@ workflow:
     desc: "Start hello world test"
     tool:
       kind: python
-      args: {}
+      input: {}
       code: |
         result = {"status": "initialized"}
     next:
@@ -29,7 +29,7 @@ workflow:
     desc: "Hello world test step"
     tool:
       kind: python
-      args:
+      input:
         message: "{{ message }}"
       code: |
         print(f"HELLO_WORLD: {message}")
@@ -44,6 +44,6 @@ workflow:
     desc: "End hello world test"
     tool:
       kind: python
-      args: {}
+      input: {}
       code: |
         result = {"status": "complete"}

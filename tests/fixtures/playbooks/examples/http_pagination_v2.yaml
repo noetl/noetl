@@ -21,9 +21,9 @@ workflow:
       code: 'result = {"status": "initialized"}
 
         '
-  set_ctx:
-    current_page: '{{ workload.current_page }}'
-    all_pages: '{{ workload.all_pages }}'
+  set:
+    ctx.current_page: '{{ workload.current_page }}'
+    ctx.all_pages: '{{ workload.all_pages }}'
   next:
     spec:
       mode: exclusive
@@ -39,10 +39,10 @@ workflow:
         rules:
         - else:
             do: continue
-            set_iter:
-              page: 1
-              has_more: true
-              items: []
+            set:
+              iter.page: 1
+              iter.has_more: true
+              iter.items: []
   - name: fetch_page
     kind: http
     spec:
@@ -53,26 +53,26 @@ workflow:
         pageSize: '{{ page_size }}'
       policy:
         rules:
-        - when: '{{ outcome.status == ''error'' and outcome.http.status in [500, 502,
+        - when: '{{ output.status == ''error'' and output.http.status in [500, 502,
             503] }}'
           then:
             do: retry
             attempts: 3
             backoff: exponential
             delay: 0.5
-        - when: '{{ outcome.status == ''error'' }}'
+        - when: '{{ output.status == ''error'' }}'
           then:
             do: fail
         - else:
             do: continue
-            set_iter:
-              has_more: '{{ outcome.result.data.paging.hasMore | default(false) }}'
-              page: '{{ outcome.result.data.paging.page | default(iter.page) }}'
-              items: '{{ outcome.result.data.items | default([]) }}'
+            set:
+              iter.has_more: '{{ output.data.paging.hasMore | default(false) }}'
+              iter.page: '{{ output.data.paging.page | default(iter.page) }}'
+              iter.items: '{{ output.data.items | default([]) }}'
   - name: collect_items
     kind: python
     spec:
-      args:
+      input:
         items: '{{ iter.items }}'
         all_pages: '{{ ctx.all_pages }}'
       code: '# Extend collection with new items
@@ -86,8 +86,8 @@ workflow:
         rules:
         - else:
             do: continue
-            set_ctx:
-              all_pages: '{{ outcome.result.all_pages }}'
+            set:
+              ctx.all_pages: '{{ output.data.all_pages }}'
   - name: paginate
     kind: noop
     spec:
@@ -97,8 +97,8 @@ workflow:
           then:
             do: jump
             to: fetch_page
-            set_iter:
-              page: '{{ (iter.page | int) + 1 }}'
+            set:
+              iter.page: '{{ (iter.page | int) + 1 }}'
         - else:
             do: break
   next:
@@ -106,15 +106,15 @@ workflow:
       mode: exclusive
     arcs:
     - step: process_results
-      args:
-        items: '{{ ctx.all_pages }}'
+      set:
+        ctx.paginated_items: '{{ ctx.all_pages }}'
 - step: process_results
   desc: Process collected results
   tool:
     kind: python
     spec:
-      args:
-        items: '{{ args.items }}'
+      input:
+        items: '{{ ctx.paginated_items }}'
       code: 'print(f"Processing {len(items)} items")
 
         result = {"count": len(items), "status": "processed"}

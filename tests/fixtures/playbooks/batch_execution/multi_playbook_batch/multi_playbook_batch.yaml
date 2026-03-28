@@ -24,7 +24,7 @@ workflow:
     desc: Start Multiple Playbook Batch Workflow
     tool:
       kind: python
-      args: {}
+      input: {}
       code: |
         result = {"status": "initialized", "message": "Starting batch workflow"}
     next:
@@ -46,8 +46,8 @@ workflow:
         mode: exclusive
       arcs:
         - step: run_weather_processing
-          args:
-            http_result: '{{ run_http_test }}'
+          set:
+            ctx.http_result: '{{ run_http_test }}'
 
   - step: run_weather_processing
     desc: Run weather processing playbook
@@ -63,8 +63,8 @@ workflow:
         mode: exclusive
       arcs:
         - step: run_data_transformation
-          args:
-            weather_result: '{{ run_weather_processing }}'
+          set:
+            ctx.weather_result: '{{ run_weather_processing }}'
 
   - step: run_data_transformation
     desc: Run data transformation playbook
@@ -124,6 +124,6 @@ workflow:
     desc: End of batch workflow
     tool:
       kind: python
-      args: {}
+      input: {}
       code: |
         result = {"status": "completed"}

@@ -11,7 +11,7 @@ workflow:
   desc: Start workflow
   tool:
     kind: python
-    args: {}
+    input: {}
     code: 'result = {"status": "initialized"}
 
       '
@@ -43,13 +43,13 @@ workflow:
     spec:
       policy:
         rules:
-        - when: '{{ outcome.http.status in [500, 502, 503] }}'
+        - when: '{{ output.http.status in [500, 502, 503] }}'
           then:
             do: retry
             attempts: 3
             backoff: exponential
             delay: 0.5
-        - when: '{{ outcome.status == ''error'' }}'
+        - when: '{{ output.status == ''error'' }}'
           then:
             do: fail
         - else:
@@ -69,7 +69,7 @@ workflow:
     spec:
       policy:
         rules:
-        - when: '{{ outcome.status == ''error'' }}'
+        - when: '{{ output.status == ''error'' }}'
           then:
             do: continue
         - else:
@@ -97,7 +97,7 @@ workflow:
   desc: Fail if no rows stored
   tool:
     kind: python
-    args:
+    input:
       show_count: '{{ show_count }}'
     code: "count = int(show_count.get('command_0', {}).get('rows', [{}])[0].get('records',\
       \ 0))\nif count == 0:\n    raise ValueError(\"No rows stored in http_to_postgres_direct\"\
@@ -111,7 +111,7 @@ workflow:
   desc: End workflow
   tool:
     kind: python
-    args: {}
+    input: {}
     code: 'result = {"status": "completed"}
 
       '

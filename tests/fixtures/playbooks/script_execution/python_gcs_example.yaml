@@ -14,7 +14,7 @@ workflow:
     desc: Start workflow
     tool:
       kind: python
-      args: {}
+      input: {}
       code: |
         result = {"status": "initialized"}
     next:
@@ -32,7 +32,7 @@ workflow:
         source:
           type: gcs
           auth: "{{ gcp_credential }}"
-      args:
+      input:
         name: "{{ greeting_name }}"
         count: 2
     next:
@@ -45,7 +45,7 @@ workflow:
     desc: Verify GCS-loaded script executed correctly
     tool:
       kind: python
-      args:
+      input:
         result: "{{ run_python_from_gcs }}"
       code: |
         assert result['status'] == 'success', f"Expected success, got {result['status']}"
@@ -68,6 +68,6 @@ workflow:
     desc: End workflow
     tool:
       kind: python
-      args: {}
+      input: {}
       code: |
         result = {"status": "complete"}

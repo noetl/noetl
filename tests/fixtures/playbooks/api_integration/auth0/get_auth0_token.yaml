@@ -42,7 +42,7 @@ workflow:
     desc: Begin token acquisition
     tool:
       kind: python
-      args: {}
+      input: {}
       code: |
         result = {"status": "initialized"}
     next:
@@ -80,7 +80,7 @@ workflow:
     desc: Return token
     tool:
       kind: python
-      args:
+      input:
         access_token: "{{ get_token.data.access_token }}"
         token_type: "{{ get_token.data.token_type }}"
         expires_in: "{{ get_token.data.expires_in }}"
@@ -102,7 +102,7 @@ workflow:
     desc: Token acquisition failed
     tool:
       kind: python
-      args:
+      input:
         status: "{{ get_token.status_code }}"
         error: "{{ get_token.data }}"
       code: |
@@ -122,6 +122,6 @@ workflow:
     desc: Complete
     tool:
       kind: python
-      args: {}
+      input: {}
       code: |
         result = {"status": "complete"}

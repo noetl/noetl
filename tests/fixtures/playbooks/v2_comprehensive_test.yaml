@@ -14,7 +14,7 @@ workflow:
     desc: Initialize workflow with data preparation
     tool:
       kind: python
-      args:
+      input:
         initial_message: "{{ initial_message }}"
       code: |
         import random
@@ -39,7 +39,7 @@ workflow:
     desc: Process high values
     tool:
       kind: python
-      args:
+      input:
         value: "{{ start.random_value }}"
       code: |
         value = int(value)
@@ -62,7 +62,7 @@ workflow:
     desc: Process low values
     tool:
       kind: python
-      args:
+      input:
         value: "{{ start.random_value }}"
       code: |
         value = int(value)
@@ -85,7 +85,7 @@ workflow:
     desc: Generate final summary
     tool:
       kind: python
-      args:
+      input:
         start_value: "{{ start.random_value }}"
         category: "{{ process_high.category if process_high else process_low.category }}"
         final_value: "{{ process_high.processed if process_high else process_low.processed }}"

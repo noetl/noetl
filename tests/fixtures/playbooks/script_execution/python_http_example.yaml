@@ -13,7 +13,7 @@ workflow:
     desc: Start workflow
     tool:
       kind: python
-      args: {}
+      input: {}
       code: |
         result = {"status": "initialized"}
     next:
@@ -33,7 +33,7 @@ workflow:
           endpoint: "{{ script_url }}"
           method: GET
           timeout: 30
-      args:
+      input:
         name: "{{ greeting_name }}"
         count: 2
     next:
@@ -46,7 +46,7 @@ workflow:
     desc: Verify HTTP-fetched script executed correctly
     tool:
       kind: python
-      args:
+      input:
         result: "{{ run_python_from_http }}"
       code: |
         assert result['status'] == 'success', f"Expected success, got {result['status']}"
@@ -68,6 +68,6 @@ workflow:
     desc: End workflow
     tool:
       kind: python
-      args: {}
+      input: {}
       code: |
         result = {"status": "complete"}

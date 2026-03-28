@@ -21,7 +21,7 @@ workflow:
     desc: Resolve gateway URL
     tool:
       kind: python
-      args:
+      input:
         credential_name: "{{ credential_name }}"
         override_gateway_url: "{{ gateway_url }}"
         override_base_url: "{{ base_url }}"
@@ -61,7 +61,7 @@ workflow:
     desc: Validate session and check tickle/auth status
     tool:
       kind: python
-      args:
+      input:
         base_url: "{{ start.base_url }}"
       code: |
         import httpx
@@ -98,7 +98,7 @@ workflow:
     desc: Summarize verification
     tool:
       kind: python
-      args:
+      input:
         gateway_url: "{{ start.gateway_url }}"
         base_url: "{{ start.base_url }}"
         validate_resp: "{{ call_api.validate }}"
@@ -152,7 +152,7 @@ workflow:
     desc: Done
     tool:
       kind: python
-      args:
+      input:
         summary: "{{ summarize }}"
       code: |
         result = {

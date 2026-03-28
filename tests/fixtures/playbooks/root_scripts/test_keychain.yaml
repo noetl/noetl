@@ -5,9 +5,9 @@ metadata:
   path: tests/keychain_test
 
 workload:
-  openai_key: "{{ args.openai_key | default('sk-default-key') }}"
-  amadeus_client_id: "{{ args.amadeus_client_id | default('default-client-id') }}"
-  amadeus_client_secret: "{{ args.amadeus_client_secret | default('default-secret') }}"
+  openai_key: "{{ input.openai_key | default('sk-default-key') }}"
+  amadeus_client_id: "{{ input.amadeus_client_id | default('default-client-id') }}"
+  amadeus_client_secret: "{{ input.amadeus_client_secret | default('default-secret') }}"
 
 keychain:
   - name: openai_token

@@ -4,7 +4,7 @@
 # - `when` is the ONLY conditional keyword (no `expr`)
 # - All knobs live under `spec` at any level
 # - Policies under `spec.policy` typed by scope
-# - Task outcome via `task.spec.policy.rules` (not eval)
+# - Task output via `task.spec.policy.rules` (not eval)
 # - Routing via `next.spec` + `next.arcs[]` (Petri-net arcs)
 # - NO `step.when` field (use `step.spec.policy.admit.rules`)
 # - Outcome status uses "ok" | "error" (not "success")
@@ -71,7 +71,7 @@ workflow:
         - step: fetch_data
 
   # ==========================================================================
-  # Step 2: Single tool with task policy for outcome handling
+  # Step 2: Single tool with task policy for output handling
   # ==========================================================================
   - step: fetch_data
     desc: Fetch data with retry policy
@@ -84,21 +84,21 @@ workflow:
         policy:
           rules:
             # Use `when` not `expr`
-            - when: "{{ outcome.status == 'error' and outcome.http.status in [429, 500, 502, 503] }}"
+            - when: "{{ output.status == 'error' and output.http.status in [429, 500, 502, 503] }}"
               then:
                 do: retry
                 attempts: 3
                 backoff: exponential
                 delay: 1.0
-            - when: "{{ outcome.status == 'error' }}"
+            - when: "{{ output.status == 'error' }}"
               then:
                 do: fail
             - else:
                 then:
                   do: continue
                   # set_ctx updates execution-scoped variables
-                  set_ctx:
-                    fetch_completed: true
+                  set:
+                    ctx.fetch_completed: true
     next:
       spec:
         mode: exclusive
@@ -115,7 +115,7 @@ workflow:
       # Pipeline: list of tasks with explicit name: field (canonical format)
       - name: validate
         kind: python
-        args:
+        input:
           data: "{{ fetch_data.data }}"
         code: |
           if not data:
@@ -125,14 +125,14 @@ workflow:
         spec:
           policy:
             rules:
-              - when: "{{ outcome.result.status == 'error' }}"
+              - when: "{{ output.data.status == 'error' }}"
                 then: { do: fail }
               - else:
                   then: { do: continue }
 
       - name: transform
         kind: python
-        args:
+        input:
           # _prev contains previous task's result
           prev: "{{ _prev }}"
         code: |
@@ -141,10 +141,10 @@ workflow:
           policy:
             rules:
               - else:
-                  then:
+                then:
                     do: continue
-                    set_ctx:
-                      transform_done: true
+                    set:
+                      ctx.transform_done: true
     next:
       spec:
         mode: exclusive
@@ -174,9 +174,9 @@ workflow:
       spec:
         policy:
           rules:
-            - when: "{{ outcome.status == 'error' and outcome.error.retryable }}"
+            - when: "{{ output.status == 'error' and output.error.retryable }}"
               then: { do: retry, attempts: 2 }
-            - when: "{{ outcome.status == 'error' }}"
+            - when: "{{ output.status == 'error' }}"
               then: { do: continue }  # Continue on non-retryable errors
             - else:
                 then: { do: continue }
@@ -194,7 +194,7 @@ workflow:
     desc: Workflow complete
     tool:
       kind: python
-      args:
+      input:
         ctx_vars: "{{ ctx }}"
       code: |
         result = {

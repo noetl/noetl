@@ -19,7 +19,7 @@ workflow:
       spec:
         policy:
           rules:
-            - when: "{{ outcome.status == 'error' }}"
+            - when: "{{ output.status == 'error' }}"
               then: { do: retry, attempts: 3, delay: 1.0, backoff: exponential }
             - else:
                 then: { do: continue }
@@ -33,6 +33,6 @@ workflow:
     desc: End workflow
     tool:
       kind: python
-      args: {}
+      input: {}
       code: |
         result = {"status": "complete"}

@@ -48,7 +48,7 @@ workflow:
                 }
 
             return {"status": "error", "message": "Invalid HTTP response format"}
-    args:
+    input:
       http_response: "{{ start }}"
     next:
       spec:
@@ -84,7 +84,7 @@ workflow:
 
             print(f"[VERIFY] Verification: {verification['status']}")
             return verification
-    args:
+    input:
       process_result: "{{ process }}"
     next:
       spec:
@@ -115,5 +115,5 @@ workflow:
             print(f"[END] HTTP status code: {status_code}")
 
             return {"status": "completed", "test_passed": status == "passed"}
-    args:
+    input:
       verify_result: "{{ verify }}"

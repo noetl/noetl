@@ -208,7 +208,7 @@ workflow:
     desc: Schema provisioned successfully
     tool:
       kind: python
-      args:
+      input:
         verification: "{{ verify_schema.command_0.rows[0] }}"
       code: |
         result = {

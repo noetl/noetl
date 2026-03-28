@@ -22,7 +22,7 @@ workflow:
   desc: Start HTTP iterator save test
   tool:
     kind: python
-    args: {}
+    input: {}
     code: 'result = {"status": "initialized"}
 
       '
@@ -73,7 +73,7 @@ workflow:
     spec:
       policy:
         rules:
-        - when: '{{ outcome.status == ''error'' }}'
+        - when: '{{ output.status == ''error'' }}'
           then:
             do: continue
         - else:
@@ -120,7 +120,7 @@ workflow:
   desc: Validate that all cities have data
   tool:
     kind: python
-    args:
+    input:
       verify_results: '{{ verify_results }}'
     code: "\"\"\"Validate that all expected cities have data saved.\"\"\"\n# Get verification\
       \ results - verify_results is already the dict with command_0\nverify_result\
@@ -147,7 +147,7 @@ workflow:
   desc: Test completed
   tool:
     kind: python
-    args: {}
+    input: {}
     code: 'result = {"status": "completed"}
 
       '
