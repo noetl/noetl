@@ -25,7 +25,7 @@ workflow:
   tool:
     kind: playbook
     path: tests/fixtures/playbooks/save_storage_test/create_tables
-    args:
+    input:
       pg_auth: '{{ pg_auth }}'
   next:
     spec:

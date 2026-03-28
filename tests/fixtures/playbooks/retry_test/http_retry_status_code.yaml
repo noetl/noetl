@@ -18,9 +18,9 @@ workflow:
       spec:
         policy:
           rules:
-            - when: "{{ outcome.http.status in [500, 502, 503] }}"
+            - when: "{{ output.http.status in [500, 502, 503] }}"
               then: { do: retry, attempts: 3, delay: 0.5, backoff: exponential }
-            - when: "{{ outcome.status == 'error' }}"
+            - when: "{{ output.status == 'error' }}"
               then: { do: fail }
             - else:
                 then: { do: continue }
@@ -34,6 +34,6 @@ workflow:
     desc: End workflow
     tool:
       kind: python
-      args: {}
+      input: {}
       code: |
         result = {"status": "complete"}

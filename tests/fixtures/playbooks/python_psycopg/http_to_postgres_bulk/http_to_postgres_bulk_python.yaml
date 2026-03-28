@@ -19,7 +19,7 @@ workflow:
     desc: Start workflow
     tool:
       kind: python
-      args: {}
+      input: {}
       code: |
         result = {"status": "initialized"}
     next:
@@ -68,7 +68,7 @@ workflow:
       kind: python
       libs:
         psycopg: psycopg
-      args:
+      input:
         http_data: "{{ fetch_http_data }}"
         pg_host: "{{ pg_host }}"
         pg_port: "{{ pg_port }}"
@@ -137,6 +137,6 @@ workflow:
     desc: End workflow
     tool:
       kind: python
-      args: {}
+      input: {}
       code: |
         result = {"status": "completed"}

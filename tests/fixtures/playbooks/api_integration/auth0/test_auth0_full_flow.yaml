@@ -34,7 +34,7 @@ workflow:
     desc: Begin full Auth0 flow test
     tool:
       kind: python
-      args: {}
+      input: {}
       code: |
         result = {"status": "starting", "test": "auth0_full_flow"}
     next:
@@ -48,7 +48,7 @@ workflow:
     tool:
       kind: playbook
       path: api_integration/auth0/get_auth0_token
-      args:
+      input:
         username: "{{ username }}"
         password: "{{ password }}"
         auth0_domain: "{{ auth0_domain }}"
@@ -68,7 +68,7 @@ workflow:
     tool:
       kind: playbook
       path: api_integration/auth0/auth0_login
-      args:
+      input:
         auth0_token: "{{ get_auth0_token.access_token }}"
         client_ip: "127.0.0.1"
     next:
@@ -84,7 +84,7 @@ workflow:
     desc: Return successful test result
     tool:
       kind: python
-      args:
+      input:
         session_token: "{{ login_with_token.session_token }}"
         user_id: "{{ login_with_token.user.user_id }}"
         email: "{{ login_with_token.user.email }}"
@@ -111,7 +111,7 @@ workflow:
     desc: Auth0 token acquisition failed
     tool:
       kind: python
-      args:
+      input:
         error: "{{ get_auth0_token }}"
       code: |
         # Arguments injected: error
@@ -130,7 +130,7 @@ workflow:
     desc: NoETL login failed
     tool:
       kind: python
-      args:
+      input:
         error: "{{ login_with_token }}"
       code: |
         # Arguments injected: error
@@ -149,6 +149,6 @@ workflow:
     desc: Complete
     tool:
       kind: python
-      args: {}
+      input: {}
       code: |
         result = {"status": "complete"}

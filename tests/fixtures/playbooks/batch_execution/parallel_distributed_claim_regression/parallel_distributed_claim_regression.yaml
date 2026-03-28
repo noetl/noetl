@@ -23,7 +23,7 @@ workflow:
   - step: start
     tool:
       kind: python
-      args:
+      input:
         total_items: '{{ total_items }}'
         batch_size: '{{ batch_size }}'
       code: |
@@ -74,7 +74,7 @@ workflow:
   - step: build_batch_plan
     tool:
       kind: python
-      args:
+      input:
         total_items: '{{ total_items }}'
         batch_size: '{{ batch_size }}'
       code: |
@@ -112,7 +112,7 @@ workflow:
       path: '{{ chunk_worker_path }}'
       return_step: end
       timeout: 1200
-      args:
+      input:
         pg_auth: '{{ pg_auth }}'
         batch_number: '{{ iter.batch.batch_number }}'
         offset: '{{ iter.batch.offset }}'
@@ -141,7 +141,7 @@ workflow:
   - step: assert_no_duplicate_batch_runs
     tool:
       kind: python
-      args:
+      input:
         db_result: '{{ verify_batch_run_uniqueness }}'
       code: |
         rows = db_result.get("command_0", {}).get("rows", []) if isinstance(db_result, dict) else []
@@ -168,7 +168,7 @@ workflow:
   - step: assert_result_count
     tool:
       kind: python
-      args:
+      input:
         expected_total: '{{ total_items }}'
         db_result: '{{ verify_results }}'
       code: |

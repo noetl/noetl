@@ -27,7 +27,7 @@ workflow:
     desc: Normalize prompt and set generation guardrails
     tool:
       kind: python
-      args:
+      input:
         prompt: "{{ prompt }}"
       code: |
         normalized_prompt = str(prompt or "").strip()
@@ -98,7 +98,7 @@ workflow:
       kind: python
       libs:
         json: json
-      args:
+      input:
         openai_response: "{{ openai_generate }}"
       code: |
         raw = ""

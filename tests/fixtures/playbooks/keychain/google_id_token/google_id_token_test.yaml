@@ -60,7 +60,7 @@ workflow:
     desc: Verify ID token was generated and is accessible in keychain
     tool:
       kind: python
-      args:
+      input:
         id_token: "{{ keychain.cloud_run_id_token.id_token }}"
         token_type: "{{ keychain.cloud_run_id_token.token_type }}"
         audience: "{{ keychain.cloud_run_id_token.audience }}"
@@ -144,7 +144,7 @@ workflow:
       spec:
         policy:
           rules:
-            - when: "{{ outcome.status == 'error' }}"
+            - when: "{{ output.status == 'error' }}"
               then:
                 do: continue
             - else:
@@ -198,7 +198,7 @@ workflow:
     desc: Verify token auto-renewal metadata is stored correctly
     tool:
       kind: python
-      args:
+      input:
         execution_id: "{{ job.uuid }}"
       code: |
         # In a real scenario, this would check if the token can be renewed

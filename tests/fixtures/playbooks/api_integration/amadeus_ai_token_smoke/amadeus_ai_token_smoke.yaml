@@ -86,7 +86,7 @@ workflow:
     desc: Build compact smoke test report
     tool:
       kind: python
-      args:
+      input:
         openai_response: "{{ check_openai_models }}"
         amadeus_response: "{{ check_amadeus_airport_lookup }}"
       code: |

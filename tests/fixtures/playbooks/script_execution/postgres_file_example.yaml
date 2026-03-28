@@ -13,7 +13,7 @@ workflow:
     desc: Start workflow
     tool:
       kind: python
-      args: {}
+      input: {}
       code: |
         result = {"status": "initialized"}
     next:
@@ -67,6 +67,6 @@ workflow:
     desc: End workflow
     tool:
       kind: python
-      args: {}
+      input: {}
       code: |
         result = {"status": "complete"}

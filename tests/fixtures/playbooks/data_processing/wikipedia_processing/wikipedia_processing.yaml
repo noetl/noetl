@@ -20,7 +20,7 @@ workflow:
     desc: "Start Wikipedia Data Processing Workflow"
     tool:
       kind: python
-      args: {}
+      input: {}
       code: |
         result = {"status": "initialized"}
     next:
@@ -116,6 +116,6 @@ workflow:
     desc: "End of Wikipedia processing workflow"
     tool:
       kind: python
-      args: {}
+      input: {}
       code: |
         result = {"status": "completed"}

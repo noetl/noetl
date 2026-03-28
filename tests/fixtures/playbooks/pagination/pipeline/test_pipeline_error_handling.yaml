@@ -33,8 +33,8 @@ workflow:
       \ \"retry_on_500\",\n    \"retry_on_rate_limit\",\n    \"skip_transform_error\"\
       ,\n    \"fail_on_auth_error\"\n  ]\n}\n"
   set:
-    test_results: '{{ workload.test_results }}'
-    current_test: '{{ workload.current_test }}'
+    ctx.test_results: '{{ workload.test_results }}'
+    ctx.current_test: '{{ workload.current_test }}'
   next:
     spec:
       mode: exclusive

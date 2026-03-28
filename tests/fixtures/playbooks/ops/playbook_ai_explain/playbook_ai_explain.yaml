@@ -34,7 +34,7 @@ workflow:
       kind: python
       libs:
         json: json
-      args:
+      input:
         target_playbook_catalog_id: "{{ target_playbook_catalog_id }}"
         target_playbook_path: "{{ target_playbook_path }}"
         target_playbook_version: "{{ target_playbook_version }}"
@@ -135,7 +135,7 @@ workflow:
       libs:
         json: json
         re: re
-      args:
+      input:
         openai_response: "{{ openai_explain }}"
       code: |
         raw = ""

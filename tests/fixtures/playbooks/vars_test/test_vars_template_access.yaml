@@ -17,7 +17,7 @@ workflow:
   tool:
   - name: start_task
     kind: python
-    args: {}
+    input: {}
     code: 'result = {"status": "initialized"}
 
       '
@@ -31,7 +31,7 @@ workflow:
   tool:
   - name: set_vars_task
     kind: python
-    args: {}
+    input: {}
     code: "# Return values that will be extracted via policy rules\nresult = {\n \
       \   \"counter\": 42,\n    \"message\": \"Template access works!\",\n    \"config\"\
       : {\n        \"timeout\": 30,\n        \"retries\": 3\n    }\n}\n"
@@ -41,10 +41,10 @@ workflow:
         - else:
             then:
               do: continue
-              set_ctx:
-                counter: '{{ outcome.result.counter }}'
-                message: '{{ outcome.result.message }}'
-                config: '{{ outcome.result.config }}'
+              set:
+                ctx.counter: '{{ output.data.counter }}'
+                ctx.message: '{{ output.data.message }}'
+                ctx.config: '{{ output.data.config }}'
   next:
     spec:
       mode: exclusive
@@ -55,7 +55,7 @@ workflow:
   tool:
   - name: use_vars_task
     kind: python
-    args:
+    input:
       counter: '{{ ctx.counter }}'
       message: '{{ ctx.message }}'
       timeout: '{{ ctx.config.timeout }}'
@@ -74,7 +74,7 @@ workflow:
   tool:
   - name: verify_task
     kind: python
-    args: {}
+    input: {}
     code: "# Get previous step result\nprev_result = context.get('use_vars_in_template',\
       \ {})\nif isinstance(prev_result, dict) and 'data' in prev_result:\n    prev_result\
       \ = prev_result['data']\n\n# Verify values\ncounter = prev_result.get(\"received_counter\"\
@@ -99,7 +99,7 @@ workflow:
   tool:
   - name: end_task
     kind: python
-    args: {}
+    input: {}
     code: 'result = {"status": "complete"}
 
       '

@@ -37,7 +37,7 @@ workflow:
     desc: "Start regression test suite - 53 playbooks (4 skipped)"
     tool:
       kind: python
-      args: {}
+      input: {}
       code: |
         result = {"status": "initialized"}
     next:
@@ -800,7 +800,7 @@ workflow:
     desc: "Regression test suite completed"
     tool:
       kind: python
-      args: {}
+      input: {}
       code: |
         print("=== Regression test suite completed - 53 playbooks tested (4 skipped) ===")
         result = {"status": "success", "data": {"tests_run": 53, "skipped": 4}}

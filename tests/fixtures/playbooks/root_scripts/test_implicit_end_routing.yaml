@@ -9,7 +9,7 @@ workflow:
     desc: Start workflow - router only
     tool:
       kind: python
-      args: {}
+      input: {}
       code: |
         result = {"status": "started"}
     next:
@@ -22,7 +22,7 @@ workflow:
     desc: Execute step1 - NO next field, should implicitly route to end
     tool:
       kind: python
-      args: {}
+      input: {}
       code: |
         result = {"status": "step1_complete"}
 
@@ -32,6 +32,6 @@ workflow:
     desc: End step - aggregates all workflow results
     tool:
       kind: python
-      args: {}
+      input: {}
       code: |
         result = {"status": "workflow_complete"}

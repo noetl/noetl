@@ -52,7 +52,7 @@ workflow:
     desc: Initialize chunk worker inputs
     tool:
       kind: python
-      args:
+      input:
         batch_number: '{{ batch_number }}'
         offset: '{{ offset }}'
         batch_size: '{{ batch_size }}'
@@ -100,7 +100,7 @@ workflow:
     desc: Extract rows. Mirrors mds_batch_worker.normalize_mds_batch.
     tool:
       kind: python
-      args:
+      input:
         db_result: '{{ fetch_batch }}'
       code: |
         rows = db_result.get("command_0", {}).get("rows", []) if isinstance(db_result, dict) else []
@@ -189,7 +189,7 @@ workflow:
     desc: Return batch summary
     tool:
       kind: python
-      args:
+      input:
         normalize: '{{ normalize_batch }}'
         batch_number: '{{ batch_number }}'
       code: |

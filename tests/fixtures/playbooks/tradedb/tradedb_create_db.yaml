@@ -32,6 +32,6 @@ workflow:
     desc: Done
     tool:
       kind: python
-      args: {}
+      input: {}
       code: |
         result = {"status": "completed"}

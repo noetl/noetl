@@ -25,7 +25,7 @@ workflow:
     desc: Initialize chunk worker inputs (v2 batch upsert variant)
     tool:
       kind: python
-      args:
+      input:
         batch_number: '{{ batch_number }}'
         offset: '{{ offset }}'
         batch_size: '{{ batch_size }}'
@@ -101,7 +101,7 @@ workflow:
     desc: Return chunk summary for v2 batch upsert worker
     tool:
       kind: python
-      args:
+      input:
         upsert_result: '{{ upsert_batch }}'
         batch_number: '{{ batch_number }}'
         batch_size: '{{ batch_size }}'

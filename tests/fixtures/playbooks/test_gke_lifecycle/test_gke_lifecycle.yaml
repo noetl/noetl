@@ -36,9 +36,9 @@ workflow:
           echo "Region:   {{ region }}"
           echo "State DB: {{ state_database }}"
           echo ""
-    set_ctx:
-      test_cluster_name: "{{ cluster_name_prefix }}-$(date +%Y%m%d%H%M%S)"
-      test_start_time: "$(date +%s)"
+    set:
+      ctx.test_cluster_name: "{{ cluster_name_prefix }}-$(date +%Y%m%d%H%M%S)"
+      ctx.test_start_time: "$(date +%s)"
     next:
       spec:
         mode: exclusive
@@ -93,9 +93,9 @@ workflow:
       url: https://cloudresourcemanager.googleapis.com/v1/projects/{{ project_id }}
       auth:
         source: adc
-    set_ctx:
-      auth_success: "{{ result.status == 200 }}"
-      project_name: "{{ result.body.name | default('unknown') }}"
+    set:
+      ctx.auth_success: "{{ result.status == 200 }}"
+      ctx.project_name: "{{ result.body.name | default('unknown') }}"
     next:
       spec:
         mode: exclusive
@@ -162,9 +162,9 @@ workflow:
       url: https://container.googleapis.com/v1/projects/{{ project_id }}/locations/{{ region }}/clusters
       auth:
         source: adc
-    set_ctx:
-      list_status: "{{ result.status }}"
-      existing_clusters: "{{ result.body.clusters | default([]) | length }}"
+    set:
+      ctx.list_status: "{{ result.status }}"
+      ctx.existing_clusters: "{{ result.body.clusters | default([]) | length }}"
     next:
       spec:
         mode: exclusive
@@ -218,8 +218,8 @@ workflow:
           created_at
         FROM resources
         WHERE project = '{{ project_id }}';
-    set_ctx:
-      resource_count: "{{ result | length }}"
+    set:
+      ctx.resource_count: "{{ result | length }}"
     next:
       spec:
         mode: exclusive
@@ -287,8 +287,8 @@ workflow:
         SELECT status, current_state, last_synced_at
         FROM resources
         WHERE resource_id = '{{ project_id }}/{{ region }}/{{ ctx.test_cluster_name }}';
-    set_ctx:
-      updated_status: "{{ result[0].status if result else 'not_found' }}"
+    set:
+      ctx.updated_status: "{{ result[0].status if result else 'not_found' }}"
     next:
       spec:
         mode: exclusive
@@ -351,8 +351,8 @@ workflow:
         SELECT COUNT(*) as remaining
         FROM resources
         WHERE resource_id = '{{ project_id }}/{{ region }}/{{ ctx.test_cluster_name }}';
-    set_ctx:
-      remaining_count: "{{ result[0].remaining if result else -1 }}"
+    set:
+      ctx.remaining_count: "{{ result[0].remaining if result else -1 }}"
     next:
       spec:
         mode: exclusive

@@ -21,7 +21,7 @@ workflow:
     desc: Start Kubernetes job workflow
     tool:
       kind: python
-      args: {}
+      input: {}
       code: |
         result = {"status": "initialized", "message": "Starting K8s job workflow"}
     next:
@@ -39,7 +39,7 @@ workflow:
         source:
           type: gcs
           auth: "{{ gcp_credential }}"
-      args:
+      input:
         input_file: "{{ input_data }}"
         output_bucket: "{{ output_bucket }}"
         mode: "batch"
@@ -73,7 +73,7 @@ workflow:
       kind: python
       libs:
         json: json
-      args:
+      input:
         job_result: "{{ run_script_as_k8s_job }}"
       code: |
         print("=" * 80)
@@ -114,6 +114,6 @@ workflow:
     desc: End workflow
     tool:
       kind: python
-      args: {}
+      input: {}
       code: |
         result = {"status": "complete"}

@@ -25,7 +25,7 @@ workflow:
       iterator: "num"
     tool:
       kind: python
-      args: {}
+      input: {}
       code: |
             num = input_data.get('num')
             loop_index = input_data.get('loop_index', 0)
@@ -36,7 +36,7 @@ workflow:
             print(f"[LOOP] Result: {result}")
 
             return {"number": num, "doubled": result, "index": loop_index}
-    args:
+    input:
       num: "{{ num }}"
       loop_index: "{{ loop_index }}"
     next:
@@ -49,7 +49,7 @@ workflow:
     desc: Analyze loop results
     tool:
       kind: python
-      args: {}
+      input: {}
       code: |
             print(f"[PROCESS] Loop completed, analyzing results")
             print(f"[PROCESS] Input data type: {type(input_data).__name__}")
@@ -84,7 +84,7 @@ workflow:
       iterator: "user"
     tool:
       kind: python
-      args: {}
+      input: {}
       code: |
             user = input_data.get('user', {})
             loop_index = input_data.get('loop_index', 0)
@@ -103,7 +103,7 @@ workflow:
                 "category": category,
                 "index": loop_index
             }
-    args:
+    input:
       user: "{{ user }}"
       loop_index: "{{ loop_index }}"
     next:
@@ -116,7 +116,7 @@ workflow:
     desc: Verify loop execution
     tool:
       kind: python
-      args: {}
+      input: {}
       code: |
             print(f"[VERIFY] Verifying loop test results")
 
@@ -150,7 +150,7 @@ workflow:
 
             print(f"[VERIFY] Verification: {verification['status']}")
             return verification
-    args:
+    input:
       process_result: "{{ process }}"
     next:
       spec:
@@ -162,7 +162,7 @@ workflow:
     desc: Complete the test
     tool:
       kind: python
-      args: {}
+      input: {}
       code: |
             print(f"[END] Loop test completed successfully!")
 
@@ -185,5 +185,5 @@ workflow:
             print(f"[END] Original sum: {original_sum}, Doubled sum: {doubled_sum}")
 
             return {"status": "ok", "test_passed": status == "passed"}
-    args:
+    input:
       verify_result: "{{ verify }}"

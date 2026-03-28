@@ -91,7 +91,7 @@ workflow:
           import: storage
         io: io
         os: os
-      args:
+      input:
         bucket: "{{ gcs_bucket }}"
         prefix: "exports/{{ output_filename }}"
         output_filename: "{{ output_filename }}"

@@ -42,7 +42,7 @@ workflow:
       Decimal:
         from: decimal
         import: Decimal
-    args:
+    input:
       input_data: {}
     code: "mixed_data = {\n  \"string_field\": \"test_string\",\n  \"integer_field\"\
       : 12345,\n  \"float_field\": 3.14159,\n  \"boolean_field\": True,\n  \"null_field\"\
@@ -73,7 +73,7 @@ workflow:
   tool:
   - name: generate_special
     kind: python
-    args:
+    input:
       input_data: '{{ test_mixed_types }}'
     code: "special_data = {\n    \"quotes\": \"This has 'single' and \\\"double\\\"\
       \ quotes\",\n    \"unicode\": \"Unicode: alphabetagammadeltaepsilon, zhongwen,\
@@ -100,7 +100,7 @@ workflow:
   desc: Test save with empty and null data
   tool:
     kind: python
-    args:
+    input:
       input_data: '{{ test_special_characters }}'
     code: "empty_scenarios = {\n    \"empty_string\": \"\",\n    \"empty_list\": [],\n\
       \    \"empty_dict\": {},\n    \"zero_value\": 0,\n    \"false_value\": False,\n\
@@ -115,7 +115,7 @@ workflow:
   tool:
   - name: generate_large
     kind: python
-    args:
+    input:
       input_data: '{{ test_empty_data }}'
     code: "# Generate moderately large dataset\nlarge_data = {\n    \"metadata\":\
       \ {\n        \"test_type\": \"large_payload\",\n        \"record_count\": 100\n\

@@ -22,7 +22,7 @@ workflow:
     desc: Start GCS OAuth test
     tool:
       kind: python
-      args: {}
+      input: {}
       code: |
         result = {"status": "initialized", "message": "Starting GCS OAuth test"}
     next:
@@ -50,7 +50,7 @@ workflow:
     desc: Parse bucket list response
     tool:
       kind: python
-      args:
+      input:
         api_response: "{{ list_buckets }}"
       code: |
         """Parse GCS bucket list response."""
@@ -87,7 +87,7 @@ workflow:
     desc: Final OAuth verification
     tool:
       kind: python
-      args:
+      input:
         bucket_result: "{{ parse_bucket_list }}"
       code: |
         """Verify OAuth flow completed successfully."""
@@ -119,6 +119,6 @@ workflow:
     desc: GCS OAuth test completed
     tool:
       kind: python
-      args: {}
+      input: {}
       code: |
         result = {"status": "completed"}

@@ -30,12 +30,12 @@ workflow:
       kind: python
       code: |
         result = {"status": "initialized"}
-    set_ctx:
-      current_page: "{{ workload.current_page }}"
-      has_more: "{{ workload.has_more }}"
-      chain_contract_ok: "{{ workload.chain_contract_ok }}"
-      pages_fetched: "{{ workload.pages_fetched }}"
-      processed_total: "{{ workload.processed_total }}"
+    set:
+      ctx.current_page: "{{ workload.current_page }}"
+      ctx.has_more: "{{ workload.has_more }}"
+      ctx.chain_contract_ok: "{{ workload.chain_contract_ok }}"
+      ctx.pages_fetched: "{{ workload.pages_fetched }}"
+      ctx.processed_total: "{{ workload.processed_total }}"
     next:
       spec:
         mode: exclusive
@@ -58,13 +58,13 @@ workflow:
         spec:
           policy:
             rules:
-              - when: "{{ outcome.status == 'error' and (outcome.error.retryable or (outcome.error.message is defined and ('Connection reset' in outcome.error.message or 'timed out' in outcome.error.message))) }}"
+              - when: "{{ output.status == 'error' and (output.error.retryable or (output.error.message is defined and ('Connection reset' in output.error.message or 'timed out' in output.error.message))) }}"
                 then:
                   do: retry
                   attempts: 6
                   backoff: exponential
                   delay: 0.8
-              - when: "{{ outcome.status == 'error' }}"
+              - when: "{{ output.status == 'error' }}"
                 then:
                   do: fail
               - else:
@@ -72,7 +72,7 @@ workflow:
                     do: continue
       - name: reduce_page
         kind: python
-        args:
+        input:
           response: "{{ _prev.data }}"
           current_chain_ok: "{{ ctx.chain_contract_ok }}"
           pages_fetched: "{{ ctx.pages_fetched }}"
@@ -109,7 +109,7 @@ workflow:
             "mode": mode,
             "pages_fetched": int(pages_fetched or 0) + 1,
           }
-    result:
+    output:
       output_select:
         - page_records
         - page_record_count
@@ -119,11 +119,11 @@ workflow:
         - linked_chain_length
         - mode
         - pages_fetched
-    set_ctx:
-      has_more: "{{ fetch_page.has_more }}"
-      current_page: "{{ fetch_page.next_page }}"
-      chain_contract_ok: "{{ fetch_page.chain_contract_ok }}"
-      pages_fetched: "{{ fetch_page.pages_fetched }}"
+    set:
+      ctx.has_more: "{{ fetch_page.has_more }}"
+      ctx.current_page: "{{ fetch_page.next_page }}"
+      ctx.chain_contract_ok: "{{ fetch_page.chain_contract_ok }}"
+      ctx.pages_fetched: "{{ fetch_page.pages_fetched }}"
     next:
       spec:
         mode: exclusive
@@ -140,7 +140,7 @@ workflow:
       iterator: record
     tool:
       kind: python
-      args:
+      input:
         record: "{{ iter.record }}"
       code: |
         record_id = int(record.get("record_id", 0))
@@ -162,7 +162,7 @@ workflow:
     desc: Aggregate page progress and decide next page
     tool:
       kind: python
-      args:
+      input:
         loop_summary: "{{ process_records }}"
         merge_result: "{{ fetch_page }}"
         processed_total: "{{ ctx.processed_total }}"
@@ -200,12 +200,12 @@ workflow:
           "expected_page_total": expected_page_total,
           "duplicate_margin": duplicate_margin,
         }
-    set_ctx:
-      processed_total: "{{ update_progress.processed_total }}"
-      has_more: "{{ update_progress.has_more }}"
-      current_page: "{{ update_progress.next_page }}"
-      pages_fetched: "{{ update_progress.pages_fetched }}"
-      chain_contract_ok: "{{ update_progress.chain_contract_ok }}"
+    set:
+      ctx.processed_total: "{{ update_progress.processed_total }}"
+      ctx.has_more: "{{ update_progress.has_more }}"
+      ctx.current_page: "{{ update_progress.next_page }}"
+      ctx.pages_fetched: "{{ update_progress.pages_fetched }}"
+      ctx.chain_contract_ok: "{{ update_progress.chain_contract_ok }}"
     next:
       spec:
         mode: exclusive
@@ -219,7 +219,7 @@ workflow:
     desc: Validate full run counters
     tool:
       kind: python
-      args:
+      input:
         expected_total: "{{ total_records }}"
         processed_total: "{{ ctx.processed_total }}"
         chain_contract_ok: "{{ ctx.chain_contract_ok }}"

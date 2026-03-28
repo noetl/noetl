@@ -13,7 +13,7 @@ workbook:
   - name: compute_flag
     tool:
       kind: python
-      args:
+      input:
         temperature_c: null
       code: |
         is_hot = float(temperature_c) >= 25.0
@@ -31,7 +31,7 @@ workflow:
     desc: "Begin"
     tool:
       kind: python
-      args: {}
+      input: {}
       code: |
         result = {"status": "initialized"}
     next:
@@ -45,7 +45,7 @@ workflow:
     tool:
       kind: workbook
       name: compute_flag
-      args:
+      input:
         temperature_c: "{{ temperature_c }}"
     next:
       spec:
@@ -60,7 +60,7 @@ workflow:
     desc: "Hot branch; fan out to two steps in PARALLEL"
     tool:
       kind: python
-      args: {}
+      input: {}
       code: |
         result = {"status": "routing_to_parallel"}
     next:
@@ -73,7 +73,7 @@ workflow:
   - step: hot_task_a
     tool:
       kind: python
-      args: {}
+      input: {}
       code: |
         result = {"who": "A"}
     next:
@@ -85,7 +85,7 @@ workflow:
   - step: hot_task_b
     tool:
       kind: python
-      args: {}
+      input: {}
       code: |
         result = {"who": "B"}
     next:
@@ -98,7 +98,7 @@ workflow:
     desc: "Cold branch single continuation"
     tool:
       kind: python
-      args: {}
+      input: {}
       code: |
         result = {"status": "routing_to_cold"}
     next:
@@ -110,7 +110,7 @@ workflow:
   - step: cold_task
     tool:
       kind: python
-      args: {}
+      input: {}
       code: |
         result = {"who": "C"}
     next:
@@ -123,6 +123,6 @@ workflow:
     desc: "Finish"
     tool:
       kind: python
-      args: {}
+      input: {}
       code: |
         result = {"status": "complete"}

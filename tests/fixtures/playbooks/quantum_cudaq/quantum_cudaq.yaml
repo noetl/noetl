@@ -61,7 +61,7 @@ workflow:
                 then: { allow: false }
     tool:
       kind: python
-      args:
+      input:
         sweeps: "{{ sweeps }}"
         tags: "{{ tags }}"
       code: |
@@ -79,9 +79,9 @@ workflow:
             - else:
                 then:
                   do: continue
-                  set_ctx:
-                    simulations: []
-                    ai_notes: []
+                  set:
+                    ctx.simulations: []
+                    ctx.ai_notes: []
     next:
       spec:
         mode: exclusive
@@ -100,26 +100,26 @@ workflow:
       spec:
         policy:
           rules:
-            - when: "{{ outcome.status == 'error' and outcome.http.status in [429, 500, 502, 503] }}"
+            - when: "{{ output.status == 'error' and output.http.status in [429, 500, 502, 503] }}"
               then:
                 do: retry
                 attempts: 3
                 delay: 1.5
                 backoff: exponential
-            - when: "{{ outcome.status == 'error' }}"
+            - when: "{{ output.status == 'error' }}"
               then:
                 do: continue
-                set_ctx:
-                  problem_spec:
+                set:
+                  ctx.problem_spec:
                     id: "fallback-maxcut"
                     qubits: 2
                     default_depth: 2
-                  ai_notes: "{{ (ctx.ai_notes or []) + ['Problem catalog unavailable; using fallback problem spec'] }}"
+                  ctx.ai_notes: "{{ (ctx.ai_notes or []) + ['Problem catalog unavailable; using fallback problem spec'] }}"
             - else:
                 then:
                   do: continue
-                  set_ctx:
-                    problem_spec: "{{ outcome.data }}"
+                  set:
+                    ctx.problem_spec: "{{ output.data }}"
     next:
       spec:
         mode: exclusive
@@ -131,7 +131,7 @@ workflow:
     desc: Build CUDA-Q kernel template and parameter sweep plan
     tool:
       kind: python
-      args:
+      input:
         problem: "{{ ctx.problem_spec or {} }}"
         sweeps: "{{ sweeps }}"
       code: |
@@ -181,10 +181,10 @@ workflow:
             - else:
                 then:
                   do: continue
-                  set_ctx:
-                    kernel_source: "{{ outcome.result.kernel_source }}"
-                    run_plan: "{{ outcome.result.run_plan }}"
-                    qubits: "{{ outcome.result.qubits }}"
+                  set:
+                    ctx.kernel_source: "{{ output.data.kernel_source }}"
+                    ctx.run_plan: "{{ output.data.run_plan }}"
+                    ctx.qubits: "{{ output.data.qubits }}"
     next:
       spec:
         mode: exclusive
@@ -206,7 +206,7 @@ workflow:
             preserve_order: true
     tool:
       kind: python
-      args:
+      input:
         kernel_source: "{{ ctx.kernel_source }}"
         run_config: "{{ iter.run }}"
         cudaq_target: "{{ cudaq_target }}"
@@ -251,7 +251,7 @@ workflow:
       spec:
         policy:
           rules:
-            - when: "{{ outcome.status == 'error' }}"
+            - when: "{{ output.status == 'error' }}"
               then:
                 do: retry
                 attempts: 2
@@ -260,8 +260,8 @@ workflow:
             - else:
                 then:
                   do: continue
-                  set_ctx:
-                    simulations: "{{ (ctx.simulations or []) + [outcome.result] }}"
+                  set:
+                    ctx.simulations: "{{ (ctx.simulations or []) + [output.data] }}"
     next:
       spec:
         mode: exclusive
@@ -273,7 +273,7 @@ workflow:
     desc: Summarize quantum outcomes with AI Meta agent context
     tool:
       kind: python
-      args:
+      input:
         simulations: "{{ ctx.simulations }}"
         ai_review_prompt: "{{ ai_review_prompt }}"
         enable_ai_review: "{{ enable_ai_review }}"
@@ -331,15 +331,15 @@ workflow:
         VALUES (
           '{{ problem_id }}',
           '{{ cudaq_target }}',
-          {{ ai_analysis.result.aggregates.runs }},
+          {{ ai_analysis.data.aggregates.runs }},
           jsonb_build_object(
-            'run_count', {{ ai_analysis.result.aggregates.runs }},
-            'average_expectation', {{ ai_analysis.result.aggregates.average_expectation }},
-            'best_run_id', '{{ ai_analysis.result.aggregates.best_run.run_id }}'
+            'run_count', {{ ai_analysis.data.aggregates.runs }},
+            'average_expectation', {{ ai_analysis.data.aggregates.average_expectation }},
+            'best_run_id', '{{ ai_analysis.data.aggregates.best_run.run_id }}'
           ),
           jsonb_build_object(
             'agent', '{{ analysis_agent }}',
-            'insights', '{{ ai_analysis.result.summary.insights | tojson | replace("'", "''") }}'::jsonb
+            'insights', '{{ ai_analysis.data.summary.insights | tojson | replace("'", "''") }}'::jsonb
           ),
           NOW()
         )
@@ -351,16 +351,16 @@ workflow:
       spec:
         policy:
           rules:
-            - when: "{{ outcome.status == 'error' }}"
+            - when: "{{ output.status == 'error' }}"
               then:
                 do: continue
-                set_ctx:
-                  ai_notes: "{{ (ctx.ai_notes or []) + ['Postgres persistence failed'] }}"
+                set:
+                  ctx.ai_notes: "{{ (ctx.ai_notes or []) + ['Postgres persistence failed'] }}"
             - else:
                 then:
                   do: continue
-                  set_ctx:
-                    ai_notes: "{{ (ctx.ai_notes or []) + ['Postgres persistence succeeded'] }}"
+                  set:
+                    ctx.ai_notes: "{{ (ctx.ai_notes or []) + ['Postgres persistence succeeded'] }}"
     next:
       spec:
         mode: exclusive
@@ -382,27 +382,27 @@ workflow:
       body:
         problem_id: "{{ problem_id }}"
         target: "{{ cudaq_target }}"
-        ai_summary: "{{ ai_analysis.result.summary }}"
-        aggregates: "{{ ai_analysis.result.aggregates }}"
+        ai_summary: "{{ ai_analysis.data.summary }}"
+        aggregates: "{{ ai_analysis.data.aggregates }}"
         simulations: "{{ ctx.simulations }}"
       spec:
         policy:
           rules:
-            - when: "{{ outcome.status == 'error' and outcome.http.status in [408, 500, 503] }}"
+            - when: "{{ output.status == 'error' and output.http.status in [408, 500, 503] }}"
               then:
                 do: retry
                 attempts: 2
                 delay: 2
-            - when: "{{ outcome.status == 'error' }}"
+            - when: "{{ output.status == 'error' }}"
               then:
                 do: continue
-                set_ctx:
-                  ai_notes: "{{ (ctx.ai_notes or []) + ['HTTP dispatch failed'] }}"
+                set:
+                  ctx.ai_notes: "{{ (ctx.ai_notes or []) + ['HTTP dispatch failed'] }}"
             - else:
                 then:
                   do: continue
-                  set_ctx:
-                    ai_notes: "{{ (ctx.ai_notes or []) + ['Dispatch accepted'] }}"
+                  set:
+                    ctx.ai_notes: "{{ (ctx.ai_notes or []) + ['Dispatch accepted'] }}"
     next:
       spec:
         mode: exclusive
@@ -416,7 +416,7 @@ workflow:
     desc: Finalize orchestration and emit execution digest
     tool:
       kind: python
-      args:
+      input:
         simulations: "{{ ctx.simulations }}"
         ai_notes: "{{ ctx.ai_notes }}"
       code: |

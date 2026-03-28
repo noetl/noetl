@@ -23,7 +23,7 @@ workflow:
   tool:
   - name: process_results
     kind: python
-    args:
+    input:
       query_results: '{{ start }}'
     code: "import json\nprint(f\"[PROCESS] Processing Postgres query results\")\n\
       print(f\"[PROCESS] Input data type: {type(input_data).__name__}\")\nprint(f\"\
@@ -48,7 +48,7 @@ workflow:
   tool:
   - name: verify_data
     kind: python
-    args:
+    input:
       process_result: '{{ process }}'
     code: "import json\nprint(f\"[VERIFY] Input data keys: {list(input_data.keys())}\"\
       )\nprint(f\"[VERIFY] Input data types: {[(k, type(v).__name__) for k, v in input_data.items()]}\"\

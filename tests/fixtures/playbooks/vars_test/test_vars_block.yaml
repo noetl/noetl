@@ -12,7 +12,7 @@ workflow:
   tool:
   - name: start_task
     kind: python
-    args: {}
+    input: {}
     code: 'result = {"status": "initialized"}
 
       '
@@ -26,7 +26,7 @@ workflow:
   tool:
   - name: fetch_data_task
     kind: python
-    args: {}
+    input: {}
     code: "# Simulate fetching data from a database\nresult = {\n    \"status\": \"\
       success\",\n    \"users\": [\n        {\"user_id\": 123, \"email\": \"alice@example.com\"\
       , \"name\": \"Alice\"},\n        {\"user_id\": 456, \"email\": \"bob@example.com\"\
@@ -38,11 +38,11 @@ workflow:
         - else:
             then:
               do: continue
-              set_ctx:
-                first_user_id: '{{ outcome.response.users[0].user_id }}'
-                first_email: '{{ outcome.response.users[0].email }}'
-                user_count: '{{ outcome.response.metadata.count }}'
-                data_source: '{{ outcome.response.metadata.source }}'
+              set:
+                ctx.first_user_id: '{{ output.response.users[0].user_id }}'
+                ctx.first_email: '{{ output.response.users[0].email }}'
+                ctx.user_count: '{{ output.response.metadata.count }}'
+                ctx.data_source: '{{ output.response.metadata.source }}'
   next:
     spec:
       mode: exclusive
@@ -53,7 +53,7 @@ workflow:
   tool:
   - name: use_vars_task
     kind: python
-    args:
+    input:
       first_user_id: '{{ ctx.first_user_id }}'
       first_email: '{{ ctx.first_email }}'
       user_count: '{{ ctx.user_count }}'
@@ -74,7 +74,7 @@ workflow:
   tool:
   - name: verify_task
     kind: python
-    args:
+    input:
       first_user_id: '{{ ctx.first_user_id }}'
       first_email: '{{ ctx.first_email }}'
       user_count: '{{ ctx.user_count }}'
@@ -98,7 +98,7 @@ workflow:
   tool:
   - name: end_task
     kind: python
-    args: {}
+    input: {}
     code: 'result = {"status": "complete"}
 
       '

@@ -16,7 +16,7 @@ workflow:
     desc: Start TradeDB bootstrap
     tool:
       kind: python
-      args:
+      input:
         db_name: "{{ db_name }}"
       code: |
         result = {"status": "starting", "db_name": db_name}
@@ -64,7 +64,7 @@ workflow:
     desc: Done
     tool:
       kind: python
-      args:
+      input:
         db_name: "{{ db_name }}"
       code: |
         result = {"status": "completed", "db_name": db_name}

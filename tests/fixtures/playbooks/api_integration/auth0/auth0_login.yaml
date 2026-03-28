@@ -82,7 +82,7 @@ workflow:
       spec:
         policy:
           rules:
-            - when: "{{ outcome.status == 'error' }}"
+            - when: "{{ output.status == 'error' }}"
               then:
                 do: continue
             - else:
@@ -154,7 +154,7 @@ workflow:
       spec:
         policy:
           rules:
-            - when: "{{ outcome.status == 'error' }}"
+            - when: "{{ output.status == 'error' }}"
               then:
                 do: continue
             - else:
@@ -266,7 +266,7 @@ workflow:
       spec:
         policy:
           rules:
-            - when: "{{ outcome.status == 'error' }}"
+            - when: "{{ output.status == 'error' }}"
               then:
                 do: continue
             - else:

@@ -15,7 +15,7 @@ workflow:
     desc: Start HTTP to PostgreSQL transfer
     tool:
       kind: python
-      args: {}
+      input: {}
       code: |
         result = {"status": "initialized"}
     next:
@@ -60,7 +60,7 @@ workflow:
     desc: Transform and insert posts into PostgreSQL
     tool:
       kind: python
-      args:
+      input:
         input_data: "{{ fetch_posts }}"
       code: |
         """Transform JSON posts and insert into PostgreSQL."""
@@ -147,6 +147,6 @@ workflow:
     desc: End HTTP to PostgreSQL transfer
     tool:
       kind: python
-      args: {}
+      input: {}
       code: |
         result = {"status": "completed"}

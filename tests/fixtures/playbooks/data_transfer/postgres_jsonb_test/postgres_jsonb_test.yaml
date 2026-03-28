@@ -91,7 +91,7 @@ workflow:
       kind: python
       libs:
         json: json
-      args:
+      input:
         test_table: "{{ test_table }}"
         sample_json_data: "{{ sample_json_data }}"
       code: |
@@ -262,7 +262,7 @@ workflow:
     desc: Validate JSONB operations and cleanup test table
     tool:
       kind: python
-      args:
+      input:
         query_jsonb_data: "{{ query_jsonb_data }}"
         test_truncate: "{{ test_truncate }}"
       code: |

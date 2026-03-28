@@ -12,7 +12,7 @@ workflow:
   tool:
   - name: init_action
     kind: python
-    args:
+    input:
       input_data: '{{ workload }}'
     code: "result = {\n    'status': 'success',\n    'message': 'Start step executed\
       \ with action type',\n    'data': {'executed': True, 'input': input_data}\n\
@@ -22,15 +22,15 @@ workflow:
       mode: exclusive
     arcs:
     - step: process
-      args:
-        from_start: '{{ start.data.executed }}'
+      set:
+        ctx.from_start: '{{ start.data.executed }}'
 - step: process
   desc: Process step - executed after start
   tool:
   - name: process_action
     kind: python
-    args:
-      from_start: '{{ args.from_start | default(start.data.executed) }}'
+    input:
+      from_start: '{{ ctx.from_start | default(start.data.executed) }}'
     code: "result = {\n    'status': 'success',\n    'message': 'Process step executed',\n\
       \    'data': {\n        'from_start': from_start,\n        'processed': True\n\
       \    }\n}\n"

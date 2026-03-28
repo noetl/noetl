@@ -24,7 +24,7 @@ workflow:
     desc: Initialize chunk worker inputs
     tool:
       kind: python
-      args:
+      input:
         batch_number: '{{ batch_number }}'
         offset: '{{ offset }}'
         batch_size: '{{ batch_size }}'
@@ -68,7 +68,7 @@ workflow:
     desc: Extract rows from DB result for loop processing
     tool:
       kind: python
-      args:
+      input:
         db_result: '{{ fetch_batch }}'
       code: |
         rows = db_result.get("command_0", {}).get("rows", []) if isinstance(db_result, dict) else []
@@ -107,7 +107,7 @@ workflow:
     tool:
       - name: compute
         kind: python
-        args:
+        input:
           item_id: '{{ iter.item.item_id }}'
           group_id: '{{ iter.item.group_id }}'
           payload: '{{ iter.item.payload }}'
@@ -152,7 +152,7 @@ workflow:
     desc: Return chunk summary
     tool:
       kind: python
-      args:
+      input:
         normalize: '{{ normalize_batch }}'
         processed: '{{ process_items | default({}) }}'
         batch_number: '{{ batch_number }}'

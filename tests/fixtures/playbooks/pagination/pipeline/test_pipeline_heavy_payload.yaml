@@ -36,9 +36,9 @@ workflow:
       \    \"page_size\": {{ page_size }},\n    \"estimated_kb_per_page\": {{ payload_kb_per_item\
       \ }} * {{ page_size }}\n  }\n}\n"
   set:
-    current_page: '{{ workload.current_page }}'
-    pages_processed: '{{ workload.pages_processed }}'
-    total_bytes_processed: '{{ workload.total_bytes_processed }}'
+    ctx.current_page: '{{ workload.current_page }}'
+    ctx.pages_processed: '{{ workload.pages_processed }}'
+    ctx.total_bytes_processed: '{{ workload.total_bytes_processed }}'
   next:
     spec:
       mode: exclusive
@@ -133,9 +133,9 @@ workflow:
             then:
               do: continue
               set:
-                current_page: '{{ (ctx.current_page | int) + 1 }}'
-                pages_processed: '{{ (ctx.pages_processed | int) + 1 }}'
-                total_bytes_processed: '{{ update_progress.total_bytes_processed }}'
+                ctx.current_page: '{{ (ctx.current_page | int) + 1 }}'
+                ctx.pages_processed: '{{ (ctx.pages_processed | int) + 1 }}'
+                ctx.total_bytes_processed: '{{ update_progress.total_bytes_processed }}'
   next:
     spec:
       mode: exclusive

@@ -133,7 +133,7 @@ workflow:
     desc: Parse OpenAI response and build Amadeus query
     tool:
       kind: python
-      args:
+      input:
         openai_response: "{{ openai_translate_query }}"
       code: |
         import json
@@ -318,7 +318,7 @@ workflow:
     desc: Extract and compact flight offers from Amadeus response
     tool:
       kind: python
-      args:
+      input:
         amadeus: "{{ amadeus_search }}"
       code: |
         import json
@@ -409,7 +409,7 @@ workflow:
     desc: Extract summary text from OpenAI response
     tool:
       kind: python
-      args:
+      input:
         openai_resp: "{{ openai_translate_response }}"
         amadeus_query: "{{ build_amadeus_query }}"
       code: |

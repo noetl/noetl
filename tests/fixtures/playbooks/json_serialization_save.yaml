@@ -35,7 +35,7 @@ workflow:
   tool:
   - name: generate_data
     kind: python
-    args:
+    input:
       input_data: {}
     code: "# Return a dict that will be saved to JSONB\nresult = {\n    \"data\":\
       \ {\n        \"string_field\": \"test_value\",\n        \"number_field\": 42,\n\
@@ -48,8 +48,8 @@ workflow:
         - when: '{{ true }}'
           then:
             do: continue
-            set_ctx:
-              json_data: '{{ outcome.result.data }}'
+            set:
+              ctx.json_data: '{{ output.data }}'
   - name: save_json
     kind: postgres
     auth: '{{ pg_auth }}'
@@ -61,7 +61,7 @@ workflow:
     spec:
       policy:
         rules:
-        - when: '{{ outcome.status == ''error'' }}'
+        - when: '{{ output.status == ''error'' }}'
           then:
             do: fail
         - when: '{{ true }}'

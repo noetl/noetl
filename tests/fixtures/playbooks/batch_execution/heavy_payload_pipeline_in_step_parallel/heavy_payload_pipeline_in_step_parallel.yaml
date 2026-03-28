@@ -99,7 +99,7 @@ workflow:
     desc: Resolve mode for this run
     tool:
       kind: python
-      args:
+      input:
         execution_mode: '{{ execution_mode }}'
       code: |
         mode = str(execution_mode or "chunked_optimal").strip().lower()
@@ -132,7 +132,7 @@ workflow:
     tool:
       - name: build_large_request
         kind: python
-        args:
+        input:
           item: '{{ iter.item }}'
           payload_kb_per_item: '{{ payload_kb_per_item }}'
         code: |
@@ -169,9 +169,9 @@ workflow:
         spec:
           policy:
             rules:
-              - when: '{{ outcome.status == "error" and (outcome.http.status in [429, 500, 502, 503, 504]) }}'
+              - when: '{{ output.status == "error" and (output.http.status in [429, 500, 502, 503, 504]) }}'
                 then: { do: retry, attempts: 4, backoff: exponential, delay: 1.0 }
-              - when: '{{ outcome.status == "error" }}'
+              - when: '{{ output.status == "error" }}'
                 then: { do: fail }
               - else:
                   then: { do: continue }
@@ -179,7 +179,7 @@ workflow:
         kind: python
         libs:
           json: json
-        args:
+        input:
           request_payload: '{{ build_large_request }}'
           http_result: '{{ fetch_detail }}'
           mode: direct_stress
@@ -253,7 +253,7 @@ workflow:
             processed_at = NOW();
       - name: finalize
         kind: python
-        args:
+        input:
           projected: '{{ project_result }}'
         code: |
           result = projected
@@ -268,7 +268,7 @@ workflow:
     desc: Build chunk windows for bounded-memory batch execution
     tool:
       kind: python
-      args:
+      input:
         batch_size: '{{ batch_size }}'
         max_batches: '{{ max_batches }}'
       code: |
@@ -313,7 +313,7 @@ workflow:
       path: '{{ batch_worker_path }}'
       return_step: end
       timeout: 1200
-      args:
+      input:
         pg_auth: '{{ pg_auth }}'
         parent_execution_id: '{{ job.execution_id }}'
         batch_number: '{{ iter.batch.batch_number }}'
@@ -381,7 +381,7 @@ workflow:
     desc: Summarize execution for mode and data checks
     tool:
       kind: python
-      args:
+      input:
         mode: '{{ resolve_mode.mode }}'
         validation: '{{ validate_persisted_results }}'
         direct_loop: '{{ run_direct_stress | default({}) }}'

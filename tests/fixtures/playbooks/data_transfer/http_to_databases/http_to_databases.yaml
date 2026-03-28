@@ -18,7 +18,7 @@ workflow:
     desc: Start HTTP to databases transfer pipeline
     tool:
       kind: python
-      args: {}
+      input: {}
       code: |
         result = {"status": "initialized"}
     next:
@@ -153,7 +153,7 @@ workflow:
     desc: Transform HTTP JSON data and prepare for database insertion
     tool:
       kind: python
-      args:
+      input:
         fetch_http_data: "{{ fetch_http_data }}"
       code: |
         """Transform HTTP API response and prepare for database insertion."""
@@ -418,7 +418,7 @@ workflow:
     desc: Cross-verify data across all databases (Postgres, Snowflake, DuckDB, DuckLake)
     tool:
       kind: python
-      args:
+      input:
         verify_pg_data: "{{ verify_pg_data }}"
         verify_sf_data: "{{ verify_sf_data }}"
         verify_duckdb_data: "{{ verify_duckdb_data }}"
@@ -512,6 +512,6 @@ workflow:
     desc: End HTTP to databases transfer pipeline
     tool:
       kind: python
-      args: {}
+      input: {}
       code: |
         result = {"status": "completed"}

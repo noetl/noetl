@@ -14,7 +14,7 @@ workflow:
     desc: Start workflow
     tool:
       kind: python
-      args: {}
+      input: {}
       code: |
         result = {"status": "initialized"}
     next:
@@ -31,7 +31,7 @@ workflow:
         uri: "{{ script_path }}"
         source:
           type: file
-      args:
+      input:
         name: "{{ greeting_name }}"
         count: "{{ greeting_count }}"
     next:
@@ -44,7 +44,7 @@ workflow:
     desc: Verify script execution result
     tool:
       kind: python
-      args:
+      input:
         result: "{{ run_python_from_file.data }}"
       code: |
         assert result['status'] == 'success', f"Expected success, got {result['status']}"
@@ -67,6 +67,6 @@ workflow:
     desc: End workflow
     tool:
       kind: python
-      args: {}
+      input: {}
       code: |
         result = {"status": "complete"}

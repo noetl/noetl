@@ -22,7 +22,7 @@ workbook:
   - name: calculate_experience_score
     tool:
       kind: python
-      args:
+      input:
         years_experience: null
       assert:
         expects:
@@ -52,7 +52,7 @@ workbook:
   - name: calculate_performance_score
     tool:
       kind: python
-      args:
+      input:
         performance_rating: null
       assert:
         expects:
@@ -74,7 +74,7 @@ workbook:
   - name: calculate_department_score
     tool:
       kind: python
-      args:
+      input:
         department: null
       assert:
         expects:
@@ -104,7 +104,7 @@ workbook:
   - name: calculate_age_factor
     tool:
       kind: python
-      args:
+      input:
         age: null
       assert:
         expects:
@@ -134,7 +134,7 @@ workbook:
   - name: determine_category
     tool:
       kind: python
-      args:
+      input:
         profile_score: null
         years_experience: null
       assert:
@@ -164,7 +164,7 @@ workflow:
     desc: "Begin user profile scoring"
     tool:
       kind: python
-      args: {}
+      input: {}
       code: |
         result = {"status": "initialized"}
     next:
@@ -177,7 +177,7 @@ workflow:
     desc: "Extract and validate user data from input"
     tool:
       kind: python
-      args:
+      input:
         input_data: "{{ user_data | default({'name': 'TestUser', 'age': 30, 'department': 'Engineering', 'years_experience': 5, 'performance_rating': 4.0}) }}"
       code: |
         # input_data comes directly as a dict from workload
@@ -208,7 +208,7 @@ workflow:
     tool:
       kind: workbook
       name: calculate_experience_score
-      args:
+      input:
         years_experience: "{{ extract_user_data.years_experience }}"
     next:
       spec:
@@ -221,7 +221,7 @@ workflow:
     tool:
       kind: workbook
       name: calculate_performance_score
-      args:
+      input:
         performance_rating: "{{ extract_user_data.performance_rating }}"
     next:
       spec:
@@ -234,7 +234,7 @@ workflow:
     tool:
       kind: workbook
       name: calculate_department_score
-      args:
+      input:
         department: "{{ extract_user_data.department }}"
     next:
       spec:
@@ -247,7 +247,7 @@ workflow:
     tool:
       kind: workbook
       name: calculate_age_factor
-      args:
+      input:
         age: "{{ extract_user_data.age }}"
     next:
       spec:
@@ -259,7 +259,7 @@ workflow:
     desc: "Compute weighted total profile score"
     tool:
       kind: python
-      args:
+      input:
         user_name: "{{ extract_user_data.user_name }}"
         experience_data: "{{ score_experience }}"
         performance_data: "{{ score_performance }}"
@@ -305,7 +305,7 @@ workflow:
     tool:
       kind: workbook
       name: determine_category
-      args:
+      input:
         profile_score: "{{ compute_total_score.profile_score }}"
         years_experience: "{{ extract_user_data.years_experience }}"
     next:
@@ -318,7 +318,7 @@ workflow:
     desc: "Prepare final result for parent playbook"
     tool:
       kind: python
-      args:
+      input:
         score_data: "{{ compute_total_score }}"
         category_data: "{{ determine_score_category }}"
         execution_context: "{{ execution_context }}"

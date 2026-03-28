@@ -29,7 +29,7 @@ workflow:
     desc: Validate mode and route execution
     tool:
       kind: python
-      args:
+      input:
         provider: "{{ provider }}"
         shots: "{{ shots }}"
       code: |
@@ -63,7 +63,7 @@ workflow:
     desc: Run Bell-state simulation for quantum networking baseline
     tool:
       kind: python
-      args:
+      input:
         shots: "{{ shots }}"
         nvidia_use_gpu: "{{ nvidia_use_gpu }}"
       code: |
@@ -138,7 +138,7 @@ workflow:
     desc: Submit and monitor a Bell-state sampler job via IBM Quantum Runtime REST API
     tool:
       kind: python
-      args:
+      input:
         ibm_api_base: "{{ ibm_api_base }}"
         ibm_api_version: "{{ ibm_api_version }}"
         ibm_api_key: "{{ ibm_api_key }}"
@@ -332,7 +332,7 @@ workflow:
     desc: Handle unsupported provider values
     tool:
       kind: python
-      args:
+      input:
         provider: "{{ provider }}"
       code: |
         result = {
@@ -350,7 +350,7 @@ workflow:
     desc: Final response envelope
     tool:
       kind: python
-      args:
+      input:
         provider: "{{ provider }}"
       code: |
         selected = None

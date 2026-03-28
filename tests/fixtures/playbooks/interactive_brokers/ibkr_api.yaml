@@ -46,7 +46,7 @@ workflow:
     desc: Route to requested target
     tool:
       kind: python
-      args:
+      input:
         target: "{{ target }}"
         credential_name: "{{ credential_name }}"
         override_gateway_url: "{{ gateway_url }}"
@@ -121,7 +121,7 @@ workflow:
     desc: Parse and return auth status
     tool:
       kind: python
-      args:
+      input:
         response: "{{ check_auth_status }}"
       code: |
         data = response.get('data', {})
@@ -160,7 +160,7 @@ workflow:
       libs:
         pyotp: pyotp
         time: time
-      args:
+      input:
         totp_secret: "{{ start.totp_secret }}"
       code: |
         if not totp_secret:
@@ -207,7 +207,7 @@ workflow:
     desc: Parse tickle response
     tool:
       kind: python
-      args:
+      input:
         response: "{{ tickle_session }}"
       code: |
         data = response.get('data', {})
@@ -246,7 +246,7 @@ workflow:
     desc: Pick futures contract
     tool:
       kind: python
-      args:
+      input:
         response: "{{ get_futures }}"
         symbol: "{{ symbol }}"
         index: "{{ contract_index }}"
@@ -295,7 +295,7 @@ workflow:
     desc: Summarize historical data
     tool:
       kind: python
-      args:
+      input:
         contract: "{{ pick_contract.contract }}"
         history: "{{ get_history }}"
       code: |
@@ -340,7 +340,7 @@ workflow:
     desc: Parse accounts response
     tool:
       kind: python
-      args:
+      input:
         response: "{{ get_accounts }}"
       code: |
         data = response.get('data', [])
@@ -389,8 +389,8 @@ workflow:
       headers:
         Content-Type: application/json
       verify_ssl: false
-    set_ctx:
-      account_id: "{{ result.data[0].accountId if result.data else '' }}"
+    set:
+      ctx.account_id: "{{ result.data[0].accountId if result.data else '' }}"
     next:
       spec:
         mode: exclusive
@@ -417,7 +417,7 @@ workflow:
     desc: Parse positions response
     tool:
       kind: python
-      args:
+      input:
         response: "{{ fetch_positions }}"
         account_id: "{{ ctx.account_id }}"
       code: |
@@ -484,7 +484,7 @@ workflow:
     desc: Parse orders response
     tool:
       kind: python
-      args:
+      input:
         response: "{{ get_orders }}"
       code: |
         data = response.get('data', {})
@@ -505,7 +505,7 @@ workflow:
     desc: Workflow complete
     tool:
       kind: python
-      args:
+      input:
         status: "{{ result.status if result is defined else 'completed' }}"
       code: |
         result = {"status": status}

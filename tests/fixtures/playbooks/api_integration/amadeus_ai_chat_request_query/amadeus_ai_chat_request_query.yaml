@@ -122,7 +122,7 @@ workflow:
       libs:
         json: json
         re: re
-      args:
+      input:
         response: "{{ analyze_user_intent }}"
       code: |
         result = None
@@ -181,7 +181,7 @@ workflow:
     desc: Validate endpoint and normalize query parameters
     tool:
       kind: python
-      args:
+      input:
         intent: "{{ parse_intent_result }}"
         api_url: "{{ workload.api_url }}"
       code: |

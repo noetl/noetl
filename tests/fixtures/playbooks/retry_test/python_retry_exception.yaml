@@ -15,7 +15,7 @@ workflow:
       kind: python
       libs:
         random: random
-      args: {}
+      input: {}
       code: |
         # Simulate random failures for testing retry
         rand_val = random.randint(1, 100)
@@ -31,7 +31,7 @@ workflow:
       spec:
         policy:
           rules:
-            - when: "{{ outcome.status == 'error' }}"
+            - when: "{{ output.status == 'error' }}"
               then: { do: retry, attempts: 5, delay: 0.2, backoff: exponential }
             - else:
                 then: { do: continue }
@@ -45,6 +45,6 @@ workflow:
     desc: End workflow
     tool:
       kind: python
-      args: {}
+      input: {}
       code: |
         result = {"status": "complete"}

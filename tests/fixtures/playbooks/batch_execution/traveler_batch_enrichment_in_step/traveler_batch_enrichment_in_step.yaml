@@ -79,7 +79,7 @@ workflow:
     desc: Build configurable batch windows for traveler processing
     tool:
       kind: python
-      args:
+      input:
         batch_size: '{{ batch_size }}'
         max_batches: '{{ max_batches }}'
       code: |
@@ -123,7 +123,7 @@ workflow:
       path: '{{ batch_worker_path }}'
       return_step: end
       timeout: 900
-      args:
+      input:
         pg_auth: '{{ pg_auth }}'
         parent_execution_id: '{{ job.execution_id }}'
         batch_number: '{{ iter.batch.batch_number }}'
@@ -182,7 +182,7 @@ workflow:
     desc: Summarize batch worker execution and persistence checks
     tool:
       kind: python
-      args:
+      input:
         validation: '{{ validate_persisted_results }}'
         worker_loop: '{{ run_batch_workers }}'
         batch_size: '{{ batch_size }}'

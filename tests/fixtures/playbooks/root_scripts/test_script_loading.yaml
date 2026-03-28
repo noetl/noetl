@@ -18,7 +18,7 @@ workflow:
         source:
           type: inline
           code: "{{ test_code }}"
-      args: {}
+      input: {}
     next:
       spec:
         mode: exclusive
@@ -29,7 +29,7 @@ workflow:
     desc: End workflow
     tool:
       kind: python
-      args:
+      input:
         result: "{{ result }}"
       code: |
         print(f"Result: {result}")

@@ -24,7 +24,7 @@ workbook:
   tool:
     kind: python
     spec:
-      args:
+      input:
         city: null
         threshold: null
       code: "# Evaluate weather data\ntemp = city.get(\"temperature\", 0)\nalert =\
@@ -40,9 +40,9 @@ workflow:
       code: 'result = {"status": "initialized", "timestamp": "2025-12-10T00:00:00Z"}
 
         '
-  set_ctx:
-    weather_results: '{{ workload.weather_results }}'
-    alerts: '{{ workload.alerts }}'
+  set:
+    ctx.weather_results: '{{ workload.weather_results }}'
+    ctx.alerts: '{{ workload.alerts }}'
   next:
     spec:
       mode: exclusive
@@ -68,28 +68,28 @@ workflow:
         temperature_unit: celsius
       policy:
         rules:
-        - when: '{{ outcome.status == ''error'' and outcome.http.status in [500, 502,
+        - when: '{{ output.status == ''error'' and output.http.status in [500, 502,
             503, 504] }}'
           then:
             do: retry
             attempts: 3
             backoff: exponential
             delay: 1.0
-        - when: '{{ outcome.status == ''error'' }}'
+        - when: '{{ output.status == ''error'' }}'
           then:
             do: fail
         - else:
             do: continue
-            set_iter:
-              current_temp: '{{ outcome.result.current_weather.temperature }}'
-              city_data:
+            set:
+              iter.current_temp: '{{ output.data.current_weather.temperature }}'
+              iter.city_data:
                 name: '{{ iter.city.name }}'
-                temperature: '{{ outcome.result.current_weather.temperature }}'
-                windspeed: '{{ outcome.result.current_weather.windspeed }}'
+                temperature: '{{ output.data.current_weather.temperature }}'
+                windspeed: '{{ output.data.current_weather.windspeed }}'
   - name: evaluate_and_route
     kind: python
     spec:
-      args:
+      input:
         city_data: '{{ iter.city_data }}'
         threshold: '{{ alert_threshold }}'
         weather_results: '{{ ctx.weather_results }}'
@@ -108,9 +108,9 @@ workflow:
         rules:
         - else:
             do: continue
-            set_ctx:
-              weather_results: '{{ outcome.result.weather_results }}'
-              alerts: '{{ outcome.result.alerts }}'
+            set:
+              ctx.weather_results: '{{ output.data.weather_results }}'
+              ctx.alerts: '{{ output.data.alerts }}'
   next:
     spec:
       mode: exclusive
@@ -122,7 +122,7 @@ workflow:
   - name: compute_summary
     kind: python
     spec:
-      args:
+      input:
         weather_results: '{{ ctx.weather_results }}'
         alerts: '{{ ctx.alerts }}'
       code: "total_cities = len(weather_results) + len(alerts)\nalert_count = len(alerts)\n\
@@ -134,8 +134,8 @@ workflow:
         rules:
         - else:
             do: continue
-            set_ctx:
-              summary: '{{ outcome.result }}'
+            set:
+              ctx.summary: '{{ output.data }}'
   - name: save_summary
     kind: postgres
     spec:
@@ -146,7 +146,7 @@ workflow:
         \ }},\n  $json${{ ctx.summary | tojson }}$json$::jsonb,\n  NOW()\n);\n"
       policy:
         rules:
-        - when: '{{ outcome.status == ''error'' }}'
+        - when: '{{ output.status == ''error'' }}'
           then:
             do: fail
         - else:

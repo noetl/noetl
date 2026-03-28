@@ -14,7 +14,7 @@ workflow:
     desc: "Start schema creation"
     tool:
       kind: python
-      args: {}
+      input: {}
       code: |
         result = {"status": "initialized"}
     next:
@@ -133,7 +133,7 @@ workflow:
     desc: "Schema creation completed"
     tool:
       kind: python
-      args: {}
+      input: {}
       code: |
         result = {
             "status": "success",

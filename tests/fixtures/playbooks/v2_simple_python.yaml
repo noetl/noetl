@@ -16,7 +16,7 @@ workflow:
   - step: start
     tool:
       kind: python
-      args:
+      input:
         message: "{{ message }}"
       code: |
         print(f"Processing: {message}")
@@ -35,6 +35,6 @@ workflow:
     desc: Workflow complete
     tool:
       kind: python
-      args: {}
+      input: {}
       code: |
         result = {"status": "completed"}

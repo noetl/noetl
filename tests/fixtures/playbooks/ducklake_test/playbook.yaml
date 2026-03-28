@@ -115,8 +115,8 @@ workflow:
             - else:
                 then:
                   do: continue
-                  set_ctx:
-                    user_count: "{{ query_users.data | length }}"
+                  set:
+                    ctx.user_count: "{{ query_users.data | length }}"
     next:
       spec:
         mode: exclusive
@@ -166,8 +166,8 @@ workflow:
             - else:
                 then:
                   do: continue
-                  set_ctx:
-                    event_count: "{{ count_events.data[0].event_count | default(0) }}"
+                  set:
+                    ctx.event_count: "{{ count_events.data[0].event_count | default(0) }}"
     next:
       spec:
         mode: exclusive
@@ -191,9 +191,9 @@ workflow:
             - else:
                 then:
                   do: continue
-                  set_ctx:
-                    snapshot_count: "{{ get_catalog_info.data[0] | length }}"
-                    table_count: "{{ get_catalog_info.data[1] | length }}"
+                  set:
+                    ctx.snapshot_count: "{{ get_catalog_info.data[0] | length }}"
+                    ctx.table_count: "{{ get_catalog_info.data[1] | length }}"
     next:
       spec:
         mode: exclusive

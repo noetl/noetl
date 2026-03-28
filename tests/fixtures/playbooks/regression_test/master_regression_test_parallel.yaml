@@ -97,7 +97,7 @@ workflow:
     desc: "Start parallel regression test suite - 51 playbooks (4 skipped)"
     tool:
       kind: python
-      args: {}
+      input: {}
       code: |
         print(f"Starting parallel regression test suite")
         print(f"Total playbooks: 51 (4 skipped)")
@@ -207,7 +207,7 @@ workflow:
     desc: "Regression test suite completed"
     tool:
       kind: python
-      args: {}
+      input: {}
       code: |
         print("=== Parallel regression test suite completed ===")
         print("Total playbooks: 51 (4 skipped)")

@@ -18,7 +18,7 @@ workflow:
     desc: Initialize chunk worker
     tool:
       kind: python
-      args:
+      input:
         batch_number: '{{ batch_number }}'
         offset: '{{ offset }}'
         batch_size: '{{ batch_size }}'
@@ -63,7 +63,7 @@ workflow:
     desc: Normalize fetched rows for loop processing
     tool:
       kind: python
-      args:
+      input:
         db_result: '{{ fetch_batch }}'
       code: |
         rows = db_result.get("command_0", {}).get("rows", []) if isinstance(db_result, dict) else []
@@ -110,7 +110,7 @@ workflow:
       kind: python
       libs:
         hashlib: hashlib
-      args:
+      input:
         http_loop_result: '{{ process_batch_http }}'
         batch_rows: '{{ normalize_batch.batch_rows }}'
       code: |
@@ -248,7 +248,7 @@ workflow:
     desc: Return chunk processing summary
     tool:
       kind: python
-      args:
+      input:
         normalize: '{{ normalize_batch }}'
         transformed: '{{ transform_http_results }}'
         batch_number: '{{ batch_number }}'

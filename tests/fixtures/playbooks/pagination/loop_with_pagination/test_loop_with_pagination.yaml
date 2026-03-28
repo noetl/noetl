@@ -39,9 +39,9 @@ workflow:
       \ TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP\n);\nDELETE FROM pagination_test_results\
       \ WHERE execution_id = {{ execution_id }};\nSELECT 'Table ready' as status;\n"
   set:
-    current_endpoint_index: '{{ workload.current_endpoint_index }}'
-    current_page: '{{ workload.current_page }}'
-    current_endpoint: '{{ workload.current_endpoint }}'
+    ctx.current_endpoint_index: '{{ workload.current_endpoint_index }}'
+    ctx.current_page: '{{ workload.current_page }}'
+    ctx.current_endpoint: '{{ workload.current_endpoint }}'
   next:
     spec:
       mode: exclusive
@@ -61,8 +61,8 @@ workflow:
       \        'index': endpoint_index\n    }\nelse:\n    result = {\n        'has_more_endpoints':\
       \ False,\n        'endpoint': None,\n        'index': endpoint_index\n    }\n"
   set:
-    current_endpoint: '{{ init_endpoint_loop.endpoint }}'
-    current_page: 1
+    ctx.current_endpoint: '{{ init_endpoint_loop.endpoint }}'
+    ctx.current_page: 1
   next:
     spec:
       mode: exclusive
@@ -128,7 +128,7 @@ workflow:
       \    'has_more': paging.get('hasMore', False),\n    'current_page': paging.get('page',\
       \ 1)\n}\n"
   set:
-    current_page: '{{ (ctx.current_page | int) + 1 }}'
+    ctx.current_page: '{{ (ctx.current_page | int) + 1 }}'
   next:
     spec:
       mode: exclusive
@@ -145,7 +145,7 @@ workflow:
 
       '
   set:
-    current_endpoint_index: '{{ (ctx.current_endpoint_index | int) + 1 }}'
+    ctx.current_endpoint_index: '{{ (ctx.current_endpoint_index | int) + 1 }}'
   next:
     spec:
       mode: exclusive
