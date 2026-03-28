@@ -7,25 +7,25 @@ nodes:
         # NoETL API
       - containerPort: 30082
         hostPort: 18082
-        listenAddress: "127.0.0.1"
+        listenAddress: "0.0.0.0"
         protocol: TCP
 
         # PostgreSQL
       - containerPort: 30321
         hostPort: 15432
-        listenAddress: "127.0.0.1"
+        listenAddress: "0.0.0.0"
         protocol: TCP
 
         # NATS Client
       - containerPort: 30422
         hostPort: 31422
-        listenAddress: "127.0.0.1"
+        listenAddress: "0.0.0.0"
         protocol: TCP
 
         # NATS Monitoring
       - containerPort: 30822
         hostPort: 31822
-        listenAddress: "127.0.0.1"
+        listenAddress: "0.0.0.0"
         protocol: TCP
 
     # ci/kind/cache added to .gitignore

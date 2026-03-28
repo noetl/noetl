@@ -6,7 +6,7 @@ The following tools are available for in-cluster troubleshooting: [Tshoot](manif
 ## Available Components
 
 After deployment, the following components are available on the host system:
-- Noetl server: http://localhost:8082/
+- NoETL server: `http://<LocalHostName>.local:8082/` (fallback: `http://localhost:8082/`)
 - VictoriaLogs: http://localhost:39428/select/vmui
 - Grafana: http://localhost:3000
   - with login: `admin`; password: `admin`
@@ -116,7 +116,14 @@ The Rust CLI automatically:
 
 ---
 
-The noetl service port `8082` is exposed as port `8082` on the host system. Container folders `/opt/noetl/data` and `/opt/noetl/logs` are mounted to the host folders `ci/kind/cache/noetl-data` and `ci/kind/cache/noetl-logs`, respectively. The container status can be checked at http://localhost:8082/api/health
+The noetl service port `8082` is exposed as port `8082` on the host system and bound on `0.0.0.0` for LAN access. Container folders `/opt/noetl/data` and `/opt/noetl/logs` are mounted to the host folders `ci/kind/cache/noetl-data` and `ci/kind/cache/noetl-logs`, respectively. The container status can be checked at `http://<LocalHostName>.local:8082/api/health` (fallback: `http://localhost:8082/api/health`).
+
+If your cluster was created before this bind-address update, recreate it so new port mappings take effect:
+
+```bash
+kind delete cluster --name noetl
+noetl run ../ops/automation/infrastructure/kind.yaml --set action=create
+```
 
 ### Rust CLI Kubernetes Commands
 

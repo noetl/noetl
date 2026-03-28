@@ -7,91 +7,91 @@ nodes:
         # NOETL
       - containerPort: 30082 
         hostPort: 8082
-        listenAddress: "127.0.0.1" # optional: set the bind address on the host. 0.0.0.0 is the current default
+        listenAddress: "0.0.0.0" # optional: set the bind address on the host. 0.0.0.0 is the current default
         protocol: TCP # optional: set the protocol to one of TCP, UDP, SCTP. TCP is the default
 
         # Postgers
       - containerPort: 30321
         hostPort: 54321
-        listenAddress: "127.0.0.1"
+        listenAddress: "0.0.0.0"
         protocol: TCP
 
         # Grafana
       - containerPort: 30300
         hostPort: 3000
-        listenAddress: "127.0.0.1"
+        listenAddress: "0.0.0.0"
         protocol: TCP
 
         # VictoriaLogs
       - containerPort: 30428
         hostPort: 9428
-        listenAddress: "127.0.0.1"
+        listenAddress: "0.0.0.0"
         protocol: TCP
 
         # ClickHouse HTTP
       - containerPort: 30123
         hostPort: 30123
-        listenAddress: "127.0.0.1"
+        listenAddress: "0.0.0.0"
         protocol: TCP
 
         # ClickHouse Native
       - containerPort: 30900
         hostPort: 30900
-        listenAddress: "127.0.0.1"
+        listenAddress: "0.0.0.0"
         protocol: TCP
 
         # Qdrant HTTP
       - containerPort: 30633
         hostPort: 30633
-        listenAddress: "127.0.0.1"
+        listenAddress: "0.0.0.0"
         protocol: TCP
 
         # Qdrant gRPC
       - containerPort: 30634
         hostPort: 30634
-        listenAddress: "127.0.0.1"
+        listenAddress: "0.0.0.0"
         protocol: TCP
 
         # NATS Client
       - containerPort: 30422
         hostPort: 30422
-        listenAddress: "127.0.0.1"
+        listenAddress: "0.0.0.0"
         protocol: TCP
 
         # NATS Monitoring
       - containerPort: 30822
         hostPort: 30822
-        listenAddress: "127.0.0.1"
+        listenAddress: "0.0.0.0"
         protocol: TCP
 
         # Superset (Analytics)
       - containerPort: 30888
         hostPort: 30888
-        listenAddress: "127.0.0.1"
+        listenAddress: "0.0.0.0"
         protocol: TCP
 
         # JupyterLab (Analytics)
       - containerPort: 30999
         hostPort: 30999
-        listenAddress: "127.0.0.1"
+        listenAddress: "0.0.0.0"
         protocol: TCP
 
         # Pagination Test Server
       - containerPort: 30555
         hostPort: 30555
-        listenAddress: "127.0.0.1"
+        listenAddress: "0.0.0.0"
         protocol: TCP
 
         # Gateway API
       - containerPort: 30090
         hostPort: 8090
-        listenAddress: "127.0.0.1"
+        listenAddress: "0.0.0.0"
         protocol: TCP
 
         # Gateway UI
       - containerPort: 30080
         hostPort: 8080
-        listenAddress: "127.0.0.1"
+        listenAddress: "0.0.0.0"
         protocol: TCP
 
     # ci/kind/cache added to .gitignore
