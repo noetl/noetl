@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.14.0](https://github.com/noetl/noetl/compare/v2.13.1...v2.14.0) (2026-03-28)
+
+### Features
+
+* **dsl/v2:** rename args→input, outcome→output, set_ctx→set across DSL v2 ([25da2a3](https://github.com/noetl/noetl/commit/25da2a3c041dfed4694edf2b0cdd257a2a7a09d3))
+
 ## [2.13.1](https://github.com/noetl/noetl/compare/v2.13.0...v2.13.1) (2026-03-27)
 
 ### Bug Fixes
