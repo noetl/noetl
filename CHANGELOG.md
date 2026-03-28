@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.14.1](https://github.com/noetl/noetl/compare/v2.14.0...v2.14.1) (2026-03-28)
+
+### Bug Fixes
+
+* align distributed runtime command context with dsl input ([8e5a166](https://github.com/noetl/noetl/commit/8e5a1665046fe8c7cbc2c2e01abf4c507cf326b0))
+
 ## [2.14.0](https://github.com/noetl/noetl/compare/v2.13.1...v2.14.0) (2026-03-28)
 
 ### Features
