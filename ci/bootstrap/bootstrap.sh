@@ -66,6 +66,29 @@ log_error() {
     echo -e "${RED}[ERROR]${NC} $1"
 }
 
+detect_lan_host() {
+    if [[ -n "${NOETL_HOST:-}" ]]; then
+        echo "$NOETL_HOST"
+        return
+    fi
+
+    local host=""
+    if command -v scutil >/dev/null 2>&1; then
+        host="$(scutil --get LocalHostName 2>/dev/null || true)"
+    fi
+    if [[ -z "$host" ]]; then
+        host="$(hostname -s 2>/dev/null || hostname 2>/dev/null || true)"
+    fi
+
+    if [[ -z "$host" ]]; then
+        echo "localhost"
+    elif [[ "$host" == *.* ]]; then
+        echo "$host"
+    else
+        echo "${host}.local"
+    fi
+}
+
 # Help message
 show_help() {
     cat << EOF
@@ -538,18 +561,20 @@ setup_cluster() {
     log_info "Running NoETL bootstrap (this may take several minutes)..."
     noetl run "$OPS_AUTOMATION_DIR/boot.yaml"
 
+    local lan_host
+    lan_host="$(detect_lan_host)"
     log_success "NoETL infrastructure ready"
-    log_info "NoETL Server API: http://localhost:8082"
-    log_info "Gateway API: http://localhost:8090"
-    log_info "Gateway UI: http://localhost:8080"
+    log_info "NoETL Server API: http://${lan_host}:8082"
+    log_info "Gateway API: http://${lan_host}:8090"
+    log_info "Gateway UI: http://${lan_host}:8080"
     echo ""
     log_info "Observability Services:"
-    log_info "  - ClickHouse HTTP:    http://localhost:30123"
-    log_info "  - ClickHouse Native:  localhost:30900"
-    log_info "  - Qdrant HTTP:        http://localhost:30633"
-    log_info "  - Qdrant gRPC:        localhost:30634"
-    log_info "  - NATS Client:        nats://localhost:30422"
-    log_info "  - NATS Monitoring:    http://localhost:30822"
+    log_info "  - ClickHouse HTTP:    http://${lan_host}:30123"
+    log_info "  - ClickHouse Native:  ${lan_host}:30900"
+    log_info "  - Qdrant HTTP:        http://${lan_host}:30633"
+    log_info "  - Qdrant gRPC:        ${lan_host}:30634"
+    log_info "  - NATS Client:        nats://${lan_host}:30422"
+    log_info "  - NATS Monitoring:    http://${lan_host}:30822"
     echo ""
     log_info "Monitoring:"
     log_info "  - Grafana: kubectl port-forward -n vmstack svc/vmstack-grafana 3000:80"
@@ -717,14 +742,17 @@ main() {
     echo "========================================"
     echo ""
     log_success "NoETL development environment is ready"
+    local lan_host
+    lan_host="$(detect_lan_host)"
     echo ""
     echo "Services:"
-    echo "  - NoETL Server API:   http://localhost:8082"
-    echo "  - Gateway API:        http://localhost:8090"
-    echo "  - Gateway UI:         http://localhost:8080"
-    echo "  - ClickHouse HTTP:    http://localhost:30123"
-    echo "  - Qdrant HTTP:        http://localhost:30633"
-    echo "  - NATS Monitoring:    http://localhost:30822"
+    echo "  - NoETL Server API:   http://${lan_host}:8082"
+    echo "  - Gateway API:        http://${lan_host}:8090"
+    echo "  - Gateway UI:         http://${lan_host}:8080"
+    echo "  - ClickHouse HTTP:    http://${lan_host}:30123"
+    echo "  - Qdrant HTTP:        http://${lan_host}:30633"
+    echo "  - NATS Monitoring:    http://${lan_host}:30822"
+    echo "  - Local fallback:     http://localhost:8082"
     echo ""
     echo "Quick Start:"
     echo "  1. Activate venv:        source $VENV_PATH/bin/activate"
@@ -738,7 +766,7 @@ main() {
     echo "  noetl run $OPS_AUTOMATION_DIR/infrastructure/gateway.yaml --set action=status"
     echo ""
     echo "Execute Playbooks:"
-    echo "  noetl execute playbook <name> --host localhost --port 8082"
+    echo "  noetl execute playbook <name> --host ${lan_host} --port 8082"
     echo ""
     echo "Documentation:"
     echo "  - CI Setup: documentation/docs/operations/ci-setup.md"

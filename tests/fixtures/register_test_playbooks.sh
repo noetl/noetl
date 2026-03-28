@@ -3,9 +3,41 @@
 # Usage:
 #   ./tests/fixtures/register_test_playbooks.sh [host] [port]
 #   ./tests/fixtures/register_test_playbooks.sh [port] [host]
+# Defaults:
+#   host = ${NOETL_HOST:-<LocalHostName>.local}
+#   port = ${NOETL_PORT:-8082}
 
-ARG1=${1:-localhost}
-ARG2=${2:-8082}
+detect_default_host() {
+  if [[ -n "${NOETL_HOST:-}" ]]; then
+    echo "$NOETL_HOST"
+    return
+  fi
+
+  local host=""
+  if command -v scutil >/dev/null 2>&1; then
+    host="$(scutil --get LocalHostName 2>/dev/null || true)"
+  fi
+  if [[ -z "$host" ]]; then
+    host="$(hostname -s 2>/dev/null || hostname 2>/dev/null || true)"
+  fi
+
+  if [[ -z "$host" ]]; then
+    echo "localhost"
+    return
+  fi
+
+  if [[ "$host" == *.* ]]; then
+    echo "$host"
+  else
+    echo "${host}.local"
+  fi
+}
+
+DEFAULT_HOST="$(detect_default_host)"
+DEFAULT_PORT="${NOETL_PORT:-8082}"
+
+ARG1=${1:-$DEFAULT_HOST}
+ARG2=${2:-$DEFAULT_PORT}
 
 if [[ "$ARG1" =~ ^[0-9]+$ ]]; then
   PORT="$ARG1"
@@ -28,6 +60,7 @@ if ! command -v noetl >/dev/null 2>&1; then
 fi
 
 echo "Loading test fixture playbooks from $FIXTURE_ROOT on $HOST port $PORT"
+echo "NoETL endpoint: http://$HOST:$PORT"
 
 if [ ! -d "$FIXTURE_ROOT" ]; then
   echo "Fixture directory not found: $FIXTURE_ROOT" >&2
