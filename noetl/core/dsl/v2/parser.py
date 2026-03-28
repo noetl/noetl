@@ -5,7 +5,7 @@ Class-based YAML parser for v2 playbooks with canonical v10 format:
 - `when` is the ONLY conditional keyword (reject `expr`)
 - All knobs live under `spec` at any level
 - Policies under `spec.policy` typed by scope
-- Task outcome via `task.spec.policy.rules` (reject `eval`)
+- Task output policy via `task.spec.policy.rules` (reject `eval`)
 - Routing via `next.spec` + `next.arcs[]` (Petri-net arcs)
 - NO `step.when` field (use `step.spec.policy.admit.rules`)
 - NO root `vars` (use ctx/iter via policy)
@@ -24,7 +24,7 @@ class DSLParser:
     Validates:
     - tool.kind pattern (rejects old 'type' field)
     - tool as single object or pipeline list
-    - task.spec.policy.rules for outcome handling (rejects eval)
+    - task.spec.policy.rules for output handling (rejects eval)
     - next.spec + next.arcs[] for routing (rejects simple next[] list)
     - step.spec.policy.admit.rules for admission (rejects step.when)
     - loop.spec.mode for iteration
@@ -240,7 +240,7 @@ class DSLParser:
             raise ValueError(
                 f"Step '{step_name}': 'case' blocks are not allowed in v10. "
                 "Use 'step.spec.policy.admit.rules' for admission, "
-                "'task.spec.policy.rules' for outcome handling, "
+                "'task.spec.policy.rules' for output handling, "
                 "and 'next.arcs[].when' for routing."
             )
 
@@ -290,7 +290,7 @@ class DSLParser:
             if "eval" in tool_data:
                 raise ValueError(
                     f"Step '{step_name}': 'eval' is not allowed in v10. "
-                    "Use 'task.spec.policy.rules' for outcome handling instead."
+                    "Use 'task.spec.policy.rules' for output handling instead."
                 )
             # Validate task.spec.policy if present
             if "spec" in tool_data:
@@ -364,7 +364,7 @@ class DSLParser:
             if "eval" in task_config:
                 raise ValueError(
                     f"Step '{step_name}': tool[{i}].{label}: 'eval' is not allowed in v10. "
-                    "Use 'spec.policy.rules' for outcome handling instead."
+                    "Use 'spec.policy.rules' for output handling instead."
                 )
 
             # Validate task.spec.policy if present

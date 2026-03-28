@@ -5,7 +5,7 @@ Canonical v10 implementation with:
 - `when` is the ONLY conditional keyword (no `expr`)
 - All knobs live under `spec` (at any level)
 - Policies live under `spec.policy` and are typed by scope
-- Task outcome handling uses `task.spec.policy` object with required `rules:`
+- Task output-status handling uses `task.spec.policy` object with required `rules:`
 - Routing uses Petri-net arcs: `step.next` is object with `next.spec` + `next.arcs[]`
 - No special "sink" tool kind - storage is just tools returning references
 - Loop is a step modifier (not a tool kind)
@@ -38,14 +38,14 @@ class StepEnterPayload(BaseModel):
 
 class CallDonePayload(BaseModel):
     """Payload for call.done event (tool execution result)."""
-    result: Any = Field(None, description="Tool execution result")
+    result: Any = Field(None, description="Control-plane result envelope (status/reference/context)")
     error: Optional[Union[str, dict[str, Any]]] = Field(None, description="Error details if tool failed (string or dict)")
     duration_ms: Optional[int] = Field(None, description="Tool execution duration in milliseconds")
 
 
 class StepExitPayload(BaseModel):
     """Payload for step.exit event."""
-    result: Any = Field(None, description="Final step result")
+    result: Any = Field(None, description="Final control-plane result envelope")
     error: Optional[Union[str, dict[str, Any]]] = Field(None, description="Error details if step failed (string or dict)")
     context: Optional[dict[str, Any]] = Field(None, description="Updated execution context")
 
@@ -54,7 +54,7 @@ class LifecycleEventPayload(BaseModel):
     """Payload for lifecycle events (workflow/playbook initialized/completed/failed)."""
     status: str = Field(..., description="Status: initialized, completed, failed")
     final_step: Optional[str] = Field(None, description="Final step name (for completion events)")
-    result: Any = Field(None, description="Final result (for completion events)")
+    result: Any = Field(None, description="Final control-plane result envelope (for completion events)")
     error: Optional[Union[str, dict[str, Any]]] = Field(None, description="Error details (for failed events, string or dict)")
 
 
@@ -82,6 +82,15 @@ class CommandIssuedPayload(BaseModel):
     priority: int = Field(default=0, description="Command priority")
     max_attempts: int = Field(default=3, description="Maximum retry attempts")
 
+    @model_validator(mode='before')
+    @classmethod
+    def _rename_legacy_fields(cls, obj):
+        """Accept legacy 'args' as alias for 'input'."""
+        if isinstance(obj, dict) and "args" in obj and "input" not in obj:
+            obj = dict(obj)
+            obj["input"] = obj.pop("args")
+        return obj
+
 
 class CommandClaimedPayload(BaseModel):
     """Payload for command.claimed event."""
@@ -100,7 +109,7 @@ class CommandCompletedPayload(BaseModel):
     """Payload for command.completed event."""
     command_id: str = Field(..., description="Command identifier")
     worker_id: str = Field(..., description="Worker that completed the command")
-    result: Any = Field(None, description="Command result")
+    result: Any = Field(None, description="Command control-plane result envelope")
 
 
 class CommandFailedPayload(BaseModel):
@@ -221,7 +230,7 @@ class PolicyRule(BaseModel):
     First matching rule wins (or else clause if no when).
 
     Example:
-        - when: "{{ outcome.status == 'error' and outcome.error.retryable }}"
+        - when: "{{ output.status == 'error' and output.error.retryable }}"
           then: { do: retry, attempts: 3, backoff: exponential }
         - else:
             then: { do: continue }
@@ -263,7 +272,7 @@ class AdmitPolicy(BaseModel):
 
 class TaskPolicy(BaseModel):
     """
-    Task outcome policy (worker-side, canonical v10).
+    Task output-status policy (worker-side, canonical v10).
 
     MUST be an object with required `rules:` list.
     This is the ONLY place where control actions (retry/jump/break/fail/continue) are allowed.
@@ -272,12 +281,15 @@ class TaskPolicy(BaseModel):
         spec:
           policy:
             rules:
-              - when: "{{ outcome.status == 'error' and outcome.http.status in [429,500,502,503] }}"
+              - when: "{{ output.status == 'error' and output.http.status in [429,500,502,503] }}"
                 then: { do: retry, attempts: 5, backoff: exponential, delay: 1.0 }
-              - when: "{{ outcome.status == 'error' }}"
+              - when: "{{ output.status == 'error' }}"
                 then: { do: fail }
               - else:
-                  then: { do: continue, set_iter: { has_more: "{{ outcome.result.paging.hasMore }}" } }
+                  then:
+                    do: continue
+                    set:
+                      iter.has_more: "{{ output.data.paging.hasMore }}"
     """
     mode: Literal["exclusive", "inclusive"] = Field(
         default="exclusive",
@@ -405,14 +417,14 @@ class TaskSpec(BaseModel):
     """
     Task-level spec configuration (canonical v10).
 
-    Contains task policy for outcome handling.
+    Contains task policy for output-status handling.
     Policy is the ONLY place where control actions are allowed.
     """
     timeout: Optional[dict[str, Any]] = Field(
         None, description="Timeout config { connect: 5, read: 15 }"
     )
     policy: Optional[TaskPolicy] = Field(
-        None, description="Task outcome policy with rules"
+        None, description="Task output-status policy with rules"
     )
 
     class Config:
@@ -460,7 +472,7 @@ class ToolSpec(BaseModel):
     # Task-level spec with policy (canonical v10)
     spec: Optional[TaskSpec] = Field(
         default=None,
-        description="Task spec with policy.rules for outcome handling"
+        description="Task spec with policy.rules for output-status handling"
     )
     # Output configuration at tool level
     output: Optional[ToolOutput] = Field(
@@ -719,7 +731,7 @@ class Step(BaseModel):
 
     Key changes from previous versions:
     - NO `step.when` field - use `step.spec.policy.admit.rules` for admission
-    - NO `tool.eval` - use `task.spec.policy.rules` for outcome handling
+    - NO `tool.eval` - use `task.spec.policy.rules` for output-status handling
     - `next` is a router object with `spec` + `arcs[]`
 
     Canonical step structure:
@@ -743,7 +755,7 @@ class Step(BaseModel):
                 spec:
                   policy:
                     rules:
-                      - when: "{{ outcome.status == 'error' }}"
+                      - when: "{{ output.status == 'error' }}"
                         then: { do: retry, attempts: 3 }
                       - else:
                           then: { do: continue }
@@ -1069,6 +1081,15 @@ class Command(BaseModel):
     retry_delay: Optional[float] = Field(None, description="Initial retry delay")
     retry_backoff: Optional[str] = Field(None, description="Retry backoff strategy")
     metadata: dict[str, Any] = Field(default_factory=dict, description="Additional metadata")
+
+    @model_validator(mode='before')
+    @classmethod
+    def _rename_legacy_fields(cls, obj):
+        """Accept legacy 'args' as alias for 'input'."""
+        if isinstance(obj, dict) and "args" in obj and "input" not in obj:
+            obj = dict(obj)
+            obj["input"] = obj.pop("args")
+        return obj
 
     def to_queue_record(self) -> dict[str, Any]:
         """Convert to queue table record format."""

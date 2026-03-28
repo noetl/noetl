@@ -1979,18 +1979,18 @@ class ControlFlowEngine:
         self,
         state: "ExecutionState",
         step_def: Step,
-        args: dict[str, Any],
+        step_input: dict[str, Any],
     ) -> list[Command]:
         """Issue one or more loop commands based on loop mode and max_in_flight."""
         if not step_def.loop:
-            command = await self._create_command_for_step(state, step_def, args)
+            command = await self._create_command_for_step(state, step_def, step_input)
             return [command] if command else []
 
         issue_budget = self._get_loop_max_in_flight(step_def)
         commands: list[Command] = []
 
         for _ in range(issue_budget):
-            command = await self._create_command_for_step(state, step_def, args)
+            command = await self._create_command_for_step(state, step_def, step_input)
             if not command:
                 break
             commands.append(command)
@@ -2059,9 +2059,9 @@ class ControlFlowEngine:
         Example:
             next:
               - step: success_handler
-                when: "{{ outcome.status == 'success' }}"
+                when: "{{ output.status == 'success' }}"
               - step: error_handler
-                when: "{{ outcome.status == 'error' }}"
+                when: "{{ output.status == 'error' }}"
               - step: default_handler  # No when = always matches
         """
         commands = []
@@ -2862,7 +2862,7 @@ class ControlFlowEngine:
                 kind=tool_kind,
                 config=rendered_tool_config
             ),
-            args={},
+            input={},
             render_context=context,
             attempt=1,
             priority=0,
@@ -2925,7 +2925,7 @@ class ControlFlowEngine:
                     "remaining_actions": remaining_actions,
                 }
             ),
-            args={},
+            input={},
             render_context=context,
             attempt=1,
             priority=0,
@@ -2942,10 +2942,10 @@ class ControlFlowEngine:
         self,
         state: ExecutionState,
         step: Step,
-        args: dict[str, Any]
+        transition_input: dict[str, Any]
     ) -> Optional[Command]:
         """Create a command to execute a step."""
-        control_args = args if isinstance(args, dict) else {}
+        control_args = transition_input if isinstance(transition_input, dict) else {}
         loop_retry_requested = bool(control_args.get("__loop_retry"))
         loop_retry_index_raw = control_args.get("__loop_retry_index")
         loop_continue_requested = bool(control_args.get("__loop_continue"))
@@ -3557,7 +3557,7 @@ class ControlFlowEngine:
                 context.get("loop_index", "NOT_FOUND"),
             )
 
-        # Build args separately - for step inputs
+        # Build input bindings separately for step execution.
         step_args = {}
         if step.input:
             step_args.update(step.input)
@@ -3565,15 +3565,15 @@ class ControlFlowEngine:
             # Backward compat: accept legacy step.args if step.input not set
             step_args.update(step.args)
 
-        # Merge transition args
+        # Merge transition-scoped input published by prior routing/actions.
         filtered_args = {
-            k: v for k, v in args.items()
+            k: v for k, v in control_args.items()
             if k not in {"__loop_retry", "__loop_retry_index", "__loop_continue"}
         }
         step_args.update(filtered_args)
 
-        # Render Jinja2 templates in args
-        rendered_args = recursive_render(self.jinja_env, step_args, context)
+        # Render Jinja2 templates in merged input.
+        rendered_input = recursive_render(self.jinja_env, step_args, context)
 
         if step.tool is None:
             logger.info(
@@ -3690,7 +3690,7 @@ class ControlFlowEngine:
                 kind=tool_kind,
                 config=tool_config
             ),
-            input=rendered_args,
+            input=rendered_input,
             render_context=context,
             pipeline=pipeline,
             next_targets=next_targets,

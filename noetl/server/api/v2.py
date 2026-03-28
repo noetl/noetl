@@ -975,6 +975,42 @@ def _estimate_json_size(value: Any) -> int:
         return len(str(value).encode("utf-8"))
 
 
+def _command_input_from_context(context: Any) -> dict[str, Any]:
+    """Return canonical command input map from context, accepting legacy args alias."""
+    if not isinstance(context, dict):
+        return {}
+    input_map = context.get("input")
+    if isinstance(input_map, dict):
+        return input_map
+    legacy_args = context.get("args")
+    if isinstance(legacy_args, dict):
+        return legacy_args
+    return {}
+
+
+def _command_input_from_model(cmd: Any) -> dict[str, Any]:
+    """Read command input from canonical field first, then legacy args."""
+    cmd_input = getattr(cmd, "input", None)
+    if isinstance(cmd_input, dict):
+        return cmd_input
+    legacy_args = getattr(cmd, "args", None)
+    if isinstance(legacy_args, dict):
+        return legacy_args
+    return {}
+
+
+def _build_command_context(cmd: Any) -> dict[str, Any]:
+    """Build command context envelope emitted in command.issued events."""
+    return {
+        "tool_config": cmd.tool.config,
+        "input": _command_input_from_model(cmd),
+        "render_context": cmd.render_context,
+        "next_targets": cmd.next_targets,  # Canonical v2: routing via next[].when
+        "pipeline": cmd.pipeline,  # Canonical v2: task pipeline
+        "spec": cmd.spec.model_dump() if cmd.spec else None,  # Step behavior (next_mode)
+    }
+
+
 def _validate_postgres_command_context(*, step: str, tool_kind: str, context: dict[str, Any]) -> None:
     """
     Enforce postgres command contract before command.issued is persisted.
@@ -984,10 +1020,10 @@ def _validate_postgres_command_context(*, step: str, tool_kind: str, context: di
     if str(tool_kind).lower() != "postgres":
         return
     tool_config = context.get("tool_config") if isinstance(context, dict) else {}
-    args = context.get("args") if isinstance(context, dict) else {}
+    command_input = _command_input_from_context(context)
     auth_cfg = tool_config.get("auth") if isinstance(tool_config, dict) else None
     if auth_cfg in (None, "", {}):
-        auth_cfg = args.get("auth") if isinstance(args, dict) else None
+        auth_cfg = command_input.get("auth") if isinstance(command_input, dict) else None
     if auth_cfg in (None, "", {}):
         raise ValueError(
             f"Postgres command for step '{step}' is missing auth in command context. "
@@ -1007,9 +1043,9 @@ def _validate_postgres_command_context(*, step: str, tool_kind: str, context: di
         direct_fields.update(
             key for key in forbidden_fields if tool_config.get(key) not in (None, "")
         )
-    if isinstance(args, dict):
+    if isinstance(command_input, dict):
         direct_fields.update(
-            key for key in forbidden_fields if args.get(key) not in (None, "")
+            key for key in forbidden_fields if command_input.get(key) not in (None, "")
         )
     if direct_fields:
         raise ValueError(
@@ -1384,14 +1420,7 @@ async def execute(req: ExecuteRequest) -> ExecuteResponse:
                     evt_id = await _next_snowflake_id(cur)
                     
                     # Build context for command execution (passes execution parameters, not results)
-                    context = {
-                        "tool_config": cmd.tool.config,
-                        "args": cmd.args or {},
-                        "render_context": cmd.render_context,
-                        "next_targets": cmd.next_targets,  # Canonical v2: routing via next[].when
-                        "pipeline": cmd.pipeline,  # Canonical v2: task pipeline
-                        "spec": cmd.spec.model_dump() if cmd.spec else None,  # Step behavior (next_mode)
-                    }
+                    context = _build_command_context(cmd)
                     _validate_postgres_command_context_or_422(
                         step=cmd.step,
                         tool_kind=cmd.tool.kind,
@@ -2097,14 +2126,7 @@ async def handle_event(req: EventRequest) -> EventResponse:
                     new_evt_id = await _next_snowflake_id(cur)
                     
                     # Build context for retry command (command execution parameters)
-                    context = {
-                        "tool_config": cmd.tool.config,
-                        "args": cmd.args or {},
-                        "render_context": cmd.render_context,
-                        "next_targets": cmd.next_targets,  # Canonical v2: routing via next[].when
-                        "pipeline": cmd.pipeline,  # Canonical v2: task pipeline
-                        "spec": cmd.spec.model_dump() if cmd.spec else None,  # Step behavior (next_mode)
-                    }
+                    context = _build_command_context(cmd)
                     _validate_postgres_command_context_or_422(
                         step=cmd.step,
                         tool_kind=cmd.tool.kind,
@@ -2616,14 +2638,7 @@ async def _issue_commands_for_batch(job: _BatchAcceptJob, commands: list) -> Non
                 cmd_suffix = await _next_snowflake_id(cur)
                 cmd_id = f"{cmd.execution_id}:{cmd.step}:{cmd_suffix}"
                 new_evt_id = await _next_snowflake_id(cur)
-                context = {
-                    "tool_config": cmd.tool.config,
-                    "args": cmd.args or {},
-                    "render_context": cmd.render_context,
-                    "next_targets": cmd.next_targets,
-                    "pipeline": cmd.pipeline,
-                    "spec": cmd.spec.model_dump() if cmd.spec else None,
-                }
+                context = _build_command_context(cmd)
                 _validate_postgres_command_context_or_422(
                     step=cmd.step,
                     tool_kind=cmd.tool.kind,
