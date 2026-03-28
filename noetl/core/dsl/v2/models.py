@@ -12,7 +12,7 @@ Canonical v10 implementation with:
 - NO `step.when` field - step admission via `step.spec.policy.admit.rules`
 """
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 from typing import Any, Literal, Optional, Union
 from datetime import datetime
 
@@ -23,8 +23,17 @@ from datetime import datetime
 
 class StepEnterPayload(BaseModel):
     """Payload for step.enter event."""
-    args: dict[str, Any] = Field(default_factory=dict, description="Step input arguments")
+    input: dict[str, Any] = Field(default_factory=dict, description="Step input bindings")
     context: Optional[dict[str, Any]] = Field(None, description="Execution context")
+
+    @model_validator(mode='before')
+    @classmethod
+    def _rename_legacy_fields(cls, obj):
+        """Accept legacy 'args' as alias for 'input'."""
+        if isinstance(obj, dict) and "args" in obj and "input" not in obj:
+            obj = dict(obj)
+            obj["input"] = obj.pop("args")
+        return obj
 
 
 class CallDonePayload(BaseModel):
@@ -68,7 +77,7 @@ class CommandIssuedPayload(BaseModel):
     step: str = Field(..., description="Step name")
     tool_kind: str = Field(..., description="Tool type")
     tool_config: dict[str, Any] = Field(default_factory=dict, description="Tool configuration")
-    args: dict[str, Any] = Field(default_factory=dict, description="Step arguments")
+    input: dict[str, Any] = Field(default_factory=dict, description="Step input bindings")
     render_context: dict[str, Any] = Field(default_factory=dict, description="Render context for templates")
     priority: int = Field(default=0, description="Command priority")
     max_attempts: int = Field(default=3, description="Maximum retry attempts")
@@ -178,16 +187,30 @@ class PolicyRuleThen(BaseModel):
     delay: Optional[float] = Field(None, description="Initial delay in seconds")
     # Jump option
     to: Optional[str] = Field(None, description="Target task label for jump action")
-    # Variable mutations
-    set_ctx: Optional[dict[str, Any]] = Field(
-        None, description="Patches to execution-scoped context"
-    )
-    set_iter: Optional[dict[str, Any]] = Field(
-        None, description="Patches to iteration-scoped context"
+    # Unified scoped mutation (replaces set_ctx / set_iter)
+    set: Optional[dict[str, Any]] = Field(
+        None, description="Scoped variable mutations: ctx.*, iter.*, step.*"
     )
 
     class Config:
         extra = "allow"
+
+    @model_validator(mode='before')
+    @classmethod
+    def _rename_legacy_fields(cls, obj):
+        """Accept legacy set_ctx/set_iter as aliases for set."""
+        if isinstance(obj, dict) and "set" not in obj:
+            obj = dict(obj)
+            legacy: dict[str, Any] = {}
+            if "set_ctx" in obj:
+                for k, v in obj.pop("set_ctx").items():
+                    legacy[f"ctx.{k}" if "." not in k else k] = v
+            if "set_iter" in obj:
+                for k, v in obj.pop("set_iter").items():
+                    legacy[f"iter.{k}" if "." not in k else k] = v
+            if legacy:
+                obj["set"] = legacy
+        return obj
 
 
 class PolicyRule(BaseModel):
@@ -457,12 +480,12 @@ class ToolOutcome(BaseModel):
     """
     Structured result of tool execution (canonical v10).
 
-    Available in policy rule expressions as 'outcome'.
+    Available in policy rule expressions as 'output'.
 
     IMPORTANT: status is "ok" or "error" (not "success").
 
-    Example outcome:
-        outcome = {
+    Example output:
+        output = {
             "status": "error",
             "error": {
                 "kind": "rate_limit",
@@ -475,7 +498,8 @@ class ToolOutcome(BaseModel):
         }
     """
     status: Literal["ok", "error"] = Field(..., description="Execution status: ok or error")
-    result: Any = Field(None, description="Tool output (if ok)")
+    data: Any = Field(None, description="Tool output payload (if ok)")
+    ref: Optional[dict[str, Any]] = Field(None, description="Reference to externalized payload")
     error: Optional[dict[str, Any]] = Field(
         None, description="Structured error {kind, retryable, code, message, details}"
     )
@@ -592,7 +616,8 @@ class Arc(BaseModel):
         arcs:
           - step: success_handler
             when: "{{ event.name == 'step.done' }}"
-            args: { data: "{{ ctx.result }}" }
+            set:
+              ctx.result_ref: "{{ output.ref }}"
           - step: error_handler
             when: "{{ event.name == 'step.failed' }}"
     """
@@ -600,12 +625,21 @@ class Arc(BaseModel):
     when: Optional[str] = Field(
         None, description="Arc guard expression (Jinja2). Default true if omitted."
     )
-    args: Optional[dict[str, Any]] = Field(
-        None, description="Token payload to pass to target step (arc inscription)"
+    set: Optional[dict[str, Any]] = Field(
+        None, description="Transition-scoped variable mutations (ctx.*, step.*, iter.*)"
     )
     spec: Optional[dict[str, Any]] = Field(
         None, description="Arc-level spec (placeholder for future)"
     )
+
+    @model_validator(mode='before')
+    @classmethod
+    def _rename_legacy_fields(cls, obj):
+        """Accept legacy 'args' as alias for 'set' on arcs."""
+        if isinstance(obj, dict) and "args" in obj and "set" not in obj:
+            obj = dict(obj)
+            obj["set"] = obj.pop("args")
+        return obj
 
 
 class NextRouter(BaseModel):
@@ -727,7 +761,7 @@ class Step(BaseModel):
     # NOTE: step.when is REMOVED in v10 - use step.spec.policy.admit.rules
     # when: REMOVED
 
-    args: Optional[dict[str, Any]] = Field(None, description="Input arguments for this step")
+    input: Optional[dict[str, Any]] = Field(None, description="Input bindings for this step")
     loop: Optional[Loop] = Field(None, description="Loop configuration")
 
     # Tool: single ToolSpec (shorthand) or list of labeled tasks (pipeline)
@@ -742,10 +776,10 @@ class Step(BaseModel):
         description="Next router with spec and arcs"
     )
 
-    # Step-level context mutation (processed after tool completes)
-    set_ctx: Optional[dict[str, Any]] = Field(
+    # Step-level scoped mutation (processed after tool completes)
+    set: Optional[dict[str, Any]] = Field(
         None,
-        description="Variables to set in execution context after step completes"
+        description="Scoped variable mutations after step completes (ctx.*, step.*, iter.*)"
     )
 
     # NOTE: Legacy fields (output, result, vars) removed in v10
@@ -837,6 +871,18 @@ class Step(BaseModel):
             return {"spec": {"mode": "exclusive"}, "arcs": arcs}
 
         return v
+
+    @model_validator(mode='before')
+    @classmethod
+    def _rename_legacy_fields(cls, obj):
+        """Accept legacy field names as aliases for canonical ones."""
+        if isinstance(obj, dict):
+            obj = dict(obj)
+            if "args" in obj and "input" not in obj:
+                obj["input"] = obj.pop("args")
+            if "set_ctx" in obj and "set" not in obj:
+                obj["set"] = obj.pop("set_ctx")
+        return obj
 
 
 # ============================================================================
@@ -997,7 +1043,7 @@ class Command(BaseModel):
     execution_id: str = Field(..., description="Execution identifier")
     step: str = Field(..., description="Step name")
     tool: ToolCall = Field(..., description="Tool invocation details")
-    args: Optional[dict[str, Any]] = Field(None, description="Step input arguments")
+    input: Optional[dict[str, Any]] = Field(None, description="Step input bindings")
     render_context: dict[str, Any] = Field(default_factory=dict, description="Full render context")
 
     # Pipeline: list of labeled tasks
@@ -1031,7 +1077,7 @@ class Command(BaseModel):
             "step": self.step,
             "tool_kind": self.tool.kind,
             "tool_config": self.tool.config,
-            "args": self.args or {},
+            "input": self.input or {},
             "pipeline": self.pipeline,
             "next_router": self.next_router,
             "next_targets": self.next_targets,
@@ -1045,10 +1091,14 @@ class Command(BaseModel):
         }
 
 
-# NOTE: All legacy aliases and deprecated models have been removed in v10.
-# Use canonical v10 patterns only:
-# - task.spec.policy.rules (not eval)
+# NOTE: Legacy aliases accepted via model_validate for backward compat:
+# - 'args' -> 'input'  (Step, Arc, Command, StepEnterPayload)
+# - 'set_ctx'/'set_iter' -> 'set'  (Step, PolicyRuleThen)
+# - 'outcome' -> 'output'  (template context key, see engine.py)
+# - 'result' -> 'data'  (ToolOutcome payload field)
+# Canonical v10 patterns:
+# - step.input / arc.set / output.data / output.ref
+# - set: { ctx.*, iter.*, step.* }
 # - when (not expr)
-# - set_ctx (not set_vars)
 # - next.arcs[] (not next[])
-# - outcome.status: "ok" | "error" (not "success")
+# - output.status: "ok" | "error"

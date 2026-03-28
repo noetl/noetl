@@ -35,7 +35,7 @@ workflow:
       ,\n  \"config\": {\n    \"payload_kb_per_item\": {{ payload_kb_per_item }},\n\
       \    \"page_size\": {{ page_size }},\n    \"estimated_kb_per_page\": {{ payload_kb_per_item\
       \ }} * {{ page_size }}\n  }\n}\n"
-  set_ctx:
+  set:
     current_page: '{{ workload.current_page }}'
     pages_processed: '{{ workload.pages_processed }}'
     total_bytes_processed: '{{ workload.total_bytes_processed }}'
@@ -61,13 +61,13 @@ workflow:
     spec:
       policy:
         rules:
-        - when: '{{ outcome.error.retryable }}'
+        - when: '{{ output.error.retryable }}'
           then:
             do: retry
             attempts: 3
             backoff: exponential
             delay: 2.0
-        - when: '{{ outcome.status == ''error'' }}'
+        - when: '{{ output.status == ''error'' }}'
           then:
             do: fail
         - else:
@@ -75,7 +75,7 @@ workflow:
               do: continue
   - name: process
     kind: python
-    args:
+    input:
       http_response: '{{ _prev }}'
       page_num: '{{ ctx.current_page }}'
     code: "import sys\n\nresponse_body = http_response.get('data', {})\nitems = response_body.get('data',\
@@ -91,7 +91,7 @@ workflow:
     spec:
       policy:
         rules:
-        - when: '{{ outcome.status == ''error'' }}'
+        - when: '{{ output.status == ''error'' }}'
           then:
             do: continue
         - else:
@@ -99,7 +99,7 @@ workflow:
               do: continue
   - name: summarize
     kind: python
-    args:
+    input:
       processed: '{{ _prev }}'
     code: "result = {\n    'page': processed['page'],\n    'items_processed': processed['items_count'],\n\
       \    'payload_kb': processed['total_payload_kb'],\n    'has_more': processed['has_more'],\n\
@@ -113,7 +113,7 @@ workflow:
   desc: Update progress and check continuation
   tool:
     kind: python
-    args:
+    input:
       result: '{{ fetch_heavy_page }}'
       current_page: '{{ ctx.current_page }}'
       max_pages: '{{ max_pages }}'
@@ -132,7 +132,7 @@ workflow:
         - else:
             then:
               do: continue
-              set_ctx:
+              set:
                 current_page: '{{ (ctx.current_page | int) + 1 }}'
                 pages_processed: '{{ (ctx.pages_processed | int) + 1 }}'
                 total_bytes_processed: '{{ update_progress.total_bytes_processed }}'
@@ -148,7 +148,7 @@ workflow:
   desc: Generate test summary
   tool:
     kind: python
-    args:
+    input:
       pages_processed: '{{ ctx.pages_processed }}'
       total_bytes: '{{ ctx.total_bytes_processed }}'
       payload_kb_per_item: '{{ payload_kb_per_item }}'

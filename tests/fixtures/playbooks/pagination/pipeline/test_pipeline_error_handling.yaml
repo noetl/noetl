@@ -17,7 +17,7 @@ metadata:
 
     - Fail on auth errors (401, 403)
 
-    - outcome variable access in policy conditions
+    - output variable access in policy conditions
 
     '
 workload:
@@ -32,7 +32,7 @@ workflow:
     code: "result = {\n  \"status\": \"initialized\",\n  \"tests_to_run\": [\n   \
       \ \"retry_on_500\",\n    \"retry_on_rate_limit\",\n    \"skip_transform_error\"\
       ,\n    \"fail_on_auth_error\"\n  ]\n}\n"
-  set_ctx:
+  set:
     test_results: '{{ workload.test_results }}'
     current_test: '{{ workload.current_test }}'
   next:
@@ -57,14 +57,14 @@ workflow:
     spec:
       policy:
         rules:
-        - when: '{{ outcome.error.retryable and outcome.error.kind == ''server_error''
+        - when: '{{ output.error.retryable and output.error.kind == ''server_error''
             }}'
           then:
             do: retry
             attempts: 3
             backoff: linear
             delay: 0.5
-        - when: '{{ outcome.status == ''error'' }}'
+        - when: '{{ output.status == ''error'' }}'
           then:
             do: fail
         - else:
@@ -72,7 +72,7 @@ workflow:
               do: continue
   - name: validate
     kind: python
-    args:
+    input:
       http_response: '{{ _prev }}'
     code: "response_body = http_response.get('data', {})\ndata = response_body.get('data',\
       \ [])\nresult = {\n  'test': 'retry_on_500',\n  'status': 'passed' if len(data)\
@@ -96,16 +96,16 @@ workflow:
     spec:
       policy:
         rules:
-        - when: '{{ outcome.error.kind == ''rate_limit'' }}'
+        - when: '{{ output.error.kind == ''rate_limit'' }}'
           then:
             do: retry
             attempts: 5
             delay: 2.0
-        - when: '{{ outcome.error.retryable }}'
+        - when: '{{ output.error.retryable }}'
           then:
             do: retry
             attempts: 3
-        - when: '{{ outcome.status == ''error'' }}'
+        - when: '{{ output.status == ''error'' }}'
           then:
             do: fail
         - else:
@@ -121,16 +121,16 @@ workflow:
     spec:
       policy:
         rules:
-        - when: '{{ outcome.error.kind == ''rate_limit'' }}'
+        - when: '{{ output.error.kind == ''rate_limit'' }}'
           then:
             do: retry
             attempts: 5
             delay: 2.0
-        - when: '{{ outcome.error.retryable }}'
+        - when: '{{ output.error.retryable }}'
           then:
             do: retry
             attempts: 3
-        - when: '{{ outcome.status == ''error'' }}'
+        - when: '{{ output.status == ''error'' }}'
           then:
             do: fail
         - else:
@@ -138,7 +138,7 @@ workflow:
               do: continue
   - name: validate
     kind: python
-    args:
+    input:
       http_response: '{{ _prev }}'
     code: "response_body = http_response.get('data', {})\ndata = response_body.get('data',\
       \ [])\nresult = {\n  'test': 'retry_on_rate_limit',\n  'status': 'passed',\n\
@@ -160,7 +160,7 @@ workflow:
       page: 1
   - name: transform_bad
     kind: python
-    args:
+    input:
       http_response: '{{ _prev }}'
     code: 'broken = http_response[''nonexistent_key''][''also_missing'']
 
@@ -170,7 +170,7 @@ workflow:
     spec:
       policy:
         rules:
-        - when: '{{ outcome.status == ''error'' }}'
+        - when: '{{ output.status == ''error'' }}'
           then:
             do: continue
         - else:
@@ -178,7 +178,7 @@ workflow:
               do: continue
   - name: validate
     kind: python
-    args:
+    input:
       prev_data: '{{ _prev }}'
     code: "result = {\n  'test': 'skip_transform_error',\n  'status': 'passed',\n\
       \  'skipped': True,\n  'prev_after_skip': prev_data,\n  'message': 'Transform\
@@ -200,7 +200,7 @@ workflow:
     spec:
       policy:
         rules:
-        - when: '{{ outcome.error.kind == ''auth'' }}'
+        - when: '{{ output.error.kind == ''auth'' }}'
           then:
             do: fail
         - else:
@@ -220,7 +220,7 @@ workflow:
   desc: Generate test results report
   tool:
     kind: python
-    args:
+    input:
       results: '{{ ctx.test_results }}'
     code: "passed = sum(1 for r in results if r.get('status') == 'passed')\nfailed\
       \ = sum(1 for r in results if r.get('status') == 'failed')\ntotal = len(results)\n\
@@ -229,8 +229,8 @@ workflow:
       \  },\n  \"test_results\": results,\n  \"policy_features_tested\": [\n    \"\
       retry with exponential backoff\",\n    \"retry with Retry-After header\",\n\
       \    \"continue on error (skip pattern)\",\n    \"fail on non-retryable errors\"\
-      ,\n    \"outcome.error.kind condition matching\",\n    \"outcome.error.retryable\
-      \ boolean check\",\n    \"outcome.status check\"\n  ]\n}\n"
+      ,\n    \"output.error.kind condition matching\",\n    \"output.error.retryable\
+      \ boolean check\",\n    \"output.status check\"\n  ]\n}\n"
   next:
     spec:
       mode: exclusive

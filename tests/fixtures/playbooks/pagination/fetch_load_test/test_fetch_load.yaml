@@ -16,8 +16,13 @@ metadata:
 workload:
   api_url: http://paginated-api.test-server.svc.cluster.local:5555
   num_patients: 500
+  patients: ["P-0001", "P-0002", "P-0003", "P-0004", "P-0005", "P-0006", "P-0007", "P-0008", "P-0009", "P-0010", "P-0011", "P-0012", "P-0013", "P-0014", "P-0015", "P-0016", "P-0017", "P-0018", "P-0019", "P-0020", "P-0021", "P-0022", "P-0023", "P-0024", "P-0025", "P-0026", "P-0027", "P-0028", "P-0029", "P-0030", "P-0031", "P-0032", "P-0033", "P-0034", "P-0035", "P-0036", "P-0037", "P-0038", "P-0039", "P-0040", "P-0041", "P-0042", "P-0043", "P-0044", "P-0045", "P-0046", "P-0047", "P-0048", "P-0049", "P-0050", "P-0051", "P-0052", "P-0053", "P-0054", "P-0055", "P-0056", "P-0057", "P-0058", "P-0059", "P-0060", "P-0061", "P-0062", "P-0063", "P-0064", "P-0065", "P-0066", "P-0067", "P-0068", "P-0069", "P-0070", "P-0071", "P-0072", "P-0073", "P-0074", "P-0075", "P-0076", "P-0077", "P-0078", "P-0079", "P-0080", "P-0081", "P-0082", "P-0083", "P-0084", "P-0085", "P-0086", "P-0087", "P-0088", "P-0089", "P-0090", "P-0091", "P-0092", "P-0093", "P-0094", "P-0095", "P-0096", "P-0097", "P-0098", "P-0099", "P-0100", "P-0101", "P-0102", "P-0103", "P-0104", "P-0105", "P-0106", "P-0107", "P-0108", "P-0109", "P-0110", "P-0111", "P-0112", "P-0113", "P-0114", "P-0115", "P-0116", "P-0117", "P-0118", "P-0119", "P-0120", "P-0121", "P-0122", "P-0123", "P-0124", "P-0125", "P-0126", "P-0127", "P-0128", "P-0129", "P-0130", "P-0131", "P-0132", "P-0133", "P-0134", "P-0135", "P-0136", "P-0137", "P-0138", "P-0139", "P-0140", "P-0141", "P-0142", "P-0143", "P-0144", "P-0145", "P-0146", "P-0147", "P-0148", "P-0149", "P-0150", "P-0151", "P-0152", "P-0153", "P-0154", "P-0155", "P-0156", "P-0157", "P-0158", "P-0159", "P-0160", "P-0161", "P-0162", "P-0163", "P-0164", "P-0165", "P-0166", "P-0167", "P-0168", "P-0169", "P-0170", "P-0171", "P-0172", "P-0173", "P-0174", "P-0175", "P-0176", "P-0177", "P-0178", "P-0179", "P-0180", "P-0181", "P-0182", "P-0183", "P-0184", "P-0185", "P-0186", "P-0187", "P-0188", "P-0189", "P-0190", "P-0191", "P-0192", "P-0193", "P-0194", "P-0195", "P-0196", "P-0197", "P-0198", "P-0199", "P-0200", "P-0201", "P-0202", "P-0203", "P-0204", "P-0205", "P-0206", "P-0207", "P-0208", "P-0209", "P-0210", "P-0211", "P-0212", "P-0213", "P-0214", "P-0215", "P-0216", "P-0217", "P-0218", "P-0219", "P-0220", "P-0221", "P-0222", "P-0223", "P-0224", "P-0225", "P-0226", "P-0227", "P-0228", "P-0229", "P-0230", "P-0231", "P-0232", "P-0233", "P-0234", "P-0235", "P-0236", "P-0237", "P-0238", "P-0239", "P-0240", "P-0241", "P-0242", "P-0243", "P-0244", "P-0245", "P-0246", "P-0247", "P-0248", "P-0249", "P-0250", "P-0251", "P-0252", "P-0253", "P-0254", "P-0255", "P-0256", "P-0257", "P-0258", "P-0259", "P-0260", "P-0261", "P-0262", "P-0263", "P-0264", "P-0265", "P-0266", "P-0267", "P-0268", "P-0269", "P-0270", "P-0271", "P-0272", "P-0273", "P-0274", "P-0275", "P-0276", "P-0277", "P-0278", "P-0279", "P-0280", "P-0281", "P-0282", "P-0283", "P-0284", "P-0285", "P-0286", "P-0287", "P-0288", "P-0289", "P-0290", "P-0291", "P-0292", "P-0293", "P-0294", "P-0295", "P-0296", "P-0297", "P-0298", "P-0299", "P-0300", "P-0301", "P-0302", "P-0303", "P-0304", "P-0305", "P-0306", "P-0307", "P-0308", "P-0309", "P-0310", "P-0311", "P-0312", "P-0313", "P-0314", "P-0315", "P-0316", "P-0317", "P-0318", "P-0319", "P-0320", "P-0321", "P-0322", "P-0323", "P-0324", "P-0325", "P-0326", "P-0327", "P-0328", "P-0329", "P-0330", "P-0331", "P-0332", "P-0333", "P-0334", "P-0335", "P-0336", "P-0337", "P-0338", "P-0339", "P-0340", "P-0341", "P-0342", "P-0343", "P-0344", "P-0345", "P-0346", "P-0347", "P-0348", "P-0349", "P-0350", "P-0351", "P-0352", "P-0353", "P-0354", "P-0355", "P-0356", "P-0357", "P-0358", "P-0359", "P-0360", "P-0361", "P-0362", "P-0363", "P-0364", "P-0365", "P-0366", "P-0367", "P-0368", "P-0369", "P-0370", "P-0371", "P-0372", "P-0373", "P-0374", "P-0375", "P-0376", "P-0377", "P-0378", "P-0379", "P-0380", "P-0381", "P-0382", "P-0383", "P-0384", "P-0385", "P-0386", "P-0387", "P-0388", "P-0389", "P-0390", "P-0391", "P-0392", "P-0393", "P-0394", "P-0395", "P-0396", "P-0397", "P-0398", "P-0399", "P-0400", "P-0401", "P-0402", "P-0403", "P-0404", "P-0405", "P-0406", "P-0407", "P-0408", "P-0409", "P-0410", "P-0411", "P-0412", "P-0413", "P-0414", "P-0415", "P-0416", "P-0417", "P-0418", "P-0419", "P-0420", "P-0421", "P-0422", "P-0423", "P-0424", "P-0425", "P-0426", "P-0427", "P-0428", "P-0429", "P-0430", "P-0431", "P-0432", "P-0433", "P-0434", "P-0435", "P-0436", "P-0437", "P-0438", "P-0439", "P-0440", "P-0441", "P-0442", "P-0443", "P-0444", "P-0445", "P-0446", "P-0447", "P-0448", "P-0449", "P-0450", "P-0451", "P-0452", "P-0453", "P-0454", "P-0455", "P-0456", "P-0457", "P-0458", "P-0459", "P-0460", "P-0461", "P-0462", "P-0463", "P-0464", "P-0465", "P-0466", "P-0467", "P-0468", "P-0469", "P-0470", "P-0471", "P-0472", "P-0473", "P-0474", "P-0475", "P-0476", "P-0477", "P-0478", "P-0479", "P-0480", "P-0481", "P-0482", "P-0483", "P-0484", "P-0485", "P-0486", "P-0487", "P-0488", "P-0489", "P-0490", "P-0491", "P-0492", "P-0493", "P-0494", "P-0495", "P-0496", "P-0497", "P-0498", "P-0499", "P-0500"]
   page_size: 10
   max_in_flight: 5
+  api_min_delay: 2.0
+  api_max_delay: 4.0
+  api_payload_kb: 100
+  api_rate_limit: 50
 
 workflow:
   - step: start
@@ -45,18 +50,25 @@ workflow:
       spec:
         mode: exclusive
       arcs:
-        - step: generate_patients
+        - step: fetch_all_patients
 
   - step: generate_patients
     desc: Generate list of 500 synthetic patient IDs
     tool:
       kind: python
-      args:
+      input:
         num_patients: '{{ num_patients }}'
       code: |
         n = int(num_patients or 500)
         patients = [{"patient_id": f"P-{i:04d}"} for i in range(1, n + 1)]
         result = {"patients": patients, "count": len(patients)}
+    output:
+      output_select:
+        - patients
+        - count
+    set:
+      patients: "{{ generate_patients.patients }}"
+      patient_count: "{{ generate_patients.count }}"
     next:
       spec:
         mode: exclusive
@@ -66,11 +78,12 @@ workflow:
   - step: fetch_all_patients
     desc: "Fetch all pages for each patient in parallel (max_in_flight: {{ max_in_flight }})"
     loop:
-      in: '{{ generate_patients.patients }}'
+      in: '{{ patients }}'
       iterator: item
       spec:
         mode: parallel
-        max_in_flight: '{{ max_in_flight }}'
+        # Distributed runtime validation currently requires a literal integer here.
+        max_in_flight: 5
     tool:
       - name: init_page
         kind: noop
@@ -80,7 +93,7 @@ workflow:
               - else:
                   then:
                     do: continue
-                    set_iter:
+                    set:
                       page: 1
                       pages_fetched: 0
                       records_fetched: 0
@@ -89,28 +102,32 @@ workflow:
         method: GET
         url: "{{ api_url }}/api/v1/patient-records"
         params:
-          patientId: "{{ iter.item.patient_id }}"
+          patientId: "{{ iter.item }}"
           page: "{{ iter.page }}"
           pageSize: "{{ page_size }}"
+          min_delay: "{{ api_min_delay }}"
+          max_delay: "{{ api_max_delay }}"
+          payload_kb: "{{ api_payload_kb }}"
+          rate_limit: "{{ api_rate_limit }}"
         spec:
           policy:
             rules:
-              - when: "{{ outcome.status == 'error' and outcome.http.status == 429 }}"
+              - when: "{{ output.status == 'error' and output.http.status == 429 }}"
                 then: { do: retry, attempts: 30, backoff: fixed, delay: 1.0 }
-              - when: "{{ outcome.status == 'error' and outcome.http.status == 404 }}"
+              - when: "{{ output.status == 'error' and output.http.status == 404 }}"
                 then:
                   do: continue
-                  set_iter:
+                  set:
                     has_more: false
-              - when: "{{ outcome.status == 'error' }}"
+              - when: "{{ output.status == 'error' }}"
                 then: { do: retry, attempts: 3, backoff: exponential, delay: 5.0 }
               - else:
                   then:
                     do: continue
-                    set_iter:
-                      has_more: "{{ outcome.result.data.meta.page < outcome.result.data.meta.totalPages }}"
+                    set:
+                      has_more: "{{ output.data.meta.page < output.data.meta.totalPages }}"
                       pages_fetched: "{{ (iter.pages_fetched | int) + 1 }}"
-                      records_fetched: "{{ (iter.records_fetched | int) + (outcome.result.data.entry | length) }}"
+                      records_fetched: "{{ (iter.records_fetched | int) + (output.data.entry | length) }}"
       - name: paginate
         kind: noop
         spec:
@@ -120,7 +137,7 @@ workflow:
                 then:
                   do: jump
                   to: fetch_page
-                  set_iter:
+                  set:
                     page: "{{ (iter.page | int) + 1 }}"
               - else:
                   then: { do: continue }
@@ -137,7 +154,7 @@ workflow:
           )
           VALUES (
             '{{ execution_id }}',
-            '{{ iter.item.patient_id }}',
+            '{{ iter.item }}',
             {{ iter.pages_fetched }},
             {{ iter.records_fetched }},
             true
@@ -150,9 +167,9 @@ workflow:
         spec:
           policy:
             rules:
-              - when: "{{ outcome.status == 'error' and outcome.error.retryable }}"
+              - when: "{{ output.status == 'error' and output.error.retryable }}"
                 then: { do: retry, attempts: 3, backoff: linear, delay: 1.0 }
-              - when: "{{ outcome.status == 'error' }}"
+              - when: "{{ output.status == 'error' }}"
                 then: { do: fail }
               - else:
                   then: { do: continue }
@@ -164,7 +181,7 @@ workflow:
           when: '{{ event.name == "loop.done" }}'
 
   - step: validate_results
-    desc: Query completion stats and surface any missing patients
+    desc: Query completion stats
     tool:
       kind: postgres
       auth: pg_k8s
@@ -177,13 +194,34 @@ workflow:
           COUNT(*) FILTER (WHERE completed = FALSE) AS failed_count
         FROM public.fetch_load_test_results
         WHERE execution_id = '{{ execution_id }}';
+      output:
+        store:
+          kind: kv
+        # Persist query output behind a ResultRef so downstream checks resolve through
+        # the reference-only event contract instead of relying on inline event payloads.
+        inline_max_bytes: 0
+    next:
+      spec:
+        mode: exclusive
+      arcs:
+        - step: load_failed_results
 
+  - step: load_failed_results
+    desc: Query failed patients for error reporting
+    tool:
+      kind: postgres
+      auth: pg_k8s
+      query: |
         SELECT patient_id, error_message
         FROM public.fetch_load_test_results
         WHERE execution_id = '{{ execution_id }}'
           AND completed = FALSE
         ORDER BY patient_id
         LIMIT 20;
+      output:
+        store:
+          kind: kv
+        inline_max_bytes: 0
     next:
       spec:
         mode: exclusive
@@ -194,15 +232,15 @@ workflow:
     desc: Assert all 500 patients completed; fail loudly if any are missing
     tool:
       kind: python
-      args:
-        stats: '{{ validate_results.data.result.command_0.rows }}'
-        failed: '{{ validate_results.data.result.command_1.rows }}'
+      input:
+        stats: '{{ validate_results.rows }}'
+        failed: '{{ load_failed_results.rows }}'
         expected: '{{ num_patients }}'
       code: |
         row = stats[0] if isinstance(stats, list) and stats else {}
         total     = int(row.get("total_patients", 0) or 0)
         completed = int(row.get("completed_count", 0) or 0)
-        failed    = int(row.get("failed_count", 0) or 0)
+        failed_count = int(row.get("failed_count", 0) or 0)
         exp       = int(expected or 500)
         failed_rows = failed if isinstance(failed, list) else []
         failed_ids = [r["patient_id"] for r in failed_rows]
@@ -213,13 +251,19 @@ workflow:
         )
         assert completed == exp, (
             f"Expected {exp} completed patients, got {completed}. "
-            f"Failed patients ({failed}): {failed_ids[:10]}"
+            f"Failed patients ({failed_count}): {failed_ids[:10]}"
+        )
+        assert failed_count == 0, (
+            f"Expected 0 failed patients, got {failed_count}. "
+            f"Failed patient IDs: {failed_ids[:10]}"
         )
 
         result = {
             "status": "passed",
             "total_patients": total,
             "completed": completed,
+            "failed_patients": failed_count,
+            "failed_patient_ids": failed_ids[:10],
             "total_pages": int(row.get("total_pages", 0) or 0),
             "total_records": int(row.get("total_records", 0) or 0),
             "avg_pages_per_patient": round(
@@ -236,7 +280,7 @@ workflow:
     desc: Load test complete — all 500 patients processed without worker crash
     tool:
       kind: python
-      args:
+      input:
         summary: '{{ check_results }}'
       code: |
         result = {

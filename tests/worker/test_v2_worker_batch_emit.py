@@ -35,6 +35,30 @@ class _SequenceHttpClient:
         return self._responses.pop(0)
 
 
+def test_normalize_output_config_supports_canonical_tool_output():
+    worker = V2Worker(worker_id="worker-test")
+
+    normalized = worker._normalize_output_config(
+        {
+            "output": {
+                "store": {"kind": "kv"},
+                "inline_max_bytes": 0,
+                "select": [
+                    {"path": "data.result.command_0.rows"},
+                    "status",
+                ],
+            }
+        }
+    )
+
+    assert normalized["store"] == {"kind": "kv"}
+    assert normalized["inline_max_bytes"] == 0
+    assert normalized["output_select"] == [
+        "data.result.command_0.rows",
+        "status",
+    ]
+
+
 @pytest.mark.asyncio
 async def test_emit_batch_events_reuses_idempotency_key_across_retries():
     worker = V2Worker(worker_id="worker-test")

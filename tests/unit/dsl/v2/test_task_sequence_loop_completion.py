@@ -788,6 +788,117 @@ workflow:
     assert context["patient_count"] == 17
 
 
+@pytest.mark.asyncio
+async def test_state_replay_restores_set_ctx_from_reference_only_result_ref(monkeypatch):
+    playbook = Playbook(**yaml.safe_load(
+        """
+apiVersion: noetl.io/v2
+kind: Playbook
+metadata:
+  name: replay_set_ctx_reference_only_ref
+  path: tests/replay_set_ctx_reference_only_ref
+workload:
+  pg_auth: pg_k8s
+workflow:
+  - step: load_next_facility
+    tool:
+      kind: postgres
+      auth: pg_k8s
+      query: SELECT 1;
+    set_ctx:
+      facility_mapping_id: "{{ load_next_facility.data.result.command_0.rows[0].facility_mapping_id }}"
+      facility_id: "{{ load_next_facility.data.result.command_0.rows[0].facility_id }}"
+  - step: load_patients_for_assessments
+    tool:
+      kind: postgres
+      auth: pg_k8s
+      query: |
+        SELECT w.patient_id
+        FROM public.patient_ids_work w
+        WHERE w.facility_mapping_id = {{ facility_mapping_id }};
+        """
+    ))
+    playbook_repo = PlaybookRepo()
+    state_store = StateStore(playbook_repo)
+
+    async def fake_load_playbook_by_id(_catalog_id):
+        return playbook
+
+    async def fake_resolve(ref):
+        assert ref["ref"] == "noetl://execution/9025/result/load_next_facility/abcd1234"
+        return {
+            "data": {
+                "result": {
+                    "command_0": {
+                        "rows": [
+                            {
+                                "facility_mapping_id": 119,
+                                "facility_id": 8123,
+                            }
+                        ],
+                        "row_count": 1,
+                    }
+                }
+            }
+        }
+
+    monkeypatch.setattr(playbook_repo, "load_playbook_by_id", fake_load_playbook_by_id)
+    monkeypatch.setattr(engine_module.default_store, "resolve", fake_resolve)
+
+    class FakeCursor:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        async def execute(self, query, _params):
+            self.last_query = query
+
+        async def fetchone(self):
+            return {
+                "catalog_id": "cat-ctx-ref-hydrated",
+                "context": {"workload": {"pg_auth": "pg_k8s"}},
+                "result": {"status": "COMPLETED"},
+            }
+
+        async def fetchall(self):
+            return [
+                {
+                    "node_name": "load_next_facility",
+                    "event_type": "step.exit",
+                    "result": {
+                        "status": "COMPLETED",
+                        "reference": {
+                            "type": "nats",
+                            "store": "kv",
+                            "locator": "noetl://execution/9025/result/load_next_facility/abcd1234",
+                        },
+                    },
+                    "meta": None,
+                },
+            ]
+
+    class FakeConnection:
+        def cursor(self, row_factory=None):  # noqa: ARG002
+            return FakeCursor()
+
+    class FakeConnectionContext:
+        async def __aenter__(self):
+            return FakeConnection()
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+    monkeypatch.setattr(engine_module, "get_pool_connection", lambda: FakeConnectionContext())
+
+    state = await state_store.load_state("9025")
+
+    assert state is not None
+    assert state.variables["facility_mapping_id"] == 119
+    assert state.variables["facility_id"] == 8123
+
+
 def test_mark_step_completed_adds_context_alias_for_plain_dict_results():
     playbook = Playbook(**yaml.safe_load(
         """

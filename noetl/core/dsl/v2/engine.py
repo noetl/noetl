@@ -25,6 +25,7 @@ from psycopg.rows import dict_row
 from noetl.core.dsl.v2.models import Event, Command, Playbook, Step, ToolCall, CommandSpec
 from noetl.core.db.pool import get_pool_connection, get_snowflake_id
 from noetl.core.cache import get_nats_cache
+from noetl.core.storage import default_store
 
 from noetl.core.logger import setup_logger
 logger = setup_logger(__name__, include_location=True)
@@ -212,6 +213,95 @@ def _unwrap_event_payload(payload: Any) -> Any:
     if isinstance(payload, dict) and "kind" in payload and "data" in payload:
         return payload.get("data")
     return payload
+
+
+def _apply_set_mutations(variables: dict, mutations: dict) -> None:
+    """Apply DSL v2 `set` mutations to the execution variable store.
+
+    Handles scoped keys (ctx.x, iter.x, step.x) by stripping the scope prefix
+    and writing the bare key.  Bare keys (no dot prefix) are written as-is for
+    backward compatibility with legacy set_ctx usage.
+    """
+    for key, value in mutations.items():
+        if "." in key:
+            scope, bare_key = key.split(".", 1)
+            if scope in ("ctx", "iter", "step"):
+                variables[bare_key] = value
+                continue
+        variables[key] = value
+
+
+def _reference_to_result_ref(reference: Any) -> Optional[dict[str, Any]]:
+    """Convert a compact PRD reference envelope into a ResultStore-compatible ref."""
+    if not isinstance(reference, dict):
+        return None
+
+    locator = str(reference.get("locator") or reference.get("ref") or "").strip()
+    if not locator.startswith("noetl://"):
+        return None
+
+    store = str(reference.get("store") or "kv").strip().lower() or "kv"
+    ref_kind = "temp_ref" if store == "memory" else "result_ref"
+    return {
+        "kind": ref_kind,
+        "ref": locator,
+        "store": store,
+    }
+
+
+def _merge_hydrated_step_result(
+    resolved: Any,
+    compact_result: dict[str, Any],
+    ref_wrapper: dict[str, Any],
+) -> Any:
+    """Merge resolved result data with compact PRD metadata for runtime templating."""
+    reference = compact_result.get("reference")
+    compact_context = compact_result.get("context")
+    compact_status = compact_result.get("status")
+
+    if isinstance(resolved, dict):
+        hydrated = dict(resolved)
+        hydrated.setdefault("_ref", ref_wrapper)
+        if isinstance(reference, dict):
+            hydrated.setdefault("reference", reference)
+        if compact_status is not None:
+            hydrated.setdefault("status", compact_status)
+        if isinstance(compact_context, dict):
+            hydrated.setdefault("context", compact_context)
+        return hydrated
+
+    wrapped: dict[str, Any] = {
+        "_ref": ref_wrapper,
+        "reference": reference,
+        "status": compact_status,
+        "result": resolved,
+    }
+    if isinstance(compact_context, dict):
+        wrapped["context"] = compact_context
+    return wrapped
+
+
+async def _hydrate_reference_only_step_result(result: Any) -> Any:
+    """Resolve compact `result.reference` envelopes back into runtime step data."""
+    if not isinstance(result, dict):
+        return result
+
+    reference = result.get("reference")
+    ref_wrapper = _reference_to_result_ref(reference)
+    if not isinstance(ref_wrapper, dict):
+        return result
+
+    try:
+        resolved = await default_store.resolve(ref_wrapper)
+    except Exception as exc:
+        logger.warning(
+            "[RESULT-REF] Failed to resolve %s: %s",
+            ref_wrapper.get("ref"),
+            exc,
+        )
+        return result
+
+    return _merge_hydrated_step_result(resolved, result, ref_wrapper)
 
 
 def _pending_step_key(step_name: Optional[str]) -> str:
@@ -673,6 +763,13 @@ class ExecutionState:
                 # Keep response alias for existing condition expressions, but only
                 # from strict result envelope (never raw tool response payload).
                 context["response"] = event_payload["result"]
+            # Canonical DSL v2: expose result payload as 'output.data'
+            context["output"] = {
+                "data": event_payload.get("result"),
+                "ref": event_payload.get("result_ref") or event_payload.get("ref"),
+                "error": event_payload.get("error"),
+                "status": "error" if event_payload.get("error") else "ok",
+            }
 
         return context
 
@@ -1085,10 +1182,12 @@ class StateStore:
                             if isinstance(event_payload, dict)
                             else event_payload
                         )
+                        step_result = await _hydrate_reference_only_step_result(step_result)
                         state.mark_step_completed(node_name, step_result)
 
                         step_def = state.get_step(node_name)
-                        if step_def and step_def.set_ctx:
+                        step_set = getattr(step_def, "set", None) if step_def else None
+                        if step_def and step_set:
                             replay_event = Event(
                                 execution_id=execution_id,
                                 step=node_name,
@@ -1096,26 +1195,27 @@ class StateStore:
                                 payload=event_payload if isinstance(event_payload, dict) else {"result": event_payload},
                             )
                             context = state.get_render_context(replay_event)
-                            for key, value_template in step_def.set_ctx.items():
+                            rendered_set: dict = {}
+                            for key, value_template in step_set.items():
                                 try:
                                     if isinstance(value_template, str) and "{{" in value_template:
-                                        rendered_value = recursive_render(
+                                        rendered_set[key] = recursive_render(
                                             replay_render_env,
                                             value_template,
                                             context,
                                             strict_keys=True,
                                         )
                                     else:
-                                        rendered_value = value_template
-                                    state.variables[key] = rendered_value
-                                    logger.debug("[STATE-LOAD] Replayed set_ctx %s from %s", key, node_name)
+                                        rendered_set[key] = value_template
+                                    logger.debug("[STATE-LOAD] Replayed set %s from %s", key, node_name)
                                 except Exception as exc:
                                     logger.warning(
-                                        "[STATE-LOAD] Failed to replay set_ctx %s for %s: %s",
+                                        "[STATE-LOAD] Failed to replay set %s for %s: %s",
                                         key,
                                         node_name,
                                         exc,
                                     )
+                            _apply_set_mutations(state.variables, rendered_set)
                 
                 # Initialize loop_state for loop steps with collected iteration results
                 for step_name in loop_steps:
@@ -2007,7 +2107,9 @@ class ControlFlowEngine:
         for idx, next_target in enumerate(next_items):
             target_step = next_target.get("step")
             when_condition = next_target.get("when")
-            target_args = next_target.get("args", {})
+            # Canonical DSL v2: arc.set contains transition-scoped mutations.
+            # Legacy arc.args treated as backward-compat alias for arc.set.
+            arc_set = next_target.get("set") or next_target.get("args") or {}
 
             if not target_step:
                 logger.warning(f"[NEXT-EVAL] Skipping next entry {idx} with no step")
@@ -2040,15 +2142,16 @@ class ControlFlowEngine:
                 logger.warning(f"[NEXT-EVAL] Skipping duplicate command for step '{target_step}' - already in issued_steps")
                 continue
 
-            # Render target args
-            rendered_args = {}
-            if target_args:
+            # Apply arc-level set mutations to state before issuing the command.
+            # Canonical DSL v2: arc.set writes to ctx/iter/step scopes.
+            if arc_set:
                 from noetl.core.dsl.render import render_template as recursive_render
-                rendered_args = recursive_render(self.jinja_env, target_args, context)
+                rendered_arc_set = recursive_render(self.jinja_env, arc_set, context)
+                _apply_set_mutations(state.variables, rendered_arc_set)
 
             # Create command(s) for target step. Loop steps may issue multiple commands
             # immediately up to max_in_flight when parallel mode is configured.
-            issued_cmds = await self._issue_loop_commands(state, target_step_def, rendered_args)
+            issued_cmds = await self._issue_loop_commands(state, target_step_def, {})
             if issued_cmds:
                 commands.extend(issued_cmds)
                 # Steps can be revisited in loopback workflows; clear old completion marker
@@ -2289,40 +2392,33 @@ class ControlFlowEngine:
                     if isinstance(next_item, str):
                         # Simple step name
                         target_step = next_item
-                        args = {}
+                        arc_set_legacy = {}
                     elif isinstance(next_item, dict):
-                        # {step: name, args: {...}}
+                        # {step: name, set: {...}} (canonical) or {step: name, args: {...}} (legacy)
                         target_step = next_item.get("step")
-                        args = next_item.get("args", {})
-                        
-                        # Render args
-                        rendered_args = {}
-                        for key, value in args.items():
-                            if isinstance(value, str) and "{{" in value:
-                                rendered_args[key] = self._render_template(value, context)
-                            else:
-                                rendered_args[key] = value
-                        args = rendered_args
+                        arc_set_legacy = next_item.get("set") or next_item.get("args") or {}
+
+                        # Render and apply arc-level set mutations
+                        if arc_set_legacy:
+                            rendered_arc = {}
+                            for key, value in arc_set_legacy.items():
+                                if isinstance(value, str) and "{{" in value:
+                                    rendered_arc[key] = self._render_template(value, context)
+                                else:
+                                    rendered_arc[key] = value
+                            _apply_set_mutations(state.variables, rendered_arc)
                     else:
                         continue
-                    
-                    # Auto-inject loop_results when transitioning from loop.done event
-                    # The loop step acts as an aggregator, and its result should be passed as loop_results
-                    if event.name == "loop.done" and event.step in state.step_results:
-                        loop_result = state.step_results[event.step]
-                        if "loop_results" not in args:
-                            args["loop_results"] = loop_result
-                            logger.info(f"Auto-injected loop_results for {target_step} from loop step {event.step}")
-                    
+
                     # Get target step definition
                     step_def = state.get_step(target_step)
                     if not step_def:
                         logger.error(f"Target step not found: {target_step}")
                         continue
-                    
+
                     # Create command for target step
                     issued_cmds = await self._issue_loop_commands(
-                        state, step_def, args
+                        state, step_def, {}
                     )
                     if issued_cmds:
                         commands.extend(issued_cmds)
@@ -2491,7 +2587,7 @@ class ControlFlowEngine:
                 # Call/invoke a step with new arguments
                 call_spec = action["call"]
                 target_step = call_spec.get("step")
-                args = call_spec.get("args", {})
+                args = call_spec.get("input") or call_spec.get("args") or {}
                 
                 if not target_step:
                     logger.warning("Call action missing 'step' attribute")
@@ -2677,19 +2773,20 @@ class ControlFlowEngine:
             for next_item in next_items:
                 if isinstance(next_item, str):
                     target_step = next_item
-                    args = {}
+                    deferred_arc_set: dict = {}
                 elif isinstance(next_item, dict):
                     target_step = next_item.get("step")
-                    args = next_item.get("args", {})
+                    deferred_arc_set = next_item.get("set") or next_item.get("args") or {}
 
-                    # Render args
-                    rendered_args = {}
-                    for key, value in args.items():
-                        if isinstance(value, str) and "{{" in value:
-                            rendered_args[key] = self._render_template(value, context)
-                        else:
-                            rendered_args[key] = value
-                    args = rendered_args
+                    # Render and apply arc-level set mutations
+                    if deferred_arc_set:
+                        rendered_deferred: dict = {}
+                        for key, value in deferred_arc_set.items():
+                            if isinstance(value, str) and "{{" in value:
+                                rendered_deferred[key] = self._render_template(value, context)
+                            else:
+                                rendered_deferred[key] = value
+                        _apply_set_mutations(state.variables, rendered_deferred)
                 else:
                     continue
 
@@ -2700,7 +2797,7 @@ class ControlFlowEngine:
                     continue
 
                 # Create command for target step
-                issued_cmds = await self._issue_loop_commands(state, step_def, args)
+                issued_cmds = await self._issue_loop_commands(state, step_def, {})
                 if issued_cmds:
                     commands.extend(issued_cmds)
                     logger.info(
@@ -3462,7 +3559,10 @@ class ControlFlowEngine:
 
         # Build args separately - for step inputs
         step_args = {}
-        if step.args:
+        if step.input:
+            step_args.update(step.input)
+        elif getattr(step, "args", None):
+            # Backward compat: accept legacy step.args if step.input not set
             step_args.update(step.args)
 
         # Merge transition args
@@ -3590,7 +3690,7 @@ class ControlFlowEngine:
                 kind=tool_kind,
                 config=tool_config
             ),
-            args=rendered_args,
+            input=rendered_args,
             render_context=context,
             pipeline=pipeline,
             next_targets=next_targets,
@@ -3749,7 +3849,7 @@ class ControlFlowEngine:
         if event.step.endswith(":task_sequence") and event.name == "call.done":
             parent_step = event.step.rsplit(":", 1)[0]
             response_data = (
-                normalized_payload.get("result", normalized_payload)
+                normalized_payload.get("response", normalized_payload)
                 if isinstance(normalized_payload, dict)
                 else normalized_payload
             )
@@ -3783,34 +3883,36 @@ class ControlFlowEngine:
             else:
                 _promoted_data = response_data
 
-            # For non-loop steps: mark parent step completed BEFORE set_ctx processing.
-            # set_ctx templates like {{ fetch_with_limit.collected_data }} need the step result
+            # For non-loop steps: mark parent step completed BEFORE set processing.
+            # set templates like {{ fetch_with_limit.collected_data }} need the step result
             # to already be in state.step_results when get_render_context() is called.
             _is_loop_step = parent_step_def and parent_step_def.loop and parent_step in state.loop_state
             if not _is_loop_step:
                 state.mark_step_completed(parent_step, _promoted_data)
-                logger.debug("[TASK_SEQ] Pre-marked parent step '%s' completed with promoted result (before set_ctx)", parent_step)
+                logger.debug("[TASK_SEQ] Pre-marked parent step '%s' completed with promoted result (before set)", parent_step)
 
-            # Process step-level set_ctx for task sequence steps
+            # Process step-level set for task sequence steps
             # This must happen BEFORE next transitions are evaluated so updated variables are available
-            if parent_step_def and parent_step_def.set_ctx:
+            _parent_set = getattr(parent_step_def, "set", None) if parent_step_def else None
+            if parent_step_def and _parent_set:
                 # Get render context with the task sequence result available
                 context = state.get_render_context(event)
                 logger.debug(
-                    "[SET_CTX] Processing step-level set_ctx for task sequence %s: keys=%s",
+                    "[SET] Processing step-level set for task sequence %s: keys=%s",
                     parent_step,
-                    list(parent_step_def.set_ctx.keys()),
+                    list(_parent_set.keys()),
                 )
-                for key, value_template in parent_step_def.set_ctx.items():
+                _ts_set_rendered: dict = {}
+                for key, value_template in _parent_set.items():
                     try:
                         if isinstance(value_template, str) and "{{" in value_template:
-                            rendered_value = self._render_template(value_template, context)
+                            _ts_set_rendered[key] = self._render_template(value_template, context)
                         else:
-                            rendered_value = value_template
-                        state.variables[key] = rendered_value
-                        logger.debug("[SET_CTX] Set %s (type=%s)", key, type(rendered_value).__name__)
+                            _ts_set_rendered[key] = value_template
+                        logger.debug("[SET] Rendered %s (type=%s)", key, type(_ts_set_rendered[key]).__name__)
                     except Exception as e:
-                        logger.error(f"[SET_CTX] Failed to render {key}: {e}")
+                        logger.error(f"[SET] Failed to render {key}: {e}")
+                _apply_set_mutations(state.variables, _ts_set_rendered)
 
             # Handle loop iteration tracking for task sequence steps
             if parent_step_def and parent_step_def.loop and parent_step in state.loop_state:
@@ -4129,10 +4231,12 @@ class ControlFlowEngine:
         # This ensures the result is available in render context for subsequent steps
         if event.name == "call.done":
             response_data = (
-                normalized_payload.get("result", normalized_payload)
+                normalized_payload.get("response",
+                    normalized_payload.get("result", normalized_payload))
                 if isinstance(normalized_payload, dict)
                 else normalized_payload
             )
+            response_data = await _hydrate_reference_only_step_result(response_data)
             state.mark_step_completed(event.step, response_data)
             logger.debug(f"[CALL.DONE] Stored result for step {event.step} in state BEFORE next evaluation")
         elif event.name == "call.error":
@@ -4150,26 +4254,27 @@ class ControlFlowEngine:
         # Get render context AFTER storing call.done response
         context = state.get_render_context(event)
 
-        # Process step-level set_ctx BEFORE evaluating next transitions
-        # This ensures variables set by set_ctx are available in routing conditions
-        if event.name == "call.done" and step_def.set_ctx:
+        # Process step-level set BEFORE evaluating next transitions
+        # This ensures variables written by set are available in routing conditions
+        step_set = getattr(step_def, "set", None)
+        if event.name == "call.done" and step_set:
             logger.debug(
-                "[SET_CTX] Processing step-level set_ctx for %s: keys=%s",
+                "[SET] Processing step-level set for %s: keys=%s",
                 event.step,
-                list(step_def.set_ctx.keys()),
+                list(step_set.keys()),
             )
-            for key, value_template in step_def.set_ctx.items():
+            rendered_step_set: dict = {}
+            for key, value_template in step_set.items():
                 try:
-                    # Render the value template with current context (including step result)
                     if isinstance(value_template, str) and "{{" in value_template:
-                        rendered_value = self._render_template(value_template, context)
+                        rendered_step_set[key] = self._render_template(value_template, context)
                     else:
-                        rendered_value = value_template
-                    state.variables[key] = rendered_value
-                    logger.debug("[SET_CTX] Set %s (type=%s)", key, type(rendered_value).__name__)
+                        rendered_step_set[key] = value_template
+                    logger.debug("[SET] Rendered %s (type=%s)", key, type(rendered_step_set[key]).__name__)
                 except Exception as e:
-                    logger.error(f"[SET_CTX] Failed to render {key}: {e}")
-            # Refresh context after set_ctx to include new variables
+                    logger.error(f"[SET] Failed to render {key}: {e}")
+            _apply_set_mutations(state.variables, rendered_step_set)
+            # Refresh context after set to include new variables
             context = state.get_render_context(event)
 
         # Evaluate next[].when transitions ONCE and store results
@@ -4197,7 +4302,8 @@ class ControlFlowEngine:
         # never triggers handle_event().
         if event.name == "call.done" and is_loop_step:
             response_data = (
-                normalized_payload.get("result", normalized_payload)
+                normalized_payload.get("response",
+                    normalized_payload.get("result", normalized_payload))
                 if isinstance(normalized_payload, dict)
                 else normalized_payload
             )
@@ -4432,7 +4538,8 @@ class ControlFlowEngine:
                 if event.step.endswith(":task_sequence"):
                     logger.debug(f"Skipping step.exit result storage for task sequence step {event.step} (already handled on call.done)")
                 else:
-                    state.mark_step_completed(event.step, event.payload["result"])
+                    hydrated_result = await _hydrate_reference_only_step_result(event.payload["result"])
+                    state.mark_step_completed(event.step, hydrated_result)
                     logger.debug(f"Stored result for step {event.step} in state")
         
         # Note: call.done response was stored earlier (before next evaluation) to ensure
