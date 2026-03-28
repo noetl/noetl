@@ -17,10 +17,10 @@ workflow:
     desc: Initialize pagination
     tool:
       kind: python
-      args: {}
+      input: {}
       code: |
         result = {"status": "initialized"}
-    set_ctx:
+    set:
       current_page: "{{ workload.current_page }}"
       page_size: "{{ workload.page_size }}"
       collected_items: "{{ workload.collected_items }}"
@@ -43,13 +43,13 @@ workflow:
       spec:
         policy:
           rules:
-            - when: "{{ outcome.status == 'error' and outcome.error.retryable }}"
+            - when: "{{ output.status == 'error' and output.error.retryable }}"
               then:
                 do: retry
                 attempts: 5
                 backoff: exponential
                 delay: 1.0
-            - when: "{{ outcome.status == 'error' }}"
+            - when: "{{ output.status == 'error' }}"
               then:
                 do: fail
             - else:
@@ -65,7 +65,7 @@ workflow:
     desc: Check if more pages exist and collect results
     tool:
       kind: python
-      args:
+      input:
         response: "{{ fetch_page }}"
         collected: "{{ ctx.collected_items }}"
         current_page: "{{ ctx.current_page }}"
@@ -86,7 +86,7 @@ workflow:
             'next_page': next_page,
             'total_collected': len(all_items)
         }
-    set_ctx:
+    set:
       collected_items: "{{ check_pagination.collected_items }}"
       current_page: "{{ check_pagination.next_page }}"
       has_more: "{{ check_pagination.has_more }}"
@@ -103,7 +103,7 @@ workflow:
     desc: Validate merged results
     tool:
       kind: python
-      args:
+      input:
         items: "{{ ctx.collected_items }}"
       code: |
         data = items if isinstance(items, list) else []
@@ -140,6 +140,6 @@ workflow:
     desc: Workflow complete
     tool:
       kind: python
-      args: {}
+      input: {}
       code: |
         result = {"status": "complete"}

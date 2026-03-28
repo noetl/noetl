@@ -149,8 +149,8 @@ async def test_parallel_loop_issues_up_to_max_in_flight(monkeypatch):
     commands = await engine._issue_loop_commands(state, step_def, {})
 
     assert len(commands) == 3  # loop.spec.max_in_flight
-    assert [cmd.args.get("claimed_batch") for cmd in commands] == [1, 2, 3]
-    assert [cmd.args.get("claimed_index") for cmd in commands] == [0, 1, 2]
+    assert [cmd.input.get("claimed_batch") for cmd in commands] == [1, 2, 3]
+    assert [cmd.input.get("claimed_index") for cmd in commands] == [0, 1, 2]
 
     # The 4th command should not be claimable until one in-flight iteration completes.
     no_slot_command = await engine._create_command_for_step(state, step_def, {})
@@ -215,8 +215,8 @@ async def test_transition_into_loop_step_issues_commands_without_name_error(monk
 
     assert len(commands) == 1
     assert all(command.step == "loop_step" for command in commands)
-    assert [command.args.get("value") for command in commands] == [10]
-    assert [command.args.get("index") for command in commands] == [0]
+    assert [command.input.get("value") for command in commands] == [10]
+    assert [command.input.get("index") for command in commands] == [0]
 
 
 @pytest.mark.asyncio
@@ -268,8 +268,8 @@ async def test_loop_continue_reuses_cached_collection_when_ctx_key_missing(monke
 
     first = await engine._create_command_for_step(state, step_def, {})
     assert first is not None
-    assert first.args.get("claimed_patient_id") == 101
-    assert first.args.get("claimed_index") == 0
+    assert first.input.get("claimed_patient_id") == 101
+    assert first.input.get("claimed_index") == 0
 
     # Simulate in-place mutation of original source list after loop init.
     source_patients.clear()
@@ -284,8 +284,8 @@ async def test_loop_continue_reuses_cached_collection_when_ctx_key_missing(monke
         {"__loop_continue": True},
     )
     assert second is not None
-    assert second.args.get("claimed_patient_id") == 102
-    assert second.args.get("claimed_index") == 1
+    assert second.input.get("claimed_patient_id") == 102
+    assert second.input.get("claimed_index") == 1
 
 
 @pytest.mark.asyncio
@@ -338,8 +338,8 @@ async def test_loop_claim_repairs_zero_collection_size_metadata(monkeypatch):
     command = await engine._create_command_for_step(state, step_def, {})
 
     assert command is not None
-    assert command.args.get("claimed_batch") == 1
-    assert command.args.get("claimed_index") == 0
+    assert command.input.get("claimed_batch") == 1
+    assert command.input.get("claimed_index") == 0
     assert int(fake_cache.state.get("collection_size", 0)) == 3
 
 
@@ -419,8 +419,8 @@ async def test_loop_continue_rerenders_when_replayed_cached_collection_is_empty(
 
     assert command is not None
     assert render_calls["count"] >= 1
-    assert command.args.get("claimed_batch") == 2
-    assert command.args.get("claimed_index") == 1
+    assert command.input.get("claimed_batch") == 2
+    assert command.input.get("claimed_index") == 1
     assert len(state.loop_state["run_batch_workers"]["collection"]) == 3
 
 
@@ -483,8 +483,8 @@ async def test_loop_watchdog_recovers_stalled_scheduled_counts(monkeypatch):
     command = await engine._create_command_for_step(state, step_def, {})
 
     assert command is not None
-    assert command.args.get("claimed_batch") == 2
-    assert command.args.get("claimed_index") == 1
+    assert command.input.get("claimed_batch") == 2
+    assert command.input.get("claimed_index") == 1
     assert int(fake_cache.state.get("scheduled_count", 0)) == 4
     assert int(state.loop_state["run_batch_workers"].get("watchdog_repair_count", 0)) >= 1
 
@@ -551,8 +551,8 @@ async def test_loop_watchdog_recovers_stale_inflight_saturation(monkeypatch):
     command = await engine._create_command_for_step(state, step_def, {})
 
     assert command is not None
-    assert command.args.get("claimed_batch") == 4
-    assert command.args.get("claimed_index") == 3
+    assert command.input.get("claimed_batch") == 4
+    assert command.input.get("claimed_index") == 3
     assert int(fake_cache.state.get("scheduled_count", 0)) == 5
     assert int(state.loop_state["run_batch_workers"].get("watchdog_repair_count", 0)) >= 1
 
@@ -623,8 +623,8 @@ async def test_loop_counter_reconcile_recovers_no_slot_without_watchdog(monkeypa
     command = await engine._create_command_for_step(state, step_def, {})
 
     assert command is not None
-    assert command.args.get("claimed_batch") == 6
-    assert command.args.get("claimed_index") == 5
+    assert command.input.get("claimed_batch") == 6
+    assert command.input.get("claimed_index") == 5
     assert int(fake_cache.state.get("completed_count", 0)) == 4
     assert int(fake_cache.state.get("scheduled_count", 0)) == 6
     assert fake_cache.state.get("last_counter_reconcile_at")

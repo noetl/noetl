@@ -82,11 +82,25 @@ class TaskSequenceContext:
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dict for template rendering."""
+        # Canonical DSL v2: expose result as 'output.data'/'output.ref'.
+        # Keep 'outcome' for backward compat with existing playbooks.
+        output_view: dict[str, Any] = {}
+        if isinstance(self.outcome, dict):
+            output_view = {
+                "status": self.outcome.get("status", "ok"),
+                "data": self.outcome.get("data") or self.outcome.get("result"),
+                "ref": self.outcome.get("ref"),
+                "error": self.outcome.get("error"),
+            }
+            for k in ("http", "pg", "py", "meta"):
+                if k in self.outcome:
+                    output_view[k] = self.outcome[k]
         return {
             "_task": self._task,
             "_prev": self._prev,
             "_attempt": self._attempt,
-            "outcome": self.outcome,
+            "outcome": self.outcome,   # backward compat
+            "output": output_view,     # canonical DSL v2
             "results": self.results,
             "ctx": self.ctx,
             "iter": self.iter,
@@ -121,8 +135,7 @@ class ControlAction:
     attempts: int = 3  # Max retry attempts
     backoff: str = "none"  # none, linear, exponential
     delay: float = 1.0  # Initial delay seconds
-    set_ctx: Optional[dict[str, Any]] = None  # Execution-scoped vars
-    set_iter: Optional[dict[str, Any]] = None  # Iteration-scoped vars
+    set: Optional[dict[str, Any]] = None  # Scoped mutations: ctx.*, iter.*, step.*
 
 
 def build_outcome(
@@ -169,7 +182,8 @@ def build_outcome(
     }
 
     if status == "ok":
-        outcome["result"] = result
+        outcome["result"] = result   # backward compat
+        outcome["data"] = result     # canonical DSL v2: output.data
     else:
         outcome["error"] = error or {"kind": "unknown", "retryable": False, "message": "Unknown error"}
 
@@ -550,48 +564,32 @@ class TaskSequenceExecutor:
                 "_task": latest_task_dict["_task"],
                 "_prev": latest_task_dict["_prev"],
                 "_attempt": latest_task_dict["_attempt"],
-                "outcome": latest_task_dict["outcome"],
+                "outcome": latest_task_dict["outcome"],   # backward compat
+                "output": latest_task_dict["output"],     # canonical DSL v2
                 "results": latest_task_dict["results"],
                 # Keep merged ctx and iter from render_ctx (don't override with empty task seq ctx)
             }
             action = self._evaluate_policy_rules(policy_rules, eval_ctx, ctx.outcome)
 
-            # Apply set_ctx
-            if action.set_ctx:
-                rendered_ctx = {}
-                for key, value in action.set_ctx.items():
+            # Apply unified 'set' mutations (canonical DSL v2: ctx.*, iter.*, step.*)
+            if action.set:
+                for key, value in action.set.items():
                     if isinstance(value, str) and "{{" in value:
                         try:
-                            rendered_ctx[key] = self.render_template(value, eval_ctx)
+                            value = self.render_template(value, eval_ctx)
                         except Exception as e:
-                            logger.warning(f"[TASK_SEQ] Error rendering set_ctx.{key}: {e}")
-                            rendered_ctx[key] = value
+                            logger.warning(f"[TASK_SEQ] Error rendering set.{key}: {e}")
+                    # Route to ctx or iter based on scope prefix
+                    if key.startswith("ctx."):
+                        ctx.set_ctx_vars({key[4:]: value})
+                    elif key.startswith("iter."):
+                        ctx.set_iter_vars({key[5:]: value})
+                    elif key.startswith("step."):
+                        ctx.set_ctx_vars({key[5:]: value})  # step scope → ctx for now
                     else:
-                        rendered_ctx[key] = value
-                ctx.set_ctx_vars(rendered_ctx)
-                logger.debug(f"[TASK_SEQ] Set ctx vars: {list(rendered_ctx.keys())}")
-
-            # Apply set_iter
-            if action.set_iter:
-                rendered_iter = {}
-                for key, value in action.set_iter.items():
-                    if isinstance(value, str) and "{{" in value:
-                        try:
-                            rendered_iter[key] = self.render_template(value, eval_ctx)
-                            logger.debug(
-                                f"[TASK_SEQ] Rendered set_iter.{key}: {type(rendered_iter[key]).__name__}"
-                            )
-                        except Exception as e:
-                            logger.warning(f"[TASK_SEQ] Error rendering set_iter.{key}: {e}")
-                            rendered_iter[key] = value
-                    else:
-                        rendered_iter[key] = value
-                ctx.set_iter_vars(rendered_iter)
-                logger.debug(
-                    "[TASK_SEQ] Applied set_iter keys=%s iter_key_count=%s",
-                    list(rendered_iter.keys()),
-                    len(ctx.iter.keys()),
-                )
+                        # Bare key: backward compat — write to ctx
+                        ctx.set_ctx_vars({key: value})
+                logger.debug(f"[TASK_SEQ] Applied set keys={list(action.set.keys())}")
 
             # Apply control action
             if action.action == "continue":
@@ -939,7 +937,7 @@ class TaskSequenceExecutor:
         if "set_vars" in then_data:
             raise ValueError(
                 "Policy rule uses 'set_vars' which is not allowed in v10. "
-                "Use 'set_ctx' for execution-scoped variables."
+                "Use 'set' for scoped variable mutations."
             )
 
         # STRICT v10: Require 'do' field
@@ -956,14 +954,24 @@ class TaskSequenceExecutor:
             except ValueError:
                 delay = 1.0
 
+        # Canonical DSL v2: unified 'set' with scoped keys (ctx.*, iter.*, step.*).
+        # Accept legacy set_ctx / set_iter as backward-compat aliases.
+        merged_set: Optional[dict[str, Any]] = then_data.get("set")
+        if merged_set is None:
+            legacy: dict[str, Any] = {}
+            for key, val in (then_data.get("set_ctx") or {}).items():
+                legacy[f"ctx.{key}" if "." not in key else key] = val
+            for key, val in (then_data.get("set_iter") or {}).items():
+                legacy[f"iter.{key}" if "." not in key else key] = val
+            merged_set = legacy or None
+
         return ControlAction(
             action=then_data["do"],
             to=then_data.get("to"),
             attempts=then_data.get("attempts", 3),
             backoff=then_data.get("backoff", "none"),
             delay=delay,
-            set_ctx=then_data.get("set_ctx"),
-            set_iter=then_data.get("set_iter"),
+            set=merged_set,
         )
 
     def _calculate_delay(self, action: ControlAction, attempt: int) -> float:

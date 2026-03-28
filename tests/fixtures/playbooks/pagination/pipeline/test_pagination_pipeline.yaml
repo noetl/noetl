@@ -16,7 +16,7 @@ metadata:
 
     - Retry, break, fail, continue control actions
 
-    - outcome object for accessing execution results
+    - output object for accessing execution results
 
     '
 workload:
@@ -37,7 +37,7 @@ workflow:
     kind: python
     code: "result = {\n  \"status\": \"initialized\",\n  \"message\": \"Starting pagination\
       \ pipeline test\"\n}\n"
-  set_ctx:
+  set:
     current_page: '{{ workload.current_page }}'
     page_size: '{{ workload.page_size }}'
     total_fetched: '{{ workload.total_fetched }}'
@@ -78,18 +78,18 @@ workflow:
     spec:
       policy:
         rules:
-        - when: '{{ outcome.error.kind == ''rate_limit'' }}'
+        - when: '{{ output.error.kind == ''rate_limit'' }}'
           then:
             do: retry
             attempts: 10
             delay: 5.0
-        - when: '{{ outcome.error.retryable }}'
+        - when: '{{ output.error.retryable }}'
           then:
             do: retry
             attempts: 5
             backoff: exponential
             delay: 1.0
-        - when: '{{ outcome.status == ''error'' }}'
+        - when: '{{ output.status == ''error'' }}'
           then:
             do: fail
         - else:
@@ -97,7 +97,7 @@ workflow:
               do: continue
   - name: transform
     kind: python
-    args:
+    input:
       http_response: '{{ _prev }}'
       page_num: '{{ ctx.current_page }}'
       execution_id: '{{ execution_id }}'
@@ -113,7 +113,7 @@ workflow:
     spec:
       policy:
         rules:
-        - when: '{{ outcome.status == ''error'' }}'
+        - when: '{{ output.status == ''error'' }}'
           then:
             do: continue
         - else:
@@ -121,7 +121,7 @@ workflow:
               do: continue
   - name: store
     kind: python
-    args:
+    input:
       data: '{{ _prev }}'
       db_host: '{{ db_host }}'
       db_port: '{{ db_port }}'
@@ -143,13 +143,13 @@ workflow:
     spec:
       policy:
         rules:
-        - when: '{{ outcome.error.retryable }}'
+        - when: '{{ output.error.retryable }}'
           then:
             do: retry
             attempts: 3
             backoff: linear
             delay: 2.0
-        - when: '{{ outcome.status == ''error'' }}'
+        - when: '{{ output.status == ''error'' }}'
           then:
             do: fail
         - else:
@@ -164,7 +164,7 @@ workflow:
   desc: Check if more pages to fetch
   tool:
     kind: python
-    args:
+    input:
       pipeline_result: '{{ fetch_transform_store }}'
       current_page: '{{ ctx.current_page }}'
       total_fetched: '{{ ctx.total_fetched }}'
@@ -172,7 +172,7 @@ workflow:
       \ dict) else False\n\nresult = {\n  \"has_more\": has_more,\n  \"current_page\"\
       : current_page,\n  \"total_fetched\": total_fetched,\n  \"action\": \"continue\"\
       \ if has_more else \"complete\"\n}\n"
-  set_ctx:
+  set:
     current_page: '{{ (ctx.current_page | int) + 1 }}'
   next:
     spec:
@@ -199,7 +199,7 @@ workflow:
   desc: Generate final test report
   tool:
     kind: python
-    args:
+    input:
       validation: '{{ validate_results }}'
       pages_processed: '{{ ctx.current_page }}'
       total_fetched: '{{ ctx.total_fetched }}'
@@ -214,7 +214,7 @@ workflow:
       ,\n    \"avg_score\": round(float(avg_score), 2) if avg_score else 0\n  },\n\
       \  \"features_tested\": [\n    \"Tool pipeline (list of labeled tasks)\",\n\
       \    \"tool.spec.policy.rules: per-task flow control\",\n    \"_prev data threading\
-      \ between tasks\",\n    \"outcome object for result/error inspection\",\n  \
+      \ between tasks\",\n    \"output object for result/error inspection\",\n  \
       \  \"Retry with exponential backoff\",\n    \"Control actions: continue, retry,\
       \ fail\"\n  ]\n}\n\nif not success:\n    result[\"error\"] = f\"Expected {expected_items}\
       \ records, got {total_records}\"\n"

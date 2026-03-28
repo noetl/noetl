@@ -17,10 +17,10 @@ workflow:
     desc: Initialize offset pagination
     tool:
       kind: python
-      args: {}
+      input: {}
       code: |
         result = {"status": "initialized"}
-    set_ctx:
+    set:
       offset: "{{ workload.offset }}"
       limit: "{{ workload.limit }}"
       collected_users: "{{ workload.collected_users }}"
@@ -43,13 +43,13 @@ workflow:
       spec:
         policy:
           rules:
-            - when: "{{ outcome.status == 'error' and outcome.error.retryable }}"
+            - when: "{{ output.status == 'error' and output.error.retryable }}"
               then:
                 do: retry
                 attempts: 5
                 backoff: exponential
                 delay: 1.0
-            - when: "{{ outcome.status == 'error' }}"
+            - when: "{{ output.status == 'error' }}"
               then:
                 do: fail
             - else:
@@ -65,7 +65,7 @@ workflow:
     desc: Check if more pages exist and collect results
     tool:
       kind: python
-      args:
+      input:
         response: "{{ fetch_page }}"
         collected: "{{ ctx.collected_users }}"
         current_offset: "{{ ctx.offset }}"
@@ -86,7 +86,7 @@ workflow:
             'next_offset': next_offset,
             'total_collected': len(all_users)
         }
-    set_ctx:
+    set:
       collected_users: "{{ check_pagination.collected_users }}"
       offset: "{{ check_pagination.next_offset }}"
       has_more: "{{ check_pagination.has_more }}"
@@ -103,7 +103,7 @@ workflow:
     desc: Validate merged results
     tool:
       kind: python
-      args:
+      input:
         users: "{{ ctx.collected_users }}"
       code: |
         data = users if isinstance(users, list) else []
@@ -139,6 +139,6 @@ workflow:
     desc: Workflow complete
     tool:
       kind: python
-      args: {}
+      input: {}
       code: |
         result = {"status": "complete"}

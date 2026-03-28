@@ -1,5 +1,6 @@
 import pytest
 
+import noetl.core.dsl.v2.engine as engine_module
 from noetl.core.dsl.v2.engine import ControlFlowEngine, ExecutionState, PlaybookRepo, StateStore
 from noetl.core.dsl.v2.models import Event
 from noetl.core.dsl.v2.parser import DSLParser
@@ -144,3 +145,73 @@ workflow:
     assert len(commands) == 1
     assert commands[0].step == "verify"
     assert commands[0].tool.config["args"]["user_id"] == "999"
+
+
+@pytest.mark.asyncio
+async def test_reference_only_call_done_resolves_result_ref_for_follow_up_step(monkeypatch):
+    engine, state_store, state = _build_engine(
+        """
+apiVersion: noetl.io/v2
+kind: Playbook
+metadata:
+  name: wrapped_reference_result
+
+workflow:
+  - step: validate_results
+    tool:
+      kind: postgres
+      query: SELECT 1;
+    next:
+      spec:
+        mode: exclusive
+      arcs:
+        - step: check_results
+
+  - step: check_results
+    tool:
+      kind: python
+      args:
+        stats: "{{ validate_results.data.result.command_0.rows }}"
+      code: |
+        result = {"stats": stats}
+""",
+        "exec-wrapped-ref",
+    )
+    await state_store.save_state(state)
+
+    async def fake_resolve(ref):
+        assert ref["ref"] == "noetl://execution/123/result/validate_results/abcd1234"
+        return {
+            "data": {
+                "result": {
+                    "command_0": {
+                        "rows": [{"total_patients": 500}],
+                    }
+                }
+            }
+        }
+
+    monkeypatch.setattr(engine_module.default_store, "resolve", fake_resolve)
+
+    commands = await engine.handle_event(
+        Event(
+            execution_id="exec-wrapped-ref",
+            step="validate_results",
+            name="call.done",
+            payload={
+                "result": {
+                    "status": "completed",
+                    "reference": {
+                        "type": "nats",
+                        "store": "kv",
+                        "locator": "noetl://execution/123/result/validate_results/abcd1234",
+                    },
+                }
+            },
+        ),
+        already_persisted=True,
+    )
+
+    assert len(commands) == 1
+    assert commands[0].step == "check_results"
+    assert commands[0].tool.config["args"]["stats"] == [{"total_patients": 500}]

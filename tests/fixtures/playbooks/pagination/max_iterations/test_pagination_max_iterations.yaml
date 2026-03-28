@@ -19,7 +19,7 @@ workflow:
     code: 'result = {"status": "initialized"}
 
       '
-  set_ctx:
+  set:
     current_page: '{{ workload.current_page }}'
     page_size: '{{ workload.page_size }}'
     max_iterations: '{{ workload.max_iterations }}'
@@ -43,13 +43,13 @@ workflow:
     spec:
       policy:
         rules:
-        - when: '{{ outcome.error.retryable }}'
+        - when: '{{ output.error.retryable }}'
           then:
             do: retry
             attempts: 3
             backoff: linear
             delay: 1.0
-        - when: '{{ outcome.status == ''error'' }}'
+        - when: '{{ output.status == ''error'' }}'
           then:
             do: fail
         - else:
@@ -57,7 +57,7 @@ workflow:
               do: continue
   - name: collect
     kind: python
-    args:
+    input:
       http_response: '{{ _prev }}'
       existing_data: '{{ ctx.collected_data }}'
     code: "response_body = http_response.get('data', {})\nitems = response_body.get('data',\
@@ -66,7 +66,7 @@ workflow:
       \ else []\ncollected.extend(items)\n\nresult = {\n    'collected_data': collected,\n\
       \    'has_more': paging.get('hasMore', False),\n    'current_page': paging.get('page',\
       \ 1)\n}\n"
-  set_ctx:
+  set:
     collected_data: '{{ fetch_with_limit.collected_data }}'
     current_page: '{{ (ctx.current_page | int) + 1 }}'
     iteration_count: '{{ (ctx.iteration_count | int) + 1 }}'
@@ -84,7 +84,7 @@ workflow:
   desc: Validate limited results
   tool:
     kind: python
-    args:
+    input:
       input_data: '{{ ctx.collected_data }}'
     code: "# Should only get 2 pages = 20 items (not all 35) - handle server wrapping\n\
       raw_data = input_data\n\n# Unwrap if server wrapped in {'value': ...}\nif isinstance(raw_data,\

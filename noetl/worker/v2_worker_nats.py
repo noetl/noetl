@@ -582,6 +582,35 @@ class V2Worker:
             envelope["error"] = error
         return envelope
 
+    @staticmethod
+    def _normalize_output_config(tool_config: dict[str, Any]) -> dict[str, Any]:
+        """Bridge canonical `tool.output` config to the legacy ResultHandler shape."""
+        if not isinstance(tool_config, dict):
+            return {}
+
+        raw_output = tool_config.get("output")
+        if not isinstance(raw_output, dict):
+            raw_output = tool_config.get("result")
+        if not isinstance(raw_output, dict):
+            return {}
+
+        normalized = dict(raw_output)
+
+        select_config = normalized.pop("select", None)
+        if "output_select" not in normalized and isinstance(select_config, list):
+            select_paths: list[str] = []
+            for item in select_config:
+                if isinstance(item, str) and item.strip():
+                    select_paths.append(item.strip())
+                elif isinstance(item, dict):
+                    path_value = item.get("path")
+                    if isinstance(path_value, str) and path_value.strip():
+                        select_paths.append(path_value.strip())
+            if select_paths:
+                normalized["output_select"] = select_paths
+
+        return normalized
+
     def _normalize_payload_reference_only(
         self,
         *,
@@ -1649,9 +1678,10 @@ class V2Worker:
             step=step,
             execution_id=execution_id,
         )
+        # Canonical DSL v2: command carries 'input'. Accept 'args' as backward-compat alias.
         args = self._normalize_command_context_mapping(
-            context.get("args"),
-            field_name="args",
+            context.get("input") or context.get("args"),
+            field_name="input",
             step=step,
             execution_id=execution_id,
         )
@@ -1682,13 +1712,12 @@ class V2Worker:
             eval_mode = spec.get("eval_mode", "on_entry")
             logger.debug(f"[SPEC] Step '{step}' spec: case_mode={case_mode}, eval_mode={eval_mode}")
         
-        # CRITICAL: Merge tool_config.args with top-level args
-        # In V2 DSL, step args are often defined within the tool block
-        # e.g., tool: {kind: python, args: {name: "value"}, script: {...}}
-        # The engine puts these in tool_config.args, but the worker needs them in args
-        if "args" in tool_config:
+        # CRITICAL: Merge tool_config input/args with top-level args.
+        # Canonical DSL v2: tool.input replaces tool.args; accept both for backward compat.
+        tool_input = tool_config.get("input") or tool_config.get("args")
+        if tool_input and isinstance(tool_input, dict):
             # Merge with top-level args taking precedence
-            merged_args = {**tool_config["args"], **args}
+            merged_args = {**tool_input, **args}
             args = merged_args
             logger.debug("Args config: merged_from_tool_config | keys=%s", _safe_keys(args))
         else:
@@ -1791,8 +1820,7 @@ class V2Worker:
             else:
                 try:
                     result_handler = ResultHandler(execution_id=execution_id)
-                    # Get output config from tool_config if present
-                    output_config = tool_config.get("result", {})
+                    output_config = self._normalize_output_config(tool_config)
                     processed_response = await result_handler.process_result(
                         step_name=step,
                         result=response,
@@ -2221,7 +2249,7 @@ class V2Worker:
         
         # Use render_context from engine (includes workload, step results, execution_id, etc.)
         # This allows plugins to render Jinja2 templates with full state
-        context = render_context if render_context else {"args": args, "step": step}
+        context = render_context if render_context else {"input": args, "step": step}
         
         logger.debug(
             "WORKER: initial context keys=%s execution_id=%s has_catalog_id=%s",
@@ -2291,10 +2319,11 @@ class V2Worker:
         # For workbook tool, preserve 'name' field from config (it's the workbook action name)
         # For other tools, add 'name' as step name for logging
         task_config = {**config}
-        # Merge args: config["args"] (from pipeline tool spec) + args parameter
-        # This preserves tool args from pipeline while allowing parameter override
-        config_args = config.get("args", {})
+        # Merge input: config["input"] (canonical DSL v2) or config["args"] (legacy) + args parameter
+        # This preserves tool input from pipeline while allowing parameter override
+        config_args = config.get("input") or config.get("args") or {}
         task_config["args"] = {**config_args, **args} if config_args or args else {}
+        task_config["input"] = task_config["args"]  # canonical alias
         if "name" not in config:
             task_config["name"] = step
         

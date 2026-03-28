@@ -38,7 +38,7 @@ workflow:
       \  items_count INTEGER NOT NULL,\n  has_more BOOLEAN NOT NULL,\n  created_at\
       \ TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP\n);\nDELETE FROM pagination_test_results\
       \ WHERE execution_id = {{ execution_id }};\nSELECT 'Table ready' as status;\n"
-  set_ctx:
+  set:
     current_endpoint_index: '{{ workload.current_endpoint_index }}'
     current_page: '{{ workload.current_page }}'
     current_endpoint: '{{ workload.current_endpoint }}'
@@ -51,7 +51,7 @@ workflow:
   desc: Initialize endpoint loop
   tool:
     kind: python
-    args:
+    input:
       endpoints: '{{ endpoints }}'
       endpoint_index: '{{ ctx.current_endpoint_index }}'
     code: "# Convert to int - may be string from template rendering\nendpoint_index\
@@ -60,7 +60,7 @@ workflow:
       \    result = {\n        'has_more_endpoints': True,\n        'endpoint': current,\n\
       \        'index': endpoint_index\n    }\nelse:\n    result = {\n        'has_more_endpoints':\
       \ False,\n        'endpoint': None,\n        'index': endpoint_index\n    }\n"
-  set_ctx:
+  set:
     current_endpoint: '{{ init_endpoint_loop.endpoint }}'
     current_page: 1
   next:
@@ -84,13 +84,13 @@ workflow:
     spec:
       policy:
         rules:
-        - when: '{{ outcome.error.retryable }}'
+        - when: '{{ output.error.retryable }}'
           then:
             do: retry
             attempts: 3
             backoff: linear
             delay: 1.0
-        - when: '{{ outcome.status == ''error'' }}'
+        - when: '{{ output.status == ''error'' }}'
           then:
             do: fail
         - else:
@@ -108,13 +108,13 @@ workflow:
     spec:
       policy:
         rules:
-        - when: '{{ outcome.error.retryable }}'
+        - when: '{{ output.error.retryable }}'
           then:
             do: retry
             attempts: 3
             backoff: linear
             delay: 1.0
-        - when: '{{ outcome.status == ''error'' }}'
+        - when: '{{ output.status == ''error'' }}'
           then:
             do: fail
         - else:
@@ -122,12 +122,12 @@ workflow:
               do: continue
   - name: check_pagination
     kind: python
-    args:
+    input:
       http_response: '{{ fetch }}'
     code: "paging = http_response.get('data', {}).get('paging', {})\nresult = {\n\
       \    'has_more': paging.get('hasMore', False),\n    'current_page': paging.get('page',\
       \ 1)\n}\n"
-  set_ctx:
+  set:
     current_page: '{{ (ctx.current_page | int) + 1 }}'
   next:
     spec:
@@ -144,7 +144,7 @@ workflow:
     code: 'result = {"status": "moving_to_next_endpoint"}
 
       '
-  set_ctx:
+  set:
     current_endpoint_index: '{{ (ctx.current_endpoint_index | int) + 1 }}'
   next:
     spec:
@@ -170,8 +170,8 @@ workflow:
   desc: Verify data was stored correctly
   tool:
     kind: python
-    args:
-      db_results: '{{ validate_results.data.result.command_0.rows }}'
+    input:
+      db_results: '{{ validate_results.data.command_0.rows }}'
       workload: '{{ workload }}'
     code: "\"\"\"\nValidate data was stored in Postgres via sink (each page saved\
       \ individually).\nEach pagination request created a separate row in the table.\n\
