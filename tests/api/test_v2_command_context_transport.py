@@ -40,7 +40,7 @@ async def test_store_command_context_if_needed_keeps_small_context_inline(monkey
 
     context = {
         "tool_config": {"kind": "http"},
-        "args": {"page": 1},
+        "input": {"page": 1},
     }
     result = await v2_api._store_command_context_if_needed(
         execution_id=123,
@@ -59,21 +59,32 @@ def test_validate_postgres_command_context_requires_auth():
             tool_kind="postgres",
             context={
                 "tool_config": {},
-                "args": {},
+                "input": {},
             },
         )
 
 
-def test_validate_postgres_command_context_accepts_tool_or_args_auth():
+def test_validate_postgres_command_context_accepts_tool_or_input_auth():
     v2_api._validate_postgres_command_context(
         step="load_rows",
         tool_kind="postgres",
         context={
             "tool_config": {"auth": "pg_main"},
-            "args": {},
+            "input": {},
         },
     )
 
+    v2_api._validate_postgres_command_context(
+        step="load_rows",
+        tool_kind="postgres",
+        context={
+            "tool_config": {},
+            "input": {"auth": "pg_main"},
+        },
+    )
+
+
+def test_validate_postgres_command_context_accepts_legacy_args_alias():
     v2_api._validate_postgres_command_context(
         step="load_rows",
         tool_kind="postgres",
@@ -91,6 +102,6 @@ def test_validate_postgres_command_context_rejects_direct_connection_fields():
             tool_kind="postgres",
             context={
                 "tool_config": {"auth": "pg_main", "db_host": "localhost"},
-                "args": {},
+                "input": {},
             },
         )

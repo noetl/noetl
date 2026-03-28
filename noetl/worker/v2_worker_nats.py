@@ -1679,7 +1679,7 @@ class V2Worker:
             execution_id=execution_id,
         )
         # Canonical DSL v2: command carries 'input'. Accept 'args' as backward-compat alias.
-        args = self._normalize_command_context_mapping(
+        command_input = self._normalize_command_context_mapping(
             context.get("input") or context.get("args"),
             field_name="input",
             step=step,
@@ -1712,16 +1712,16 @@ class V2Worker:
             eval_mode = spec.get("eval_mode", "on_entry")
             logger.debug(f"[SPEC] Step '{step}' spec: case_mode={case_mode}, eval_mode={eval_mode}")
         
-        # CRITICAL: Merge tool_config input/args with top-level args.
+        # CRITICAL: Merge tool_config input/args with top-level command input.
         # Canonical DSL v2: tool.input replaces tool.args; accept both for backward compat.
         tool_input = tool_config.get("input") or tool_config.get("args")
         if tool_input and isinstance(tool_input, dict):
-            # Merge with top-level args taking precedence
-            merged_args = {**tool_input, **args}
-            args = merged_args
-            logger.debug("Args config: merged_from_tool_config | keys=%s", _safe_keys(args))
+            # Merge with top-level command input taking precedence.
+            merged_input = {**tool_input, **command_input}
+            command_input = merged_input
+            logger.debug("Input config: merged_from_tool_config | keys=%s", _safe_keys(command_input))
         else:
-            logger.debug("Args config: using_top_level | keys=%s", _safe_keys(args))
+            logger.debug("Input config: using_top_level | keys=%s", _safe_keys(command_input))
 
         logger.info(f"[EVENT] Executing {step} (tool={tool_kind}) for execution {execution_id}" + (f" command={command_id}" if command_id else ""))
 
@@ -1773,7 +1773,7 @@ class V2Worker:
             if str(tool_kind).lower() == "postgres":
                 postgres_auth = tool_config.get("auth")
                 if postgres_auth in (None, "", {}):
-                    postgres_auth = args.get("auth") if isinstance(args, dict) else None
+                    postgres_auth = command_input.get("auth") if isinstance(command_input, dict) else None
                 if postgres_auth in (None, "", {}):
                     raise ValueError(
                         f"Postgres step '{step}' is missing auth in command context. "
@@ -1792,9 +1792,9 @@ class V2Worker:
                     direct_fields.update(
                         key for key in forbidden_fields if tool_config.get(key) not in (None, "")
                     )
-                if isinstance(args, dict):
+                if isinstance(command_input, dict):
                     direct_fields.update(
-                        key for key in forbidden_fields if args.get(key) not in (None, "")
+                        key for key in forbidden_fields if command_input.get(key) not in (None, "")
                     )
                 if direct_fields:
                     raise ValueError(
@@ -1804,7 +1804,14 @@ class V2Worker:
 
             # Execute tool
             t_tool_start = time.perf_counter()
-            response = await self._execute_tool(tool_kind, tool_config, args, step, render_context, case_blocks=case_blocks)
+            response = await self._execute_tool(
+                tool_kind,
+                tool_config,
+                command_input,
+                step,
+                render_context,
+                case_blocks=case_blocks,
+            )
             t_tool_end = time.perf_counter()
             logger.info(f"[PERF] Tool execution for {step} took {(t_tool_end - t_tool_start)*1000:.1f}ms")
 
@@ -2592,7 +2599,7 @@ class V2Worker:
                 try:
                     rendered = jinja_env.from_string(template).render(**ctx)
                     # If result looks like JSON (dict or list), parse it back to object
-                    # This allows {{ outcome.result }} to return the actual dict, not a string
+                    # This allows {{ output.data }} to return the actual dict, not a string
                     if isinstance(rendered, str):
                         stripped = rendered.strip()
                         if (stripped.startswith('{') and stripped.endswith('}')) or \
@@ -2601,7 +2608,7 @@ class V2Worker:
                                 return json.loads(stripped)
                             except json.JSONDecodeError:
                                 # Fallback to ast.literal_eval for Python repr format (single quotes)
-                                # This handles {{ outcome.result }} which renders as "{'key': 'value'}"
+                                # This handles {{ output.data }} when rendered as "{'key': 'value'}"
                                 try:
                                     return ast.literal_eval(stripped)
                                 except (ValueError, SyntaxError):
