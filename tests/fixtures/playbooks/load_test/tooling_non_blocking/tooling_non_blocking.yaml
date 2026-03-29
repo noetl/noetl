@@ -377,6 +377,26 @@ workflow:
         tool_metrics = {}
         tool_status = {}
 
+        def extract_command_id(evt):
+            if not isinstance(evt, dict):
+                return None
+            context = evt.get("context")
+            if isinstance(context, dict):
+                value = context.get("command_id")
+                if isinstance(value, str) and value:
+                    return value
+            result_obj = evt.get("result")
+            if isinstance(result_obj, dict):
+                value = result_obj.get("command_id")
+                if isinstance(value, str) and value:
+                    return value
+                result_context = result_obj.get("context")
+                if isinstance(result_context, dict):
+                    value = result_context.get("command_id")
+                    if isinstance(value, str) and value:
+                        return value
+            return None
+
         all_steps = list(mandatory_steps or []) + list(optional_steps or [])
         for step_name in all_steps:
             candidates = {step_name, f"{step_name}:task_sequence"}
@@ -384,10 +404,16 @@ workflow:
 
             issued = [evt for evt in scoped if evt.get("event_type") == "command.issued"]
             started = [evt for evt in scoped if evt.get("event_type") == "command.started"]
-            terminal = [
-                evt for evt in scoped
-                if evt.get("event_type") in {"command.completed", "command.failed", "command.cancelled"}
-            ]
+            done_events = [evt for evt in scoped if evt.get("event_type") == "call.done"]
+            done_by_command = {}
+            done_without_command = []
+            for evt in done_events:
+                command_id = extract_command_id(evt)
+                if command_id:
+                    done_by_command[command_id] = evt
+                else:
+                    done_without_command.append(evt)
+            terminal = list(done_by_command.values()) + done_without_command
 
             timeline = []
             for evt in started:
