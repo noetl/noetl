@@ -50,6 +50,10 @@ _TASKSEQ_LOOP_REPAIR_THRESHOLD = max(
     0,
     int(os.getenv("NOETL_TASKSEQ_LOOP_REPAIR_THRESHOLD", "3")),
 )
+_TASKSEQ_LOOP_MISSING_MIN_AGE_SECONDS = max(
+    0.0,
+    float(os.getenv("NOETL_TASKSEQ_LOOP_MISSING_MIN_AGE_SECONDS", "5")),
+)
 _LOOP_STALL_WATCHDOG_SECONDS = max(
     0.0,
     float(os.getenv("NOETL_LOOP_STALL_WATCHDOG_SECONDS", "60")),
@@ -1811,8 +1815,14 @@ class ControlFlowEngine:
         node_name: str,
         loop_event_id: Optional[str] = None,
         limit: int = 10,
+        min_age_seconds: float = _TASKSEQ_LOOP_MISSING_MIN_AGE_SECONDS,
     ) -> list[int]:
-        """Find loop iteration indexes that were issued but have no terminal command event."""
+        """
+        Find loop iteration indexes that appear missing terminal events.
+
+        Guards against false positives from healthy in-flight commands by requiring
+        a minimum age before reissuing an index.
+        """
         if limit <= 0:
             return []
 
@@ -1824,10 +1834,15 @@ class ControlFlowEngine:
                 loop_filter = "AND meta->>'loop_event_id' = %s"
                 issued_params.append(str(loop_event_id))
 
+            min_age = max(0.0, float(min_age_seconds or 0.0))
             params: list[Any] = [
                 *issued_params,
                 int(execution_id),
                 node_names,
+                int(execution_id),
+                node_names,
+                min_age,
+                min_age,
                 int(limit),
             ]
 
@@ -1838,12 +1853,24 @@ class ControlFlowEngine:
                         WITH issued AS (
                             SELECT
                                 meta->>'command_id' AS command_id,
-                                NULLIF(meta->>'loop_iteration_index', '')::int AS loop_iteration_index
+                                NULLIF(meta->>'loop_iteration_index', '')::int AS loop_iteration_index,
+                                created_at AS issued_at
                             FROM noetl.event
                             WHERE execution_id = %s
                               AND node_name = ANY(%s)
                               AND event_type = 'command.issued'
                               {loop_filter}
+                        ),
+                        started AS (
+                            SELECT
+                                meta->>'command_id' AS command_id,
+                                MAX(created_at) AS started_at
+                            FROM noetl.event
+                            WHERE execution_id = %s
+                              AND node_name = ANY(%s)
+                              AND event_type = 'command.started'
+                              AND meta ? 'command_id'
+                            GROUP BY meta->>'command_id'
                         ),
                         terminal AS (
                             SELECT DISTINCT meta->>'command_id' AS command_id
@@ -1855,9 +1882,15 @@ class ControlFlowEngine:
                         )
                         SELECT i.loop_iteration_index
                         FROM issued i
+                        LEFT JOIN started s ON s.command_id = i.command_id
                         LEFT JOIN terminal t ON t.command_id = i.command_id
                         WHERE i.loop_iteration_index IS NOT NULL
                           AND t.command_id IS NULL
+                          AND i.issued_at <= (NOW() - (%s * INTERVAL '1 second'))
+                          AND (
+                            s.command_id IS NULL
+                            OR s.started_at <= (NOW() - (%s * INTERVAL '1 second'))
+                          )
                         ORDER BY i.loop_iteration_index
                         LIMIT %s
                         """,

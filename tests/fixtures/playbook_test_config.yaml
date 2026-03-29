@@ -302,6 +302,17 @@ playbooks:
     validation:
       execution_status: completed
 
+  # === Load / Non-Blocking Tooling ===
+  - name: tooling_non_blocking
+    path: tests/fixtures/playbooks/load_test/tooling_non_blocking/tooling_non_blocking
+    category: advanced
+    enabled: true
+    requires_credentials: [pg_k8s]
+    expected_result_file: tooling_non_blocking.json
+    validation:
+      execution_status: completed
+      min_steps: 8
+
   # === Playbook Composition ===
   - name: playbook_composition
     path: tests/fixtures/playbooks/playbook_composition/playbook_composition
