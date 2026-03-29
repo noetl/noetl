@@ -103,6 +103,51 @@ class RepairingNATSCache:
         return claim_index
 
 
+class RecordingCursor:
+    def __init__(self, rows=None):
+        self.rows = rows or []
+        self.query = ""
+        self.params = tuple()
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb):
+        return False
+
+    async def execute(self, query, params):
+        self.query = query
+        self.params = tuple(params)
+
+    async def fetchall(self):
+        return list(self.rows)
+
+
+class RecordingConn:
+    def __init__(self, cursor):
+        self._cursor = cursor
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb):
+        return False
+
+    def cursor(self, row_factory=None):
+        return self._cursor
+
+
+class RecordingPoolContext:
+    def __init__(self, conn):
+        self._conn = conn
+
+    async def __aenter__(self):
+        return self._conn
+
+    async def __aexit__(self, exc_type, exc, tb):
+        return False
+
+
 @pytest.mark.asyncio
 async def test_parallel_loop_issues_up_to_max_in_flight(monkeypatch):
     fixture = Path(
@@ -628,6 +673,70 @@ async def test_loop_counter_reconcile_recovers_no_slot_without_watchdog(monkeypa
     assert int(fake_cache.state.get("completed_count", 0)) == 4
     assert int(fake_cache.state.get("scheduled_count", 0)) == 6
     assert fake_cache.state.get("last_counter_reconcile_at")
+
+
+@pytest.mark.asyncio
+async def test_find_missing_loop_iteration_indices_applies_age_gating(monkeypatch):
+    fixture = Path(
+        "tests/fixtures/playbooks/batch_execution/heavy_payload_pipeline_in_step_parallel/"
+        "heavy_payload_pipeline_in_step_parallel.yaml"
+    )
+    playbook = yaml.safe_load(fixture.read_text(encoding="utf-8"))
+    parsed_playbook = engine_module.Playbook(**playbook)
+    playbook_repo = PlaybookRepo()
+    state_store = StateStore(playbook_repo)
+    engine = ControlFlowEngine(playbook_repo, state_store)
+
+    cursor = RecordingCursor(rows=[{"loop_iteration_index": 1}, {"loop_iteration_index": 4}])
+    conn = RecordingConn(cursor)
+    monkeypatch.setattr(engine_module, "get_pool_connection", lambda: RecordingPoolContext(conn))
+
+    missing = await engine._find_missing_loop_iteration_indices(
+        execution_id="9701",
+        node_name="run_batch_workers",
+        loop_event_id="loop_9701",
+        limit=3,
+        min_age_seconds=7.25,
+    )
+
+    assert missing == [1, 4]
+    assert "event_type = 'command.started'" in cursor.query
+    assert "meta->>'loop_event_id' = %s" in cursor.query
+    assert "s.started_at <= (NOW() - (%s * INTERVAL '1 second'))" in cursor.query
+    assert cursor.params[2] == "loop_9701"
+    assert cursor.params[-3] == 7.25
+    assert cursor.params[-2] == 7.25
+    assert cursor.params[-1] == 3
+
+
+@pytest.mark.asyncio
+async def test_find_missing_loop_iteration_indices_clamps_negative_age(monkeypatch):
+    fixture = Path(
+        "tests/fixtures/playbooks/batch_execution/heavy_payload_pipeline_in_step_parallel/"
+        "heavy_payload_pipeline_in_step_parallel.yaml"
+    )
+    playbook = yaml.safe_load(fixture.read_text(encoding="utf-8"))
+    parsed_playbook = engine_module.Playbook(**playbook)
+    playbook_repo = PlaybookRepo()
+    state_store = StateStore(playbook_repo)
+    engine = ControlFlowEngine(playbook_repo, state_store)
+
+    cursor = RecordingCursor(rows=[])
+    conn = RecordingConn(cursor)
+    monkeypatch.setattr(engine_module, "get_pool_connection", lambda: RecordingPoolContext(conn))
+
+    missing = await engine._find_missing_loop_iteration_indices(
+        execution_id="9702",
+        node_name="run_batch_workers",
+        loop_event_id=None,
+        limit=5,
+        min_age_seconds=-10.0,
+    )
+
+    assert missing == []
+    assert cursor.params[-3] == 0.0
+    assert cursor.params[-2] == 0.0
+    assert cursor.params[-1] == 5
 
 
 def test_restore_loop_collection_snapshot_when_replay_shrinks_collection():

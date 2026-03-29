@@ -15,7 +15,7 @@ import sys
 import time
 import random
 import string
-from collections import defaultdict
+from collections import defaultdict, deque
 import logging
 
 logger = logging.getLogger(__name__)
@@ -36,11 +36,127 @@ PATIENT_RECORDS_RATE_LIMIT = int(os.getenv("PATIENT_RECORDS_RATE_LIMIT", "50"))
 PATIENT_RECORDS_MIN_PAGES = int(os.getenv("PATIENT_RECORDS_MIN_PAGES", "2"))
 PATIENT_RECORDS_MAX_PAGES = int(os.getenv("PATIENT_RECORDS_MAX_PAGES", "5"))
 PATIENT_RECORDS_PAYLOAD_KB = int(os.getenv("PATIENT_RECORDS_PAYLOAD_KB", "100"))
+CONCURRENCY_PROBE_MAX_EVENTS = int(os.getenv("CONCURRENCY_PROBE_MAX_EVENTS", "200"))
 
 # Track request attempts per page for flaky endpoint
 flaky_attempts = defaultdict(int)
 rate_limit_tracker = defaultdict(list)  # Track requests per second
 patient_records_rate_tracker: list = []  # Global rate tracker for /patient-records
+
+# Track async overlap behavior for concurrency probes
+concurrency_probe_lock = asyncio.Lock()
+concurrency_probe_state = {
+    "started": 0,
+    "completed": 0,
+    "active": 0,
+    "max_active": 0,
+}
+concurrency_probe_events = deque(maxlen=CONCURRENCY_PROBE_MAX_EVENTS)
+
+
+async def _record_probe_start(delay_seconds: float, label: str) -> tuple[int, int]:
+    """Record probe start and return request id + active count at start."""
+    async with concurrency_probe_lock:
+        concurrency_probe_state["started"] += 1
+        request_id = concurrency_probe_state["started"]
+        concurrency_probe_state["active"] += 1
+        concurrency_probe_state["max_active"] = max(
+            concurrency_probe_state["max_active"],
+            concurrency_probe_state["active"],
+        )
+        active_at_start = concurrency_probe_state["active"]
+        concurrency_probe_events.append(
+            {
+                "phase": "start",
+                "request_id": request_id,
+                "label": label,
+                "delay_seconds": delay_seconds,
+                "ts": time.time(),
+                "active": active_at_start,
+            }
+        )
+    return request_id, active_at_start
+
+
+async def _record_probe_end(request_id: int, label: str, duration_seconds: float) -> dict:
+    """Record probe completion and return updated snapshot."""
+    async with concurrency_probe_lock:
+        concurrency_probe_state["active"] = max(0, concurrency_probe_state["active"] - 1)
+        concurrency_probe_state["completed"] += 1
+        snapshot = {
+            "started": concurrency_probe_state["started"],
+            "completed": concurrency_probe_state["completed"],
+            "active": concurrency_probe_state["active"],
+            "max_active": concurrency_probe_state["max_active"],
+        }
+        concurrency_probe_events.append(
+            {
+                "phase": "end",
+                "request_id": request_id,
+                "label": label,
+                "duration_seconds": round(duration_seconds, 4),
+                "ts": time.time(),
+                "active": concurrency_probe_state["active"],
+            }
+        )
+    return snapshot
+
+
+@app.post('/api/v1/concurrency/reset')
+async def reset_concurrency_probe():
+    """Reset async overlap counters for probe-based blocking tests."""
+    async with concurrency_probe_lock:
+        concurrency_probe_state["started"] = 0
+        concurrency_probe_state["completed"] = 0
+        concurrency_probe_state["active"] = 0
+        concurrency_probe_state["max_active"] = 0
+        concurrency_probe_events.clear()
+    return {"status": "reset"}
+
+
+@app.get('/api/v1/concurrency/stats')
+async def get_concurrency_stats():
+    """Return current overlap stats for async concurrency probes."""
+    async with concurrency_probe_lock:
+        snapshot = {
+            "started": concurrency_probe_state["started"],
+            "completed": concurrency_probe_state["completed"],
+            "active": concurrency_probe_state["active"],
+            "max_active": concurrency_probe_state["max_active"],
+            "recent_events": list(concurrency_probe_events),
+        }
+    return snapshot
+
+
+@app.get('/api/v1/concurrency/probe')
+async def run_concurrency_probe(
+    delay_seconds: float = Query(default=0.0, ge=0.0, le=60.0),
+    label: str = Query(default="probe"),
+):
+    """
+    Async probe endpoint used to detect blocking behavior in callers.
+
+    It intentionally sleeps using asyncio (non-blocking) so other requests can
+    progress while this request is in-flight.
+    """
+    started_at = time.time()
+    request_id, active_at_start = await _record_probe_start(delay_seconds, label)
+    if delay_seconds > 0:
+        await asyncio.sleep(delay_seconds)
+    duration_seconds = time.time() - started_at
+    snapshot = await _record_probe_end(request_id, label, duration_seconds)
+
+    return {
+        "request_id": request_id,
+        "label": label,
+        "delay_seconds": delay_seconds,
+        "duration_seconds": round(duration_seconds, 4),
+        "active_at_start": active_at_start,
+        "started": snapshot["started"],
+        "completed": snapshot["completed"],
+        "active": snapshot["active"],
+        "max_active": snapshot["max_active"],
+    }
 
 
 @app.get('/api/v1/assessments')
@@ -477,7 +593,7 @@ def get_reference_chain_detail(
 # ============================================================================
 
 @app.get('/api/v1/errors')
-def get_with_errors(
+async def get_with_errors(
     page: int = Query(default=1),
     error_type: str = Query(default=None, description="Error to simulate: 429, 500, 503, timeout, auth"),
     retry_after: int = Query(default=5, description="Retry-After header value for 429"),
@@ -510,8 +626,8 @@ def get_with_errors(
         )
 
     elif error_type == 'timeout':
-        # Simulate a slow response (30 seconds)
-        time.sleep(30)
+        # Simulate a slow response with non-blocking async sleep.
+        await asyncio.sleep(30)
         return {'data': [], 'simulated': 'timeout'}
 
     elif error_type == 'auth':
@@ -781,6 +897,9 @@ if __name__ == '__main__':
     print(f"      defaults: delay={PATIENT_RECORDS_MIN_DELAY}-{PATIENT_RECORDS_MAX_DELAY}s, "
           f"pages={PATIENT_RECORDS_MIN_PAGES}-{PATIENT_RECORDS_MAX_PAGES}, "
           f"payload={PATIENT_RECORDS_PAYLOAD_KB}KB, rate_limit={PATIENT_RECORDS_RATE_LIMIT}/s")
+    print("    POST /api/v1/concurrency/reset                - Reset async-overlap probe counters")
+    print("    GET /api/v1/concurrency/probe?delay_seconds=N - Async probe request")
+    print("    GET /api/v1/concurrency/stats                 - Async overlap metrics")
     print("  Error Simulation:")
     print("    GET /api/v1/flaky?page=N&fail_on=2,3          - Flaky endpoint (fails first attempt)")
     print("    GET /api/v1/errors?error_type=429|500|503     - Simulate specific errors")
