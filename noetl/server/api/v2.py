@@ -574,6 +574,14 @@ _EVENT_TYPE_CLAIMED_PREDICATE = "event_type = 'command.claimed'"
 _EVENT_TYPE_SAME_WORKER_LATEST_PREDICATE = (
     "event_type IN ('command.started', 'command.completed', 'command.failed')"
 )
+_COMMAND_EVENT_DEDUPE_TYPES = {
+    "call.done",
+    "call.error",
+    "step.exit",
+    "command.started",
+    "command.completed",
+    "command.failed",
+}
 
 
 def _build_command_id_latest_lookup_sql(
@@ -2092,16 +2100,49 @@ async def handle_event(req: EventRequest) -> EventResponse:
         # Persist worker event
         async with get_pool_connection() as conn:
             async with conn.cursor(row_factory=dict_row) as cur:
-                evt_id = await _next_snowflake_id(cur)
                 await cur.execute(
                     "SELECT catalog_id FROM noetl.event WHERE execution_id = %s LIMIT 1",
                     (int(req.execution_id),)
                 )
                 row = await cur.fetchone()
                 catalog_id = row['catalog_id'] if row else None
-                
-                # Determine status based on event name
-                status = _status_from_event_name(req.name)
+
+                if command_id and req.name in _COMMAND_EVENT_DEDUPE_TYPES:
+                    await cur.execute(
+                        """
+                        SELECT event_id
+                        FROM noetl.event
+                        WHERE execution_id = %s
+                          AND event_type = %s
+                          AND node_name = %s
+                          AND meta ? 'command_id'
+                          AND meta->>'command_id' = %s
+                        ORDER BY event_id DESC
+                        LIMIT 1
+                        """,
+                        (int(req.execution_id), req.name, req.step, command_id),
+                    )
+                    duplicate_row = await cur.fetchone()
+                    if duplicate_row:
+                        duplicate_event_id = int(duplicate_row.get("event_id"))
+                        logger.warning(
+                            "[EVENT-DEDUPE] Ignoring duplicate event %s for execution=%s step=%s "
+                            "command_id=%s existing_event_id=%s",
+                            req.name,
+                            req.execution_id,
+                            req.step,
+                            command_id,
+                            duplicate_event_id,
+                        )
+                        if req.name in {"command.completed", "command.failed"}:
+                            _active_claim_cache_invalidate(command_id=command_id)
+                        return EventResponse(
+                            status="ok",
+                            event_id=duplicate_event_id,
+                            commands_generated=0,
+                        )
+
+                evt_id = await _next_snowflake_id(cur)
 
                 await cur.execute("""
                     INSERT INTO noetl.event (

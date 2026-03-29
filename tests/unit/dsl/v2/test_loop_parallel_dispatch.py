@@ -702,9 +702,8 @@ async def test_find_missing_loop_iteration_indices_applies_age_gating(monkeypatc
     assert missing == [1, 4]
     assert "event_type = 'command.started'" in cursor.query
     assert "meta->>'loop_event_id' = %s" in cursor.query
-    assert "s.started_at <= (NOW() - (%s * INTERVAL '1 second'))" in cursor.query
+    assert "s.command_id IS NULL" in cursor.query
     assert cursor.params[2] == "loop_9701"
-    assert cursor.params[-3] == 7.25
     assert cursor.params[-2] == 7.25
     assert cursor.params[-1] == 3
 
@@ -734,9 +733,90 @@ async def test_find_missing_loop_iteration_indices_clamps_negative_age(monkeypat
     )
 
     assert missing == []
-    assert cursor.params[-3] == 0.0
     assert cursor.params[-2] == 0.0
     assert cursor.params[-1] == 5
+
+
+def test_extract_command_id_from_event_payload_supports_reference_only_shapes():
+    assert (
+        engine_module._extract_command_id_from_event_payload(
+            {"command_id": "cmd-top-level"}
+        )
+        == "cmd-top-level"
+    )
+    assert (
+        engine_module._extract_command_id_from_event_payload(
+            {"response": {"context": {"command_id": "cmd-response-context"}}}
+        )
+        == "cmd-response-context"
+    )
+    assert (
+        engine_module._extract_command_id_from_event_payload(
+            {"result": {"context": {"command_id": "cmd-result-context"}}}
+        )
+        == "cmd-result-context"
+    )
+    assert engine_module._extract_command_id_from_event_payload({"response": {"status": "ok"}}) is None
+
+
+@pytest.mark.asyncio
+async def test_handle_event_skips_duplicate_persisted_call_done(monkeypatch):
+    playbook = {
+        "apiVersion": "noetl.io/v2",
+        "kind": "Playbook",
+        "metadata": {"name": "duplicate_call_done_guard"},
+        "workflow": [
+            {
+                "step": "reset_http_probe_stats",
+                "tool": {"kind": "python", "code": "def main(**kwargs): return {'ok': True}"},
+                "next": [{"step": "end"}],
+            },
+            {
+                "step": "end",
+                "tool": {"kind": "python", "code": "def main(**kwargs): return {'ok': True}"},
+            },
+        ],
+    }
+
+    parsed_playbook = engine_module.Playbook(**playbook)
+    playbook_repo = PlaybookRepo()
+    state_store = StateStore(playbook_repo)
+    engine = ControlFlowEngine(playbook_repo, state_store)
+
+    state = ExecutionState("9703", parsed_playbook, payload={})
+    state.last_event_id = 1
+
+    async def fake_load_state(_execution_id):
+        return state
+
+    async def fake_should_refresh(*_args, **_kwargs):
+        return False
+
+    async def fake_duplicate_count(*_args, **_kwargs):
+        return 2
+
+    async def should_not_route(*_args, **_kwargs):
+        raise AssertionError("duplicate call.done should not trigger routing")
+
+    monkeypatch.setattr(state_store, "load_state", fake_load_state)
+    monkeypatch.setattr(state_store, "get_state", lambda _execution_id: state)
+    monkeypatch.setattr(state_store, "should_refresh_cached_state", fake_should_refresh)
+    monkeypatch.setattr(engine, "_count_persisted_command_events", fake_duplicate_count)
+    monkeypatch.setattr(engine, "_evaluate_next_transitions", should_not_route)
+
+    event = Event(
+        execution_id="9703",
+        step="reset_http_probe_stats:task_sequence",
+        name="call.done",
+        payload={
+            "command_id": "9703:reset_http_probe_stats:task_sequence:cmd-1",
+            "response": {"status": "COMPLETED"},
+        },
+    )
+
+    commands = await engine.handle_event(event, already_persisted=True)
+
+    assert commands == []
 
 
 def test_restore_loop_collection_snapshot_when_replay_shrinks_collection():

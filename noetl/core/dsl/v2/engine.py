@@ -219,6 +219,43 @@ def _unwrap_event_payload(payload: Any) -> Any:
     return payload
 
 
+def _extract_command_id_from_event_payload(payload: Any) -> Optional[str]:
+    """Best-effort extraction of command_id from worker event payloads."""
+    if not isinstance(payload, dict):
+        return None
+
+    candidates: list[Any] = [payload.get("command_id")]
+
+    payload_context = payload.get("context")
+    if isinstance(payload_context, dict):
+        candidates.append(payload_context.get("command_id"))
+
+    payload_result = payload.get("result")
+    if isinstance(payload_result, dict):
+        candidates.append(payload_result.get("command_id"))
+        result_context = payload_result.get("context")
+        if isinstance(result_context, dict):
+            candidates.append(result_context.get("command_id"))
+
+    payload_response = payload.get("response")
+    if isinstance(payload_response, dict):
+        candidates.append(payload_response.get("command_id"))
+        response_context = payload_response.get("context")
+        if isinstance(response_context, dict):
+            candidates.append(response_context.get("command_id"))
+        response_result = payload_response.get("result")
+        if isinstance(response_result, dict):
+            candidates.append(response_result.get("command_id"))
+            response_result_context = response_result.get("context")
+            if isinstance(response_result_context, dict):
+                candidates.append(response_result_context.get("command_id"))
+
+    for value in candidates:
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return None
+
+
 def _apply_set_mutations(variables: dict, mutations: dict) -> None:
     """Apply DSL v2 `set` mutations to the execution variable store.
 
@@ -1068,6 +1105,7 @@ class StateStore:
                 loop_iteration_state: dict[str, dict[str, Any]] = {}
                 loop_iteration_counts: dict[str, int] = {}
                 loop_event_ids = {}  # {step_name: loop_event_id}
+                replay_loop_command_ids: dict[str, set[str]] = {}
                 replay_render_env = Environment(undefined=StrictUndefined)
                 from noetl.core.dsl.render import render_template as recursive_render
                 
@@ -1133,6 +1171,63 @@ class StateStore:
                                 for key, value in task_ctx.items():
                                     state.variables[key] = value
                                     logger.debug("[STATE-LOAD] Replayed task-sequence ctx: %s", key)
+
+                        # Reconstruct loop iteration progress for task-sequence loop steps.
+                        # step.exit rows use :task_sequence node names and are intentionally
+                        # skipped below, so call.done is the authoritative iteration signal.
+                        loop_step_name = node_name.replace(":task_sequence", "")
+                        if loop_step_name in loop_steps:
+                            command_id = _extract_command_id_from_event_payload(event_payload)
+                            seen_command_ids = replay_loop_command_ids.setdefault(loop_step_name, set())
+                            if command_id and command_id in seen_command_ids:
+                                logger.debug(
+                                    "[STATE-LOAD] Skipping duplicate task-sequence call.done replay "
+                                    "for %s command_id=%s",
+                                    loop_step_name,
+                                    command_id,
+                                )
+                            else:
+                                if command_id:
+                                    seen_command_ids.add(command_id)
+
+                                if loop_step_name not in loop_iteration_state:
+                                    loop_iteration_state[loop_step_name] = {
+                                        "results": [],
+                                        "omitted_results_count": 0,
+                                        "failed_count": 0,
+                                    }
+                                loop_iteration_counts[loop_step_name] = int(
+                                    loop_iteration_counts.get(loop_step_name, 0) or 0
+                                ) + 1
+
+                                step_loop_state = loop_iteration_state[loop_step_name]
+                                iteration_result = (
+                                    response_data.get("results", response_data)
+                                    if isinstance(response_data, dict)
+                                    else response_data
+                                )
+                                step_results = step_loop_state.get("results", [])
+                                if not isinstance(step_results, list):
+                                    step_results = []
+                                step_results.append(_compact_loop_result(iteration_result))
+                                retained_results, omitted_count = _retain_recent_loop_results(
+                                    step_results,
+                                    int(step_loop_state.get("omitted_results_count", 0) or 0),
+                                )
+                                step_loop_state["results"] = retained_results
+                                step_loop_state["omitted_results_count"] = omitted_count
+                                if isinstance(response_data, dict):
+                                    status = str(response_data.get("status", "")).upper()
+                                    if status in {"FAILED", "ERROR"}:
+                                        step_loop_state["failed_count"] = int(
+                                            step_loop_state.get("failed_count", 0) or 0
+                                        ) + 1
+
+                            loop_event_id = event_payload.get("loop_event_id")
+                            if not loop_event_id and isinstance(response_data, dict):
+                                loop_event_id = response_data.get("loop_event_id")
+                            if loop_event_id:
+                                loop_event_ids[loop_step_name] = str(loop_event_id)
 
                     # For loop steps, collect iteration results from step.exit events
                     if event_type == 'step.exit' and event_payload and node_name in loop_steps:
@@ -1809,6 +1904,39 @@ class ControlFlowEngine:
             )
             return -1
 
+    async def _count_persisted_command_events(
+        self,
+        execution_id: str,
+        event_type: str,
+        command_id: str,
+    ) -> int:
+        """Count persisted events by command_id for actionable idempotency guards."""
+        try:
+            async with get_pool_connection() as conn:
+                async with conn.cursor(row_factory=dict_row) as cur:
+                    await cur.execute(
+                        """
+                        SELECT COUNT(*) AS cnt
+                        FROM noetl.event
+                        WHERE execution_id = %s
+                          AND event_type = %s
+                          AND meta ? 'command_id'
+                          AND meta->>'command_id' = %s
+                        """,
+                        (int(execution_id), event_type, str(command_id)),
+                    )
+                    row = await cur.fetchone()
+                    return int((row or {}).get("cnt", 0) or 0)
+        except Exception as exc:
+            logger.warning(
+                "[EVENT-DEDUPE] Failed to count persisted %s events for %s command_id=%s: %s",
+                event_type,
+                execution_id,
+                command_id,
+                exc,
+            )
+            return -1
+
     async def _find_missing_loop_iteration_indices(
         self,
         execution_id: str,
@@ -1818,10 +1946,10 @@ class ControlFlowEngine:
         min_age_seconds: float = _TASKSEQ_LOOP_MISSING_MIN_AGE_SECONDS,
     ) -> list[int]:
         """
-        Find loop iteration indexes that appear missing terminal events.
+        Find loop iteration indexes that were issued but never started and have no terminal event.
 
-        Guards against false positives from healthy in-flight commands by requiring
-        a minimum age before reissuing an index.
+        Guards against false positives from healthy in-flight commands by only
+        considering unstarted commands older than the minimum age threshold.
         """
         if limit <= 0:
             return []
@@ -1839,9 +1967,6 @@ class ControlFlowEngine:
                 *issued_params,
                 int(execution_id),
                 node_names,
-                int(execution_id),
-                node_names,
-                min_age,
                 min_age,
                 int(limit),
             ]
@@ -1887,10 +2012,7 @@ class ControlFlowEngine:
                         WHERE i.loop_iteration_index IS NOT NULL
                           AND t.command_id IS NULL
                           AND i.issued_at <= (NOW() - (%s * INTERVAL '1 second'))
-                          AND (
-                            s.command_id IS NULL
-                            OR s.started_at <= (NOW() - (%s * INTERVAL '1 second'))
-                          )
+                          AND s.command_id IS NULL
                         ORDER BY i.loop_iteration_index
                         LIMIT %s
                         """,
@@ -3797,6 +3919,30 @@ class ControlFlowEngine:
         if not event.step:
             logger.error("Event missing step name")
             return commands
+
+        # Actionable worker completions may be retried by transport/reaper paths.
+        # Since these events are already persisted before handle_event() runs,
+        # duplicates can trigger the same routing side-effects multiple times.
+        # Guard by command_id and only orchestrate the first persisted instance.
+        if already_persisted and event.name in {"call.done", "call.error"}:
+            command_id = _extract_command_id_from_event_payload(normalized_payload)
+            if command_id:
+                persisted_count = await self._count_persisted_command_events(
+                    event.execution_id,
+                    event.name,
+                    command_id,
+                )
+                if persisted_count > 1:
+                    logger.warning(
+                        "[EVENT-DEDUPE] Ignoring duplicate persisted %s for execution=%s "
+                        "step=%s command_id=%s count=%s",
+                        event.name,
+                        event.execution_id,
+                        event.step,
+                        command_id,
+                        persisted_count,
+                    )
+                    return commands
         
         # Handle inline tasks (dynamically created from pipeline task execution)
         # These have format "parent_step:task_name" (e.g., "success:send_callback")
