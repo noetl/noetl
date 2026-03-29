@@ -26,6 +26,7 @@ class _FakeCursor:
         pending_count: int = 0,
         latest_event_type: str = "batch.processing",
         latest_status: str = "RUNNING",
+        terminal_event_type: str = "playbook.completed",
     ):
         self._query = ""
         self._start_time = start_time
@@ -34,6 +35,7 @@ class _FakeCursor:
         self._pending_count = pending_count
         self._latest_event_type = latest_event_type
         self._latest_status = latest_status
+        self._terminal_event_type = terminal_event_type
 
     async def execute(self, query, _params):
         self._query = query
@@ -52,7 +54,7 @@ class _FakeCursor:
             if self._terminal_time is None:
                 return None
             return {
-                "event_type": "playbook.completed",
+                "event_type": self._terminal_event_type,
                 "node_name": "bhs/state_report_generation_prod_v10",
                 "status": "COMPLETED",
                 "created_at": self._terminal_time,
@@ -89,8 +91,8 @@ class _ConnCtx:
 def test_v2_pending_command_count_sql_tracks_command_ids():
     sql = " ".join(v2_api._PENDING_COMMAND_COUNT_SQL.split())
     assert "meta->>'command_id'" in sql
-    assert "result->'data'->>'command_id'" in sql
-    assert "UNION ALL" in sql
+    assert "result->'data'->>'command_id'" not in sql
+    assert "EXCEPT" in sql
     assert "SELECT node_name" not in sql
     assert "'call.done'" not in sql
     assert "'command.completed'" in sql
@@ -217,3 +219,34 @@ async def test_status_event_log_fallback_keeps_completion_inferred_false_for_non
     assert result["completion_inferred"] is False
     assert result["end_time"] is None
     assert result["source"] == "event_log_fallback"
+
+
+@pytest.mark.asyncio
+async def test_status_marks_terminal_failure_as_failed_not_completed(monkeypatch):
+    start_time = datetime(2026, 3, 24, 6, 20, 0, tzinfo=timezone.utc)
+    terminal_time = datetime(2026, 3, 24, 6, 26, 29, tzinfo=timezone.utc)
+    latest_time = datetime(2026, 3, 24, 6, 26, 35, tzinfo=timezone.utc)
+
+    fake_state = SimpleNamespace(
+        completed=False,
+        failed=False,
+        current_step="step_a",
+        completed_steps={"start"},
+        variables={},
+    )
+    fake_engine = SimpleNamespace(state_store=SimpleNamespace(get_state=lambda _execution_id: fake_state))
+    fake_cursor = _FakeCursor(
+        start_time,
+        latest_time,
+        terminal_time,
+        terminal_event_type="playbook.failed",
+    )
+
+    monkeypatch.setattr(v2_api, "get_engine", lambda: fake_engine)
+    monkeypatch.setattr(v2_api, "get_pool_connection", lambda: _ConnCtx(_FakeConn(fake_cursor)))
+
+    result = await v2_api.get_execution_status("589375687589363111")
+
+    assert result["failed"] is True
+    assert result["completed"] is False
+    assert result["completion_inferred"] is True

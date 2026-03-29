@@ -366,6 +366,73 @@ async def test_execute_command_error_events_use_externalized_response(monkeypatc
 
 
 @pytest.mark.asyncio
+async def test_execute_command_forces_reference_persistence_for_event_payloads(monkeypatch):
+    worker = V2Worker(worker_id="test-worker")
+    emitted = []
+    batch_payloads = []
+    seen_output_configs = []
+
+    async def fake_execute_tool(*_args, **_kwargs):
+        # Intentionally small result; worker should still persist it for event transport.
+        return {"status": "ok", "data": {"value": 1}}
+
+    class FakeResultHandler:
+        def __init__(self, execution_id):
+            self.execution_id = execution_id
+
+        async def process_result(self, step_name, result, output_config):
+            seen_output_configs.append(dict(output_config))
+            return {
+                "_ref": {
+                    "kind": "result_ref",
+                    "ref": f"noetl://execution/{self.execution_id}/result/{step_name}/forced-ref",
+                    "store": "kv",
+                    "scope": "execution",
+                    "meta": {"bytes": 64},
+                },
+                "_size_bytes": 64,
+                "_store": "kv",
+            }
+
+    async def fake_emit_event(_server_url, _execution_id, _step, event_name, payload, **_kwargs):
+        emitted.append((event_name, payload))
+
+    async def fake_emit_batch_events(_server_url, _execution_id, events, **_kwargs):
+        batch_payloads.extend(events)
+        return True
+
+    monkeypatch.setattr(worker, "_execute_tool", fake_execute_tool)
+    monkeypatch.setattr(worker, "_emit_event", fake_emit_event)
+    monkeypatch.setattr(worker, "_emit_batch_events", fake_emit_batch_events)
+    monkeypatch.setattr(worker_module, "ResultHandler", FakeResultHandler)
+    monkeypatch.setattr(worker_module, "is_result_ref", lambda value: isinstance(value, dict) and "_ref" in value)
+
+    command = {
+        "execution_id": "exec-5",
+        "step": "step_small_result",
+        "tool_kind": "python",
+        "context": {
+            "tool_config": {},
+            "args": {},
+            "render_context": {},
+        },
+    }
+
+    await worker._execute_command(command, server_url="http://noetl.test", command_id="cmd-5")
+
+    assert seen_output_configs
+    assert seen_output_configs[0]["inline_max_bytes"] == 0
+
+    call_done = next(payload for name, payload in emitted if name == "call.done")
+    assert "_ref" in call_done["response"]
+
+    step_exit = next(item["payload"] for item in batch_payloads if item["name"] == "step.exit")
+    command_completed = next(item["payload"] for item in batch_payloads if item["name"] == "command.completed")
+    assert "_ref" in step_exit["result"]
+    assert "_ref" in command_completed["result"]
+
+
+@pytest.mark.asyncio
 async def test_execute_command_normalizes_stringified_context_sections(monkeypatch):
     worker = V2Worker(worker_id="test-worker")
     emitted = []
@@ -386,9 +453,28 @@ async def test_execute_command_normalizes_stringified_context_sections(monkeypat
     async def fake_emit_batch_events(*_args, **_kwargs):
         return True
 
+    class FakeResultHandler:
+        def __init__(self, execution_id):
+            self.execution_id = execution_id
+
+        async def process_result(self, step_name, result, output_config):
+            return {
+                "_ref": {
+                    "kind": "result_ref",
+                    "ref": f"noetl://execution/{self.execution_id}/result/{step_name}/ctx-normalized",
+                    "store": "kv",
+                    "scope": "execution",
+                    "meta": {"bytes": 48},
+                },
+                "_size_bytes": 48,
+                "_store": "kv",
+            }
+
     monkeypatch.setattr(worker, "_execute_tool", fake_execute_tool)
     monkeypatch.setattr(worker, "_emit_event", fake_emit_event)
     monkeypatch.setattr(worker, "_emit_batch_events", fake_emit_batch_events)
+    monkeypatch.setattr(worker_module, "ResultHandler", FakeResultHandler)
+    monkeypatch.setattr(worker_module, "is_result_ref", lambda value: isinstance(value, dict) and "_ref" in value)
 
     command = {
         "execution_id": "exec-2",

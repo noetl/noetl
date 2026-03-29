@@ -82,3 +82,35 @@ def test_validate_reference_only_payload_accepts_compact_context():
             }
         }
     )
+
+
+def test_validate_reference_only_payload_rejects_result_error_and_meta():
+    with pytest.raises(ValueError, match="unsupported keys"):
+        v2_api._validate_reference_only_payload(
+            {
+                "result": {
+                    "status": "failed",
+                    "error": {"message": "boom"},
+                    "meta": {"attempt": 1},
+                }
+            }
+        )
+
+
+def test_build_reference_only_result_keeps_result_shape_without_error_meta():
+    payload = {
+        "result": {
+            "status": "failed",
+            "error": {"message": "boom"},
+            "meta": {"attempt": 1},
+            "context": {"command_id": "cmd-2"},
+        },
+        "error": "boom",
+    }
+
+    result = v2_api._build_reference_only_result(payload=payload, status="FAILED")
+
+    assert result["status"] == "FAILED"
+    assert result["context"]["command_id"] == "cmd-2"
+    assert "error" not in result
+    assert "meta" not in result

@@ -533,7 +533,7 @@ class V2Worker:
             key_str = str(key)
             if key_str in blocked_keys:
                 continue
-            if key_str.startswith("command_"):
+            if key_str.startswith("command_") and key_str != "command_id":
                 # Strict contract: command-indexed payloads are legacy transport shape.
                 continue
             if self._is_scalar(child):
@@ -543,7 +543,9 @@ class V2Worker:
                 nested = {
                     str(nk): nv
                     for nk, nv in child.items()
-                    if self._is_scalar(nv) and str(nk) not in blocked_keys
+                    if self._is_scalar(nv)
+                    and str(nk) not in blocked_keys
+                    and (not str(nk).startswith("command_") or str(nk) == "command_id")
                 }
                 if nested:
                     context[key_str] = nested
@@ -568,7 +570,6 @@ class V2Worker:
         value: Any,
         event_name: str,
         payload: Optional[dict[str, Any]] = None,
-        error: Optional[Any] = None,
     ) -> dict[str, Any]:
         status = self._event_status_default(event_name, payload)
         envelope: dict[str, Any] = {"status": status}
@@ -578,8 +579,6 @@ class V2Worker:
         context = self._extract_control_context(value)
         if isinstance(context, dict):
             envelope["context"] = context
-        if error is not None:
-            envelope["error"] = error
         return envelope
 
     @staticmethod
@@ -629,14 +628,12 @@ class V2Worker:
                 value=result_source,
                 event_name=event_name,
                 payload=normalized,
-                error=normalized.get("error"),
             )
         elif event_name in {"call.done", "step.exit", "call.error", "command.completed", "command.failed"}:
             normalized["result"] = self._build_strict_result_envelope(
                 value={},
                 event_name=event_name,
                 payload=normalized,
-                error=normalized.get("error"),
             )
 
         top_level_context = normalized.pop("context", None)
@@ -1815,38 +1812,37 @@ class V2Worker:
             t_tool_end = time.perf_counter()
             logger.info(f"[PERF] Tool execution for {step} took {(t_tool_end - t_tool_start)*1000:.1f}ms")
 
-            # Process result through ResultHandler for large result externalization
-            # This implements output_select pattern: large results stored externally,
-            # small extracted fields available in render_context for templating
-            # Skip for artifact.get since it's meant to provide full data inline for next step
+            # Process result through ResultHandler for event transport.
+            # Contract: worker owns payload persistence; events carry refs/metadata only.
             t_result_start = time.perf_counter()
-            skip_result_processing = tool_kind == "artifact" and tool_config.get("action") == "get"
-            if skip_result_processing:
-                logger.debug(f"[RESULT] Step {step}: skipping result processing (artifact.get)")
-                response_for_events = response
-            else:
-                try:
-                    result_handler = ResultHandler(execution_id=execution_id)
-                    output_config = self._normalize_output_config(tool_config)
-                    processed_response = await result_handler.process_result(
-                        step_name=step,
-                        result=response,
-                        output_config=output_config
+            try:
+                result_handler = ResultHandler(execution_id=execution_id)
+                output_config = self._normalize_output_config(tool_config)
+                event_output_config = dict(output_config)
+                # Enforce reference-only event payloads regardless of result size.
+                event_output_config["inline_max_bytes"] = 0
+                processed_response = await result_handler.process_result(
+                    step_name=step,
+                    result=response,
+                    output_config=event_output_config,
+                )
+                if is_result_ref(processed_response):
+                    logger.info(
+                        f"[RESULT] Step {step}: stored result for event transport | "
+                        f"store={processed_response.get('_store', 'unknown')} | "
+                        f"size={processed_response.get('_size_bytes', 0)}b"
                     )
-                    # If result was externalized, use processed version
-                    if is_result_ref(processed_response):
-                        logger.info(
-                            f"[RESULT] Step {step}: externalized large result | "
-                            f"store={processed_response.get('_store', 'unknown')} | "
-                            f"size={processed_response.get('_size_bytes', 0)}b"
-                        )
-                        # Keep original response for case evaluation, but mark for external storage
-                        response_for_events = processed_response
-                    else:
-                        response_for_events = response
-                except Exception as result_err:
-                    logger.warning(f"[RESULT] Failed to process result for {step}: {result_err}")
-                    response_for_events = response
+                    response_for_events = processed_response
+                else:
+                    # Keep event payload bounded even if store write fails.
+                    logger.warning(
+                        "[RESULT] Step %s: result persistence did not return ref; using compact fallback",
+                        step,
+                    )
+                    response_for_events = processed_response if isinstance(processed_response, dict) else {"_value": None}
+            except Exception as result_err:
+                logger.warning(f"[RESULT] Failed to process result for {step}: {result_err}")
+                response_for_events = {"_store_failed": True, "_store_error": str(result_err)[:300]}
             t_result_end = time.perf_counter()
             logger.debug(f"[PERF] Result processing for {step} took {(t_result_end - t_result_start)*1000:.1f}ms")
 
@@ -1955,7 +1951,7 @@ class V2Worker:
                         "case.evaluated",
                         {
                             "action": case_action,
-                            "result": eval_response,  # Data reference only (no full payload)
+                            "result": response_for_events,
                             "triggered_by": eval_event_name
                         },
                         actionable=True,  # Server should process this for routing
@@ -2005,7 +2001,7 @@ class V2Worker:
                         "step.exit",
                         {
                             "status": "COMPLETED" if not tool_error else "CASE_HANDLED",
-                            "result": eval_response,
+                            "result": response_for_events,
                             "case_action": case_action,
                             "command_id": command_id,
                         },
@@ -2023,7 +2019,7 @@ class V2Worker:
                             {
                                 "command_id": command_id,
                                 "worker_id": self.worker_id,
-                                "result": eval_response,
+                                "result": response_for_events,
                                 "case_action": case_action
                             },
                             actionable=False,  # Informational - case.evaluated has action
