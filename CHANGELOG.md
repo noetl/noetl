@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.14.3](https://github.com/noetl/noetl/compare/v2.14.2...v2.14.3) (2026-03-29)
+
+### Bug Fixes
+
+* split loop replay guard and add tooling non-blocking matrix fixture ([f6e1c9c](https://github.com/noetl/noetl/commit/f6e1c9c7426104d8e89090b7067ddfc82adadc2a))
+
 ## [2.14.2](https://github.com/noetl/noetl/compare/v2.14.1...v2.14.2) (2026-03-29)
 
 ### Bug Fixes
