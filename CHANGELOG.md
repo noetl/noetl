@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.14.4](https://github.com/noetl/noetl/compare/v2.14.3...v2.14.4) (2026-03-29)
+
+### Bug Fixes
+
+* harden replay idempotency for task-sequence event handling ([3f88f08](https://github.com/noetl/noetl/commit/3f88f088bfc577829a4aabffbfde51061459474a))
+
 ## [2.14.3](https://github.com/noetl/noetl/compare/v2.14.2...v2.14.3) (2026-03-29)
 
 ### Bug Fixes
