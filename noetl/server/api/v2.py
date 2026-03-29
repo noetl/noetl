@@ -459,7 +459,10 @@ def _extract_event_command_id(req: "EventRequest") -> Optional[str]:
     return None
 
 
-_STRICT_RESULT_ALLOWED_KEYS = {"status", "error", "reference", "context", "meta", "command_id"}
+# Reference-only result envelope persisted in noetl.event.result.
+# Keep command_id as a tolerated legacy input key for extraction, but do not
+# persist it in result (store it in meta/context only).
+_STRICT_RESULT_ALLOWED_KEYS = {"status", "reference", "context", "command_id"}
 _STRICT_PAYLOAD_FORBIDDEN_KEYS = {"response", "inputs", "data", "data_reference", "_internal_data", "_inline"}
 _STRICT_CONTEXT_FORBIDDEN_KEYS = {"response", "result", "payload", "data", "_ref", "_inline", "_internal_data"}
 
@@ -485,7 +488,8 @@ def _contains_legacy_command_keys(value: Any, *, depth: int = 0) -> bool:
         return False
     if isinstance(value, dict):
         for key, child in value.items():
-            if str(key).startswith("command_"):
+            key_str = str(key)
+            if key_str.startswith("command_") and key_str != "command_id":
                 return True
             if _contains_legacy_command_keys(child, depth=depth + 1):
                 return True
@@ -527,6 +531,38 @@ def _validate_reference_only_payload(payload: dict[str, Any]) -> None:
             raise ValueError("payload.result.context includes forbidden inline data keys")
         if _contains_legacy_command_keys(context_obj):
             raise ValueError("payload.result.context includes legacy command_* keys")
+
+
+def _extract_event_error(payload: dict[str, Any]) -> Optional[str]:
+    """Extract compact error text for noetl.event.error column."""
+    if not isinstance(payload, dict):
+        return None
+
+    direct_error = payload.get("error")
+    if isinstance(direct_error, str):
+        value = direct_error.strip()
+        return value[:2000] if value else None
+    if isinstance(direct_error, dict):
+        message = direct_error.get("message")
+        if isinstance(message, str) and message.strip():
+            return message.strip()[:2000]
+        compact = json.dumps(direct_error, default=str)
+        return compact[:2000] if compact else None
+
+    result_obj = payload.get("result")
+    if isinstance(result_obj, dict):
+        result_error = result_obj.get("error")
+        if isinstance(result_error, str):
+            value = result_error.strip()
+            return value[:2000] if value else None
+        if isinstance(result_error, dict):
+            message = result_error.get("message")
+            if isinstance(message, str) and message.strip():
+                return message.strip()[:2000]
+            compact = json.dumps(result_error, default=str)
+            return compact[:2000] if compact else None
+
+    return None
 
 
 _EVENT_TYPE_TERMINAL_PREDICATE = (
@@ -2043,6 +2079,7 @@ async def handle_event(req: EventRequest) -> EventResponse:
             payload=req.payload,
             status=status,
         )
+        error_text = _extract_event_error(req.payload)
         command_id = _extract_event_command_id(req)
         event_meta = dict(req.meta or {})
         event_meta["actionable"] = req.actionable
@@ -2069,12 +2106,12 @@ async def handle_event(req: EventRequest) -> EventResponse:
                 await cur.execute("""
                     INSERT INTO noetl.event (
                         event_id, execution_id, catalog_id, event_type,
-                        node_id, node_name, status, result, meta, created_at
-                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                        node_id, node_name, status, result, meta, error, created_at
+                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 """, (
                     evt_id, int(req.execution_id), catalog_id, req.name,
                     req.step, req.step, status,
-                    Json(result_obj), Json(event_meta), datetime.now(timezone.utc)
+                    Json(result_obj), Json(event_meta), error_text, datetime.now(timezone.utc)
                 ))
                 await conn.commit()
                 _record_db_operation_success()
@@ -2315,12 +2352,6 @@ def _build_reference_only_result(
         context = _bounded_context(payload_result.get("context"))
         if isinstance(context, dict):
             result_obj["context"] = context
-        error_obj = payload_result.get("error")
-        if error_obj is not None:
-            result_obj["error"] = error_obj
-        meta_obj = payload_result.get("meta")
-        if isinstance(meta_obj, dict):
-            result_obj["meta"] = meta_obj
     else:
         direct_reference = payload.get("reference")
         if isinstance(direct_reference, dict):
@@ -2339,9 +2370,6 @@ def _build_reference_only_result(
         else:
             if _estimate_json_size(compact) <= _EVENT_RESULT_CONTEXT_MAX_BYTES:
                 result_obj["context"] = compact
-
-    if "error" in payload and "error" not in result_obj:
-        result_obj["error"] = payload.get("error")
     return result_obj
 
 
@@ -2522,8 +2550,8 @@ async def _persist_batch_acceptance(
                     """
                     INSERT INTO noetl.event (
                         event_id, execution_id, catalog_id, event_type,
-                        node_id, node_name, status, result, meta, worker_id, created_at
-                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                        node_id, node_name, status, result, meta, worker_id, error, created_at
+                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                     """,
                     (
                         evt_id,
@@ -2541,6 +2569,7 @@ async def _persist_batch_acceptance(
                         ),
                         Json(meta_obj),
                         req.worker_id,
+                        _extract_event_error(item.payload),
                         datetime.now(timezone.utc),
                     ),
                 )
@@ -3099,8 +3128,8 @@ async def get_execution_status(execution_id: str, full: bool = False):
                 failed = False
                 completion_inferred = True
             elif terminal_type in terminal_failed_events:
-                completed = True
-                failed = terminal_type != "execution.cancelled"
+                completed = terminal_type == "execution.cancelled"
+                failed = terminal_type in {"playbook.failed", "workflow.failed"}
                 completion_inferred = True
             elif (
                 latest_event["node_name"] == "end"
@@ -3118,6 +3147,9 @@ async def get_execution_status(execution_id: str, full: bool = False):
                 completed = True
                 failed = False
                 completion_inferred = True
+
+            if failed:
+                completed = False
 
             completed_steps: list[str] = []
             seen_steps: set[str] = set()
@@ -3217,8 +3249,8 @@ async def get_execution_status(execution_id: str, full: bool = False):
                     completed = True
                     completion_inferred = True
                 elif terminal_type in terminal_failed_events:
-                    completed = True
-                    failed = terminal_type != "execution.cancelled"
+                    completed = terminal_type == "execution.cancelled"
+                    failed = terminal_type in {"playbook.failed", "workflow.failed"}
                     completion_inferred = True
                 elif latest_event and (
                     latest_event["node_name"] == "end"
@@ -3234,6 +3266,9 @@ async def get_execution_status(execution_id: str, full: bool = False):
                 ):
                     completed = True
                     completion_inferred = True
+
+        if failed:
+            completed = False
 
         duration_anchor = terminal_event or latest_event
 

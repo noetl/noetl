@@ -52,7 +52,7 @@ class _GetExecutionCursor:
             return {"total": len(self._events)}
         if "ORDER BY event_id ASC" in self._query:
             return self._first_event
-        if "AND event_type IN ('execution.cancelled', 'playbook.failed', 'workflow.failed'" in self._query:
+        if "AND event_type IN (" in self._query and "'playbook.completed'" in self._query:
             return self._terminal_event
         if "SELECT event_type, node_name, created_at, status" in self._query:
             return self._latest_event
@@ -109,8 +109,8 @@ def test_derive_status_keeps_non_terminal_completed_running():
 def test_pending_command_count_sql_tracks_command_ids():
     sql = " ".join(execution_api._PENDING_COMMAND_COUNT_SQL.split())
     assert "meta->>'command_id'" in sql
-    assert "result->'data'->>'command_id'" in sql
-    assert "UNION ALL" in sql
+    assert "result->'data'->>'command_id'" not in sql
+    assert "EXCEPT" in sql
     assert "SELECT node_name" not in sql
     assert "'call.done'" not in sql
     assert "'command.completed'" in sql
@@ -175,6 +175,9 @@ async def test_get_executions_keeps_terminal_completed(monkeypatch):
             "result": None,
             "error": None,
             "parent_execution_id": None,
+            "terminal_event_type": "playbook.completed",
+            "terminal_status": "COMPLETED",
+            "terminal_end_time": now,
             "path": "bhs/state_report_generation_prod_v10",
             "version": 1,
         }
