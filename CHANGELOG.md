@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.14.2](https://github.com/noetl/noetl/compare/v2.14.1...v2.14.2) (2026-03-29)
+
+### Bug Fixes
+
+* **runtime:** enforce reference-only event results and failed status semantics ([db52ae1](https://github.com/noetl/noetl/commit/db52ae110acb305028a779eec35c38f1b5413190))
+
 ## [2.14.1](https://github.com/noetl/noetl/compare/v2.14.0...v2.14.1) (2026-03-28)
 
 ### Bug Fixes
