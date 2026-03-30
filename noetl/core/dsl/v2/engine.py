@@ -1967,6 +1967,8 @@ class ControlFlowEngine:
                 *issued_params,
                 int(execution_id),
                 node_names,
+                int(execution_id),
+                node_names,
                 min_age,
                 int(limit),
             ]
@@ -1988,22 +1990,43 @@ class ControlFlowEngine:
                         ),
                         started AS (
                             SELECT
-                                meta->>'command_id' AS command_id,
+                                COALESCE(
+                                    meta->>'command_id',
+                                    result->'context'->>'command_id',
+                                    context->>'command_id'
+                                ) AS command_id,
                                 MAX(created_at) AS started_at
                             FROM noetl.event
                             WHERE execution_id = %s
                               AND node_name = ANY(%s)
                               AND event_type = 'command.started'
-                              AND meta ? 'command_id'
-                            GROUP BY meta->>'command_id'
+                              AND COALESCE(
+                                    meta->>'command_id',
+                                    result->'context'->>'command_id',
+                                    context->>'command_id'
+                                  ) IS NOT NULL
+                            GROUP BY COALESCE(
+                                meta->>'command_id',
+                                result->'context'->>'command_id',
+                                context->>'command_id'
+                            )
                         ),
                         terminal AS (
-                            SELECT DISTINCT meta->>'command_id' AS command_id
+                            SELECT DISTINCT
+                                COALESCE(
+                                    meta->>'command_id',
+                                    result->'context'->>'command_id',
+                                    context->>'command_id'
+                                ) AS command_id
                             FROM noetl.event
                             WHERE execution_id = %s
                               AND node_name = ANY(%s)
-                              AND event_type IN ('command.completed', 'command.failed', 'command.cancelled')
-                              AND meta ? 'command_id'
+                              AND event_type IN ('command.completed', 'command.failed', 'command.cancelled', 'call.done')
+                              AND COALESCE(
+                                    meta->>'command_id',
+                                    result->'context'->>'command_id',
+                                    context->>'command_id'
+                                  ) IS NOT NULL
                         )
                         SELECT i.loop_iteration_index
                         FROM issued i
@@ -2077,20 +2100,38 @@ class ControlFlowEngine:
                               {loop_filter}
                         ),
                         started AS (
-                            SELECT DISTINCT meta->>'command_id' AS command_id
+                            SELECT DISTINCT
+                                COALESCE(
+                                    meta->>'command_id',
+                                    result->'context'->>'command_id',
+                                    context->>'command_id'
+                                ) AS command_id
                             FROM noetl.event
                             WHERE execution_id = %s
                               AND node_name = ANY(%s)
                               AND event_type = 'command.started'
-                              AND meta ? 'command_id'
+                              AND COALESCE(
+                                    meta->>'command_id',
+                                    result->'context'->>'command_id',
+                                    context->>'command_id'
+                                  ) IS NOT NULL
                         ),
                         terminal AS (
-                            SELECT DISTINCT meta->>'command_id' AS command_id
+                            SELECT DISTINCT
+                                COALESCE(
+                                    meta->>'command_id',
+                                    result->'context'->>'command_id',
+                                    context->>'command_id'
+                                ) AS command_id
                             FROM noetl.event
                             WHERE execution_id = %s
                               AND node_name = ANY(%s)
-                              AND event_type IN ('command.completed', 'command.failed', 'command.cancelled')
-                              AND meta ? 'command_id'
+                              AND event_type IN ('command.completed', 'command.failed', 'command.cancelled', 'call.done')
+                              AND COALESCE(
+                                    meta->>'command_id',
+                                    result->'context'->>'command_id',
+                                    context->>'command_id'
+                                  ) IS NOT NULL
                         )
                         SELECT i.loop_iteration_index
                         FROM issued i
