@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.14.7](https://github.com/noetl/noetl/compare/v2.14.6...v2.14.7) (2026-03-30)
+
+### Bug Fixes
+
+* **keychain:** read dict_row entries by key in keychain service ([3f66620](https://github.com/noetl/noetl/commit/3f66620d335c5b6368295c77f6df3cfbf316fba8))
+
 ## [2.14.6](https://github.com/noetl/noetl/compare/v2.14.5...v2.14.6) (2026-03-30)
 
 ### Bug Fixes
