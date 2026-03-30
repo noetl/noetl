@@ -8,10 +8,10 @@ Features:
 - Data threading via _prev (like Clojure's ->)
 - Per-task flow control via task.spec.policy.rules (canonical v10 ONLY)
 - Control actions: continue, retry, break, jump, fail
-- Tracks _task, _prev, _attempt, outcome for template access
+- Tracks _task, _prev, _attempt, output for template access
 - Uses `when` as the ONLY conditional keyword (rejects `expr`)
 - Outcome status uses "ok" | "error" (rejects "success")
-- Variable mutations via set_ctx/set_iter (rejects set_vars)
+- Variable mutations via set (ctx.*, iter.*, step.*) (rejects set_vars)
 
 NO BACKWARD COMPATIBILITY - v10 patterns only.
 
@@ -31,15 +31,15 @@ Canonical v10 usage in playbooks:
           spec:
             policy:
               rules:
-                - when: "{{ outcome.status == 'error' and outcome.error.retryable }}"
+                - when: "{{ output.status == 'error' and output.error.retryable }}"
                   then: { do: retry, attempts: 5, backoff: exponential, delay: 1.0 }
-                - when: "{{ outcome.status == 'error' }}"
+                - when: "{{ output.status == 'error' }}"
                   then: { do: fail }
                 - else:
                     then: { do: continue }
         - name: transform
           kind: python
-          args: { data: "{{ _prev }}" }
+          input: { data: "{{ _prev }}" }
           code: "..."
       next:
         arcs:
@@ -67,7 +67,7 @@ class TaskSequenceContext:
     - _prev: pipeline-local, only valid during tool pipeline execution
     - _task: current task name (pipeline-local)
     - _attempt: retry attempt for current task (pipeline-local)
-    - outcome: current task execution result (pipeline-local)
+    - output: current task execution envelope (pipeline-local)
     - results: all task results by name (pipeline-local)
     - ctx: execution-scoped mutable state (canonical v10)
     - iter: iteration-scoped vars (canonical v10, isolated per parallel loop iteration)
@@ -75,55 +75,52 @@ class TaskSequenceContext:
     _task: str = ""
     _prev: Any = None
     _attempt: int = 1
-    outcome: Optional[dict[str, Any]] = None
+    output: Optional[dict[str, Any]] = None
     results: dict[str, Any] = field(default_factory=dict)
     ctx: dict[str, Any] = field(default_factory=dict)
     iter: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dict for template rendering."""
-        # Canonical DSL v2: expose result as 'output.data'/'output.ref'.
-        # Keep 'outcome' for backward compat with existing playbooks.
         output_view: dict[str, Any] = {}
-        if isinstance(self.outcome, dict):
+        if isinstance(self.output, dict):
             output_view = {
-                "status": self.outcome.get("status", "ok"),
-                "data": self.outcome.get("data") or self.outcome.get("result"),
-                "ref": self.outcome.get("ref"),
-                "error": self.outcome.get("error"),
+                "status": self.output.get("status", "ok"),
+                "data": self.output.get("data"),
+                "ref": self.output.get("ref"),
+                "error": self.output.get("error"),
             }
             for k in ("http", "pg", "py", "meta"):
-                if k in self.outcome:
-                    output_view[k] = self.outcome[k]
+                if k in self.output:
+                    output_view[k] = self.output[k]
         return {
             "_task": self._task,
             "_prev": self._prev,
             "_attempt": self._attempt,
-            "outcome": self.outcome,   # backward compat
-            "output": output_view,     # canonical DSL v2
+            "output": output_view,
             "results": self.results,
             "ctx": self.ctx,
             "iter": self.iter,
         }
 
-    def update_success(self, task_name: str, result: Any, outcome: dict[str, Any]):
+    def update_success(self, task_name: str, result: Any, output: dict[str, Any]):
         """Update context after successful task."""
         self._prev = result
         self._task = task_name
-        self.outcome = outcome
+        self.output = output
         self.results[task_name] = result
 
-    def update_error(self, task_name: str, outcome: dict[str, Any]):
+    def update_error(self, task_name: str, output: dict[str, Any]):
         """Update context after failed task."""
         self._task = task_name
-        self.outcome = outcome
+        self.output = output
 
-    def set_ctx_vars(self, vars_dict: dict[str, Any]):
-        """Update execution-scoped context (canonical v10: set_ctx)."""
+    def apply_ctx_set(self, vars_dict: dict[str, Any]):
+        """Update execution-scoped context."""
         self.ctx.update(vars_dict)
 
-    def set_iter_vars(self, vars_dict: dict[str, Any]):
-        """Update iteration-scoped variables (canonical v10: set_iter)."""
+    def apply_iter_set(self, vars_dict: dict[str, Any]):
+        """Update iteration-scoped variables."""
         self.iter.update(vars_dict)
 
 
@@ -148,7 +145,7 @@ def build_outcome(
     attempt: int = 1,
 ) -> dict[str, Any]:
     """
-    Build a structured outcome object for policy rule expressions.
+    Build a structured output envelope for policy rule expressions.
 
     Args:
         status: "ok" or "error" (canonical v10 - "success" is REJECTED)
@@ -160,7 +157,7 @@ def build_outcome(
         attempt: Current attempt number
 
     Returns:
-        Outcome dict with status, result/error, meta, and tool-specific helpers
+        Output dict with status, data/error, meta, and tool-specific helpers
 
     Raises:
         ValueError: If status is "success" (must use "ok" in v10)
@@ -170,9 +167,9 @@ def build_outcome(
         raise ValueError("Canonical v10 requires status='ok', not 'success'")
 
     if status not in ("ok", "error"):
-        raise ValueError(f"Invalid outcome status: {status}. Must be 'ok' or 'error'")
+        raise ValueError(f"Invalid output status: {status}. Must be 'ok' or 'error'")
 
-    outcome = {
+    output = {
         "status": status,
         "meta": {
             "attempt": attempt,
@@ -182,10 +179,9 @@ def build_outcome(
     }
 
     if status == "ok":
-        outcome["result"] = result   # backward compat
-        outcome["data"] = result     # canonical DSL v2: output.data
+        output["data"] = result
     else:
-        outcome["error"] = error or {"kind": "unknown", "retryable": False, "message": "Unknown error"}
+        output["error"] = error or {"kind": "unknown", "retryable": False, "message": "Unknown error"}
 
     # Add tool-specific helpers
     if tool_kind == "http":
@@ -208,22 +204,22 @@ def build_outcome(
             http_headers = result.get("headers", {})
         if error:
             http_status = error.get("status_code") or error.get("code") or http_status
-        outcome["http"] = {
+        output["http"] = {
             "status": _normalize_http_status(http_status),
             "headers": http_headers,
         }
     elif tool_kind == "postgres":
-        outcome["pg"] = {}
+        output["pg"] = {}
         if error:
-            outcome["pg"]["code"] = error.get("code")
-            outcome["pg"]["sqlstate"] = error.get("sqlstate")
+            output["pg"]["code"] = error.get("code")
+            output["pg"]["sqlstate"] = error.get("sqlstate")
     elif tool_kind == "python":
-        outcome["py"] = {}
+        output["py"] = {}
         if error:
-            outcome["py"]["exception"] = error.get("exception")
-            outcome["py"]["traceback"] = error.get("traceback")
+            output["py"]["exception"] = error.get("exception")
+            output["py"]["traceback"] = error.get("traceback")
 
-    return outcome
+    return output
 
 
 class TaskSequenceExecutor:
@@ -433,7 +429,7 @@ class TaskSequenceExecutor:
             # Spread task results at top level so {{ task_name }} works (not just {{ results.task_name }})
             # IMPORTANT: Merge ctx dicts properly instead of overriding
             # base_context["ctx"] contains execution variables (current_endpoint, etc.)
-            # ctx.ctx contains task sequence mutations (from set_ctx in policy rules)
+            # ctx.ctx contains task-sequence scoped mutations from policy rules.
             # We need both available for template rendering
             task_seq_dict = ctx.to_dict()
             merged_ctx = {**base_context.get("ctx", {}), **task_seq_dict.get("ctx", {})}
@@ -442,7 +438,7 @@ class TaskSequenceExecutor:
             render_ctx = {
                 **base_context,
                 **ctx.results,  # Task results at root level: {{ amadeus_search }}
-                **task_seq_dict,  # Pipeline-local vars: _prev, _task, _attempt, outcome, results
+                **task_seq_dict,  # Pipeline-local vars: _prev, _task, _attempt, output, results
                 "ctx": merged_ctx,  # Merged execution ctx + task sequence ctx
                 "iter": merged_iter,  # Merged iteration vars
             }
@@ -459,7 +455,7 @@ class TaskSequenceExecutor:
                 len(merged_iter),
             )
 
-            # Execute tool and build outcome
+            # Execute tool and build output envelope
             start_time = time.monotonic()
             try:
                 tool_kind = tool_config.get("kind")
@@ -479,7 +475,7 @@ class TaskSequenceExecutor:
                 # Check for error in result
                 if isinstance(result, dict) and result.get("status") == "error":
                     # Preserve HTTP metadata from tool/plugin error payloads so policy rules
-                    # can match outcome.http.status and outcome.error.retryable reliably.
+                    # can match output.http.status and output.error.retryable reliably.
                     raw_status_code = result.get("status_code")
                     if raw_status_code is None and isinstance(result.get("data"), dict):
                         raw_status_code = (
@@ -518,23 +514,23 @@ class TaskSequenceExecutor:
                         if previous_task_name:
                             error_info["recovery"] = {"do": "jump", "to": previous_task_name}
 
-                    outcome = build_outcome(
+                    output = build_outcome(
                         status="error",
                         error=error_info,
                         tool_kind=tool_kind,
                         duration_ms=duration_ms,
                         attempt=ctx._attempt,
                     )
-                    ctx.update_error(task_name, outcome)
+                    ctx.update_error(task_name, output)
                 else:
-                    outcome = build_outcome(
+                    output = build_outcome(
                         status="ok",
                         result=result,
                         tool_kind=tool_kind,
                         duration_ms=duration_ms,
                         attempt=ctx._attempt,
                     )
-                    ctx.update_success(task_name, result, outcome)
+                    ctx.update_success(task_name, result, output)
                     logger.debug(f"[TASK_SEQ] Task '{task_name}' completed successfully")
 
             except Exception as e:
@@ -545,18 +541,18 @@ class TaskSequenceExecutor:
                     tool_config.get("kind", "unknown"),
                     previous_task_name=previous_task_name,
                 )
-                outcome = build_outcome(
+                output = build_outcome(
                     status="error",
                     error=error_info.to_dict(),
                     tool_kind=tool_config.get("kind", "unknown"),
                     duration_ms=duration_ms,
                     attempt=ctx._attempt,
                 )
-                ctx.update_error(task_name, outcome)
+                ctx.update_error(task_name, output)
                 logger.warning(f"[TASK_SEQ] Task '{task_name}' failed: {error_info.message}")
 
             # Evaluate policy rules (strict v10)
-            # Update render_ctx with latest task sequence state (outcome, _prev, etc.)
+            # Update render_ctx with latest task sequence state (_prev, output, etc.)
             # but preserve the merged ctx/iter from render_ctx
             latest_task_dict = ctx.to_dict()
             eval_ctx = {
@@ -564,12 +560,11 @@ class TaskSequenceExecutor:
                 "_task": latest_task_dict["_task"],
                 "_prev": latest_task_dict["_prev"],
                 "_attempt": latest_task_dict["_attempt"],
-                "outcome": latest_task_dict["outcome"],   # backward compat
-                "output": latest_task_dict["output"],     # canonical DSL v2
+                "output": latest_task_dict["output"],
                 "results": latest_task_dict["results"],
                 # Keep merged ctx and iter from render_ctx (don't override with empty task seq ctx)
             }
-            action = self._evaluate_policy_rules(policy_rules, eval_ctx, ctx.outcome)
+            action = self._evaluate_policy_rules(policy_rules, eval_ctx, ctx.output)
 
             # Apply unified 'set' mutations (canonical DSL v2: ctx.*, iter.*, step.*)
             if action.set:
@@ -581,14 +576,14 @@ class TaskSequenceExecutor:
                             logger.warning(f"[TASK_SEQ] Error rendering set.{key}: {e}")
                     # Route to ctx or iter based on scope prefix
                     if key.startswith("ctx."):
-                        ctx.set_ctx_vars({key[4:]: value})
+                        ctx.apply_ctx_set({key[4:]: value})
                     elif key.startswith("iter."):
-                        ctx.set_iter_vars({key[5:]: value})
+                        ctx.apply_iter_set({key[5:]: value})
                     elif key.startswith("step."):
-                        ctx.set_ctx_vars({key[5:]: value})  # step scope → ctx for now
+                        ctx.apply_ctx_set({key[5:]: value})  # step scope → ctx for now
                     else:
-                        # Bare key: backward compat — write to ctx
-                        ctx.set_ctx_vars({key: value})
+                        # Bare key writes into execution context.
+                        ctx.apply_ctx_set({key: value})
                 logger.debug(f"[TASK_SEQ] Applied set keys={list(action.set.keys())}")
 
             # Apply control action
@@ -605,7 +600,7 @@ class TaskSequenceExecutor:
                         "_prev": ctx._prev,
                         "results": ctx.results,
                         "ctx": ctx.ctx,
-                        "error": ctx.outcome.get("error") if ctx.outcome else None,
+                        "error": ctx.output.get("error") if ctx.output else None,
                         "failed_task": task_name,
                     }
 
@@ -697,7 +692,7 @@ class TaskSequenceExecutor:
                     "_prev": ctx._prev,
                     "results": ctx.results,
                     "ctx": ctx.ctx,
-                    "error": ctx.outcome.get("error") if ctx.outcome else None,
+                    "error": ctx.output.get("error") if ctx.output else None,
                     "failed_task": task_name,
                 }
 
@@ -736,7 +731,7 @@ class TaskSequenceExecutor:
                 if "eval" in config:
                     raise ValueError(
                         f"Task '{name}': 'eval' is not allowed in v10. "
-                        "Use 'spec.policy.rules' for outcome handling."
+                        "Use 'spec.policy.rules' for output handling."
                     )
 
                 # Get policy rules from spec.policy.rules
@@ -763,7 +758,7 @@ class TaskSequenceExecutor:
                 if "eval" in config:
                     raise ValueError(
                         f"Task '{name}': 'eval' is not allowed in v10. "
-                        "Use 'spec.policy.rules' for outcome handling."
+                        "Use 'spec.policy.rules' for output handling."
                     )
 
                 # Get policy rules from spec.policy.rules
@@ -853,20 +848,20 @@ class TaskSequenceExecutor:
         self,
         policy_rules: list[dict],
         render_ctx: dict,
-        outcome: dict[str, Any],
+        output: dict[str, Any],
     ) -> ControlAction:
         """
         Evaluate task.spec.policy.rules (strict v10 - no legacy support).
 
         REJECTS: expr (must use when)
-        REJECTS: set_vars (must use set_ctx)
+        REJECTS: set_vars (must use set)
 
         Default behavior (if no rules):
         - ok → continue
         - error → fail
         """
         if not policy_rules:
-            if outcome and outcome.get("status") == "error":
+            if output and output.get("status") == "error":
                 return ControlAction(action="fail")
             return ControlAction(action="continue")
 
@@ -921,7 +916,7 @@ class TaskSequenceExecutor:
                 continue
 
         # No rule matched
-        if outcome and outcome.get("status") == "error":
+        if output and output.get("status") == "error":
             logger.debug("[TASK_SEQ] No policy rule matched for error, defaulting to fail")
             return ControlAction(action="fail")
 
@@ -955,15 +950,7 @@ class TaskSequenceExecutor:
                 delay = 1.0
 
         # Canonical DSL v2: unified 'set' with scoped keys (ctx.*, iter.*, step.*).
-        # Accept legacy set_ctx / set_iter as backward-compat aliases.
         merged_set: Optional[dict[str, Any]] = then_data.get("set")
-        if merged_set is None:
-            legacy: dict[str, Any] = {}
-            for key, val in (then_data.get("set_ctx") or {}).items():
-                legacy[f"ctx.{key}" if "." not in key else key] = val
-            for key, val in (then_data.get("set_iter") or {}).items():
-                legacy[f"iter.{key}" if "." not in key else key] = val
-            merged_set = legacy or None
 
         return ControlAction(
             action=then_data["do"],

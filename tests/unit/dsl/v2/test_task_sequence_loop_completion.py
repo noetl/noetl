@@ -94,7 +94,7 @@ async def test_task_sequence_loop_uses_nats_collection_size_when_local_collectio
             execution_id=execution_id,
             step=step_def.step,
             tool=ToolCall(kind="playbook", config={}),
-            args={},
+            input={},
             render_context={},
         )
 
@@ -182,7 +182,7 @@ async def test_task_sequence_loop_prefers_execution_loop_key_when_step_event_id_
             execution_id=execution_id,
             step=step_def.step,
             tool=ToolCall(kind="playbook", config={}),
-            args={},
+            input={},
             render_context={},
         )
 
@@ -268,7 +268,7 @@ async def test_task_sequence_loop_persists_issued_steps_before_return(monkeypatc
             execution_id=execution_id,
             step=step_def.step,
             tool=ToolCall(kind="playbook", config={}),
-            args={},
+            input={},
             render_context={},
         )
 
@@ -354,7 +354,7 @@ async def test_task_sequence_loop_persists_event_before_early_return_when_needed
             execution_id=execution_id,
             step=step_def.step,
             tool=ToolCall(kind="playbook", config={}),
-            args={},
+            input={},
             render_context={},
         )
 
@@ -546,17 +546,17 @@ workflow:
       kind: postgres
       auth: pg_k8s
       query: SELECT 1;
-    set_ctx:
-      facility_mapping_id: "{{ load_next_facility.command_0.rows[0].facility_mapping_id }}"
-      facility_id: "{{ load_next_facility.command_0.rows[0].facility_id }}"
+    set:
+      ctx.facility_mapping_id: "{{ load_next_facility.command_0.rows[0].facility_mapping_id }}"
+      ctx.facility_id: "{{ load_next_facility.command_0.rows[0].facility_id }}"
   - step: load_patient_ids_context
     tool:
       kind: postgres
       auth: pg_k8s
       query: SELECT 1;
-    set_ctx:
-      patient_count: "{{ load_patient_ids_context.command_0.rows[0].patient_count | int }}"
-      facility_mapping_id: "{{ load_next_facility.command_0.rows[0].facility_mapping_id }}"
+    set:
+      ctx.patient_count: "{{ load_patient_ids_context.command_0.rows[0].patient_count | int }}"
+      ctx.facility_mapping_id: "{{ load_next_facility.command_0.rows[0].facility_mapping_id }}"
   - step: load_patients_for_assessments
     tool:
       kind: postgres
@@ -678,17 +678,17 @@ workflow:
       kind: postgres
       auth: pg_k8s
       query: SELECT 1;
-    set_ctx:
-      facility_mapping_id: "{{ load_next_facility.command_0.rows[0].facility_mapping_id }}"
-      facility_id: "{{ load_next_facility.command_0.rows[0].facility_id }}"
+    set:
+      ctx.facility_mapping_id: "{{ load_next_facility.command_0.rows[0].facility_mapping_id }}"
+      ctx.facility_id: "{{ load_next_facility.command_0.rows[0].facility_id }}"
   - step: load_patient_ids_context
     tool:
       kind: postgres
       auth: pg_k8s
       query: SELECT 1;
-    set_ctx:
-      patient_count: "{{ load_patient_ids_context.command_0.rows[0].patient_count | int }}"
-      facility_mapping_id: "{{ load_next_facility.command_0.rows[0].facility_mapping_id }}"
+    set:
+      ctx.patient_count: "{{ load_patient_ids_context.command_0.rows[0].patient_count | int }}"
+      ctx.facility_mapping_id: "{{ load_next_facility.command_0.rows[0].facility_mapping_id }}"
   - step: load_patients_for_assessments
     tool:
       kind: postgres
@@ -805,9 +805,9 @@ workflow:
       kind: postgres
       auth: pg_k8s
       query: SELECT 1;
-    set_ctx:
-      facility_mapping_id: "{{ load_next_facility.data.result.command_0.rows[0].facility_mapping_id }}"
-      facility_id: "{{ load_next_facility.data.result.command_0.rows[0].facility_id }}"
+    set:
+      ctx.facility_mapping_id: "{{ load_next_facility.data.result.command_0.rows[0].facility_mapping_id }}"
+      ctx.facility_id: "{{ load_next_facility.data.result.command_0.rows[0].facility_id }}"
   - step: load_patients_for_assessments
     tool:
       kind: postgres

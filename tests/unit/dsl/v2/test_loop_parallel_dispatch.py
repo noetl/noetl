@@ -160,7 +160,7 @@ async def test_parallel_loop_issues_up_to_max_in_flight(monkeypatch):
     run_batch_workers = next(
         step for step in playbook["workflow"] if step.get("step") == "run_batch_workers"
     )
-    run_batch_workers["args"] = {
+    run_batch_workers["input"] = {
         "claimed_batch": "{{ iter.batch.batch_number }}",
         "claimed_index": "{{ loop_index }}",
     }
@@ -276,7 +276,7 @@ async def test_loop_continue_reuses_cached_collection_when_ctx_key_missing(monke
         step for step in playbook["workflow"] if step.get("step") == "run_batch_workers"
     )
     run_batch_workers["loop"]["in"] = "{{ ctx.patients_needing_demographics }}"
-    run_batch_workers["args"] = {
+    run_batch_workers["input"] = {
         "claimed_patient_id": "{{ iter.batch.patient_id }}",
         "claimed_index": "{{ loop_index }}",
     }
@@ -343,7 +343,7 @@ async def test_loop_claim_repairs_zero_collection_size_metadata(monkeypatch):
     run_batch_workers = next(
         step for step in playbook["workflow"] if step.get("step") == "run_batch_workers"
     )
-    run_batch_workers["args"] = {
+    run_batch_workers["input"] = {
         "claimed_batch": "{{ iter.batch.batch_number }}",
         "claimed_index": "{{ loop_index }}",
     }
@@ -398,7 +398,7 @@ async def test_loop_continue_rerenders_when_replayed_cached_collection_is_empty(
     run_batch_workers = next(
         step for step in playbook["workflow"] if step.get("step") == "run_batch_workers"
     )
-    run_batch_workers["args"] = {
+    run_batch_workers["input"] = {
         "claimed_batch": "{{ iter.batch.batch_number }}",
         "claimed_index": "{{ loop_index }}",
     }
@@ -479,7 +479,7 @@ async def test_loop_watchdog_recovers_stalled_scheduled_counts(monkeypatch):
     run_batch_workers = next(
         step for step in playbook["workflow"] if step.get("step") == "run_batch_workers"
     )
-    run_batch_workers["args"] = {
+    run_batch_workers["input"] = {
         "claimed_batch": "{{ iter.batch.batch_number }}",
         "claimed_index": "{{ loop_index }}",
     }
@@ -544,7 +544,7 @@ async def test_loop_watchdog_recovers_stale_inflight_saturation(monkeypatch):
     run_batch_workers = next(
         step for step in playbook["workflow"] if step.get("step") == "run_batch_workers"
     )
-    run_batch_workers["args"] = {
+    run_batch_workers["input"] = {
         "claimed_batch": "{{ iter.batch.batch_number }}",
         "claimed_index": "{{ loop_index }}",
     }
@@ -612,7 +612,7 @@ async def test_loop_counter_reconcile_recovers_no_slot_without_watchdog(monkeypa
     run_batch_workers = next(
         step for step in playbook["workflow"] if step.get("step") == "run_batch_workers"
     )
-    run_batch_workers["args"] = {
+    run_batch_workers["input"] = {
         "claimed_batch": "{{ iter.batch.batch_number }}",
         "claimed_index": "{{ loop_index }}",
     }

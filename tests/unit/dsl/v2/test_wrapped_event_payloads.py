@@ -29,7 +29,7 @@ workflow:
   - step: extract
     tool:
       kind: python
-      args: {}
+      input: {}
       code: |
         result = {"performance_rating": 4.0}
     next:
@@ -41,7 +41,7 @@ workflow:
   - step: score
     tool:
       kind: python
-      args:
+      input:
         performance_rating: "{{ extract.performance_rating }}"
       code: |
         result = {"seen": performance_rating}
@@ -69,7 +69,7 @@ workflow:
 
     assert len(commands) == 1
     assert commands[0].step == "score"
-    assert commands[0].tool.config["args"]["performance_rating"] == 4.0
+    assert commands[0].tool.config["input"]["performance_rating"] == 4.0
 
 
 @pytest.mark.asyncio
@@ -85,7 +85,7 @@ workflow:
   - step: create
     tool:
       kind: python
-      args: {}
+      input: {}
       code: |
         result = {"user_id": 999}
       spec:
@@ -94,8 +94,8 @@ workflow:
             - else:
                 then:
                   do: continue
-                  set_ctx:
-                    test_user_id: "{{ outcome.result.user_id }}"
+                  set:
+                    ctx.test_user_id: "{{ output.data.user_id }}"
     next:
       spec:
         mode: exclusive
@@ -105,7 +105,7 @@ workflow:
   - step: verify
     tool:
       kind: python
-      args:
+      input:
         user_id: "{{ ctx.test_user_id }}"
       code: |
         result = {"user_id": user_id}
@@ -144,7 +144,7 @@ workflow:
 
     assert len(commands) == 1
     assert commands[0].step == "verify"
-    assert commands[0].tool.config["args"]["user_id"] == "999"
+    assert commands[0].tool.config["input"]["user_id"] == "999"
 
 
 @pytest.mark.asyncio
@@ -170,8 +170,8 @@ workflow:
   - step: check_results
     tool:
       kind: python
-      args:
-        stats: "{{ validate_results.data.result.command_0.rows }}"
+      input:
+        stats: "{{ validate_results.data.command_0.rows }}"
       code: |
         result = {"stats": stats}
 """,
@@ -182,12 +182,8 @@ workflow:
     async def fake_resolve(ref):
         assert ref["ref"] == "noetl://execution/123/result/validate_results/abcd1234"
         return {
-            "data": {
-                "result": {
-                    "command_0": {
-                        "rows": [{"total_patients": 500}],
-                    }
-                }
+            "command_0": {
+                "rows": [{"total_patients": 500}],
             }
         }
 
@@ -214,4 +210,4 @@ workflow:
 
     assert len(commands) == 1
     assert commands[0].step == "check_results"
-    assert commands[0].tool.config["args"]["stats"] == [{"total_patients": 500}]
+    assert commands[0].tool.config["input"]["stats"] == [{"total_patients": 500}]

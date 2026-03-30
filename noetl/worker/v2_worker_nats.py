@@ -589,8 +589,6 @@ class V2Worker:
 
         raw_output = tool_config.get("output")
         if not isinstance(raw_output, dict):
-            raw_output = tool_config.get("result")
-        if not isinstance(raw_output, dict):
             return {}
 
         normalized = dict(raw_output)
@@ -1393,7 +1391,7 @@ class V2Worker:
 
         Evaluates case conditions against:
         - Event context (event.name == 'call.done' or 'call.error')
-        - Data context (response.status_code, result.field, error, etc.)
+        - Data context (output.status, output.data.*, output.http.status, error, etc.)
 
         This allows case blocks to handle both success and error scenarios:
 
@@ -1409,7 +1407,7 @@ class V2Worker:
 
         Args:
             case_blocks: List of case conditions
-            response: Tool response/result
+            response: Tool output payload
             render_context: Full render context
             server_url: Server API URL
             execution_id: Execution ID
@@ -1420,38 +1418,19 @@ class V2Worker:
         Returns:
             Action dict {type: 'next'|'retry', details: {...}} or None
         """
-        from jinja2 import Environment
-        
         if not case_blocks or not isinstance(case_blocks, list):
             return None
         
         logger.info(f"[CASE-EVAL] Evaluating {len(case_blocks)} case blocks | event={event_name} | has_error={error is not None}")
-        
-        # Create Jinja environment for condition evaluation
-        jinja_env = Environment()
-        
-        # Build hybrid evaluation context with both event and data
-        eval_context = {
-            **render_context,
-            'response': response,
-            'result': response,
-            'this': response,
-            'event': {
-                'name': event_name,  # 'call.done' or 'call.error'
-                'type': 'tool.completed' if event_name == 'call.done' else 'tool.error',
-                'step': step
-            },
-            'error': error
-        }
-        
-        # Add HTTP-specific context if available
-        if isinstance(response, dict):
-            # Add status_code to top level for convenience
-            if 'status_code' in response:
-                eval_context['status_code'] = response['status_code']
-            # Add data.status_code for nested HTTP responses
-            if isinstance(response.get('data'), dict) and 'status_code' in response['data']:
-                eval_context['status_code'] = response['data']['status_code']
+
+        # Canonical DSL context: output + event + error.
+        eval_context = build_eval_context(
+            render_context=render_context,
+            response=response,
+            step=step,
+            event_name=event_name,
+            error=error,
+        )
         
         # Track if we need to fetch variables from server
         variables_fetched = False
@@ -1524,13 +1503,13 @@ class V2Worker:
                             # Get raw retry config (may contain Jinja2 templates)
                             raw_retry_config = action['retry']
                             
-                            # Render retry args templates with current context
+                            # Render retry input templates with current context
                             # This ensures page numbers and other dynamic values are computed NOW
                             retry_config = {}
                             for key, value in raw_retry_config.items():
-                                if key == 'args' and isinstance(value, dict):
-                                    # Recursively render args
-                                    rendered_args = {}
+                                if key == 'input' and isinstance(value, dict):
+                                    # Recursively render input
+                                    rendered_input = {}
                                     for arg_key, arg_value in value.items():
                                         if isinstance(arg_value, dict):
                                             # Recursively render nested dicts (e.g., params)
@@ -1541,13 +1520,13 @@ class V2Worker:
                                                     rendered_nested[nested_key] = template.render(eval_context)
                                                 else:
                                                     rendered_nested[nested_key] = nested_value
-                                            rendered_args[arg_key] = rendered_nested
+                                            rendered_input[arg_key] = rendered_nested
                                         elif isinstance(arg_value, str) and '{{' in arg_value:
                                             template = _template_cache.get_or_compile(arg_value)
-                                            rendered_args[arg_key] = template.render(eval_context)
+                                            rendered_input[arg_key] = template.render(eval_context)
                                         else:
-                                            rendered_args[arg_key] = arg_value
-                                    retry_config[key] = rendered_args
+                                            rendered_input[arg_key] = arg_value
+                                    retry_config[key] = rendered_input
                                 else:
                                     retry_config[key] = value
                             
@@ -1639,7 +1618,7 @@ class V2Worker:
 
         Evaluates case conditions against:
         - Event context (event.name, event.type, etc.)
-        - Data context (response.status_code, result.field, error, etc.)
+        - Data context (output.status, output.data.*, output.http.status, error, etc.)
 
         Returns action to take: {type: 'next'|'retry', details: {...}}
         If no case matches, returns None.
@@ -1675,9 +1654,8 @@ class V2Worker:
             step=step,
             execution_id=execution_id,
         )
-        # Canonical DSL v2: command carries 'input'. Accept 'args' as backward-compat alias.
         command_input = self._normalize_command_context_mapping(
-            context.get("input") or context.get("args"),
+            context.get("input"),
             field_name="input",
             step=step,
             execution_id=execution_id,
@@ -1709,11 +1687,9 @@ class V2Worker:
             eval_mode = spec.get("eval_mode", "on_entry")
             logger.debug(f"[SPEC] Step '{step}' spec: case_mode={case_mode}, eval_mode={eval_mode}")
         
-        # CRITICAL: Merge tool_config input/args with top-level command input.
-        # Canonical DSL v2: tool.input replaces tool.args; accept both for backward compat.
-        tool_input = tool_config.get("input") or tool_config.get("args")
+        # Merge tool.input with top-level command input (top-level values take precedence).
+        tool_input = tool_config.get("input")
         if tool_input and isinstance(tool_input, dict):
-            # Merge with top-level command input taking precedence.
             merged_input = {**tool_input, **command_input}
             command_input = merged_input
             logger.debug("Input config: merged_from_tool_config | keys=%s", _safe_keys(command_input))
@@ -1942,7 +1918,7 @@ class V2Worker:
                     
                     # ARCHITECTURE PRINCIPLE #3:
                     # Report case action to server via ACTIONABLE event
-                    # Server will issue new command with rendered args from case_action.config
+                    # Server will issue new command with rendered input from case_action.config
                     # This follows server-worker-server control loop pattern
                     await self._emit_event(
                         server_url,
@@ -2322,11 +2298,11 @@ class V2Worker:
         # For workbook tool, preserve 'name' field from config (it's the workbook action name)
         # For other tools, add 'name' as step name for logging
         task_config = {**config}
-        # Merge input: config["input"] (canonical DSL v2) or config["args"] (legacy) + args parameter
-        # This preserves tool input from pipeline while allowing parameter override
-        config_args = config.get("input") or config.get("args") or {}
-        task_config["args"] = {**config_args, **args} if config_args or args else {}
-        task_config["input"] = task_config["args"]  # canonical alias
+        # Merge canonical tool.input with command input overrides.
+        config_input = config.get("input") if isinstance(config.get("input"), dict) else {}
+        merged_input = {**config_input, **args} if config_input or args else {}
+        task_config["input"] = merged_input
+        task_config["args"] = merged_input  # plugin compatibility until all tools read `input`
         if "name" not in config:
             task_config["name"] = step
         
@@ -2504,9 +2480,9 @@ class V2Worker:
             return result.get('data', result) if isinstance(result, dict) else result
             
         elif tool_kind == "playbook":
-            # Playbook tasks need merged task args from config["args"] (task_sequence path passes args={}).
+            # Playbook tasks need merged task input from config["input"] (task_sequence path passes args={}).
             # If return_step is configured, use native async executor with polling support.
-            playbook_args = task_config.get("args") if isinstance(task_config.get("args"), dict) else args
+            playbook_args = task_config.get("input") if isinstance(task_config.get("input"), dict) else args
             if task_config.get("return_step"):
                 return await self._execute_playbook(task_config, playbook_args or {})
 

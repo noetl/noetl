@@ -26,8 +26,6 @@ class TaskResultProxy:
         data = object.__getattribute__(self, "_data")
         if name == "data" and name not in data:
             return self
-        if name == "result" and name not in data:
-            return self
         if name == "is_defined":
             return True
         def _wrap(val: Any):
