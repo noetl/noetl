@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.14.5](https://github.com/noetl/noetl/compare/v2.14.4...v2.14.5) (2026-03-30)
+
+### Bug Fixes
+
+* **dsl:** bind all loop-missing query params ([92b5de4](https://github.com/noetl/noetl/commit/92b5de4c8210b705977387c63f363da20873859c))
+* **dsl:** stop false loop-orphan replay on started events ([41021a8](https://github.com/noetl/noetl/commit/41021a8f3f206b3810997b4caae22da268f4fe97))
+
 ## [2.14.4](https://github.com/noetl/noetl/compare/v2.14.3...v2.14.4) (2026-03-29)
 
 ### Bug Fixes
