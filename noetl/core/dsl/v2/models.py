@@ -28,11 +28,10 @@ class StepEnterPayload(BaseModel):
 
     @model_validator(mode='before')
     @classmethod
-    def _rename_legacy_fields(cls, obj):
-        """Accept legacy 'args' as alias for 'input'."""
-        if isinstance(obj, dict) and "args" in obj and "input" not in obj:
-            obj = dict(obj)
-            obj["input"] = obj.pop("args")
+    def _reject_legacy_fields(cls, obj):
+        """Reject legacy payload aliases to keep event contracts unambiguous."""
+        if isinstance(obj, dict) and "args" in obj:
+            raise ValueError("step.enter payload must use 'input' (legacy 'args' is not allowed)")
         return obj
 
 
@@ -84,11 +83,10 @@ class CommandIssuedPayload(BaseModel):
 
     @model_validator(mode='before')
     @classmethod
-    def _rename_legacy_fields(cls, obj):
-        """Accept legacy 'args' as alias for 'input'."""
-        if isinstance(obj, dict) and "args" in obj and "input" not in obj:
-            obj = dict(obj)
-            obj["input"] = obj.pop("args")
+    def _reject_legacy_fields(cls, obj):
+        """Reject legacy payload aliases to keep command contracts strict."""
+        if isinstance(obj, dict) and "args" in obj:
+            raise ValueError("command.issued payload must use 'input' (legacy 'args' is not allowed)")
         return obj
 
 
@@ -206,19 +204,10 @@ class PolicyRuleThen(BaseModel):
 
     @model_validator(mode='before')
     @classmethod
-    def _rename_legacy_fields(cls, obj):
-        """Accept legacy set_ctx/set_iter as aliases for set."""
-        if isinstance(obj, dict) and "set" not in obj:
-            obj = dict(obj)
-            legacy: dict[str, Any] = {}
-            if "set_ctx" in obj:
-                for k, v in obj.pop("set_ctx").items():
-                    legacy[f"ctx.{k}" if "." not in k else k] = v
-            if "set_iter" in obj:
-                for k, v in obj.pop("set_iter").items():
-                    legacy[f"iter.{k}" if "." not in k else k] = v
-            if legacy:
-                obj["set"] = legacy
+    def _reject_legacy_fields(cls, obj):
+        """Reject legacy assignment aliases; use canonical `set` only."""
+        if isinstance(obj, dict) and ("set_ctx" in obj or "set_iter" in obj):
+            raise ValueError("policy.then must use 'set' (legacy set_ctx/set_iter are not allowed)")
         return obj
 
 
@@ -646,11 +635,10 @@ class Arc(BaseModel):
 
     @model_validator(mode='before')
     @classmethod
-    def _rename_legacy_fields(cls, obj):
-        """Accept legacy 'args' as alias for 'set' on arcs."""
-        if isinstance(obj, dict) and "args" in obj and "set" not in obj:
-            obj = dict(obj)
-            obj["set"] = obj.pop("args")
+    def _reject_legacy_fields(cls, obj):
+        """Reject legacy arc aliases; use canonical `set` only."""
+        if isinstance(obj, dict) and "args" in obj:
+            raise ValueError("next.arcs[] must use 'set' (legacy 'args' is not allowed)")
         return obj
 
 
@@ -886,14 +874,18 @@ class Step(BaseModel):
 
     @model_validator(mode='before')
     @classmethod
-    def _rename_legacy_fields(cls, obj):
-        """Accept legacy field names as aliases for canonical ones."""
-        if isinstance(obj, dict):
-            obj = dict(obj)
-            if "args" in obj and "input" not in obj:
-                obj["input"] = obj.pop("args")
-            if "set_ctx" in obj and "set" not in obj:
-                obj["set"] = obj.pop("set_ctx")
+    def _reject_legacy_fields(cls, obj):
+        """Reject legacy step-level aliases; canonical fields are input/output/set only."""
+        if isinstance(obj, dict) and (
+            "args" in obj
+            or "set_ctx" in obj
+            or "set_iter" in obj
+            or "result" in obj
+            or "outcome" in obj
+        ):
+            raise ValueError(
+                "step must use canonical fields only (legacy args/set_ctx/set_iter/result/outcome are not allowed; use input/set and tool.output)"
+            )
         return obj
 
 
@@ -1084,11 +1076,10 @@ class Command(BaseModel):
 
     @model_validator(mode='before')
     @classmethod
-    def _rename_legacy_fields(cls, obj):
-        """Accept legacy 'args' as alias for 'input'."""
-        if isinstance(obj, dict) and "args" in obj and "input" not in obj:
-            obj = dict(obj)
-            obj["input"] = obj.pop("args")
+    def _reject_legacy_fields(cls, obj):
+        """Reject legacy command aliases; canonical commands carry `input`."""
+        if isinstance(obj, dict) and "args" in obj:
+            raise ValueError("command must use 'input' (legacy 'args' is not allowed)")
         return obj
 
     def to_queue_record(self) -> dict[str, Any]:
@@ -1112,11 +1103,8 @@ class Command(BaseModel):
         }
 
 
-# NOTE: Legacy aliases accepted via model_validate for backward compat:
-# - 'args' -> 'input'  (Step, Arc, Command, StepEnterPayload)
-# - 'set_ctx'/'set_iter' -> 'set'  (Step, PolicyRuleThen)
-# - 'outcome' -> 'output'  (template context key, see engine.py)
-# - 'result' -> 'data'  (ToolOutcome payload field)
+# NOTE: Canonical-only parsing:
+# - Reject legacy aliases such as args/set_ctx/set_iter/outcome/result on author-facing DSL models.
 # Canonical v10 patterns:
 # - step.input / arc.set / output.data / output.ref
 # - set: { ctx.*, iter.*, step.* }

@@ -3,11 +3,13 @@ import pytest
 from noetl.core.dsl.render import TaskResultProxy
 
 
-def test_task_result_proxy_result_alias_returns_self_for_dict_payload():
+def test_task_result_proxy_exposes_canonical_data_and_rejects_result_alias():
     proxy = TaskResultProxy({"rows": [{"id": 1}], "status": "success"})
 
-    assert proxy.result.rows[0]["id"] == 1
-    assert proxy.result.status == "success"
+    assert proxy.data.rows[0]["id"] == 1
+    assert proxy.data.status == "success"
+    with pytest.raises(AttributeError):
+        _ = proxy.result
 
 
 def test_task_result_proxy_does_not_flatten_context_keys_to_top_level():

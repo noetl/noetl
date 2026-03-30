@@ -343,16 +343,49 @@ def build_eval_context(
 
     This context includes:
     - All render_context variables (workload, step results, etc.)
-    - response/result/this: tool response data
+    - output: canonical tool output envelope
     - event: event context (name, type, step)
     - error: error message if call.error
     - status_code: HTTP status code if available
     """
+    output_status = "error" if event_name == "call.error" else "ok"
+    output_error: Any = error
+    output_ref = None
+    output_data: Any = response
+    output_http: dict[str, Any] = {}
+
+    if isinstance(response, dict):
+        raw_status = str(response.get("status", "")).strip().lower()
+        if raw_status in {"error", "failed"}:
+            output_status = "error"
+        elif raw_status in {"ok", "success", "completed", "noop"}:
+            output_status = "ok"
+
+        if response.get("error") is not None:
+            output_error = response.get("error")
+        output_ref = response.get("ref") or response.get("reference")
+        output_data = response.get("data", response)
+        http_status = response.get("status_code")
+        if isinstance(output_data, dict) and http_status is None:
+            http_status = output_data.get("status_code")
+        if http_status is not None:
+            output_http["status"] = http_status
+
+    if output_error is not None and not isinstance(output_error, dict):
+        output_error = {"message": str(output_error)}
+
+    output = {
+        "status": output_status,
+        "data": output_data,
+        "ref": output_ref,
+        "error": output_error,
+    }
+    if output_http:
+        output["http"] = output_http
+
     eval_context = {
         **render_context,
-        'response': response,
-        'result': response,
-        'this': response,
+        'output': output,
         'event': {
             'name': event_name,
             'type': 'tool.completed' if event_name == 'call.done' else 'tool.error',

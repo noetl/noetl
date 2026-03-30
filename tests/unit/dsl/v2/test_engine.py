@@ -385,8 +385,8 @@ workflow:
     assert len(state.context["all_items"]) == 3
 
 
-def test_conditional_transition_with_args(engine_setup):
-    """Test conditional transition passing args to next step."""
+def test_conditional_transition_with_set_and_input(engine_setup):
+    """Test conditional transition using arc set + step input."""
     engine, playbook_repo, state_store = engine_setup
     
     yaml_content = """
@@ -402,16 +402,20 @@ workflow:
       method: GET
       endpoint: "https://api.example.com/data"
     
-    case:
-      - when: "{{ event.name == 'call.done' and response.status == 200 }}"
-        then:
-          next:
-            - step: process
-              args:
-                data: "{{ response.data }}"
-                count: "{{ response.data | length }}"
+    next:
+      spec:
+        mode: exclusive
+      arcs:
+        - step: process
+          when: "{{ event.name == 'call.done' and output.data.status == 200 }}"
+          set:
+            ctx.process_data: "{{ output.data.data }}"
+            ctx.process_count: "{{ output.data.data | length }}"
 
   - step: process
+    input:
+      data: "{{ ctx.process_data }}"
+      count: "{{ ctx.process_count }}"
     tool:
       kind: python
       code: "def main(data, count): return {'processed': count}"
@@ -436,10 +440,10 @@ workflow:
     
     commands = engine.handle_event(event)
 
-    # Should generate command for process step with args
+    # Should generate command for process step with canonical input.
     assert len(commands) == 1
     assert commands[0].step == "process"
-    assert commands[0].args is not None
+    assert commands[0].input is not None
 
 
 @pytest.mark.asyncio

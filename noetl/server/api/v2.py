@@ -1012,26 +1012,20 @@ def _estimate_json_size(value: Any) -> int:
 
 
 def _command_input_from_context(context: Any) -> dict[str, Any]:
-    """Return canonical command input map from context, accepting legacy args alias."""
+    """Return canonical command input map from context."""
     if not isinstance(context, dict):
         return {}
     input_map = context.get("input")
     if isinstance(input_map, dict):
         return input_map
-    legacy_args = context.get("args")
-    if isinstance(legacy_args, dict):
-        return legacy_args
     return {}
 
 
 def _command_input_from_model(cmd: Any) -> dict[str, Any]:
-    """Read command input from canonical field first, then legacy args."""
+    """Read command input from canonical field."""
     cmd_input = getattr(cmd, "input", None)
     if isinstance(cmd_input, dict):
         return cmd_input
-    legacy_args = getattr(cmd, "args", None)
-    if isinstance(legacy_args, dict):
-        return legacy_args
     return {}
 
 

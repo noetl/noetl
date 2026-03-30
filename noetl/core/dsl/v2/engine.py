@@ -223,8 +223,7 @@ def _apply_set_mutations(variables: dict, mutations: dict) -> None:
     """Apply DSL v2 `set` mutations to the execution variable store.
 
     Handles scoped keys (ctx.x, iter.x, step.x) by stripping the scope prefix
-    and writing the bare key.  Bare keys (no dot prefix) are written as-is for
-    backward compatibility with legacy set_ctx usage.
+    and writing the bare key. Bare keys (no dot prefix) are written as-is.
     """
     for key, value in mutations.items():
         if "." in key:
@@ -258,15 +257,17 @@ def _merge_hydrated_step_result(
     compact_result: dict[str, Any],
     ref_wrapper: dict[str, Any],
 ) -> Any:
-    """Merge resolved result data with compact PRD metadata for runtime templating."""
+    """Merge resolved output data with compact PRD metadata for runtime templating."""
     reference = compact_result.get("reference")
     compact_context = compact_result.get("context")
     compact_status = compact_result.get("status")
 
     if isinstance(resolved, dict):
         hydrated = dict(resolved)
+        hydrated.setdefault("data", resolved)
         hydrated.setdefault("_ref", ref_wrapper)
         if isinstance(reference, dict):
+            hydrated.setdefault("ref", reference)
             hydrated.setdefault("reference", reference)
         if compact_status is not None:
             hydrated.setdefault("status", compact_status)
@@ -275,18 +276,20 @@ def _merge_hydrated_step_result(
         return hydrated
 
     wrapped: dict[str, Any] = {
+        "data": resolved,
         "_ref": ref_wrapper,
-        "reference": reference,
         "status": compact_status,
-        "result": resolved,
     }
+    if isinstance(reference, dict):
+        wrapped["ref"] = reference
+        wrapped["reference"] = reference
     if isinstance(compact_context, dict):
         wrapped["context"] = compact_context
     return wrapped
 
 
 async def _hydrate_reference_only_step_result(result: Any) -> Any:
-    """Resolve compact `result.reference` envelopes back into runtime step data."""
+    """Resolve compact `result.reference` envelopes back into runtime step output."""
     if not isinstance(result, dict):
         return result
 
@@ -306,6 +309,61 @@ async def _hydrate_reference_only_step_result(result: Any) -> Any:
         return result
 
     return _merge_hydrated_step_result(resolved, result, ref_wrapper)
+
+
+def _normalize_output_status(value: Any) -> str:
+    raw = str(value or "").strip().lower()
+    if raw in {"ok", "success", "completed", "done", "noop"}:
+        return "ok"
+    if raw in {"error", "failed", "failure"}:
+        return "error"
+    return "ok"
+
+
+def _build_output_view(
+    *,
+    event_payload: dict[str, Any],
+    step_result: Any,
+) -> dict[str, Any]:
+    """Build canonical author-facing output envelope from control-plane payload and step state."""
+    payload_result = event_payload.get("result")
+    output: dict[str, Any] = {
+        "status": "error" if event_payload.get("error") else "ok",
+        "data": None,
+        "ref": None,
+        "error": event_payload.get("error"),
+    }
+
+    if isinstance(payload_result, dict):
+        output["status"] = _normalize_output_status(payload_result.get("status", output["status"]))
+        if isinstance(payload_result.get("reference"), dict):
+            output["ref"] = payload_result.get("reference")
+        if isinstance(payload_result.get("error"), dict):
+            output["error"] = payload_result.get("error")
+        if isinstance(payload_result.get("context"), dict):
+            output["context"] = payload_result.get("context")
+            output["data"] = payload_result.get("context")
+
+    if isinstance(step_result, dict):
+        if "status" in step_result:
+            output["status"] = _normalize_output_status(step_result.get("status"))
+        if "error" in step_result and step_result.get("error") is not None:
+            output["error"] = step_result.get("error")
+        if isinstance(step_result.get("ref"), dict):
+            output["ref"] = step_result.get("ref")
+        elif isinstance(step_result.get("reference"), dict):
+            output["ref"] = step_result.get("reference")
+        output["data"] = step_result.get("data", step_result)
+        for key in ("http", "pg", "py", "meta", "context"):
+            if key in step_result:
+                output[key] = step_result.get(key)
+    elif step_result is not None:
+        output["data"] = step_result
+
+    if output.get("data") is None and output.get("context") is not None:
+        output["data"] = output["context"]
+
+    return output
 
 
 def _pending_step_key(step_name: Optional[str]) -> str:
@@ -760,20 +818,17 @@ class ExecutionState:
         
         # Add event-specific data (strict reference-only contract).
         if isinstance(event_payload, dict):
-            if "error" in event_payload:
-                context["error"] = event_payload["error"]
-            if "result" in event_payload:
-                context["result"] = event_payload["result"]
-                # Keep response alias for existing condition expressions, but only
-                # from strict result envelope (never raw tool response payload).
-                context["response"] = event_payload["result"]
-            # Canonical DSL v2: expose result payload as 'output.data'
-            context["output"] = {
-                "data": event_payload.get("result"),
-                "ref": event_payload.get("result_ref") or event_payload.get("ref"),
-                "error": event_payload.get("error"),
-                "status": "error" if event_payload.get("error") else "ok",
-            }
+            step_result = self.step_results.get(event.step) if event.step else None
+            if step_result is None and isinstance(event.step, str) and event.step.endswith(":task_sequence"):
+                step_result = self.step_results.get(event.step.rsplit(":", 1)[0])
+
+            output_view = _build_output_view(
+                event_payload=event_payload,
+                step_result=step_result,
+            )
+            context["output"] = output_view
+            if output_view.get("error") is not None:
+                context["error"] = output_view.get("error")
 
         return context
 
@@ -990,7 +1045,7 @@ class StateStore:
                     return None
                 
                 # Extract workload from playbook.initialized event payload.
-                # This contains the merged workload (playbook defaults + parent args)
+                # This contains the merged workload (playbook defaults + parent input)
                 workload = {}
                 logger.debug(
                     "[STATE-LOAD] event_result type=%s truthy=%s is_dict=%s",
@@ -2141,8 +2196,7 @@ class ControlFlowEngine:
             target_step = next_target.get("step")
             when_condition = next_target.get("when")
             # Canonical DSL v2: arc.set contains transition-scoped mutations.
-            # Legacy arc.args treated as backward-compat alias for arc.set.
-            arc_set = next_target.get("set") or next_target.get("args") or {}
+            arc_set = next_target.get("set") or {}
 
             if not target_step:
                 logger.warning(f"[NEXT-EVAL] Skipping next entry {idx} with no step")
@@ -2281,7 +2335,7 @@ class ControlFlowEngine:
 
         Supports:
         - Task sequences: labeled tasks with tool.eval: for flow control
-        - Reserved action types: next, set, result, fail, collect, retry
+        - Reserved action types: next, set, fail, collect, retry, call
         - Inline tasks with tool: { task_name: { tool: { kind: ... } } }
 
         IMPORTANT: Actions are processed sequentially. If inline tasks are present,
@@ -2295,7 +2349,7 @@ class ControlFlowEngine:
         # Reserved action keys that are not named tasks
         # Any key not in this set that contains a tool: is treated as an inline task
         # NOTE: 'vars' REMOVED in strict v10
-        reserved_actions = {"next", "set", "result", "fail", "collect", "retry"}
+        reserved_actions = {"next", "set", "fail", "collect", "retry", "call"}
 
         # Normalize to list
         actions = then_block if isinstance(then_block, list) else [then_block]
@@ -2325,7 +2379,7 @@ class ControlFlowEngine:
                         continue
                     # Skip labeled tasks (they're in the task sequence)
                     is_task = any(
-                        key not in {"next", "set", "result", "fail", "collect", "retry"}
+                        key not in {"next", "set", "fail", "collect", "retry", "call"}
                         and isinstance(val, dict) and "tool" in val
                         for key, val in action.items()
                     )
@@ -2387,11 +2441,11 @@ class ControlFlowEngine:
             # Return only inline task commands (next actions are deferred)
             commands.extend(inline_task_commands)
 
-            # Still process non-next reserved actions (set, result, fail, collect)
+            # Still process non-next reserved actions (set, fail, collect, retry, call)
             for action in actions:
                 if not isinstance(action, dict):
                     continue
-                # Process set, result, fail, collect immediately (they don't depend on inline tasks)
+                # Process immediate actions that don't depend on inline task completion.
                 await self._process_immediate_actions(action, state, context, event, commands)
 
             return commands
@@ -2427,9 +2481,9 @@ class ControlFlowEngine:
                         target_step = next_item
                         arc_set_legacy = {}
                     elif isinstance(next_item, dict):
-                        # {step: name, set: {...}} (canonical) or {step: name, args: {...}} (legacy)
+                        # {step: name, set: {...}} (canonical)
                         target_step = next_item.get("step")
-                        arc_set_legacy = next_item.get("set") or next_item.get("args") or {}
+                        arc_set_legacy = next_item.get("set") or {}
 
                         # Render and apply arc-level set mutations
                         if arc_set_legacy:
@@ -2464,16 +2518,6 @@ class ControlFlowEngine:
                         state.variables[key] = self._render_template(value, context)
                     else:
                         state.variables[key] = value
-            
-            elif "result" in action:
-                # Set step result
-                result_spec = action["result"]
-                if isinstance(result_spec, dict) and "from" in result_spec:
-                    from_key = result_spec["from"]
-                    if from_key in state.variables:
-                        state.mark_step_completed(event.step, state.variables[from_key])
-                else:
-                    state.mark_step_completed(event.step, result_spec)
             
             elif "fail" in action:
                 # Mark execution as failed
@@ -2572,7 +2616,7 @@ class ControlFlowEngine:
                         else:
                             rendered_params[key] = value
 
-                    # HTTP tool expects runtime pagination overrides under args['params']
+                    # HTTP tool expects runtime pagination overrides under input['params']
                     updated_args["params"] = rendered_params
 
                 # Process other updatable fields
@@ -2595,7 +2639,7 @@ class ControlFlowEngine:
                         f"(index now {loop_state['index']})"
                     )
 
-                # Create retry command with updated args (same step)
+                # Create retry command with updated input (same step)
                 retry_args_with_control = dict(updated_args)
                 if loop_state is not None:
                     retry_args_with_control["__loop_retry"] = True
@@ -2620,15 +2664,15 @@ class ControlFlowEngine:
                 # Call/invoke a step with new arguments
                 call_spec = action["call"]
                 target_step = call_spec.get("step")
-                args = call_spec.get("input") or call_spec.get("args") or {}
+                call_input = call_spec.get("input") or {}
                 
                 if not target_step:
                     logger.warning("Call action missing 'step' attribute")
                     continue
                 
-                # Render args
+                # Render input payload.
                 rendered_args = {}
-                for key, value in args.items():
+                for key, value in call_input.items():
                     if isinstance(value, str) and "{{" in value:
                         rendered_args[key] = self._render_template(value, context)
                     else:
@@ -2652,7 +2696,7 @@ class ControlFlowEngine:
                 delay = retry_spec.get("delay", 0)
                 max_attempts = retry_spec.get("max_attempts", 3)
                 backoff = retry_spec.get("backoff", "linear")  # linear, exponential
-                retry_args = retry_spec.get("args", {})  # Get rendered args from worker
+                retry_args = retry_spec.get("input", {})  # Rendered retry input from worker
                 
                 # Get current attempt from event.attempt (Event model field)
                 current_attempt = event.attempt if event.attempt else 1
@@ -2677,7 +2721,7 @@ class ControlFlowEngine:
                     _sample_keys(retry_args),
                 )
                 
-                # Create retry command with rendered args from worker
+                # Create retry command with rendered input from worker
                 command = await self._create_command_for_step(state, step_def, retry_args)
                 if command:
                     # Increment attempt counter
@@ -2704,7 +2748,7 @@ class ControlFlowEngine:
         commands: list[Command]
     ) -> None:
         """
-        Process immediate (non-deferred) actions like set, result, fail, collect.
+        Process immediate (non-deferred) actions like set and fail.
         These actions don't depend on inline task completion and can run immediately.
         """
         if "set" in action:
@@ -2716,19 +2760,9 @@ class ControlFlowEngine:
                 else:
                     state.variables[key] = value
 
-        # NOTE: 'vars' action is REMOVED in strict v10 - use 'set' or task.spec.policy.rules set_ctx
+        # NOTE: 'vars' action is REMOVED in strict v10 - use scoped 'set' assignments.
 
-        if "result" in action:
-            # Set step result
-            result_spec = action["result"]
-            if isinstance(result_spec, dict) and "from" in result_spec:
-                from_key = result_spec["from"]
-                if from_key in state.variables:
-                    state.mark_step_completed(event.step, state.variables[from_key])
-            else:
-                state.mark_step_completed(event.step, result_spec)
-
-        elif "fail" in action:
+        if "fail" in action:
             # Mark execution as failed
             state.failed = True
             logger.info(f"Execution {state.execution_id} marked as failed")
@@ -2809,7 +2843,7 @@ class ControlFlowEngine:
                     deferred_arc_set: dict = {}
                 elif isinstance(next_item, dict):
                     target_step = next_item.get("step")
-                    deferred_arc_set = next_item.get("set") or next_item.get("args") or {}
+                    deferred_arc_set = next_item.get("set") or {}
 
                     # Render and apply arc-level set mutations
                     if deferred_arc_set:
@@ -2862,7 +2896,7 @@ class ControlFlowEngine:
                 kind: gateway
                 action: callback
                 data:
-                  status: "{{ result.status }}"
+                  status: "{{ output.status }}"
 
         Args:
             state: Current execution state
@@ -3594,9 +3628,6 @@ class ControlFlowEngine:
         step_args = {}
         if step.input:
             step_args.update(step.input)
-        elif getattr(step, "args", None):
-            # Backward compat: accept legacy step.args if step.input not set
-            step_args.update(step.args)
 
         # Merge transition-scoped input published by prior routing/actions.
         filtered_args = {
@@ -3619,10 +3650,10 @@ class ControlFlowEngine:
         pipeline = None
         if isinstance(step.tool, list):
             # Pipeline: list of labeled tasks
-            # Each item is {label: {kind: ..., args: ..., eval: ...}}
+            # Each item is {name: ..., kind: ..., input/spec/output...}
             # IMPORTANT: Do NOT pre-render pipeline templates here!
             # Task sequences may have templates that depend on variables set by earlier tasks
-            # (e.g., set_ctx from policy rules). The worker's task_sequence_executor
+            # (e.g., via `set` in policy rules). The worker's task_sequence_executor
             # will render templates at execution time with the proper context.
             pipeline = step.tool  # Pass raw list, worker renders at execution time
             logger.info(f"[PIPELINE] Step '{step.step}' has pipeline with {len(pipeline)} tasks (deferred rendering)")
@@ -3735,7 +3766,7 @@ class ControlFlowEngine:
 
         return command
 
-    # NOTE: _process_vars_block REMOVED in strict v10 - use task.spec.policy.rules set_ctx
+    # NOTE: _process_vars_block REMOVED in strict v10 - use scoped `set` mutations.
 
     async def handle_event(self, event: Event, already_persisted: bool = False) -> list[Command]:
         """
@@ -3894,8 +3925,8 @@ class ControlFlowEngine:
             if not payload_loop_event_id and isinstance(response_data, dict):
                 payload_loop_event_id = response_data.get("loop_event_id")
 
-            # Extract ctx variables from task sequence result and merge into execution state
-            # This syncs set_ctx mutations from task policy rules back to the server
+            # Extract ctx variables from task sequence result and merge into execution state.
+            # This syncs scoped set mutations from task policy rules back to the server.
             task_ctx = response_data.get("ctx", {})
             if task_ctx and isinstance(task_ctx, dict):
                 for key, value in task_ctx.items():
@@ -4197,7 +4228,7 @@ class ControlFlowEngine:
                     except Exception as e:
                         logger.error(f"[TASK_SEQ-LOOP] Error handling loop: {e}", exc_info=True)
             else:
-                # Not in loop - parent step was already marked completed above (before set_ctx)
+                # Not in loop - parent step was already marked completed above (before set processing)
                 # with the last tool's result promoted to the top level for flat template access.
                 logger.info(f"[TASK_SEQ] Parent step '{parent_step}' already marked completed with promoted result")
 
@@ -4610,7 +4641,7 @@ class ControlFlowEngine:
 
             elif action_type == "next":
                 # Worker sends steps as a list: [{"step": "upsert_user"}]
-                # _process_then_actions expects next items to be step names or {step: name, args: {...}}
+                # _process_then_actions expects next items to be step names or {step: name, set: {...}}
                 worker_commands = await self._process_then_actions(
                     [{"next": action_config}],
                     state,
@@ -4764,7 +4795,7 @@ class ControlFlowEngine:
                         loop_done_commands = await self._evaluate_next_transitions(state, step_def, loop_done_event)
                         commands.extend(loop_done_commands)
 
-        # NOTE: step.vars is REMOVED in strict v10 - use task.spec.policy.rules set_ctx
+        # NOTE: step.vars is REMOVED in strict v10 - use scoped `set` mutations.
 
         # If step.exit event and no next/loop matched, use structural next as fallback
         # NOTE: This code path should rarely be hit because next transitions are evaluated

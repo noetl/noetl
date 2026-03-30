@@ -64,11 +64,11 @@ async def test_http_error_status_code_drives_retry_rule():
                 "policy": {
                     "rules": [
                         {
-                            "when": "{{ outcome.status == 'error' and outcome.http.status in [500] }}",
+                            "when": "{{ output.status == 'error' and output.http.status in [500] }}",
                             "then": {"do": "retry", "attempts": 2, "backoff": "none", "delay": 0},
                         },
                         {
-                            "when": "{{ outcome.status == 'error' }}",
+                            "when": "{{ output.status == 'error' }}",
                             "then": {"do": "fail"},
                         },
                         {"else": {"then": {"do": "continue"}}},
@@ -114,11 +114,11 @@ async def test_http_error_infers_retryable_for_429():
                 "policy": {
                     "rules": [
                         {
-                            "when": "{{ outcome.status == 'error' and outcome.error.retryable }}",
+                            "when": "{{ output.status == 'error' and output.error.retryable }}",
                             "then": {"do": "retry", "attempts": 2, "backoff": "none", "delay": 0},
                         },
                         {
-                            "when": "{{ outcome.status == 'error' }}",
+                            "when": "{{ output.status == 'error' }}",
                             "then": {"do": "fail"},
                         },
                         {"else": {"then": {"do": "continue"}}},
@@ -169,7 +169,7 @@ async def test_task_sequence_jump_overwrites_latest_result_for_same_task_name():
                 "policy": {
                     "rules": [
                         {
-                            "when": "{{ outcome.status == 'ok' and outcome.result.jump }}",
+                            "when": "{{ output.status == 'ok' and output.data.jump }}",
                             "then": {"do": "jump", "to": "fetch"},
                         },
                         {"else": {"then": {"do": "continue"}}},
@@ -254,7 +254,7 @@ async def test_task_sequence_jump_previous_alias_targets_prior_task():
                 "policy": {
                     "rules": [
                         {
-                            "when": "{{ outcome.status == 'ok' and outcome.result.repeat }}",
+                            "when": "{{ output.status == 'ok' and output.data.repeat }}",
                             "then": {"do": "jump", "to": "previous"},
                         },
                         {"else": {"then": {"do": "continue"}}},
@@ -310,11 +310,11 @@ async def test_task_sequence_missing_reference_error_supports_jump_replay():
                 "policy": {
                     "rules": [
                         {
-                            "when": "{{ outcome.status == 'error' and outcome.error.code == 'REFERENCE_NOT_AVAILABLE' }}",
+                            "when": "{{ output.status == 'error' and output.error.code == 'REFERENCE_NOT_AVAILABLE' }}",
                             "then": {"do": "jump", "to": "previous"},
                         },
                         {
-                            "when": "{{ outcome.status == 'error' }}",
+                            "when": "{{ output.status == 'error' }}",
                             "then": {"do": "fail"},
                         },
                         {"else": {"then": {"do": "continue"}}},
@@ -353,7 +353,7 @@ async def test_task_sequence_missing_reference_error_reports_reference_code():
                 "policy": {
                     "rules": [
                         {
-                            "when": "{{ outcome.status == 'error' }}",
+                            "when": "{{ output.status == 'error' }}",
                             "then": {"do": "fail"},
                         }
                     ]
