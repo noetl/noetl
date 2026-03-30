@@ -179,6 +179,18 @@ class V2Worker:
         )
         self._recent_command_activity: dict[str, float] = {}
         self._recent_command_activity_last_prune_monotonic = 0.0
+        self._command_heartbeat_interval_seconds = max(
+            2.0,
+            float(os.getenv("NOETL_COMMAND_HEARTBEAT_INTERVAL_SECONDS", "15")),
+        )
+        self._command_heartbeat_timeout_seconds = max(
+            1.0,
+            float(os.getenv("NOETL_COMMAND_HEARTBEAT_TIMEOUT_SECONDS", "3")),
+        )
+        self._command_heartbeat_max_retries = max(
+            1,
+            int(os.getenv("NOETL_COMMAND_HEARTBEAT_MAX_RETRIES", "1")),
+        )
         # Adaptive AIMD concurrency controller: limits simultaneous claim/event
         # requests from this worker process, backing off when the server pool
         # is saturated (503) and recovering as it clears.
@@ -256,6 +268,58 @@ class V2Worker:
             self._recent_command_activity.pop(str(command_id), None)
             return False
         return True
+
+    async def _command_heartbeat_loop(
+        self,
+        *,
+        server_url: str,
+        execution_id: int,
+        step: str,
+        command_id: str,
+        stop_event: asyncio.Event,
+    ) -> None:
+        """Emit periodic command.heartbeat events while a command is executing."""
+        interval_seconds = self._command_heartbeat_interval_seconds
+        while self._running and not stop_event.is_set():
+            try:
+                await asyncio.wait_for(stop_event.wait(), timeout=interval_seconds)
+                break
+            except asyncio.TimeoutError:
+                pass
+
+            if stop_event.is_set():
+                break
+
+            try:
+                emitted = await self._emit_event(
+                    server_url=server_url,
+                    execution_id=execution_id,
+                    step=step,
+                    name="command.heartbeat",
+                    payload={"command_id": command_id, "worker_id": self.worker_id},
+                    actionable=False,
+                    informative=True,
+                    timeout_seconds=self._command_heartbeat_timeout_seconds,
+                    max_retries=self._command_heartbeat_max_retries,
+                    raise_on_failure=False,
+                )
+                if not emitted:
+                    logger.debug(
+                        "[HEARTBEAT] command.heartbeat emission failed | execution=%s step=%s command=%s",
+                        execution_id,
+                        step,
+                        command_id,
+                    )
+            except asyncio.CancelledError:
+                break
+            except Exception as heartbeat_error:
+                logger.debug(
+                    "[HEARTBEAT] command.heartbeat error | execution=%s step=%s command=%s error=%s",
+                    execution_id,
+                    step,
+                    command_id,
+                    heartbeat_error,
+                )
 
     async def _wait_for_postgres_capacity(self, step: str, command_id: str) -> None:
         """Pause db-heavy command execution while plugin pools are saturated."""
@@ -1776,15 +1840,47 @@ class V2Worker:
                     )
 
             # Execute tool
+            heartbeat_stop_event: Optional[asyncio.Event] = None
+            heartbeat_task: Optional[asyncio.Task] = None
+            if command_id:
+                heartbeat_stop_event = asyncio.Event()
+                heartbeat_task = asyncio.create_task(
+                    self._command_heartbeat_loop(
+                        server_url=server_url,
+                        execution_id=execution_id,
+                        step=step,
+                        command_id=command_id,
+                        stop_event=heartbeat_stop_event,
+                    ),
+                    name=f"command-heartbeat:{command_id}",
+                )
+
             t_tool_start = time.perf_counter()
-            response = await self._execute_tool(
-                tool_kind,
-                tool_config,
-                command_input,
-                step,
-                render_context,
-                case_blocks=case_blocks,
-            )
+            try:
+                response = await self._execute_tool(
+                    tool_kind,
+                    tool_config,
+                    command_input,
+                    step,
+                    render_context,
+                    case_blocks=case_blocks,
+                )
+            finally:
+                if heartbeat_stop_event:
+                    heartbeat_stop_event.set()
+                if heartbeat_task:
+                    try:
+                        await asyncio.wait_for(
+                            heartbeat_task,
+                            timeout=self._command_heartbeat_timeout_seconds + 0.5,
+                        )
+                    except asyncio.TimeoutError:
+                        heartbeat_task.cancel()
+                        try:
+                            await heartbeat_task
+                        except asyncio.CancelledError:
+                            pass
+
             t_tool_end = time.perf_counter()
             logger.info(f"[PERF] Tool execution for {step} took {(t_tool_end - t_tool_start)*1000:.1f}ms")
 

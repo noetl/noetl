@@ -53,6 +53,13 @@ _TERMINAL_COMMAND_EVENT_TYPES = [
     "command.failed",
     "command.cancelled",
 ]
+_TERMINAL_EXECUTION_EVENT_TYPES = [
+    "playbook.completed",
+    "playbook.failed",
+    "workflow.completed",
+    "workflow.failed",
+    "execution.cancelled",
+]
 
 _REAPER_ENABLED = os.getenv("NOETL_COMMAND_REAPER_ENABLED", "true").strip().lower() in {
     "1", "true", "yes", "on"
@@ -156,6 +163,12 @@ async def _find_orphaned_commands(
                         WHERE x.execution_id = issued_candidates.execution_id
                           AND x.event_type = 'execution.cancelled'
                     )
+                    -- Execution has already reached terminal lifecycle state
+                    AND NOT EXISTS (
+                        SELECT 1 FROM noetl.event et
+                        WHERE et.execution_id = issued_candidates.execution_id
+                          AND et.event_type = ANY(%s)
+                    )
                 ORDER BY issued_candidates.event_id DESC
                 LIMIT %s
                 """,
@@ -164,6 +177,7 @@ async def _find_orphaned_commands(
                     lookback_hours,
                     stale_seconds,
                     _TERMINAL_COMMAND_EVENT_TYPES,
+                    _TERMINAL_EXECUTION_EVENT_TYPES,
                     max_commands,
                 ),
             )
@@ -223,6 +237,12 @@ async def _find_unclaimed_pending_commands(
                       WHERE x.execution_id = issued_candidates.execution_id
                         AND x.event_type = 'execution.cancelled'
                   )
+                  -- Execution has already reached terminal lifecycle state
+                  AND NOT EXISTS (
+                      SELECT 1 FROM noetl.event et
+                      WHERE et.execution_id = issued_candidates.execution_id
+                        AND et.event_type = ANY(%s)
+                  )
                 ORDER BY issued_candidates.event_id DESC
                 LIMIT %s
                 """,
@@ -230,6 +250,7 @@ async def _find_unclaimed_pending_commands(
                     lookback_hours,
                     pending_retry_seconds,
                     _TERMINAL_COMMAND_EVENT_TYPES,
+                    _TERMINAL_EXECUTION_EVENT_TYPES,
                     max_commands,
                 ),
             )

@@ -19,6 +19,7 @@ def test_claim_command_lookup_sql_remains_index_friendly():
     _assert_index_friendly_lookup(v2_api._CLAIM_TERMINAL_LOOKUP_SQL)
     _assert_index_friendly_lookup(v2_api._CLAIM_EXISTING_LOOKUP_SQL)
     _assert_index_friendly_lookup(v2_api._CLAIM_SAME_WORKER_LATEST_LOOKUP_SQL)
+    assert "command.heartbeat" in v2_api._CLAIM_EXISTING_LOOKUP_SQL
 
 
 def test_handle_event_claim_lookup_sql_remains_index_friendly():
