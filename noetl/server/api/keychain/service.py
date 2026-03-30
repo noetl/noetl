@@ -118,12 +118,12 @@ class KeychainService:
                         )
                         expired_row = await cursor.fetchone()
                         
-                        if expired_row and expired_row[2]:  # auto_renew is True
+                        if expired_row and expired_row.get('auto_renew'):  # auto_renew is True
                             logger.info(f"Token expired for {keychain_name}, auto_renew enabled")
-                            renew_cfg = decrypt_json(expired_row[3]) if expired_row[3] else None
+                            renew_cfg = decrypt_json(expired_row.get('renew_config')) if expired_row.get('renew_config') else None
                             return {
-                                'keychain_name': expired_row[0],
-                                'catalog_id': expired_row[1],
+                                'keychain_name': expired_row.get('keychain_name'),
+                                'catalog_id': expired_row.get('catalog_id'),
                                 'expired': True,
                                 'auto_renew': True,
                                 'renew_config': renew_cfg,
@@ -133,31 +133,28 @@ class KeychainService:
                         logger.debug(f"Cache miss for key: {cache_key}")
                         return None
                     
-                    # Decrypt and return
-                    (kc_name, cat_id, encrypted_data, cred_type, cache_type, 
-                     exec_id, parent_exec_id, sc_type, expires_at, created_at, 
-                     accessed_at, access_count, auto_renew, renew_config_encrypted) = row
-                    
+                    encrypted_data = row.get('data_encrypted')
+                    renew_config_encrypted = row.get('renew_config')
                     decrypted = decrypt_json(encrypted_data)
                     renew_cfg = decrypt_json(renew_config_encrypted) if renew_config_encrypted else None
                     
-                    logger.debug(f"Cache hit for {cache_type} keychain: {keychain_name}")
+                    logger.debug(f"Cache hit for {row.get('cache_type')} keychain: {keychain_name}")
                     
                     return {
-                        'keychain_name': kc_name,
-                        'catalog_id': cat_id,
+                        'keychain_name': row.get('keychain_name'),
+                        'catalog_id': row.get('catalog_id'),
                         'cache_key': cache_key,
                         'data': decrypted,
-                        'credential_type': cred_type,
-                        'cache_type': cache_type,
-                        'execution_id': exec_id,
-                        'parent_execution_id': parent_exec_id,
-                        'scope_type': sc_type,
-                        'expires_at': expires_at,
-                        'created_at': created_at,
-                        'accessed_at': accessed_at,
-                        'access_count': access_count,
-                        'auto_renew': auto_renew,
+                        'credential_type': row.get('credential_type'),
+                        'cache_type': row.get('cache_type'),
+                        'execution_id': row.get('execution_id'),
+                        'parent_execution_id': row.get('parent_execution_id'),
+                        'scope_type': row.get('scope_type'),
+                        'expires_at': row.get('expires_at'),
+                        'created_at': row.get('created_at'),
+                        'accessed_at': row.get('accessed_at'),
+                        'access_count': row.get('access_count'),
+                        'auto_renew': row.get('auto_renew'),
                         'renew_config': renew_cfg,
                         'expired': False
                     }
@@ -352,14 +349,14 @@ class KeychainService:
                     
                     return [
                         {
-                            'keychain_name': row[0],
-                            'cache_key': row[1],
-                            'credential_type': row[2],
-                            'cache_type': row[3],
-                            'scope_type': row[4],
-                            'expires_at': row[5],
-                            'auto_renew': row[6],
-                            'access_count': row[7]
+                            'keychain_name': row.get('keychain_name'),
+                            'cache_key': row.get('cache_key'),
+                            'credential_type': row.get('credential_type'),
+                            'cache_type': row.get('cache_type'),
+                            'scope_type': row.get('scope_type'),
+                            'expires_at': row.get('expires_at'),
+                            'auto_renew': row.get('auto_renew'),
+                            'access_count': row.get('access_count')
                         }
                         for row in rows
                     ]
