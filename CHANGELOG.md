@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.14.6](https://github.com/noetl/noetl/compare/v2.14.5...v2.14.6) (2026-03-30)
+
+### Bug Fixes
+
+* **runtime:** stabilize command claims under long-running tools ([d937c10](https://github.com/noetl/noetl/commit/d937c10dc5438658519605f50dba8383083834ac))
+
 ## [2.14.5](https://github.com/noetl/noetl/compare/v2.14.4...v2.14.5) (2026-03-30)
 
 ### Bug Fixes
