@@ -42,6 +42,17 @@ def _build_acceptance_result(
     return v2_api._BatchAcceptanceResult(job=job, event_ids=event_ids or [1, 2], duplicate=duplicate)
 
 
+def test_extract_command_id_from_payload_supports_nested_result_context():
+    payload = {
+        "result": {
+            "context": {
+                "command_id": "cmd-nested",
+            }
+        }
+    }
+    assert v2_api._extract_command_id_from_payload(payload, None) == "cmd-nested"
+
+
 @pytest.mark.asyncio
 async def test_batch_enqueue_ack_timeout_under_queue_pressure(monkeypatch):
     queue = asyncio.Queue(maxsize=1)
@@ -114,6 +125,96 @@ async def test_batch_worker_unavailable_error_code(monkeypatch):
 
     assert exc.value.status_code == 503
     assert exc.value.detail["code"] == v2_api._BATCH_FAILURE_WORKER_UNAVAILABLE
+
+
+@pytest.mark.asyncio
+async def test_persist_batch_acceptance_stores_command_id_in_meta(monkeypatch):
+    class _CursorCtx:
+        def __init__(self, cursor):
+            self._cursor = cursor
+
+        async def __aenter__(self):
+            return self._cursor
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+    class _PersistCursor:
+        def __init__(self):
+            self.insert_params = []
+            self._fetch_calls = 0
+
+        async def execute(self, query, params=None):
+            if "INSERT INTO noetl.event" in query:
+                self.insert_params.append(params)
+
+        async def fetchone(self):
+            self._fetch_calls += 1
+            if self._fetch_calls == 1:
+                return {"catalog_id": 10}
+            return None
+
+    class _PersistConn:
+        def __init__(self, cursor):
+            self._cursor = cursor
+
+        def cursor(self, row_factory=None):
+            return _CursorCtx(self._cursor)
+
+        async def commit(self):
+            return None
+
+    class _ConnCtx:
+        def __init__(self, conn):
+            self._conn = conn
+
+        async def __aenter__(self):
+            return self._conn
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+    fake_cursor = _PersistCursor()
+    fake_conn = _PersistConn(fake_cursor)
+
+    def _fake_get_pool_connection(*_args, **_kwargs):
+        return _ConnCtx(fake_conn)
+
+    next_ids = iter(range(1000, 1200))
+
+    async def _fake_next_snowflake_id(_cur):
+        return next(next_ids)
+
+    monkeypatch.setattr(v2_api, "get_pool_connection", _fake_get_pool_connection)
+    monkeypatch.setattr(v2_api, "_next_snowflake_id", _fake_next_snowflake_id)
+
+    req = v2_api.BatchEventRequest(
+        execution_id="42",
+        worker_id="worker-1",
+        events=[
+            v2_api.BatchEventItem(
+                step="tool_step",
+                name="command.completed",
+                payload={
+                    "result": {"status": "COMPLETED"},
+                    "command_id": "cmd-42",
+                },
+                actionable=False,
+                informative=True,
+            )
+        ],
+    )
+
+    acceptance = await v2_api._persist_batch_acceptance(req, idempotency_key=None)
+    assert acceptance.duplicate is False
+    inserted_command_completed = [
+        params
+        for params in fake_cursor.insert_params
+        if isinstance(params, tuple) and len(params) > 8 and params[3] == "command.completed"
+    ]
+    assert inserted_command_completed
+    meta_obj = inserted_command_completed[0][8].obj
+    assert meta_obj["command_id"] == "cmd-42"
 
 
 @pytest.mark.asyncio

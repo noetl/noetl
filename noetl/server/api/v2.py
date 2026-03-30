@@ -435,18 +435,21 @@ def _active_claim_cache_invalidate(
             _active_claim_cache_by_command.pop(cached.command_id, None)
 
 
-def _extract_event_command_id(req: "EventRequest") -> Optional[str]:
-    payload = req.payload or {}
-    meta = req.meta or {}
+def _extract_command_id_from_payload(
+    payload: Optional[dict[str, Any]],
+    meta: Optional[dict[str, Any]] = None,
+) -> Optional[str]:
+    payload_obj = payload if isinstance(payload, dict) else {}
+    meta_obj = meta if isinstance(meta, dict) else {}
 
-    candidates = [
-        payload.get("command_id"),
-        meta.get("command_id"),
+    candidates: list[Any] = [
+        payload_obj.get("command_id"),
+        meta_obj.get("command_id"),
     ]
-    payload_context = payload.get("context")
+    payload_context = payload_obj.get("context")
     if isinstance(payload_context, dict):
         candidates.append(payload_context.get("command_id"))
-    payload_result = payload.get("result")
+    payload_result = payload_obj.get("result")
     if isinstance(payload_result, dict):
         candidates.append(payload_result.get("command_id"))
         result_context = payload_result.get("context")
@@ -457,6 +460,10 @@ def _extract_event_command_id(req: "EventRequest") -> Optional[str]:
         if isinstance(value, str) and value.strip():
             return value.strip()
     return None
+
+
+def _extract_event_command_id(req: "EventRequest") -> Optional[str]:
+    return _extract_command_id_from_payload(req.payload, req.meta)
 
 
 # Reference-only result envelope persisted in noetl.event.result.
@@ -570,9 +577,10 @@ _EVENT_TYPE_TERMINAL_PREDICATE = (
     + ", ".join(f"'{e}'" for e in _COMMAND_TERMINAL_EVENT_TYPES)
     + ")"
 )
+_EVENT_TYPE_ACTIVE_CLAIM_PREDICATE = "event_type IN ('command.claimed', 'command.heartbeat')"
 _EVENT_TYPE_CLAIMED_PREDICATE = "event_type = 'command.claimed'"
 _EVENT_TYPE_SAME_WORKER_LATEST_PREDICATE = (
-    "event_type IN ('command.started', 'command.completed', 'command.failed')"
+    "event_type IN ('command.started', 'command.heartbeat', 'command.completed', 'command.failed')"
 )
 _COMMAND_EVENT_DEDUPE_TYPES = {
     "call.done",
@@ -621,7 +629,7 @@ _CLAIM_TERMINAL_LOOKUP_SQL = _build_command_id_latest_lookup_sql(
 _CLAIM_EXISTING_LOOKUP_SQL = _build_command_id_latest_lookup_sql(
     inner_select_columns="event_id, worker_id, meta, created_at",
     outer_select_columns="event_id, worker_id, meta, created_at",
-    event_type_predicate=_EVENT_TYPE_CLAIMED_PREDICATE,
+    event_type_predicate=_EVENT_TYPE_ACTIVE_CLAIM_PREDICATE,
     alias="claimed_match",
 )
 _CLAIM_SAME_WORKER_LATEST_LOOKUP_SQL = _build_command_id_latest_lookup_sql(
@@ -1971,6 +1979,7 @@ async def handle_event(req: EventRequest) -> EventResponse:
     
     Skip engine for administrative events:
     - command.claimed: Just persist, don't process
+    - command.heartbeat: lease/liveness refresh, don't process
     - command.started: Just persist, don't process
     - command.completed: Already processed by worker
     - step.enter: Just marks step started
@@ -1984,8 +1993,11 @@ async def handle_event(req: EventRequest) -> EventResponse:
         # Events that should NOT trigger engine processing
         # These are administrative events that just need to be persisted
         skip_engine_events = {
-            "command.claimed", "command.started", "command.completed",
-            "step.enter"
+            "command.claimed",
+            "command.heartbeat",
+            "command.started",
+            "command.completed",
+            "step.enter",
         }
         
         # For command.claimed, use fully atomic claiming with advisory lock + insert in same transaction
@@ -2498,6 +2510,7 @@ async def _persist_batch_acceptance(
 ) -> _BatchAcceptanceResult:
     skip_engine_events = {
         "command.claimed",
+        "command.heartbeat",
         "command.started",
         "command.completed",
         "step.enter",
@@ -2558,6 +2571,7 @@ async def _persist_batch_acceptance(
             event_ids: list[int] = []
             last_actionable_event: Optional[Event] = None
             last_actionable_evt_id: Optional[int] = None
+            terminal_command_ids: set[str] = set()
             for item in req.events:
                 try:
                     _validate_reference_only_payload(item.payload)
@@ -2580,6 +2594,9 @@ async def _persist_batch_acceptance(
                     meta_obj["worker_id"] = req.worker_id
                 if idempotency_key:
                     meta_obj["idempotency_key"] = idempotency_key
+                item_command_id = _extract_command_id_from_payload(item.payload)
+                if item_command_id:
+                    meta_obj["command_id"] = item_command_id
 
                 await cur.execute(
                     """
@@ -2608,6 +2625,8 @@ async def _persist_batch_acceptance(
                         datetime.now(timezone.utc),
                     ),
                 )
+                if item_command_id and item.name in _COMMAND_TERMINAL_EVENT_TYPES:
+                    terminal_command_ids.add(item_command_id)
 
                 if item.actionable and item.name not in skip_engine_events:
                     last_actionable_event = Event(
@@ -2665,6 +2684,8 @@ async def _persist_batch_acceptance(
                 ),
             )
             await conn.commit()
+            for terminal_command_id in terminal_command_ids:
+                _active_claim_cache_invalidate(command_id=terminal_command_id)
 
     job = _BatchAcceptJob(
         request_id=request_id,

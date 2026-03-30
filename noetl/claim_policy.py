@@ -38,14 +38,14 @@ def decide_reclaim_for_existing_claim(
         and worker_heartbeat_age_seconds >= heartbeat_stale_seconds
     )
 
+    if claim_age_seconds < lease_seconds:
+        return ClaimReclaimDecision(reclaim=False, retry_reason="lease_active")
+
     if worker_inactive:
         return ClaimReclaimDecision(reclaim=True, reason="worker_inactive")
 
     if heartbeat_stale:
         return ClaimReclaimDecision(reclaim=True, reason="worker_heartbeat_stale")
-
-    if claim_age_seconds < lease_seconds:
-        return ClaimReclaimDecision(reclaim=False, retry_reason="lease_active")
 
     worker_healthy = (
         status_norm == "ready"

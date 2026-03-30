@@ -1,11 +1,27 @@
 from noetl.claim_policy import decide_reclaim_for_existing_claim
 
 
-def test_reclaim_when_worker_inactive_even_if_lease_not_expired():
+def test_keep_claim_when_worker_inactive_but_lease_not_expired():
     decision = decide_reclaim_for_existing_claim(
         existing_worker="worker-a",
         requesting_worker="worker-b",
         claim_age_seconds=10.0,
+        lease_seconds=120.0,
+        worker_runtime_status="error",
+        worker_heartbeat_age_seconds=1.0,
+        heartbeat_stale_seconds=30.0,
+        healthy_worker_hard_timeout_seconds=1800.0,
+    )
+
+    assert decision.reclaim is False
+    assert decision.retry_reason == "lease_active"
+
+
+def test_reclaim_when_worker_inactive_after_lease_expiry():
+    decision = decide_reclaim_for_existing_claim(
+        existing_worker="worker-a",
+        requesting_worker="worker-b",
+        claim_age_seconds=130.0,
         lease_seconds=120.0,
         worker_runtime_status="error",
         worker_heartbeat_age_seconds=1.0,
@@ -63,3 +79,35 @@ def test_reclaim_on_lease_expiry_when_worker_health_unknown():
 
     assert decision.reclaim is True
     assert decision.reason == "lease_expired"
+
+
+def test_keep_claim_when_heartbeat_stale_but_lease_active():
+    decision = decide_reclaim_for_existing_claim(
+        existing_worker="worker-a",
+        requesting_worker="worker-b",
+        claim_age_seconds=67.0,
+        lease_seconds=120.0,
+        worker_runtime_status="ready",
+        worker_heartbeat_age_seconds=65.0,
+        heartbeat_stale_seconds=30.0,
+        healthy_worker_hard_timeout_seconds=1800.0,
+    )
+
+    assert decision.reclaim is False
+    assert decision.retry_reason == "lease_active"
+
+
+def test_reclaim_when_heartbeat_stale_after_lease_expiry():
+    decision = decide_reclaim_for_existing_claim(
+        existing_worker="worker-a",
+        requesting_worker="worker-b",
+        claim_age_seconds=130.0,
+        lease_seconds=120.0,
+        worker_runtime_status="ready",
+        worker_heartbeat_age_seconds=65.0,
+        heartbeat_stale_seconds=30.0,
+        healthy_worker_hard_timeout_seconds=1800.0,
+    )
+
+    assert decision.reclaim is True
+    assert decision.reason == "worker_heartbeat_stale"
