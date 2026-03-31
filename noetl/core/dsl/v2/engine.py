@@ -4371,6 +4371,30 @@ class ControlFlowEngine:
                                     )
 
                         if collection_size > 0 and new_count >= collection_size:
+                            # Guard: atomically claim the right to fire loop.done for this epoch.
+                            # Prevents duplicate loopback dispatches when multiple concurrent
+                            # call.done handlers reach this point simultaneously (e.g. via the
+                            # NATS-fallback count path where all handlers see the same persisted count).
+                            try:
+                                if not await nats_cache.try_claim_loop_done(
+                                    str(state.execution_id),
+                                    parent_step,
+                                    event_id=resolved_loop_event_id,
+                                ):
+                                    logger.info(
+                                        "[TASK_SEQ-LOOP] loop.done already claimed for %s (execution=%s), skipping dispatch",
+                                        parent_step,
+                                        state.execution_id,
+                                    )
+                                    return commands
+                            except Exception as _claim_err:
+                                logger.warning(
+                                    "[TASK_SEQ-LOOP] try_claim_loop_done failed for %s: %s — proceeding with aggregation_finalized guard",
+                                    parent_step,
+                                    _claim_err,
+                                )
+                                # Fall through: aggregation_finalized is a second-layer in-process guard.
+
                             # Loop done - mark completed and create loop.done event
                             loop_state["completed"] = True
                             loop_state["aggregation_finalized"] = True
@@ -4631,6 +4655,30 @@ class ControlFlowEngine:
 
                     # Check if loop is done
                     if collection_size > 0 and new_count >= collection_size:
+                        # Guard: atomically claim the right to fire loop.done for this epoch.
+                        # Prevents duplicate loopback dispatches when multiple concurrent
+                        # call.done handlers reach this point simultaneously (e.g. via the
+                        # NATS-fallback count path where all handlers see the same persisted count).
+                        try:
+                            if not await nats_cache.try_claim_loop_done(
+                                str(state.execution_id),
+                                event.step,
+                                event_id=resolved_loop_event_id,
+                            ):
+                                logger.info(
+                                    "[LOOP-CALL.DONE] loop.done already claimed for %s (execution=%s), skipping dispatch",
+                                    event.step,
+                                    state.execution_id,
+                                )
+                                return commands
+                        except Exception as _claim_err:
+                            logger.warning(
+                                "[LOOP-CALL.DONE] try_claim_loop_done failed for %s: %s — proceeding with aggregation_finalized guard",
+                                event.step,
+                                _claim_err,
+                            )
+                            # Fall through: aggregation_finalized is a second-layer in-process guard.
+
                         loop_state["completed"] = True
                         loop_state["aggregation_finalized"] = True
                         logger.info(f"[LOOP-CALL.DONE] Loop completed for {event.step}: {new_count}/{collection_size}")

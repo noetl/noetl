@@ -271,6 +271,83 @@ class NATSKVCache:
 
         return -1
 
+    async def try_claim_loop_done(
+        self,
+        execution_id: str,
+        step_name: str,
+        event_id: Optional[str] = None,
+    ) -> bool:
+        """Atomically claim the right to fire loop.done for this loop epoch.
+
+        Uses compare-and-swap on NATS K/V so that exactly one concurrent
+        call.done handler generates the loop.done event and evaluates
+        downstream arcs.  All other concurrent callers receive False and
+        must not dispatch loop.done.
+
+        Returns:
+            True  — this caller is the designated loop.done dispatcher.
+            False — another caller already claimed it, or the state was
+                    not found / could not be updated.
+        """
+        if not self._kv:
+            await self.connect()
+
+        key_suffix = f"loop:{step_name}:{event_id}" if event_id else f"loop:{step_name}"
+        key = self._make_key(execution_id, key_suffix)
+
+        max_retries = 10
+        for attempt in range(max_retries):
+            try:
+                entry = await self._kv.get(key)
+                if not entry:
+                    logger.warning(
+                        "try_claim_loop_done: loop state not found for %s (execution=%s)",
+                        step_name,
+                        execution_id,
+                    )
+                    return False
+
+                state = json.loads(entry.value.decode("utf-8"))
+
+                if state.get("loop_done_claimed", False):
+                    return False  # Another handler already owns this loop.done
+
+                state["loop_done_claimed"] = True
+                state["loop_done_claimed_at"] = _utcnow_iso()
+                state["updated_at"] = _utcnow_iso()
+
+                value = json.dumps(state).encode("utf-8")
+                await self._kv.update(key, value, last=entry.revision)
+                logger.info(
+                    "try_claim_loop_done: claimed loop.done for %s (execution=%s event_id=%s)",
+                    step_name,
+                    execution_id,
+                    event_id,
+                )
+                return True
+
+            except Exception as e:
+                err = str(e).lower()
+                if "wrong last sequence" in err and attempt < max_retries - 1:
+                    base = min(0.002 * (2 ** min(attempt, 6)), 0.1)
+                    sleep_seconds = base * (0.5 + random.random())
+                    await asyncio.sleep(sleep_seconds)
+                    continue
+                if "wrong last sequence" in err:
+                    logger.warning(
+                        "try_claim_loop_done: could not claim after %s retries "
+                        "(execution=%s step=%s event_id=%s)",
+                        max_retries,
+                        execution_id,
+                        step_name,
+                        event_id,
+                    )
+                else:
+                    logger.error("try_claim_loop_done: unexpected error: %s", e)
+                return False
+
+        return False
+
     async def claim_next_loop_index(
         self,
         execution_id: str,
