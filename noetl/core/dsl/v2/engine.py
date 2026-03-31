@@ -4375,6 +4375,7 @@ class ControlFlowEngine:
                             # Prevents duplicate loopback dispatches when multiple concurrent
                             # call.done handlers reach this point simultaneously (e.g. via the
                             # NATS-fallback count path where all handlers see the same persisted count).
+                            _skip_loop_done = False
                             try:
                                 if not await nats_cache.try_claim_loop_done(
                                     str(state.execution_id),
@@ -4386,7 +4387,7 @@ class ControlFlowEngine:
                                         parent_step,
                                         state.execution_id,
                                     )
-                                    return commands
+                                    _skip_loop_done = True
                             except Exception as _claim_err:
                                 logger.warning(
                                     "[TASK_SEQ-LOOP] try_claim_loop_done failed for %s: %s — proceeding with aggregation_finalized guard",
@@ -4395,29 +4396,30 @@ class ControlFlowEngine:
                                 )
                                 # Fall through: aggregation_finalized is a second-layer in-process guard.
 
-                            # Loop done - mark completed and create loop.done event
-                            loop_state["completed"] = True
-                            loop_state["aggregation_finalized"] = True
-                            logger.info(f"[TASK_SEQ-LOOP] Loop completed for {parent_step}: {new_count}/{collection_size}")
+                            if not _skip_loop_done:
+                                # Loop done - mark completed and create loop.done event
+                                loop_state["completed"] = True
+                                loop_state["aggregation_finalized"] = True
+                                logger.info(f"[TASK_SEQ-LOOP] Loop completed for {parent_step}: {new_count}/{collection_size}")
 
-                            # Get aggregated result
-                            loop_aggregation = state.get_loop_aggregation(parent_step)
-                            state.mark_step_completed(parent_step, loop_aggregation)
+                                # Get aggregated result
+                                loop_aggregation = state.get_loop_aggregation(parent_step)
+                                state.mark_step_completed(parent_step, loop_aggregation)
 
-                            # Evaluate next transitions with loop.done event
-                            loop_done_event = Event(
-                                execution_id=event.execution_id,
-                                step=parent_step,
-                                name="loop.done",
-                                payload={
-                                    "status": "completed",
-                                    "iterations": new_count,
-                                    "result": loop_aggregation
-                                }
-                            )
-                            loop_done_commands = await self._evaluate_next_transitions(state, parent_step_def, loop_done_event)
-                            commands.extend(loop_done_commands)
-                            logger.info(f"[TASK_SEQ-LOOP] Generated {len(loop_done_commands)} commands from loop.done")
+                                # Evaluate next transitions with loop.done event
+                                loop_done_event = Event(
+                                    execution_id=event.execution_id,
+                                    step=parent_step,
+                                    name="loop.done",
+                                    payload={
+                                        "status": "completed",
+                                        "iterations": new_count,
+                                        "result": loop_aggregation
+                                    }
+                                )
+                                loop_done_commands = await self._evaluate_next_transitions(state, parent_step_def, loop_done_event)
+                                commands.extend(loop_done_commands)
+                                logger.info(f"[TASK_SEQ-LOOP] Generated {len(loop_done_commands)} commands from loop.done")
                         else:
                             # More iterations - create next command
                             if collection_size == 0:
@@ -4659,6 +4661,7 @@ class ControlFlowEngine:
                         # Prevents duplicate loopback dispatches when multiple concurrent
                         # call.done handlers reach this point simultaneously (e.g. via the
                         # NATS-fallback count path where all handlers see the same persisted count).
+                        _skip_loop_done = False
                         try:
                             if not await nats_cache.try_claim_loop_done(
                                 str(state.execution_id),
@@ -4670,7 +4673,7 @@ class ControlFlowEngine:
                                     event.step,
                                     state.execution_id,
                                 )
-                                return commands
+                                _skip_loop_done = True
                         except Exception as _claim_err:
                             logger.warning(
                                 "[LOOP-CALL.DONE] try_claim_loop_done failed for %s: %s — proceeding with aggregation_finalized guard",
@@ -4679,30 +4682,31 @@ class ControlFlowEngine:
                             )
                             # Fall through: aggregation_finalized is a second-layer in-process guard.
 
-                        loop_state["completed"] = True
-                        loop_state["aggregation_finalized"] = True
-                        logger.info(f"[LOOP-CALL.DONE] Loop completed for {event.step}: {new_count}/{collection_size}")
+                        if not _skip_loop_done:
+                            loop_state["completed"] = True
+                            loop_state["aggregation_finalized"] = True
+                            logger.info(f"[LOOP-CALL.DONE] Loop completed for {event.step}: {new_count}/{collection_size}")
 
-                        loop_aggregation = state.get_loop_aggregation(event.step)
-                        state.mark_step_completed(event.step, loop_aggregation)
+                            loop_aggregation = state.get_loop_aggregation(event.step)
+                            state.mark_step_completed(event.step, loop_aggregation)
 
-                        loop_done_event = Event(
-                            execution_id=event.execution_id,
-                            step=event.step,
-                            name="loop.done",
-                            payload={
-                                "status": "completed",
-                                "iterations": new_count,
-                                "result": loop_aggregation,
-                            },
-                        )
-                        loop_done_commands = await self._evaluate_next_transitions(
-                            state, step_def, loop_done_event
-                        )
-                        commands.extend(loop_done_commands)
-                        logger.info(
-                            f"[LOOP-CALL.DONE] Generated {len(loop_done_commands)} commands from loop.done"
-                        )
+                            loop_done_event = Event(
+                                execution_id=event.execution_id,
+                                step=event.step,
+                                name="loop.done",
+                                payload={
+                                    "status": "completed",
+                                    "iterations": new_count,
+                                    "result": loop_aggregation,
+                                },
+                            )
+                            loop_done_commands = await self._evaluate_next_transitions(
+                                state, step_def, loop_done_event
+                            )
+                            commands.extend(loop_done_commands)
+                            logger.info(
+                                f"[LOOP-CALL.DONE] Generated {len(loop_done_commands)} commands from loop.done"
+                            )
                     else:
                         # More iterations needed
                         logger.info(

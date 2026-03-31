@@ -326,6 +326,13 @@ class NATSKVCache:
                 )
                 return True
 
+            except KeyNotFoundError:
+                logger.debug(
+                    "try_claim_loop_done: key not found for %s (execution=%s) — loop state not initialised yet",
+                    step_name,
+                    execution_id,
+                )
+                return False
             except Exception as e:
                 err = str(e).lower()
                 if "wrong last sequence" in err and attempt < max_retries - 1:

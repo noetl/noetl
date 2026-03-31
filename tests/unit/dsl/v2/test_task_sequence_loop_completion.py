@@ -31,6 +31,9 @@ class FakeNATSCache:
         self.set_state_calls.append((execution_id, step_name, state, event_id))
         return True
 
+    async def try_claim_loop_done(self, execution_id, step_name, event_id=None):
+        return True  # always grants by default in existing tests
+
 
 class EventAwareNATSCache(FakeNATSCache):
     def __init__(self, execution_id):
@@ -52,6 +55,26 @@ class EventAwareNATSCache(FakeNATSCache):
                 "event_id": event_id,
             }
         return None
+
+
+class ClaimAwareNATSCache(FakeNATSCache):
+    """Simulates two concurrent handlers: first claim wins, second loses."""
+
+    def __init__(self, terminal_count: int):
+        super().__init__()
+        self._terminal_count = terminal_count
+        self._claim_count = 0
+        self.loop_done_dispatch_count = 0
+
+    async def increment_loop_completed(self, execution_id, step_name, event_id=None):
+        return self._terminal_count  # both handlers see terminal count
+
+    async def get_loop_state(self, execution_id, step_name, event_id=None):
+        return {"collection_size": self._terminal_count, "completed_count": self._terminal_count}
+
+    async def try_claim_loop_done(self, execution_id, step_name, event_id=None):
+        self._claim_count += 1
+        return self._claim_count == 1  # first caller wins, rest lose
 
 
 @pytest.mark.asyncio
@@ -1535,3 +1558,111 @@ workflow:
     assert invalidate_calls == [
         (execution_id, "stale_cache_newer_persisted_events")
     ]
+
+
+@pytest.mark.asyncio
+async def test_task_sequence_loop_concurrent_call_done_dispatches_loop_done_only_once(monkeypatch):
+    """Two concurrent call.done handlers at the terminal count must produce loop.done commands only once.
+
+    The ClaimAwareNATSCache grants the claim to exactly one caller (first wins, second loses).
+    We use asyncio.gather to run two handle_event calls simultaneously and verify that
+    loop.done-related transitions are evaluated exactly once across both handlers.
+    """
+    import asyncio as _asyncio
+
+    fixture = Path(
+        "tests/fixtures/playbooks/batch_execution/traveler_batch_enrichment_in_step/"
+        "traveler_batch_enrichment_in_step.yaml"
+    )
+    playbook = Playbook(**yaml.safe_load(fixture.read_text(encoding="utf-8")))
+
+    playbook_repo = PlaybookRepo()
+    state_store = StateStore(playbook_repo)
+    engine = ControlFlowEngine(playbook_repo, state_store)
+
+    execution_id = "9050"
+    parent_step = "run_batch_workers"
+    terminal_count = 4  # matches collection_size returned by ClaimAwareNATSCache
+
+    state = ExecutionState(execution_id, playbook, payload={})
+    state.loop_state[parent_step] = {
+        "collection": [],
+        "iterator": "batch",
+        "index": 0,
+        "mode": "sequential",
+        "completed": False,
+        "results": [],
+        "failed_count": 0,
+        "aggregation_finalized": False,
+        "event_id": None,
+    }
+    await state_store.save_state(state)
+
+    claim_cache = ClaimAwareNATSCache(terminal_count)
+
+    async def fake_get_nats_cache():
+        return claim_cache
+
+    loop_done_eval_count = {"count": 0}
+
+    async def counting_evaluate_next_transitions(_state, _step_def, event_obj):
+        if event_obj.name == "loop.done":
+            loop_done_eval_count["count"] += 1
+        return []
+
+    async def fake_create_command_for_step(_state, step_def, _args):
+        return Command(
+            execution_id=execution_id,
+            step=step_def.step,
+            tool=ToolCall(kind="playbook", config={}),
+            input={},
+            render_context={},
+        )
+
+    monkeypatch.setattr(engine_module, "get_nats_cache", fake_get_nats_cache)
+    monkeypatch.setattr(engine, "_create_command_for_step", fake_create_command_for_step)
+    monkeypatch.setattr(engine, "_evaluate_next_transitions", counting_evaluate_next_transitions)
+
+    event_a = Event(
+        execution_id=execution_id,
+        step=f"{parent_step}:task_sequence",
+        name="call.done",
+        payload={
+            "response": {
+                "status": "completed",
+                "results": {
+                    "worker_result": {
+                        "status": "completed",
+                    }
+                },
+            }
+        },
+    )
+    event_b = Event(
+        execution_id=execution_id,
+        step=f"{parent_step}:task_sequence",
+        name="call.done",
+        payload={
+            "response": {
+                "status": "completed",
+                "results": {
+                    "worker_result": {
+                        "status": "completed",
+                    }
+                },
+            }
+        },
+    )
+
+    await _asyncio.gather(
+        engine.handle_event(event_a, already_persisted=True),
+        engine.handle_event(event_b, already_persisted=True),
+    )
+
+    assert loop_done_eval_count["count"] == 1, (
+        f"loop.done transitions evaluated {loop_done_eval_count['count']} times; expected exactly 1"
+    )
+    # At least one handler must have attempted the claim. In practice the second handler
+    # may be blocked earlier by the aggregation_finalized in-process guard (the second layer
+    # of defence), so _claim_count may be 1 or 2 depending on asyncio interleaving.
+    assert claim_cache._claim_count >= 1
