@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.14.8](https://github.com/noetl/noetl/compare/v2.14.7...v2.14.8) (2026-03-31)
+
+### Bug Fixes
+
+* **engine:** address Copilot review comments on PR [#359](https://github.com/noetl/noetl/issues/359) ([3e0b50c](https://github.com/noetl/noetl/commit/3e0b50c36e362dc74f43c6f9259956e7820f79ae))
+* **engine:** guard loop.done dispatch with try_claim_loop_done CAS ([4b00d88](https://github.com/noetl/noetl/commit/4b00d887780c774de27ba6b71b141a439b857507))
+
 ## [2.14.7](https://github.com/noetl/noetl/compare/v2.14.6...v2.14.7) (2026-03-30)
 
 ### Bug Fixes
