@@ -872,6 +872,149 @@ async def get_patient_records(
     }
 
 
+# ============================================================================
+# PFT Flow Test endpoints - per-patient paginated API
+# Mirrors the PCC API response structure: {data: [...], paging: {hasMore, page, pageSize, total}}
+# Used by test_pft_flow.yaml for full-pipeline testing with DB batching + tombstones.
+# All pages and page counts are deterministic per patientId so reruns are reproducible.
+# ============================================================================
+
+def _pft_page_count(patient_id: str, data_type: str, min_p: int, max_p: int) -> int:
+    """Deterministic page count per (patientId, dataType) — stable across reruns."""
+    seed = int(hashlib.md5(f"{patient_id}:{data_type}".encode()).hexdigest(), 16)
+    return min_p + (seed % (max_p - min_p + 1))
+
+
+def _pft_records(patient_id: str, data_type: str, page: int, page_size: int) -> list:
+    """Generate synthetic records for a given patient, data type, and page."""
+    seed = int(hashlib.md5(f"{patient_id}:{data_type}:{page}".encode()).hexdigest(), 16)
+    return [
+        {
+            "id": f"{data_type[:4].upper()}-{patient_id}-p{page}-i{i}",
+            "patientId": str(patient_id),
+            "dataType": data_type,
+            "value": (seed + i) % 100,
+        }
+        for i in range(page_size)
+    ]
+
+
+@app.get('/api/v1/patient/assessments')
+def get_pft_patient_assessments(
+    patientId: str = Query(...),
+    page: int = Query(default=1),
+    pageSize: int = Query(default=10),
+):
+    """Per-patient assessments: 2–4 pages, {data, paging} response."""
+    total_pages = _pft_page_count(patientId, 'assessments', 2, 4)
+    if page > total_pages:
+        return JSONResponse(status_code=404, content={"error": "page not found"})
+    items = _pft_records(patientId, 'assessments', page, pageSize)
+    return {
+        "data": items,
+        "paging": {"hasMore": page < total_pages, "page": page, "pageSize": pageSize, "total": total_pages * pageSize},
+    }
+
+
+@app.get('/api/v1/patient/conditions')
+def get_pft_patient_conditions(
+    patientId: str = Query(...),
+    page: int = Query(default=1),
+    pageSize: int = Query(default=10),
+):
+    """Per-patient conditions: 1–3 pages, {data, paging} response."""
+    total_pages = _pft_page_count(patientId, 'conditions', 1, 3)
+    if page > total_pages:
+        return JSONResponse(status_code=404, content={"error": "page not found"})
+    items = _pft_records(patientId, 'conditions', page, pageSize)
+    return {
+        "data": items,
+        "paging": {"hasMore": page < total_pages, "page": page, "pageSize": pageSize, "total": total_pages * pageSize},
+    }
+
+
+@app.get('/api/v1/patient/medications')
+def get_pft_patient_medications(
+    patientId: str = Query(...),
+    page: int = Query(default=1),
+    pageSize: int = Query(default=10),
+):
+    """Per-patient medications: 2–3 pages, {data, paging} response."""
+    total_pages = _pft_page_count(patientId, 'medications', 2, 3)
+    if page > total_pages:
+        return JSONResponse(status_code=404, content={"error": "page not found"})
+    items = _pft_records(patientId, 'medications', page, pageSize)
+    return {
+        "data": items,
+        "paging": {"hasMore": page < total_pages, "page": page, "pageSize": pageSize, "total": total_pages * pageSize},
+    }
+
+
+@app.get('/api/v1/patient/vital_signs')
+def get_pft_patient_vital_signs(
+    patientId: str = Query(...),
+    page: int = Query(default=1),
+    pageSize: int = Query(default=10),
+):
+    """Per-patient vital signs: always exactly 1 page (hasMore always false)."""
+    if page > 1:
+        return JSONResponse(status_code=404, content={"error": "page not found"})
+    items = _pft_records(patientId, 'vital_signs', 1, pageSize)
+    return {
+        "data": items,
+        "paging": {"hasMore": False, "page": 1, "pageSize": pageSize, "total": pageSize},
+    }
+
+
+@app.get('/api/v1/patient/demographics')
+def get_pft_patient_demographics(patientId: str = Query(...)):
+    """Per-patient demographics: non-paginated, returns single record."""
+    seed = int(hashlib.md5(f"{patientId}:demographics".encode()).hexdigest(), 16)
+    return {
+        "patientId": patientId,
+        "firstName": f"First{seed % 1000}",
+        "lastName": f"Last{(seed >> 8) % 1000}",
+        "dob": f"19{50 + seed % 50}-{1 + seed % 12:02d}-{1 + (seed >> 4) % 28:02d}",
+        "gender": "M" if seed % 2 == 0 else "F",
+        "status": "active",
+    }
+
+
+@app.get('/api/v1/mds/assessment_ids')
+def get_mds_assessment_ids(patientId: str = Query(...)):
+    """Return 2–5 synthetic MDS assessment IDs for a patient."""
+    seed = int(hashlib.md5(f"{patientId}:mds".encode()).hexdigest(), 16)
+    count = 2 + (seed % 4)
+    return {
+        "patientId": patientId,
+        "assessmentIds": [f"MDS-{patientId}-{i:03d}" for i in range(1, count + 1)],
+        "count": count,
+    }
+
+
+@app.get('/api/v1/mds/assessment/{assessment_id}')
+def get_mds_assessment_detail(assessment_id: str):
+    """Return synthetic MDS assessment detail."""
+    seed = int(hashlib.md5(assessment_id.encode()).hexdigest(), 16)
+    return {
+        "assessmentId": assessment_id,
+        "status": "completed",
+        "sections": [
+            {
+                "sectionId": f"S{i}",
+                "questions": [
+                    {
+                        "key": f"B{i}0{j}",
+                        "responses": [{"responseValue": str((seed + i * 10 + j) % 5)}],
+                    }
+                    for j in range(1, 4)
+                ],
+            }
+            for i in range(1, 4)
+        ],
+    }
+
+
 @app.get('/health')
 def health():
     """Health check endpoint."""

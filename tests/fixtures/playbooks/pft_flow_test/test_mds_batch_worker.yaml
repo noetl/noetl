@@ -1,0 +1,167 @@
+apiVersion: noetl.io/v2
+kind: Playbook
+metadata:
+  name: test_mds_batch_worker
+  path: tests/fixtures/playbooks/pft_flow_test/test_mds_batch_worker
+  description: |
+    Sub-playbook for MDS assessment batch fetching in the PFT flow test.
+    Processes one OFFSET/LIMIT slice of pft_test_mds_assessment_ids_work:
+    fetches detail for each assessment ID from the test API and saves to
+    pft_test_mds_assessment_details.
+
+    Called by test_pft_flow.yaml run_mds_batch_workers loop.
+
+workload:
+  pg_auth: pg_k8s
+  api_url: http://paginated-api.test-server.svc.cluster.local:5555
+  facility_mapping_id: 0
+  batch_number: 1
+  offset: 0
+  batch_size: 50
+
+workflow:
+  - step: start
+    desc: Parse and validate batch inputs
+    tool:
+      kind: python
+      input:
+        batch_number: '{{ batch_number }}'
+        offset: '{{ offset }}'
+        batch_size: '{{ batch_size }}'
+        facility_mapping_id: '{{ facility_mapping_id }}'
+      code: |
+        def _to_int(v, d):
+            try:
+                return int(v)
+            except (TypeError, ValueError):
+                return d
+
+        result = {
+            "status": "initialized",
+            "batch_number": _to_int(batch_number, 1),
+            "offset": _to_int(offset, 0),
+            "batch_size": _to_int(batch_size, 50),
+            "facility_mapping_id": _to_int(facility_mapping_id, 0),
+        }
+    next:
+      spec:
+        mode: exclusive
+      arcs:
+        - step: fetch_batch_ids
+
+  - step: fetch_batch_ids
+    desc: Fetch this batch's assessment IDs from the work table (OFFSET/LIMIT)
+    tool:
+      kind: postgres
+      auth: '{{ pg_auth }}'
+      query: |
+        SELECT assessment_id, pcc_patient_id
+        FROM public.pft_test_mds_assessment_ids_work
+        WHERE facility_mapping_id = {{ facility_mapping_id | int }}
+        ORDER BY assessment_id ASC
+        OFFSET {{ offset | int }}
+        LIMIT {{ batch_size | int }};
+    next:
+      spec:
+        mode: exclusive
+      arcs:
+        - step: normalize_batch
+
+  - step: normalize_batch
+    desc: Extract rows from DB result; gate on has_rows to skip empty batches
+    tool:
+      kind: python
+      input:
+        db_result: '{{ fetch_batch_ids }}'
+      code: |
+        rows = []
+        if isinstance(db_result, dict):
+            rows = db_result.get("command_0", {}).get("rows", [])
+        elif isinstance(db_result, list):
+            rows = db_result
+        result = {
+            "batch_rows": rows,
+            "batch_count": len(rows),
+            "has_rows": len(rows) > 0,
+        }
+    next:
+      spec:
+        mode: exclusive
+      arcs:
+        - step: fetch_mds_details
+          when: '{{ normalize_batch.has_rows | string | lower == "true" }}'
+        - step: end
+
+  - step: fetch_mds_details
+    desc: Parallel HTTP fetch + save for each MDS assessment in this batch
+    loop:
+      in: '{{ normalize_batch.batch_rows }}'
+      iterator: mds_row
+      spec:
+        mode: parallel
+        max_in_flight: 5
+    tool:
+      - name: fetch
+        kind: http
+        method: GET
+        url: '{{ api_url }}/api/v1/mds/assessment/{{ iter.mds_row.assessment_id }}'
+        spec:
+          policy:
+            rules:
+              - when: '{{ output.status == "error" and (output.http.status in [400, 404]) }}'
+                then:
+                  do: break
+              - when: '{{ output.status == "error" }}'
+                then:
+                  do: retry
+                  attempts: 3
+              - else:
+                  then:
+                    do: continue
+                    set:
+                      iter.detail: '{{ output.data.data }}'
+      - name: save
+        kind: postgres
+        auth: '{{ pg_auth }}'
+        command: |
+          INSERT INTO public.pft_test_mds_assessment_details (
+            assessment_id, pcc_patient_id, facility_mapping_id, payload
+          )
+          VALUES (
+            '{{ iter.mds_row.assessment_id }}',
+            {{ iter.mds_row.pcc_patient_id }},
+            {{ facility_mapping_id | int }},
+            '{{ iter.detail | tojson | replace("'", "''") }}'::jsonb
+          )
+          ON CONFLICT (assessment_id) DO UPDATE SET
+            payload = EXCLUDED.payload,
+            fetched_at = now();
+        spec:
+          policy:
+            rules:
+              - when: '{{ output.status == "error" }}'
+                then:
+                  do: fail
+              - else:
+                  then:
+                    do: continue
+    next:
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
+          when: '{{ event.name == "loop.done" }}'
+
+  - step: end
+    desc: Batch worker complete
+    tool:
+      kind: python
+      input:
+        batch_number: '{{ batch_number }}'
+        offset: '{{ offset }}'
+      code: |
+        result = {
+            "status": "completed",
+            "batch_number": int(batch_number) if batch_number else 0,
+            "offset": int(offset) if offset else 0,
+        }
