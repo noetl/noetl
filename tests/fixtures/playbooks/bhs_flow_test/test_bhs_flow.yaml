@@ -11,21 +11,21 @@ metadata:
     are processed, NoETL is stable and the production playbook should work.
 
     Setup:
-    - 10 facilities, 250 patients each = 2 500 patients total
-    - Each facility requires 3 batches (100 + 100 + 50) per data type
+    - 10 facilities, 1000 patients each = 10 000 patients total
+    - Each facility requires 10 batches of 100 per data type
     - 4 paginated fetch steps (assessments 2-4p, conditions 1-3p, medications 2-3p,
       vital_signs 1p always) + 1 non-paginated (demographics)
     - MDS sub-playbook batching (test_mds_batch_worker) for assessments
     - All test tables are prefixed bhs_test_* in public schema
 
-    Go/no-go criterion: validate_facility_results shows 250/250 per facility for all
+    Go/no-go criterion: validate_facility_results shows 1000/1000 per facility for all
     5 data types.  Any shortfall indicates the patient-loss bug is still present.
 
 workload:
   api_url: http://paginated-api.test-server.svc.cluster.local:5555
   page_size: 10
   num_facilities: 10
-  patients_per_facility: 250
+  patients_per_facility: 1000
 
 workflow:
   # ------------------------------------------------------------------
@@ -191,7 +191,7 @@ workflow:
 
   - step: setup_facility_work
     desc: |
-      Truncate patient work table, clear old tombstones, seed 250 patients for this facility.
+      Truncate patient work table, clear old tombstones, seed 1000 patients for this facility.
       Mirrors the clear_old_ids + save_ids pattern from fetch_and_extract_patient_ids.
     tool:
       kind: postgres
@@ -204,13 +204,13 @@ workflow:
         DELETE FROM public.bhs_test_patient_fetch_status
         WHERE facility_mapping_id = {{ facility_mapping_id | int }};
 
-        -- Seed 250 test patients: facility N gets IDs (N-1)*250+1 .. N*250
+        -- Seed 1000 test patients: facility N gets IDs (N-1)*1000+1 .. N*1000
         INSERT INTO public.bhs_test_patient_ids_work (patient_id, facility_mapping_id, facility_org_uuid)
         SELECT
-          ({{ facility_mapping_id | int }} - 1) * 250 + seq AS patient_id,
+          ({{ facility_mapping_id | int }} - 1) * 1000 + seq AS patient_id,
           {{ facility_mapping_id | int }} AS facility_mapping_id,
           'org-{{ facility_mapping_id }}' AS facility_org_uuid
-        FROM generate_series(1, 250) AS seq
+        FROM generate_series(1, 1000) AS seq
         ON CONFLICT (patient_id, facility_mapping_id) DO NOTHING;
 
         SELECT COUNT(*) AS patient_count
@@ -317,8 +317,6 @@ workflow:
                 then:
                   do: retry
                   attempts: 3
-                  backoff: exponential
-                  delay: 1.0
               - else:
                   then:
                     do: continue
@@ -451,8 +449,6 @@ workflow:
                 then:
                   do: retry
                   attempts: 3
-                  backoff: exponential
-                  delay: 1.0
               - else:
                   then:
                     do: continue
@@ -585,8 +581,6 @@ workflow:
                 then:
                   do: retry
                   attempts: 3
-                  backoff: exponential
-                  delay: 1.0
               - else:
                   then:
                     do: continue
@@ -721,8 +715,6 @@ workflow:
                 then:
                   do: retry
                   attempts: 3
-                  backoff: exponential
-                  delay: 1.0
               - else:
                   then:
                     do: continue
@@ -845,8 +837,6 @@ workflow:
                 then:
                   do: retry
                   attempts: 3
-                  backoff: exponential
-                  delay: 1.0
               - else:
                   then:
                     do: continue
@@ -1046,7 +1036,7 @@ workflow:
           {{ validate_facility_results.rows[0].vital_signs_done }},
           {{ validate_facility_results.rows[0].demographics_done }},
           {{ validate_facility_results.rows[0].tombstones_assessments }},
-          250
+          1000
         )
         ON CONFLICT (execution_id, facility_mapping_id) DO UPDATE SET
           assessments_done       = EXCLUDED.assessments_done,
@@ -1090,7 +1080,7 @@ workflow:
   # FINAL VALIDATION
   # ------------------------------------------------------------------
   - step: validate_all_results
-    desc: Query final validation log and assert all facilities have 250/250 patients
+    desc: Query final validation log and assert all facilities have 1000/1000 patients
     tool:
       kind: postgres
       auth: pg_k8s
@@ -1119,19 +1109,19 @@ workflow:
 
   - step: check_results
     desc: |
-      Assert all 10 facilities have 250/250 patients with ACTUAL data in result tables.
-      If the v2.14.7 loop.done race bug is present, tombstones_assessments will be 250
-      but assessments_done will be << 250 (only ~1 batch worth, due to premature cutoff).
+      Assert all 10 facilities have 1000/1000 patients with ACTUAL data in result tables.
+      If the v2.14.7 loop.done race bug is present, tombstones_assessments will be 1000
+      but assessments_done will be << 1000 (only ~1 batch worth, due to premature cutoff).
     tool:
       kind: python
       input:
         results: '{{ validate_all_results.rows }}'
         expected_facilities: 10
-        expected_patients: 250
+        expected_patients: 1000
       code: |
         rows = results if isinstance(results, list) else []
         expected_f = int(expected_facilities or 10)
-        expected_p = int(expected_patients or 250)
+        expected_p = int(expected_patients or 1000)
 
         print(f"[CHECK] {len(rows)} facilities in validation log (expected {expected_f})")
 
