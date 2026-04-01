@@ -1,0 +1,1186 @@
+apiVersion: noetl.io/v2
+kind: Playbook
+metadata:
+  name: test_bhs_flow
+  path: tests/fixtures/playbooks/bhs_flow_test/test_bhs_flow
+  description: |
+    Full-pipeline BHS flow test — mirrors state_report_generation_prod_v13 without Snowflake.
+
+    Tests the exact bug-prone code path: DB-based patient batching with LIMIT 100 and
+    NOT EXISTS tombstones in patient_fetch_status.  If all patients across all facilities
+    are processed, NoETL is stable and the production playbook should work.
+
+    Setup:
+    - 10 facilities, 250 patients each = 2 500 patients total
+    - Each facility requires 3 batches (100 + 100 + 50) per data type
+    - 4 paginated fetch steps (assessments 2-4p, conditions 1-3p, medications 2-3p,
+      vital_signs 1p always) + 1 non-paginated (demographics)
+    - MDS sub-playbook batching (test_mds_batch_worker) for assessments
+    - All test tables are prefixed bhs_test_* in public schema
+
+    Go/no-go criterion: validate_facility_results shows 250/250 per facility for all
+    5 data types.  Any shortfall indicates the patient-loss bug is still present.
+
+workload:
+  api_url: http://paginated-api.test-server.svc.cluster.local:5555
+  page_size: 10
+  num_facilities: 10
+  patients_per_facility: 250
+
+workflow:
+  # ------------------------------------------------------------------
+  # SETUP: create tables, seed facility list
+  # ------------------------------------------------------------------
+  - step: start
+    desc: Create all test tables and seed 10 facilities
+    tool:
+      kind: postgres
+      auth: pg_k8s
+      query: |
+        -- Facilities table
+        CREATE TABLE IF NOT EXISTS public.bhs_test_facilities (
+          facility_mapping_id  INTEGER      PRIMARY KEY,
+          facility_name        TEXT         NOT NULL,
+          facility_id          INTEGER      NOT NULL,
+          active               BOOLEAN      NOT NULL DEFAULT TRUE,
+          updated_at           TIMESTAMPTZ  NOT NULL DEFAULT NOW()
+        );
+
+        -- Patient IDs work table (current facility only — truncated between facilities)
+        CREATE TABLE IF NOT EXISTS public.bhs_test_patient_ids_work (
+          patient_id          INTEGER NOT NULL,
+          facility_mapping_id INTEGER NOT NULL,
+          facility_org_uuid   TEXT    NOT NULL,
+          PRIMARY KEY (patient_id, facility_mapping_id)
+        );
+
+        -- Tombstone table — prevents double-processing per data type
+        CREATE TABLE IF NOT EXISTS public.bhs_test_patient_fetch_status (
+          pcc_patient_id      INTEGER NOT NULL,
+          facility_mapping_id INTEGER NOT NULL,
+          data_type           TEXT    NOT NULL,
+          claimed_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          PRIMARY KEY (pcc_patient_id, facility_mapping_id, data_type)
+        );
+
+        -- Result tables
+        CREATE TABLE IF NOT EXISTS public.bhs_test_patient_assessments (
+          pcc_patient_id      INTEGER     NOT NULL,
+          facility_mapping_id INTEGER     NOT NULL,
+          page_number         INTEGER     NOT NULL,
+          payload             JSONB,
+          is_last_page        BOOLEAN     NOT NULL DEFAULT FALSE,
+          PRIMARY KEY (pcc_patient_id, facility_mapping_id, page_number)
+        );
+
+        CREATE TABLE IF NOT EXISTS public.bhs_test_patient_conditions (
+          pcc_patient_id      INTEGER     NOT NULL,
+          facility_mapping_id INTEGER     NOT NULL,
+          page_number         INTEGER     NOT NULL,
+          payload             JSONB,
+          is_last_page        BOOLEAN     NOT NULL DEFAULT FALSE,
+          PRIMARY KEY (pcc_patient_id, facility_mapping_id, page_number)
+        );
+
+        CREATE TABLE IF NOT EXISTS public.bhs_test_patient_medications (
+          pcc_patient_id      INTEGER     NOT NULL,
+          facility_mapping_id INTEGER     NOT NULL,
+          page_number         INTEGER     NOT NULL,
+          payload             JSONB,
+          is_last_page        BOOLEAN     NOT NULL DEFAULT FALSE,
+          PRIMARY KEY (pcc_patient_id, facility_mapping_id, page_number)
+        );
+
+        CREATE TABLE IF NOT EXISTS public.bhs_test_patient_vital_signs (
+          pcc_patient_id      INTEGER     NOT NULL,
+          facility_mapping_id INTEGER     NOT NULL,
+          page_number         INTEGER     NOT NULL,
+          payload             JSONB,
+          is_last_page        BOOLEAN     NOT NULL DEFAULT FALSE,
+          PRIMARY KEY (pcc_patient_id, facility_mapping_id, page_number)
+        );
+
+        CREATE TABLE IF NOT EXISTS public.bhs_test_patient_demographics (
+          pcc_patient_id      INTEGER     NOT NULL,
+          facility_mapping_id INTEGER     NOT NULL,
+          payload             JSONB,
+          fetched_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          PRIMARY KEY (pcc_patient_id, facility_mapping_id)
+        );
+
+        -- MDS tables
+        CREATE TABLE IF NOT EXISTS public.bhs_test_mds_assessment_ids_work (
+          assessment_id       TEXT        NOT NULL,
+          pcc_patient_id      INTEGER     NOT NULL,
+          facility_mapping_id INTEGER     NOT NULL,
+          PRIMARY KEY (assessment_id)
+        );
+
+        CREATE TABLE IF NOT EXISTS public.bhs_test_mds_assessment_details (
+          assessment_id       TEXT        NOT NULL,
+          pcc_patient_id      INTEGER     NOT NULL,
+          facility_mapping_id INTEGER     NOT NULL,
+          payload             JSONB,
+          fetched_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          PRIMARY KEY (assessment_id)
+        );
+
+        -- Validation log (written per facility after processing)
+        CREATE TABLE IF NOT EXISTS public.bhs_test_validation_log (
+          execution_id           TEXT        NOT NULL,
+          facility_mapping_id    INTEGER     NOT NULL,
+          assessments_done       INTEGER,
+          conditions_done        INTEGER,
+          medications_done       INTEGER,
+          vital_signs_done       INTEGER,
+          demographics_done      INTEGER,
+          tombstones_assessments INTEGER,
+          total_expected         INTEGER,
+          logged_at              TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          PRIMARY KEY (execution_id, facility_mapping_id)
+        );
+        -- Add column if missing (for reruns on existing table)
+        ALTER TABLE public.bhs_test_validation_log
+          ADD COLUMN IF NOT EXISTS tombstones_assessments INTEGER;
+
+        -- Reset facilities for this run
+        DELETE FROM public.bhs_test_facilities;
+        INSERT INTO public.bhs_test_facilities (facility_mapping_id, facility_name, facility_id, active)
+        SELECT
+          seq AS facility_mapping_id,
+          'Test Facility ' || seq AS facility_name,
+          seq AS facility_id,
+          TRUE AS active
+        FROM generate_series(1, 10) AS seq;
+
+        SELECT COUNT(*) AS facility_count FROM public.bhs_test_facilities WHERE active = TRUE;
+    next:
+      spec:
+        mode: exclusive
+      arcs:
+        - step: load_next_facility
+
+  # ------------------------------------------------------------------
+  # FACILITY LOOP
+  # ------------------------------------------------------------------
+  - step: load_next_facility
+    desc: Pick the next unprocessed facility (lowest active facility_mapping_id)
+    tool:
+      kind: postgres
+      auth: pg_k8s
+      query: |
+        SELECT facility_mapping_id, facility_name, facility_id,
+               'org-' || facility_mapping_id AS facility_org_uuid
+        FROM public.bhs_test_facilities
+        WHERE active = TRUE
+        ORDER BY facility_mapping_id
+        LIMIT 1;
+    next:
+      spec:
+        mode: exclusive
+      arcs:
+        - step: setup_facility_work
+          when: '{{ (load_next_facility.row_count | default(0) | int) > 0 }}'
+        - step: validate_all_results
+          when: '{{ (load_next_facility.row_count | default(0) | int) == 0 }}'
+    set:
+      ctx.facility_mapping_id: '{{ load_next_facility.rows[0].facility_mapping_id }}'
+      ctx.facility_org_uuid: '{{ load_next_facility.rows[0].facility_org_uuid }}'
+      ctx.facility_id: '{{ load_next_facility.rows[0].facility_id }}'
+      ctx.facility_name: '{{ load_next_facility.rows[0].facility_name }}'
+
+  - step: setup_facility_work
+    desc: |
+      Truncate patient work table, clear old tombstones, seed 250 patients for this facility.
+      Mirrors the clear_old_ids + save_ids pattern from fetch_and_extract_patient_ids.
+    tool:
+      kind: postgres
+      auth: pg_k8s
+      command: |
+        -- Clear previous facility's patient data from work table
+        TRUNCATE public.bhs_test_patient_ids_work;
+
+        -- Clear tombstones for this facility (simulates clear_old_ids in production)
+        DELETE FROM public.bhs_test_patient_fetch_status
+        WHERE facility_mapping_id = {{ facility_mapping_id | int }};
+
+        -- Seed 250 test patients: facility N gets IDs (N-1)*250+1 .. N*250
+        INSERT INTO public.bhs_test_patient_ids_work (patient_id, facility_mapping_id, facility_org_uuid)
+        SELECT
+          ({{ facility_mapping_id | int }} - 1) * 250 + seq AS patient_id,
+          {{ facility_mapping_id | int }} AS facility_mapping_id,
+          'org-{{ facility_mapping_id }}' AS facility_org_uuid
+        FROM generate_series(1, 250) AS seq
+        ON CONFLICT (patient_id, facility_mapping_id) DO NOTHING;
+
+        SELECT COUNT(*) AS patient_count
+        FROM public.bhs_test_patient_ids_work
+        WHERE facility_mapping_id = {{ facility_mapping_id | int }};
+    next:
+      spec:
+        mode: exclusive
+      arcs:
+        - step: load_patients_for_assessments
+    set:
+      ctx.patient_count: '{{ setup_facility_work.rows[0].patient_count }}'
+
+  # ------------------------------------------------------------------
+  # FETCH ASSESSMENTS (paginated, 2-4 pages)
+  # ------------------------------------------------------------------
+  - step: load_patients_for_assessments
+    desc: |
+      Pre-filter patients that still need assessment data.
+      Claims atomically via patient_fetch_status INSERT RETURNING; LIMIT 100 per batch.
+    tool:
+      kind: postgres
+      auth: pg_k8s
+      command: |
+        WITH candidates AS (
+          SELECT w.patient_id, w.facility_mapping_id, w.facility_org_uuid
+          FROM public.bhs_test_patient_ids_work w
+          WHERE w.facility_mapping_id = {{ facility_mapping_id | int }}
+            AND NOT EXISTS (
+              SELECT 1 FROM public.bhs_test_patient_fetch_status s
+              WHERE s.pcc_patient_id = w.patient_id
+                AND s.facility_mapping_id = w.facility_mapping_id
+                AND s.data_type = 'assessments'
+            )
+          ORDER BY w.patient_id
+          LIMIT 100
+        ),
+        claimed AS (
+          INSERT INTO public.bhs_test_patient_fetch_status (pcc_patient_id, facility_mapping_id, data_type)
+          SELECT patient_id, facility_mapping_id, 'assessments'
+          FROM candidates
+          ON CONFLICT (pcc_patient_id, facility_mapping_id, data_type) DO NOTHING
+          RETURNING pcc_patient_id AS patient_id, facility_mapping_id
+        )
+        SELECT
+          c.patient_id,
+          c.facility_mapping_id,
+          cand.facility_org_uuid,
+          f.facility_id,
+          f.facility_name
+        FROM claimed c
+        INNER JOIN candidates cand
+          ON cand.patient_id = c.patient_id
+          AND cand.facility_mapping_id = c.facility_mapping_id
+        INNER JOIN public.bhs_test_facilities f ON f.facility_mapping_id = c.facility_mapping_id
+        ORDER BY c.patient_id;
+    next:
+      spec:
+        mode: exclusive
+      arcs:
+        - step: fetch_assessments
+          when: '{{ (load_patients_for_assessments.row_count | int) > 0 }}'
+        - step: load_patients_for_conditions
+          when: '{{ (load_patients_for_assessments.row_count | int) == 0 }}'
+    set:
+      ctx.patients_needing_assessments_count: '{{ load_patients_for_assessments.row_count }}'
+
+  - step: fetch_assessments
+    desc: |
+      Fetch all assessment pages for each patient (parallel, max_in_flight 5).
+      Paginated: 2-4 pages per patient. On loop.done loops back for next batch.
+    loop:
+      in: '{{ load_patients_for_assessments.rows }}'
+      iterator: patient
+      spec:
+        mode: parallel
+        max_in_flight: 5
+    tool:
+      - name: init_page
+        kind: noop
+        spec:
+          policy:
+            rules:
+              - else:
+                  then:
+                    do: continue
+                    set:
+                      iter.page: 1
+      - name: fetch_page
+        kind: http
+        method: GET
+        url: '{{ api_url }}/api/v1/patient/assessments'
+        params:
+          patientId: '{{ iter.patient.patient_id }}'
+          page: '{{ iter.page }}'
+          pageSize: '{{ page_size }}'
+        spec:
+          policy:
+            rules:
+              - when: '{{ output.status == "error" and (output.http.status in [400, 404]) }}'
+                then:
+                  do: break
+              - when: '{{ output.status == "error" }}'
+                then:
+                  do: retry
+                  attempts: 3
+                  backoff: exponential
+                  delay: 1.0
+              - else:
+                  then:
+                    do: continue
+                    set:
+                      iter.has_more: '{{ output.data.data.paging.hasMore }}'
+                      iter.page_data: '{{ output.data.data.data }}'
+                      iter.current_page: '{{ output.data.data.paging.page }}'
+      - name: save_page
+        kind: postgres
+        auth: pg_k8s
+        command: |
+          INSERT INTO public.bhs_test_patient_assessments (pcc_patient_id, facility_mapping_id, page_number, payload, is_last_page)
+          VALUES (
+            {{ iter.patient.patient_id }},
+            {{ facility_mapping_id | int }},
+            {{ iter.current_page }},
+            '{{ iter.page_data | tojson | replace("'", "''") }}'::jsonb,
+            {{ 'false' if iter.has_more | string | lower == 'true' else 'true' }}
+          )
+          ON CONFLICT (pcc_patient_id, facility_mapping_id, page_number) DO UPDATE SET
+            payload = EXCLUDED.payload,
+            is_last_page = EXCLUDED.is_last_page;
+      - name: paginate
+        kind: noop
+        spec:
+          policy:
+            rules:
+              - when: '{{ iter.has_more | string | lower == "true" }}'
+                then:
+                  do: jump
+                  to: fetch_page
+                  set:
+                    iter.page: '{{ (iter.page | int) + 1 }}'
+              - else:
+                  then:
+                    do: break
+    next:
+      spec:
+        mode: exclusive
+      arcs:
+        - step: load_patients_for_assessments
+          when: '{{ event.name == "loop.done" }}'
+
+  # ------------------------------------------------------------------
+  # FETCH CONDITIONS (paginated, 1-3 pages)
+  # ------------------------------------------------------------------
+  - step: load_patients_for_conditions
+    desc: Claim next batch of 100 patients for conditions fetch.
+    tool:
+      kind: postgres
+      auth: pg_k8s
+      command: |
+        WITH candidates AS (
+          SELECT w.patient_id, w.facility_mapping_id, w.facility_org_uuid
+          FROM public.bhs_test_patient_ids_work w
+          WHERE w.facility_mapping_id = {{ facility_mapping_id | int }}
+            AND NOT EXISTS (
+              SELECT 1 FROM public.bhs_test_patient_fetch_status s
+              WHERE s.pcc_patient_id = w.patient_id
+                AND s.facility_mapping_id = w.facility_mapping_id
+                AND s.data_type = 'conditions'
+            )
+          ORDER BY w.patient_id
+          LIMIT 100
+        ),
+        claimed AS (
+          INSERT INTO public.bhs_test_patient_fetch_status (pcc_patient_id, facility_mapping_id, data_type)
+          SELECT patient_id, facility_mapping_id, 'conditions'
+          FROM candidates
+          ON CONFLICT (pcc_patient_id, facility_mapping_id, data_type) DO NOTHING
+          RETURNING pcc_patient_id AS patient_id, facility_mapping_id
+        )
+        SELECT
+          c.patient_id,
+          c.facility_mapping_id,
+          cand.facility_org_uuid,
+          f.facility_id,
+          f.facility_name
+        FROM claimed c
+        INNER JOIN candidates cand
+          ON cand.patient_id = c.patient_id
+          AND cand.facility_mapping_id = c.facility_mapping_id
+        INNER JOIN public.bhs_test_facilities f ON f.facility_mapping_id = c.facility_mapping_id
+        ORDER BY c.patient_id;
+    next:
+      spec:
+        mode: exclusive
+      arcs:
+        - step: fetch_conditions
+          when: '{{ (load_patients_for_conditions.row_count | int) > 0 }}'
+        - step: load_patients_for_medications
+          when: '{{ (load_patients_for_conditions.row_count | int) == 0 }}'
+    set:
+      ctx.patients_needing_conditions_count: '{{ load_patients_for_conditions.row_count }}'
+
+  - step: fetch_conditions
+    desc: Fetch all condition pages per patient (parallel, max_in_flight 5).
+    loop:
+      in: '{{ load_patients_for_conditions.rows }}'
+      iterator: patient
+      spec:
+        mode: parallel
+        max_in_flight: 5
+    tool:
+      - name: init_page
+        kind: noop
+        spec:
+          policy:
+            rules:
+              - else:
+                  then:
+                    do: continue
+                    set:
+                      iter.page: 1
+      - name: fetch_page
+        kind: http
+        method: GET
+        url: '{{ api_url }}/api/v1/patient/conditions'
+        params:
+          patientId: '{{ iter.patient.patient_id }}'
+          page: '{{ iter.page }}'
+          pageSize: '{{ page_size }}'
+        spec:
+          policy:
+            rules:
+              - when: '{{ output.status == "error" and (output.http.status in [400, 404]) }}'
+                then:
+                  do: break
+              - when: '{{ output.status == "error" }}'
+                then:
+                  do: retry
+                  attempts: 3
+                  backoff: exponential
+                  delay: 1.0
+              - else:
+                  then:
+                    do: continue
+                    set:
+                      iter.has_more: '{{ output.data.data.paging.hasMore }}'
+                      iter.page_data: '{{ output.data.data.data }}'
+                      iter.current_page: '{{ output.data.data.paging.page }}'
+      - name: save_page
+        kind: postgres
+        auth: pg_k8s
+        command: |
+          INSERT INTO public.bhs_test_patient_conditions (pcc_patient_id, facility_mapping_id, page_number, payload, is_last_page)
+          VALUES (
+            {{ iter.patient.patient_id }},
+            {{ facility_mapping_id | int }},
+            {{ iter.current_page }},
+            '{{ iter.page_data | tojson | replace("'", "''") }}'::jsonb,
+            {{ 'false' if iter.has_more | string | lower == 'true' else 'true' }}
+          )
+          ON CONFLICT (pcc_patient_id, facility_mapping_id, page_number) DO UPDATE SET
+            payload = EXCLUDED.payload,
+            is_last_page = EXCLUDED.is_last_page;
+      - name: paginate
+        kind: noop
+        spec:
+          policy:
+            rules:
+              - when: '{{ iter.has_more | string | lower == "true" }}'
+                then:
+                  do: jump
+                  to: fetch_page
+                  set:
+                    iter.page: '{{ (iter.page | int) + 1 }}'
+              - else:
+                  then:
+                    do: break
+    next:
+      spec:
+        mode: exclusive
+      arcs:
+        - step: load_patients_for_conditions
+          when: '{{ event.name == "loop.done" }}'
+
+  # ------------------------------------------------------------------
+  # FETCH MEDICATIONS (paginated, 2-3 pages)
+  # ------------------------------------------------------------------
+  - step: load_patients_for_medications
+    desc: Claim next batch of 100 patients for medications fetch.
+    tool:
+      kind: postgres
+      auth: pg_k8s
+      command: |
+        WITH candidates AS (
+          SELECT w.patient_id, w.facility_mapping_id, w.facility_org_uuid
+          FROM public.bhs_test_patient_ids_work w
+          WHERE w.facility_mapping_id = {{ facility_mapping_id | int }}
+            AND NOT EXISTS (
+              SELECT 1 FROM public.bhs_test_patient_fetch_status s
+              WHERE s.pcc_patient_id = w.patient_id
+                AND s.facility_mapping_id = w.facility_mapping_id
+                AND s.data_type = 'medications'
+            )
+          ORDER BY w.patient_id
+          LIMIT 100
+        ),
+        claimed AS (
+          INSERT INTO public.bhs_test_patient_fetch_status (pcc_patient_id, facility_mapping_id, data_type)
+          SELECT patient_id, facility_mapping_id, 'medications'
+          FROM candidates
+          ON CONFLICT (pcc_patient_id, facility_mapping_id, data_type) DO NOTHING
+          RETURNING pcc_patient_id AS patient_id, facility_mapping_id
+        )
+        SELECT
+          c.patient_id,
+          c.facility_mapping_id,
+          cand.facility_org_uuid,
+          f.facility_id,
+          f.facility_name
+        FROM claimed c
+        INNER JOIN candidates cand
+          ON cand.patient_id = c.patient_id
+          AND cand.facility_mapping_id = c.facility_mapping_id
+        INNER JOIN public.bhs_test_facilities f ON f.facility_mapping_id = c.facility_mapping_id
+        ORDER BY c.patient_id;
+    next:
+      spec:
+        mode: exclusive
+      arcs:
+        - step: fetch_medications
+          when: '{{ (load_patients_for_medications.row_count | int) > 0 }}'
+        - step: load_patients_for_vital_signs
+          when: '{{ (load_patients_for_medications.row_count | int) == 0 }}'
+    set:
+      ctx.patients_needing_medications_count: '{{ load_patients_for_medications.row_count }}'
+
+  - step: fetch_medications
+    desc: Fetch all medication pages per patient (parallel, max_in_flight 5).
+    loop:
+      in: '{{ load_patients_for_medications.rows }}'
+      iterator: patient
+      spec:
+        mode: parallel
+        max_in_flight: 5
+    tool:
+      - name: init_page
+        kind: noop
+        spec:
+          policy:
+            rules:
+              - else:
+                  then:
+                    do: continue
+                    set:
+                      iter.page: 1
+      - name: fetch_page
+        kind: http
+        method: GET
+        url: '{{ api_url }}/api/v1/patient/medications'
+        params:
+          patientId: '{{ iter.patient.patient_id }}'
+          page: '{{ iter.page }}'
+          pageSize: '{{ page_size }}'
+        spec:
+          policy:
+            rules:
+              - when: '{{ output.status == "error" and (output.http.status in [400, 404]) }}'
+                then:
+                  do: break
+              - when: '{{ output.status == "error" }}'
+                then:
+                  do: retry
+                  attempts: 3
+                  backoff: exponential
+                  delay: 1.0
+              - else:
+                  then:
+                    do: continue
+                    set:
+                      iter.has_more: '{{ output.data.data.paging.hasMore }}'
+                      iter.page_data: '{{ output.data.data.data }}'
+                      iter.current_page: '{{ output.data.data.paging.page }}'
+      - name: save_page
+        kind: postgres
+        auth: pg_k8s
+        command: |
+          INSERT INTO public.bhs_test_patient_medications (pcc_patient_id, facility_mapping_id, page_number, payload, is_last_page)
+          VALUES (
+            {{ iter.patient.patient_id }},
+            {{ facility_mapping_id | int }},
+            {{ iter.current_page }},
+            '{{ iter.page_data | tojson | replace("'", "''") }}'::jsonb,
+            {{ 'false' if iter.has_more | string | lower == 'true' else 'true' }}
+          )
+          ON CONFLICT (pcc_patient_id, facility_mapping_id, page_number) DO UPDATE SET
+            payload = EXCLUDED.payload,
+            is_last_page = EXCLUDED.is_last_page;
+      - name: paginate
+        kind: noop
+        spec:
+          policy:
+            rules:
+              - when: '{{ iter.has_more | string | lower == "true" }}'
+                then:
+                  do: jump
+                  to: fetch_page
+                  set:
+                    iter.page: '{{ (iter.page | int) + 1 }}'
+              - else:
+                  then:
+                    do: break
+    next:
+      spec:
+        mode: exclusive
+      arcs:
+        - step: load_patients_for_medications
+          when: '{{ event.name == "loop.done" }}'
+
+  # ------------------------------------------------------------------
+  # FETCH VITAL SIGNS (paginated but always 1 page)
+  # ------------------------------------------------------------------
+  - step: load_patients_for_vital_signs
+    desc: Claim next batch of 100 patients for vital signs fetch (always 1 page per patient).
+    tool:
+      kind: postgres
+      auth: pg_k8s
+      command: |
+        WITH candidates AS (
+          SELECT w.patient_id, w.facility_mapping_id, w.facility_org_uuid
+          FROM public.bhs_test_patient_ids_work w
+          WHERE w.facility_mapping_id = {{ facility_mapping_id | int }}
+            AND NOT EXISTS (
+              SELECT 1 FROM public.bhs_test_patient_fetch_status s
+              WHERE s.pcc_patient_id = w.patient_id
+                AND s.facility_mapping_id = w.facility_mapping_id
+                AND s.data_type = 'vital_signs'
+            )
+          ORDER BY w.patient_id
+          LIMIT 100
+        ),
+        claimed AS (
+          INSERT INTO public.bhs_test_patient_fetch_status (pcc_patient_id, facility_mapping_id, data_type)
+          SELECT patient_id, facility_mapping_id, 'vital_signs'
+          FROM candidates
+          ON CONFLICT (pcc_patient_id, facility_mapping_id, data_type) DO NOTHING
+          RETURNING pcc_patient_id AS patient_id, facility_mapping_id
+        )
+        SELECT
+          c.patient_id,
+          c.facility_mapping_id,
+          cand.facility_org_uuid,
+          f.facility_id,
+          f.facility_name
+        FROM claimed c
+        INNER JOIN candidates cand
+          ON cand.patient_id = c.patient_id
+          AND cand.facility_mapping_id = c.facility_mapping_id
+        INNER JOIN public.bhs_test_facilities f ON f.facility_mapping_id = c.facility_mapping_id
+        ORDER BY c.patient_id;
+    next:
+      spec:
+        mode: exclusive
+      arcs:
+        - step: fetch_vital_signs
+          when: '{{ (load_patients_for_vital_signs.row_count | int) > 0 }}'
+        - step: load_patients_for_demographics
+          when: '{{ (load_patients_for_vital_signs.row_count | int) == 0 }}'
+    set:
+      ctx.patients_needing_vital_signs_count: '{{ load_patients_for_vital_signs.row_count }}'
+
+  - step: fetch_vital_signs
+    desc: |
+      Fetch vital signs per patient (parallel, max_in_flight 5).
+      All patients have exactly 1 page — tests the single-page paginated path.
+    loop:
+      in: '{{ load_patients_for_vital_signs.rows }}'
+      iterator: patient
+      spec:
+        mode: parallel
+        max_in_flight: 5
+    tool:
+      - name: init_page
+        kind: noop
+        spec:
+          policy:
+            rules:
+              - else:
+                  then:
+                    do: continue
+                    set:
+                      iter.page: 1
+      - name: fetch_page
+        kind: http
+        method: GET
+        url: '{{ api_url }}/api/v1/patient/vital_signs'
+        params:
+          patientId: '{{ iter.patient.patient_id }}'
+          page: '{{ iter.page }}'
+          pageSize: '{{ page_size }}'
+        spec:
+          policy:
+            rules:
+              - when: '{{ output.status == "error" and (output.http.status in [400, 404]) }}'
+                then:
+                  do: break
+              - when: '{{ output.status == "error" }}'
+                then:
+                  do: retry
+                  attempts: 3
+                  backoff: exponential
+                  delay: 1.0
+              - else:
+                  then:
+                    do: continue
+                    set:
+                      iter.has_more: '{{ output.data.data.paging.hasMore }}'
+                      iter.page_data: '{{ output.data.data.data }}'
+                      iter.current_page: '{{ output.data.data.paging.page }}'
+      - name: save_page
+        kind: postgres
+        auth: pg_k8s
+        command: |
+          INSERT INTO public.bhs_test_patient_vital_signs (pcc_patient_id, facility_mapping_id, page_number, payload, is_last_page)
+          VALUES (
+            {{ iter.patient.patient_id }},
+            {{ facility_mapping_id | int }},
+            {{ iter.current_page }},
+            '{{ iter.page_data | tojson | replace("'", "''") }}'::jsonb,
+            {{ 'false' if iter.has_more | string | lower == 'true' else 'true' }}
+          )
+          ON CONFLICT (pcc_patient_id, facility_mapping_id, page_number) DO UPDATE SET
+            payload = EXCLUDED.payload,
+            is_last_page = EXCLUDED.is_last_page;
+      - name: paginate
+        kind: noop
+        spec:
+          policy:
+            rules:
+              - when: '{{ iter.has_more | string | lower == "true" }}'
+                then:
+                  do: jump
+                  to: fetch_page
+                  set:
+                    iter.page: '{{ (iter.page | int) + 1 }}'
+              - else:
+                  then:
+                    do: break
+    next:
+      spec:
+        mode: exclusive
+      arcs:
+        - step: load_patients_for_vital_signs
+          when: '{{ event.name == "loop.done" }}'
+
+  # ------------------------------------------------------------------
+  # FETCH DEMOGRAPHICS (non-paginated)
+  # ------------------------------------------------------------------
+  - step: load_patients_for_demographics
+    desc: Claim next batch of 100 patients for demographics fetch (non-paginated).
+    tool:
+      kind: postgres
+      auth: pg_k8s
+      command: |
+        WITH candidates AS (
+          SELECT w.patient_id, w.facility_mapping_id, w.facility_org_uuid
+          FROM public.bhs_test_patient_ids_work w
+          WHERE w.facility_mapping_id = {{ facility_mapping_id | int }}
+            AND NOT EXISTS (
+              SELECT 1 FROM public.bhs_test_patient_fetch_status s
+              WHERE s.pcc_patient_id = w.patient_id
+                AND s.facility_mapping_id = w.facility_mapping_id
+                AND s.data_type = 'demographics'
+            )
+          ORDER BY w.patient_id
+          LIMIT 100
+        ),
+        claimed AS (
+          INSERT INTO public.bhs_test_patient_fetch_status (pcc_patient_id, facility_mapping_id, data_type)
+          SELECT patient_id, facility_mapping_id, 'demographics'
+          FROM candidates
+          ON CONFLICT (pcc_patient_id, facility_mapping_id, data_type) DO NOTHING
+          RETURNING pcc_patient_id AS patient_id, facility_mapping_id
+        )
+        SELECT
+          c.patient_id,
+          c.facility_mapping_id,
+          cand.facility_org_uuid,
+          f.facility_id,
+          f.facility_name
+        FROM claimed c
+        INNER JOIN candidates cand
+          ON cand.patient_id = c.patient_id
+          AND cand.facility_mapping_id = c.facility_mapping_id
+        INNER JOIN public.bhs_test_facilities f ON f.facility_mapping_id = c.facility_mapping_id
+        ORDER BY c.patient_id;
+    next:
+      spec:
+        mode: exclusive
+      arcs:
+        - step: fetch_demographics
+          when: '{{ (load_patients_for_demographics.row_count | int) > 0 }}'
+        - step: prepare_mds_work
+          when: '{{ (load_patients_for_demographics.row_count | int) == 0 }}'
+    set:
+      ctx.patients_needing_demographics_count: '{{ load_patients_for_demographics.row_count }}'
+
+  - step: fetch_demographics
+    desc: |
+      Fetch demographics per patient (parallel, max_in_flight 5).
+      Non-paginated: single HTTP call per patient, no pagination loop needed.
+    loop:
+      in: '{{ load_patients_for_demographics.rows }}'
+      iterator: patient
+      spec:
+        mode: parallel
+        max_in_flight: 5
+    tool:
+      - name: fetch
+        kind: http
+        method: GET
+        url: '{{ api_url }}/api/v1/patient/demographics'
+        params:
+          patientId: '{{ iter.patient.patient_id }}'
+        spec:
+          policy:
+            rules:
+              - when: '{{ output.status == "error" and (output.http.status in [400, 404]) }}'
+                then:
+                  do: break
+              - when: '{{ output.status == "error" }}'
+                then:
+                  do: retry
+                  attempts: 3
+                  backoff: exponential
+                  delay: 1.0
+              - else:
+                  then:
+                    do: continue
+                    set:
+                      iter.fetch_data: '{{ output.data.data }}'
+      - name: save
+        kind: postgres
+        auth: pg_k8s
+        command: |
+          INSERT INTO public.bhs_test_patient_demographics (pcc_patient_id, facility_mapping_id, payload)
+          VALUES (
+            {{ iter.patient.patient_id }},
+            {{ facility_mapping_id | int }},
+            '{{ iter.fetch_data | tojson | replace("'", "''") }}'::jsonb
+          )
+          ON CONFLICT (pcc_patient_id, facility_mapping_id) DO UPDATE SET
+            payload = EXCLUDED.payload,
+            fetched_at = now();
+        spec:
+          policy:
+            rules:
+              - else:
+                  then:
+                    do: continue
+    next:
+      spec:
+        mode: exclusive
+      arcs:
+        - step: load_patients_for_demographics
+          when: '{{ event.name == "loop.done" }}'
+
+  # ------------------------------------------------------------------
+  # MDS BATCH PROCESSING (sub-playbook)
+  # ------------------------------------------------------------------
+  - step: prepare_mds_work
+    desc: |
+      Clear old MDS work entries for this facility and populate from assessments.
+      Each assessment page row generates one synthetic MDS assessment ID.
+    tool:
+      kind: postgres
+      auth: pg_k8s
+      command: |
+        DELETE FROM public.bhs_test_mds_assessment_ids_work
+        WHERE facility_mapping_id = {{ facility_mapping_id | int }};
+
+        INSERT INTO public.bhs_test_mds_assessment_ids_work (assessment_id, pcc_patient_id, facility_mapping_id)
+        SELECT
+          'MDS-' || pcc_patient_id || '-' || page_number AS assessment_id,
+          pcc_patient_id,
+          facility_mapping_id
+        FROM public.bhs_test_patient_assessments
+        WHERE facility_mapping_id = {{ facility_mapping_id | int }}
+          AND is_last_page = TRUE
+        ON CONFLICT (assessment_id) DO NOTHING;
+
+        SELECT COUNT(*) AS mds_assessment_count
+        FROM public.bhs_test_mds_assessment_ids_work
+        WHERE facility_mapping_id = {{ facility_mapping_id | int }};
+    next:
+      spec:
+        mode: exclusive
+      arcs:
+        - step: count_mds_assessments
+
+  - step: count_mds_assessments
+    desc: Count MDS assessments pending for this facility
+    tool:
+      kind: postgres
+      auth: pg_k8s
+      query: |
+        SELECT COUNT(*) AS mds_assessment_count
+        FROM public.bhs_test_mds_assessment_ids_work
+        WHERE facility_mapping_id = {{ facility_mapping_id | int }};
+    next:
+      spec:
+        mode: exclusive
+      arcs:
+        - step: build_mds_batch_plan
+
+  - step: build_mds_batch_plan
+    desc: Compute OFFSET/LIMIT batch windows for MDS worker dispatch
+    tool:
+      kind: python
+      input:
+        total_count: '{{ count_mds_assessments.rows[0].mds_assessment_count }}'
+      code: |
+        def _to_int(v, d):
+            try:
+                return int(v)
+            except (TypeError, ValueError):
+                return d
+
+        total = _to_int(total_count, 0)
+        batch_size = 50
+        batches = []
+        for idx in range(0, total, batch_size):
+            batch_number = (idx // batch_size) + 1
+            limit = min(batch_size, total - idx)
+            batches.append({
+                "batch_number": batch_number,
+                "offset": idx,
+                "limit": limit,
+            })
+        result = {
+            "batches": batches,
+            "batch_count": len(batches),
+            "total_count": total,
+            "batch_size": batch_size,
+        }
+    next:
+      spec:
+        mode: exclusive
+      arcs:
+        - step: run_mds_batch_workers
+          when: '{{ (build_mds_batch_plan.batch_count | int) > 0 }}'
+        - step: validate_facility_results
+          when: '{{ (build_mds_batch_plan.batch_count | int) == 0 }}'
+
+  - step: run_mds_batch_workers
+    desc: Dispatch MDS batch workers serially (max_in_flight 1) via sub-playbook
+    loop:
+      in: '{{ build_mds_batch_plan.batches }}'
+      iterator: batch
+      spec:
+        mode: parallel
+        max_in_flight: 1
+    tool:
+      kind: playbook
+      path: tests/fixtures/playbooks/bhs_flow_test/test_mds_batch_worker
+      return_step: end
+      timeout: 300
+      input:
+        pg_auth: pg_k8s
+        api_url: '{{ api_url }}'
+        facility_mapping_id: '{{ facility_mapping_id }}'
+        batch_number: '{{ iter.batch.batch_number }}'
+        offset: '{{ iter.batch.offset }}'
+        batch_size: '{{ iter.batch.limit }}'
+    next:
+      spec:
+        mode: exclusive
+      arcs:
+        - step: validate_facility_results
+          when: '{{ event.name == "loop.done" }}'
+
+  # ------------------------------------------------------------------
+  # FACILITY VALIDATION + COMPLETION
+  # ------------------------------------------------------------------
+  - step: validate_facility_results
+    desc: |
+      Count ACTUAL fetched patient data per data type (not tombstones).
+      This is the true correctness check: a patient is "done" only when data
+      was saved to the result tables, not just when a tombstone was claimed.
+      With the v2.14.7 loop.done race bug, tombstones are inserted for all
+      patients but data is only saved for ~1 batch worth (100 patients) before
+      the race fires loop.done prematurely and cuts off subsequent batches.
+    tool:
+      kind: postgres
+      auth: pg_k8s
+      query: |
+        SELECT
+          (SELECT COUNT(DISTINCT pcc_patient_id) FROM public.bhs_test_patient_assessments
+           WHERE facility_mapping_id = {{ facility_mapping_id | int }}) AS assessments_done,
+          (SELECT COUNT(DISTINCT pcc_patient_id) FROM public.bhs_test_patient_conditions
+           WHERE facility_mapping_id = {{ facility_mapping_id | int }}) AS conditions_done,
+          (SELECT COUNT(DISTINCT pcc_patient_id) FROM public.bhs_test_patient_medications
+           WHERE facility_mapping_id = {{ facility_mapping_id | int }}) AS medications_done,
+          (SELECT COUNT(DISTINCT pcc_patient_id) FROM public.bhs_test_patient_vital_signs
+           WHERE facility_mapping_id = {{ facility_mapping_id | int }}) AS vital_signs_done,
+          (SELECT COUNT(DISTINCT pcc_patient_id) FROM public.bhs_test_patient_demographics
+           WHERE facility_mapping_id = {{ facility_mapping_id | int }}) AS demographics_done,
+          (SELECT COUNT(DISTINCT pcc_patient_id) FROM public.bhs_test_patient_fetch_status
+           WHERE facility_mapping_id = {{ facility_mapping_id | int }} AND data_type = 'assessments') AS tombstones_assessments;
+    next:
+      spec:
+        mode: exclusive
+      arcs:
+        - step: log_facility_validation
+
+  - step: log_facility_validation
+    desc: Write per-facility validation results to log table and print summary
+    tool:
+      kind: postgres
+      auth: pg_k8s
+      command: |
+        INSERT INTO public.bhs_test_validation_log (
+          execution_id, facility_mapping_id,
+          assessments_done, conditions_done, medications_done,
+          vital_signs_done, demographics_done, tombstones_assessments, total_expected
+        )
+        VALUES (
+          '{{ execution_id }}',
+          {{ facility_mapping_id | int }},
+          {{ validate_facility_results.rows[0].assessments_done }},
+          {{ validate_facility_results.rows[0].conditions_done }},
+          {{ validate_facility_results.rows[0].medications_done }},
+          {{ validate_facility_results.rows[0].vital_signs_done }},
+          {{ validate_facility_results.rows[0].demographics_done }},
+          {{ validate_facility_results.rows[0].tombstones_assessments }},
+          250
+        )
+        ON CONFLICT (execution_id, facility_mapping_id) DO UPDATE SET
+          assessments_done       = EXCLUDED.assessments_done,
+          conditions_done        = EXCLUDED.conditions_done,
+          medications_done       = EXCLUDED.medications_done,
+          vital_signs_done       = EXCLUDED.vital_signs_done,
+          demographics_done      = EXCLUDED.demographics_done,
+          tombstones_assessments = EXCLUDED.tombstones_assessments,
+          logged_at              = NOW();
+
+        SELECT 'logged' AS status;
+    next:
+      spec:
+        mode: exclusive
+      arcs:
+        - step: mark_facility_processed
+
+  - step: mark_facility_processed
+    desc: Mark current facility as done (active=false) and loop back if more remain
+    tool:
+      kind: postgres
+      auth: pg_k8s
+      command: |
+        UPDATE public.bhs_test_facilities
+        SET active = FALSE, updated_at = NOW()
+        WHERE facility_mapping_id = {{ facility_mapping_id | int }};
+
+        SELECT COUNT(*) AS remaining_count FROM public.bhs_test_facilities WHERE active = TRUE;
+    next:
+      spec:
+        mode: exclusive
+      arcs:
+        - step: load_next_facility
+          when: '{{ (mark_facility_processed.rows[0].remaining_count | int) > 0 }}'
+        - step: validate_all_results
+          when: '{{ (mark_facility_processed.rows[0].remaining_count | int) == 0 }}'
+    set:
+      ctx.remaining_count: '{{ mark_facility_processed.rows[0].remaining_count }}'
+
+  # ------------------------------------------------------------------
+  # FINAL VALIDATION
+  # ------------------------------------------------------------------
+  - step: validate_all_results
+    desc: Query final validation log and assert all facilities have 250/250 patients
+    tool:
+      kind: postgres
+      auth: pg_k8s
+      query: |
+        SELECT
+          facility_mapping_id,
+          assessments_done,
+          conditions_done,
+          medications_done,
+          vital_signs_done,
+          demographics_done,
+          total_expected,
+          (assessments_done = total_expected
+           AND conditions_done = total_expected
+           AND medications_done = total_expected
+           AND vital_signs_done = total_expected
+           AND demographics_done = total_expected) AS all_passed
+        FROM public.bhs_test_validation_log
+        WHERE execution_id = '{{ execution_id }}'
+        ORDER BY facility_mapping_id;
+    next:
+      spec:
+        mode: exclusive
+      arcs:
+        - step: check_results
+
+  - step: check_results
+    desc: |
+      Assert all 10 facilities have 250/250 patients with ACTUAL data in result tables.
+      If the v2.14.7 loop.done race bug is present, tombstones_assessments will be 250
+      but assessments_done will be << 250 (only ~1 batch worth, due to premature cutoff).
+    tool:
+      kind: python
+      input:
+        results: '{{ validate_all_results.rows }}'
+        expected_facilities: 10
+        expected_patients: 250
+      code: |
+        rows = results if isinstance(results, list) else []
+        expected_f = int(expected_facilities or 10)
+        expected_p = int(expected_patients or 250)
+
+        print(f"[CHECK] {len(rows)} facilities in validation log (expected {expected_f})")
+
+        failures = []
+
+        if len(rows) != expected_f:
+            failures.append(
+                f"Expected {expected_f} facilities in log, got {len(rows)} — "
+                "execution may have stalled due to loop.done race"
+            )
+
+        for r in rows:
+            fid = r.get("facility_mapping_id")
+            tombstones = int(r.get("tombstones_assessments") or 0)
+            for dtype in ["assessments_done", "conditions_done", "medications_done",
+                          "vital_signs_done", "demographics_done"]:
+                count = int(r.get(dtype) or 0)
+                if count != expected_p:
+                    note = ""
+                    if dtype == "assessments_done" and tombstones > count:
+                        note = f" [RACE BUG: {tombstones} tombstones claimed but only {count} fetched]"
+                    failures.append(
+                        f"facility={fid} {dtype}={count} (expected {expected_p}){note}"
+                    )
+
+        assert not failures, (
+            f"Patient loss detected in {len(failures)} case(s):\n" + "\n".join(failures)
+        )
+
+        result = {
+            "status": "passed",
+            "facilities_checked": len(rows),
+            "patients_per_facility": expected_p,
+            "all_data_types_complete": True,
+        }
+    next:
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
+
+  - step: end
+    desc: BHS flow test complete — all facilities and patients processed
+    tool:
+      kind: python
+      input:
+        summary: '{{ check_results }}'
+      code: |
+        result = {
+            "status": "completed",
+            "summary": summary,
+        }
