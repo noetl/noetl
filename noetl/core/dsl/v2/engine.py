@@ -3377,7 +3377,8 @@ class ControlFlowEngine:
                     nats_loop_state.get("scheduled_count", nats_completed) or nats_completed
                 )
                 nats_size = int(nats_loop_state.get("collection_size", len(collection)) or len(collection))
-                if nats_size > 0 and nats_completed >= nats_size and nats_scheduled >= nats_size:
+                nats_loop_done_claimed = bool(nats_loop_state.get("loop_done_claimed", False))
+                if (nats_size > 0 and nats_completed >= nats_size and nats_scheduled >= nats_size) or nats_loop_done_claimed:
                     loop_event_id = f"loop_{state.last_event_id or time.time_ns()}"
                     state.init_loop(
                         step.step,
@@ -4204,7 +4205,9 @@ class ControlFlowEngine:
                                 resolved_loop_event_id = candidate_event_id
                                 break
 
+                        _nats_count_reliable = True
                         if new_count < 0:
+                            _nats_count_reliable = False
                             # Keep progress moving even if distributed cache increments fail.
                             # Prefer durable count from persisted call.done events over local in-memory counts.
                             new_count = state.get_loop_completed_count(parent_step)
@@ -4371,55 +4374,66 @@ class ControlFlowEngine:
                                     )
 
                         if collection_size > 0 and new_count >= collection_size:
-                            # Guard: atomically claim the right to fire loop.done for this epoch.
-                            # Prevents duplicate loopback dispatches when multiple concurrent
-                            # call.done handlers reach this point simultaneously (e.g. via the
-                            # NATS-fallback count path where all handlers see the same persisted count).
-                            _skip_loop_done = False
-                            try:
-                                if not await nats_cache.try_claim_loop_done(
-                                    str(state.execution_id),
-                                    parent_step,
-                                    event_id=resolved_loop_event_id,
-                                ):
-                                    logger.info(
-                                        "[TASK_SEQ-LOOP] loop.done already claimed for %s (execution=%s), skipping dispatch",
-                                        parent_step,
-                                        state.execution_id,
-                                    )
-                                    _skip_loop_done = True
-                            except Exception as _claim_err:
+                            if not _nats_count_reliable:
                                 logger.warning(
-                                    "[TASK_SEQ-LOOP] try_claim_loop_done failed for %s: %s — proceeding with aggregation_finalized guard",
+                                    "[TASK_SEQ-LOOP] Fallback count %s >= size %s but NATS increment failed — "
+                                    "skipping loop.done claim for %s (execution=%s); "
+                                    "next reliable call.done will claim it",
+                                    new_count,
+                                    collection_size,
                                     parent_step,
-                                    _claim_err,
+                                    state.execution_id,
                                 )
-                                # Fall through: aggregation_finalized is a second-layer in-process guard.
+                            else:
+                                # Guard: atomically claim the right to fire loop.done for this epoch.
+                                # Prevents duplicate loopback dispatches when multiple concurrent
+                                # call.done handlers reach this point simultaneously (e.g. via the
+                                # NATS-fallback count path where all handlers see the same persisted count).
+                                _skip_loop_done = False
+                                try:
+                                    if not await nats_cache.try_claim_loop_done(
+                                        str(state.execution_id),
+                                        parent_step,
+                                        event_id=resolved_loop_event_id,
+                                    ):
+                                        logger.info(
+                                            "[TASK_SEQ-LOOP] loop.done already claimed for %s (execution=%s), skipping dispatch",
+                                            parent_step,
+                                            state.execution_id,
+                                        )
+                                        _skip_loop_done = True
+                                except Exception as _claim_err:
+                                    logger.warning(
+                                        "[TASK_SEQ-LOOP] try_claim_loop_done failed for %s: %s — proceeding with aggregation_finalized guard",
+                                        parent_step,
+                                        _claim_err,
+                                    )
+                                    # Fall through: aggregation_finalized is a second-layer in-process guard.
 
-                            if not _skip_loop_done:
-                                # Loop done - mark completed and create loop.done event
-                                loop_state["completed"] = True
-                                loop_state["aggregation_finalized"] = True
-                                logger.info(f"[TASK_SEQ-LOOP] Loop completed for {parent_step}: {new_count}/{collection_size}")
+                                if not _skip_loop_done:
+                                    # Loop done - mark completed and create loop.done event
+                                    loop_state["completed"] = True
+                                    loop_state["aggregation_finalized"] = True
+                                    logger.info(f"[TASK_SEQ-LOOP] Loop completed for {parent_step}: {new_count}/{collection_size}")
 
-                                # Get aggregated result
-                                loop_aggregation = state.get_loop_aggregation(parent_step)
-                                state.mark_step_completed(parent_step, loop_aggregation)
+                                    # Get aggregated result
+                                    loop_aggregation = state.get_loop_aggregation(parent_step)
+                                    state.mark_step_completed(parent_step, loop_aggregation)
 
-                                # Evaluate next transitions with loop.done event
-                                loop_done_event = Event(
-                                    execution_id=event.execution_id,
-                                    step=parent_step,
-                                    name="loop.done",
-                                    payload={
-                                        "status": "completed",
-                                        "iterations": new_count,
-                                        "result": loop_aggregation
-                                    }
-                                )
-                                loop_done_commands = await self._evaluate_next_transitions(state, parent_step_def, loop_done_event)
-                                commands.extend(loop_done_commands)
-                                logger.info(f"[TASK_SEQ-LOOP] Generated {len(loop_done_commands)} commands from loop.done")
+                                    # Evaluate next transitions with loop.done event
+                                    loop_done_event = Event(
+                                        execution_id=event.execution_id,
+                                        step=parent_step,
+                                        name="loop.done",
+                                        payload={
+                                            "status": "completed",
+                                            "iterations": new_count,
+                                            "result": loop_aggregation
+                                        }
+                                    )
+                                    loop_done_commands = await self._evaluate_next_transitions(state, parent_step_def, loop_done_event)
+                                    commands.extend(loop_done_commands)
+                                    logger.info(f"[TASK_SEQ-LOOP] Generated {len(loop_done_commands)} commands from loop.done")
                         else:
                             # More iterations - create next command
                             if collection_size == 0:
@@ -4622,7 +4636,9 @@ class ControlFlowEngine:
                             resolved_loop_event_id = candidate_event_id
                             break
 
+                    _nats_count_reliable = True
                     if new_count < 0:
+                        _nats_count_reliable = False
                         new_count = state.get_loop_completed_count(event.step)
                         persisted_count = await self._count_step_events(
                             state.execution_id, event.step, "call.done"
@@ -4657,56 +4673,67 @@ class ControlFlowEngine:
 
                     # Check if loop is done
                     if collection_size > 0 and new_count >= collection_size:
-                        # Guard: atomically claim the right to fire loop.done for this epoch.
-                        # Prevents duplicate loopback dispatches when multiple concurrent
-                        # call.done handlers reach this point simultaneously (e.g. via the
-                        # NATS-fallback count path where all handlers see the same persisted count).
-                        _skip_loop_done = False
-                        try:
-                            if not await nats_cache.try_claim_loop_done(
-                                str(state.execution_id),
-                                event.step,
-                                event_id=resolved_loop_event_id,
-                            ):
-                                logger.info(
-                                    "[LOOP-CALL.DONE] loop.done already claimed for %s (execution=%s), skipping dispatch",
-                                    event.step,
-                                    state.execution_id,
-                                )
-                                _skip_loop_done = True
-                        except Exception as _claim_err:
+                        if not _nats_count_reliable:
                             logger.warning(
-                                "[LOOP-CALL.DONE] try_claim_loop_done failed for %s: %s — proceeding with aggregation_finalized guard",
+                                "[LOOP-CALL.DONE] Fallback count %s >= size %s but NATS increment failed — "
+                                "skipping loop.done claim for %s (execution=%s); "
+                                "next reliable call.done will claim it",
+                                new_count,
+                                collection_size,
                                 event.step,
-                                _claim_err,
+                                state.execution_id,
                             )
-                            # Fall through: aggregation_finalized is a second-layer in-process guard.
+                        else:
+                            # Guard: atomically claim the right to fire loop.done for this epoch.
+                            # Prevents duplicate loopback dispatches when multiple concurrent
+                            # call.done handlers reach this point simultaneously (e.g. via the
+                            # NATS-fallback count path where all handlers see the same persisted count).
+                            _skip_loop_done = False
+                            try:
+                                if not await nats_cache.try_claim_loop_done(
+                                    str(state.execution_id),
+                                    event.step,
+                                    event_id=resolved_loop_event_id,
+                                ):
+                                    logger.info(
+                                        "[LOOP-CALL.DONE] loop.done already claimed for %s (execution=%s), skipping dispatch",
+                                        event.step,
+                                        state.execution_id,
+                                    )
+                                    _skip_loop_done = True
+                            except Exception as _claim_err:
+                                logger.warning(
+                                    "[LOOP-CALL.DONE] try_claim_loop_done failed for %s: %s — proceeding with aggregation_finalized guard",
+                                    event.step,
+                                    _claim_err,
+                                )
+                                # Fall through: aggregation_finalized is a second-layer in-process guard.
 
-                        if not _skip_loop_done:
-                            loop_state["completed"] = True
-                            loop_state["aggregation_finalized"] = True
-                            logger.info(f"[LOOP-CALL.DONE] Loop completed for {event.step}: {new_count}/{collection_size}")
+                            if not _skip_loop_done:
+                                loop_state["completed"] = True
+                                loop_state["aggregation_finalized"] = True
+                                logger.info(f"[LOOP-CALL.DONE] Loop completed for {event.step}: {new_count}/{collection_size}")
 
-                            loop_aggregation = state.get_loop_aggregation(event.step)
-                            state.mark_step_completed(event.step, loop_aggregation)
+                                loop_aggregation = state.get_loop_aggregation(event.step)
+                                state.mark_step_completed(event.step, loop_aggregation)
 
-                            loop_done_event = Event(
-                                execution_id=event.execution_id,
-                                step=event.step,
-                                name="loop.done",
-                                payload={
-                                    "status": "completed",
-                                    "iterations": new_count,
-                                    "result": loop_aggregation,
-                                },
-                            )
-                            loop_done_commands = await self._evaluate_next_transitions(
-                                state, step_def, loop_done_event
-                            )
-                            commands.extend(loop_done_commands)
-                            logger.info(
-                                f"[LOOP-CALL.DONE] Generated {len(loop_done_commands)} commands from loop.done"
-                            )
+                                loop_done_event = Event(
+                                    execution_id=event.execution_id,
+                                    step=event.step,
+                                    name="loop.done",
+                                    payload={
+                                        "status": "completed",
+                                        "iterations": new_count,
+                                        "result": loop_aggregation,
+                                    },
+                                )
+                                loop_done_commands = await self._evaluate_next_transitions(
+                                    state, step_def, loop_done_event
+                                )
+                                commands.extend(loop_done_commands)
+                                logger.info(
+                                    f"[LOOP-CALL.DONE] Generated {len(loop_done_commands)} commands from loop.done"
+                                )
                     else:
                         # More iterations needed
                         logger.info(
@@ -4987,52 +5014,74 @@ class ControlFlowEngine:
                         loop_commands = await self._issue_loop_commands(state, step_def, {})
                         commands.extend(loop_commands)
                     else:
-                        # Loop done - create aggregated result and store as step result
-                        logger.info(f"[LOOP] Loop completed for step {event.step}, creating aggregated result")
+                        # Guard: one concurrent step.exit fires loop.done.
+                        _loop_event_id_for_cas = loop_state.get("event_id") if loop_state else None
+                        _skip_loop_done = False
+                        try:
+                            if not await nats_cache.try_claim_loop_done(
+                                str(state.execution_id),
+                                event.step,
+                                event_id=_loop_event_id_for_cas,
+                            ):
+                                logger.info(
+                                    "[LOOP-STEP.EXIT] loop.done already claimed for %s (execution=%s), skipping",
+                                    event.step,
+                                    state.execution_id,
+                                )
+                                _skip_loop_done = True
+                        except Exception as _cas_err:
+                            logger.warning(
+                                "[LOOP-STEP.EXIT] try_claim_loop_done failed for %s: %s — proceeding",
+                                event.step,
+                                _cas_err,
+                            )
+                        if not _skip_loop_done:
+                            # Loop done - create aggregated result and store as step result
+                            logger.info(f"[LOOP] Loop completed for step {event.step}, creating aggregated result")
 
-                        # Mark loop as completed in local state
-                        if loop_state:
-                            loop_state["completed"] = True
-                            loop_state["aggregation_finalized"] = True
-                            # NOTE: Results are stored locally in loop_state["results"] during execution
-                            # For distributed deployments, the aggregate service fetches from event table
-                            # NATS K/V only stores counts, NOT results (to respect 1MB limit)
-                            logger.debug(f"[LOOP-COMPLETE] Local results count: {len(loop_state.get('results', []))}")
+                            # Mark loop as completed in local state
+                            if loop_state:
+                                loop_state["completed"] = True
+                                loop_state["aggregation_finalized"] = True
+                                # NOTE: Results are stored locally in loop_state["results"] during execution
+                                # For distributed deployments, the aggregate service fetches from event table
+                                # NATS K/V only stores counts, NOT results (to respect 1MB limit)
+                                logger.debug(f"[LOOP-COMPLETE] Local results count: {len(loop_state.get('results', []))}")
 
-                        # Get aggregated loop results from local state
-                        # NOTE: For distributed scenarios where local results may be incomplete,
-                        # use the aggregate service endpoint to fetch authoritative results from event table
-                        loop_aggregation = state.get_loop_aggregation(event.step)
-                        
-                        # Check if step has pagination data to merge
-                        if event.step in state.pagination_state:
-                            pagination_data = state.pagination_state[event.step]
-                            if pagination_data["collected_data"]:
-                                # Merge pagination data into aggregated result
-                                loop_aggregation["pagination"] = {
-                                    "collected_items": pagination_data["collected_data"],
-                                    "iteration_count": pagination_data["iteration_count"]
+                            # Get aggregated loop results from local state
+                            # NOTE: For distributed scenarios where local results may be incomplete,
+                            # use the aggregate service endpoint to fetch authoritative results from event table
+                            loop_aggregation = state.get_loop_aggregation(event.step)
+
+                            # Check if step has pagination data to merge
+                            if event.step in state.pagination_state:
+                                pagination_data = state.pagination_state[event.step]
+                                if pagination_data["collected_data"]:
+                                    # Merge pagination data into aggregated result
+                                    loop_aggregation["pagination"] = {
+                                        "collected_items": pagination_data["collected_data"],
+                                        "iteration_count": pagination_data["iteration_count"]
+                                    }
+                                    logger.info(f"Merged pagination data into loop result: {pagination_data['iteration_count']} iterations")
+
+                            # Store aggregated result as the step result
+                            # This makes it available to next steps via {{ loop_step_name }}
+                            state.mark_step_completed(event.step, loop_aggregation)
+                            logger.info(f"Stored aggregated loop result for {event.step}: {loop_aggregation['stats']}")
+
+                            # Process loop.done event through next transitions
+                            loop_done_event = Event(
+                                execution_id=event.execution_id,
+                                step=event.step,
+                                name="loop.done",
+                                payload={
+                                    "status": "completed",
+                                    "iterations": state.loop_state[event.step]["index"],
+                                    "result": loop_aggregation  # Include aggregated result in payload
                                 }
-                                logger.info(f"Merged pagination data into loop result: {pagination_data['iteration_count']} iterations")
-                        
-                        # Store aggregated result as the step result
-                        # This makes it available to next steps via {{ loop_step_name }}
-                        state.mark_step_completed(event.step, loop_aggregation)
-                        logger.info(f"Stored aggregated loop result for {event.step}: {loop_aggregation['stats']}")
-                        
-                        # Process loop.done event through next transitions
-                        loop_done_event = Event(
-                            execution_id=event.execution_id,
-                            step=event.step,
-                            name="loop.done",
-                            payload={
-                                "status": "completed",
-                                "iterations": state.loop_state[event.step]["index"],
-                                "result": loop_aggregation  # Include aggregated result in payload
-                            }
-                        )
-                        loop_done_commands = await self._evaluate_next_transitions(state, step_def, loop_done_event)
-                        commands.extend(loop_done_commands)
+                            )
+                            loop_done_commands = await self._evaluate_next_transitions(state, step_def, loop_done_event)
+                            commands.extend(loop_done_commands)
 
         # NOTE: step.vars is REMOVED in strict v10 - use scoped `set` mutations.
 
