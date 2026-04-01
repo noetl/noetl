@@ -2,14 +2,14 @@ apiVersion: noetl.io/v2
 kind: Playbook
 metadata:
   name: test_mds_batch_worker
-  path: tests/fixtures/playbooks/bhs_flow_test/test_mds_batch_worker
+  path: tests/fixtures/playbooks/pft_flow_test/test_mds_batch_worker
   description: |
-    Sub-playbook for MDS assessment batch fetching in the BHS flow test.
-    Processes one OFFSET/LIMIT slice of bhs_test_mds_assessment_ids_work:
+    Sub-playbook for MDS assessment batch fetching in the PFT flow test.
+    Processes one OFFSET/LIMIT slice of pft_test_mds_assessment_ids_work:
     fetches detail for each assessment ID from the test API and saves to
-    bhs_test_mds_assessment_details.
+    pft_test_mds_assessment_details.
 
-    Called by test_bhs_flow.yaml run_mds_batch_workers loop.
+    Called by test_pft_flow.yaml run_mds_batch_workers loop.
 
 workload:
   pg_auth: pg_k8s
@@ -56,7 +56,7 @@ workflow:
       auth: '{{ pg_auth }}'
       query: |
         SELECT assessment_id, pcc_patient_id
-        FROM public.bhs_test_mds_assessment_ids_work
+        FROM public.pft_test_mds_assessment_ids_work
         WHERE facility_mapping_id = {{ facility_mapping_id | int }}
         ORDER BY assessment_id ASC
         OFFSET {{ offset | int }}
@@ -124,7 +124,7 @@ workflow:
         kind: postgres
         auth: '{{ pg_auth }}'
         command: |
-          INSERT INTO public.bhs_test_mds_assessment_details (
+          INSERT INTO public.pft_test_mds_assessment_details (
             assessment_id, pcc_patient_id, facility_mapping_id, payload
           )
           VALUES (

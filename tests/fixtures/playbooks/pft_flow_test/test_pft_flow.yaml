@@ -1,10 +1,10 @@
 apiVersion: noetl.io/v2
 kind: Playbook
 metadata:
-  name: test_bhs_flow
-  path: tests/fixtures/playbooks/bhs_flow_test/test_bhs_flow
+  name: test_pft_flow
+  path: tests/fixtures/playbooks/pft_flow_test/test_pft_flow
   description: |
-    Full-pipeline BHS flow test — mirrors state_report_generation_prod_v13 without Snowflake.
+    Full-pipeline PFT flow test — mirrors state_report_generation_prod_v13 without Snowflake.
 
     Tests the exact bug-prone code path: DB-based patient batching with LIMIT 100 and
     NOT EXISTS tombstones in patient_fetch_status.  If all patients across all facilities
@@ -16,7 +16,7 @@ metadata:
     - 4 paginated fetch steps (assessments 2-4p, conditions 1-3p, medications 2-3p,
       vital_signs 1p always) + 1 non-paginated (demographics)
     - MDS sub-playbook batching (test_mds_batch_worker) for assessments
-    - All test tables are prefixed bhs_test_* in public schema
+    - All test tables are prefixed pft_test_* in public schema
 
     Go/no-go criterion: validate_facility_results shows 1000/1000 per facility for all
     5 data types.  Any shortfall indicates the patient-loss bug is still present.
@@ -38,7 +38,7 @@ workflow:
       auth: pg_k8s
       query: |
         -- Facilities table
-        CREATE TABLE IF NOT EXISTS public.bhs_test_facilities (
+        CREATE TABLE IF NOT EXISTS public.pft_test_facilities (
           facility_mapping_id  INTEGER      PRIMARY KEY,
           facility_name        TEXT         NOT NULL,
           facility_id          INTEGER      NOT NULL,
@@ -47,7 +47,7 @@ workflow:
         );
 
         -- Patient IDs work table (current facility only — truncated between facilities)
-        CREATE TABLE IF NOT EXISTS public.bhs_test_patient_ids_work (
+        CREATE TABLE IF NOT EXISTS public.pft_test_patient_ids_work (
           patient_id          INTEGER NOT NULL,
           facility_mapping_id INTEGER NOT NULL,
           facility_org_uuid   TEXT    NOT NULL,
@@ -55,7 +55,7 @@ workflow:
         );
 
         -- Tombstone table — prevents double-processing per data type
-        CREATE TABLE IF NOT EXISTS public.bhs_test_patient_fetch_status (
+        CREATE TABLE IF NOT EXISTS public.pft_test_patient_fetch_status (
           pcc_patient_id      INTEGER NOT NULL,
           facility_mapping_id INTEGER NOT NULL,
           data_type           TEXT    NOT NULL,
@@ -64,7 +64,7 @@ workflow:
         );
 
         -- Result tables
-        CREATE TABLE IF NOT EXISTS public.bhs_test_patient_assessments (
+        CREATE TABLE IF NOT EXISTS public.pft_test_patient_assessments (
           pcc_patient_id      INTEGER     NOT NULL,
           facility_mapping_id INTEGER     NOT NULL,
           page_number         INTEGER     NOT NULL,
@@ -73,7 +73,7 @@ workflow:
           PRIMARY KEY (pcc_patient_id, facility_mapping_id, page_number)
         );
 
-        CREATE TABLE IF NOT EXISTS public.bhs_test_patient_conditions (
+        CREATE TABLE IF NOT EXISTS public.pft_test_patient_conditions (
           pcc_patient_id      INTEGER     NOT NULL,
           facility_mapping_id INTEGER     NOT NULL,
           page_number         INTEGER     NOT NULL,
@@ -82,7 +82,7 @@ workflow:
           PRIMARY KEY (pcc_patient_id, facility_mapping_id, page_number)
         );
 
-        CREATE TABLE IF NOT EXISTS public.bhs_test_patient_medications (
+        CREATE TABLE IF NOT EXISTS public.pft_test_patient_medications (
           pcc_patient_id      INTEGER     NOT NULL,
           facility_mapping_id INTEGER     NOT NULL,
           page_number         INTEGER     NOT NULL,
@@ -91,7 +91,7 @@ workflow:
           PRIMARY KEY (pcc_patient_id, facility_mapping_id, page_number)
         );
 
-        CREATE TABLE IF NOT EXISTS public.bhs_test_patient_vital_signs (
+        CREATE TABLE IF NOT EXISTS public.pft_test_patient_vital_signs (
           pcc_patient_id      INTEGER     NOT NULL,
           facility_mapping_id INTEGER     NOT NULL,
           page_number         INTEGER     NOT NULL,
@@ -100,7 +100,7 @@ workflow:
           PRIMARY KEY (pcc_patient_id, facility_mapping_id, page_number)
         );
 
-        CREATE TABLE IF NOT EXISTS public.bhs_test_patient_demographics (
+        CREATE TABLE IF NOT EXISTS public.pft_test_patient_demographics (
           pcc_patient_id      INTEGER     NOT NULL,
           facility_mapping_id INTEGER     NOT NULL,
           payload             JSONB,
@@ -109,14 +109,14 @@ workflow:
         );
 
         -- MDS tables
-        CREATE TABLE IF NOT EXISTS public.bhs_test_mds_assessment_ids_work (
+        CREATE TABLE IF NOT EXISTS public.pft_test_mds_assessment_ids_work (
           assessment_id       TEXT        NOT NULL,
           pcc_patient_id      INTEGER     NOT NULL,
           facility_mapping_id INTEGER     NOT NULL,
           PRIMARY KEY (assessment_id)
         );
 
-        CREATE TABLE IF NOT EXISTS public.bhs_test_mds_assessment_details (
+        CREATE TABLE IF NOT EXISTS public.pft_test_mds_assessment_details (
           assessment_id       TEXT        NOT NULL,
           pcc_patient_id      INTEGER     NOT NULL,
           facility_mapping_id INTEGER     NOT NULL,
@@ -126,7 +126,7 @@ workflow:
         );
 
         -- Validation log (written per facility after processing)
-        CREATE TABLE IF NOT EXISTS public.bhs_test_validation_log (
+        CREATE TABLE IF NOT EXISTS public.pft_test_validation_log (
           execution_id           TEXT        NOT NULL,
           facility_mapping_id    INTEGER     NOT NULL,
           assessments_done       INTEGER,
@@ -140,12 +140,12 @@ workflow:
           PRIMARY KEY (execution_id, facility_mapping_id)
         );
         -- Add column if missing (for reruns on existing table)
-        ALTER TABLE public.bhs_test_validation_log
+        ALTER TABLE public.pft_test_validation_log
           ADD COLUMN IF NOT EXISTS tombstones_assessments INTEGER;
 
         -- Reset facilities for this run
-        DELETE FROM public.bhs_test_facilities;
-        INSERT INTO public.bhs_test_facilities (facility_mapping_id, facility_name, facility_id, active)
+        DELETE FROM public.pft_test_facilities;
+        INSERT INTO public.pft_test_facilities (facility_mapping_id, facility_name, facility_id, active)
         SELECT
           seq AS facility_mapping_id,
           'Test Facility ' || seq AS facility_name,
@@ -153,7 +153,7 @@ workflow:
           TRUE AS active
         FROM generate_series(1, 10) AS seq;
 
-        SELECT COUNT(*) AS facility_count FROM public.bhs_test_facilities WHERE active = TRUE;
+        SELECT COUNT(*) AS facility_count FROM public.pft_test_facilities WHERE active = TRUE;
     next:
       spec:
         mode: exclusive
@@ -171,7 +171,7 @@ workflow:
       query: |
         SELECT facility_mapping_id, facility_name, facility_id,
                'org-' || facility_mapping_id AS facility_org_uuid
-        FROM public.bhs_test_facilities
+        FROM public.pft_test_facilities
         WHERE active = TRUE
         ORDER BY facility_mapping_id
         LIMIT 1;
@@ -198,14 +198,14 @@ workflow:
       auth: pg_k8s
       command: |
         -- Clear previous facility's patient data from work table
-        TRUNCATE public.bhs_test_patient_ids_work;
+        TRUNCATE public.pft_test_patient_ids_work;
 
         -- Clear tombstones for this facility (simulates clear_old_ids in production)
-        DELETE FROM public.bhs_test_patient_fetch_status
+        DELETE FROM public.pft_test_patient_fetch_status
         WHERE facility_mapping_id = {{ facility_mapping_id | int }};
 
         -- Seed 1000 test patients: facility N gets IDs (N-1)*1000+1 .. N*1000
-        INSERT INTO public.bhs_test_patient_ids_work (patient_id, facility_mapping_id, facility_org_uuid)
+        INSERT INTO public.pft_test_patient_ids_work (patient_id, facility_mapping_id, facility_org_uuid)
         SELECT
           ({{ facility_mapping_id | int }} - 1) * 1000 + seq AS patient_id,
           {{ facility_mapping_id | int }} AS facility_mapping_id,
@@ -214,7 +214,7 @@ workflow:
         ON CONFLICT (patient_id, facility_mapping_id) DO NOTHING;
 
         SELECT COUNT(*) AS patient_count
-        FROM public.bhs_test_patient_ids_work
+        FROM public.pft_test_patient_ids_work
         WHERE facility_mapping_id = {{ facility_mapping_id | int }};
     next:
       spec:
@@ -237,10 +237,10 @@ workflow:
       command: |
         WITH candidates AS (
           SELECT w.patient_id, w.facility_mapping_id, w.facility_org_uuid
-          FROM public.bhs_test_patient_ids_work w
+          FROM public.pft_test_patient_ids_work w
           WHERE w.facility_mapping_id = {{ facility_mapping_id | int }}
             AND NOT EXISTS (
-              SELECT 1 FROM public.bhs_test_patient_fetch_status s
+              SELECT 1 FROM public.pft_test_patient_fetch_status s
               WHERE s.pcc_patient_id = w.patient_id
                 AND s.facility_mapping_id = w.facility_mapping_id
                 AND s.data_type = 'assessments'
@@ -249,7 +249,7 @@ workflow:
           LIMIT 100
         ),
         claimed AS (
-          INSERT INTO public.bhs_test_patient_fetch_status (pcc_patient_id, facility_mapping_id, data_type)
+          INSERT INTO public.pft_test_patient_fetch_status (pcc_patient_id, facility_mapping_id, data_type)
           SELECT patient_id, facility_mapping_id, 'assessments'
           FROM candidates
           ON CONFLICT (pcc_patient_id, facility_mapping_id, data_type) DO NOTHING
@@ -265,7 +265,7 @@ workflow:
         INNER JOIN candidates cand
           ON cand.patient_id = c.patient_id
           AND cand.facility_mapping_id = c.facility_mapping_id
-        INNER JOIN public.bhs_test_facilities f ON f.facility_mapping_id = c.facility_mapping_id
+        INNER JOIN public.pft_test_facilities f ON f.facility_mapping_id = c.facility_mapping_id
         ORDER BY c.patient_id;
     next:
       spec:
@@ -328,7 +328,7 @@ workflow:
         kind: postgres
         auth: pg_k8s
         command: |
-          INSERT INTO public.bhs_test_patient_assessments (pcc_patient_id, facility_mapping_id, page_number, payload, is_last_page)
+          INSERT INTO public.pft_test_patient_assessments (pcc_patient_id, facility_mapping_id, page_number, payload, is_last_page)
           VALUES (
             {{ iter.patient.patient_id }},
             {{ facility_mapping_id | int }},
@@ -371,10 +371,10 @@ workflow:
       command: |
         WITH candidates AS (
           SELECT w.patient_id, w.facility_mapping_id, w.facility_org_uuid
-          FROM public.bhs_test_patient_ids_work w
+          FROM public.pft_test_patient_ids_work w
           WHERE w.facility_mapping_id = {{ facility_mapping_id | int }}
             AND NOT EXISTS (
-              SELECT 1 FROM public.bhs_test_patient_fetch_status s
+              SELECT 1 FROM public.pft_test_patient_fetch_status s
               WHERE s.pcc_patient_id = w.patient_id
                 AND s.facility_mapping_id = w.facility_mapping_id
                 AND s.data_type = 'conditions'
@@ -383,7 +383,7 @@ workflow:
           LIMIT 100
         ),
         claimed AS (
-          INSERT INTO public.bhs_test_patient_fetch_status (pcc_patient_id, facility_mapping_id, data_type)
+          INSERT INTO public.pft_test_patient_fetch_status (pcc_patient_id, facility_mapping_id, data_type)
           SELECT patient_id, facility_mapping_id, 'conditions'
           FROM candidates
           ON CONFLICT (pcc_patient_id, facility_mapping_id, data_type) DO NOTHING
@@ -399,7 +399,7 @@ workflow:
         INNER JOIN candidates cand
           ON cand.patient_id = c.patient_id
           AND cand.facility_mapping_id = c.facility_mapping_id
-        INNER JOIN public.bhs_test_facilities f ON f.facility_mapping_id = c.facility_mapping_id
+        INNER JOIN public.pft_test_facilities f ON f.facility_mapping_id = c.facility_mapping_id
         ORDER BY c.patient_id;
     next:
       spec:
@@ -460,7 +460,7 @@ workflow:
         kind: postgres
         auth: pg_k8s
         command: |
-          INSERT INTO public.bhs_test_patient_conditions (pcc_patient_id, facility_mapping_id, page_number, payload, is_last_page)
+          INSERT INTO public.pft_test_patient_conditions (pcc_patient_id, facility_mapping_id, page_number, payload, is_last_page)
           VALUES (
             {{ iter.patient.patient_id }},
             {{ facility_mapping_id | int }},
@@ -503,10 +503,10 @@ workflow:
       command: |
         WITH candidates AS (
           SELECT w.patient_id, w.facility_mapping_id, w.facility_org_uuid
-          FROM public.bhs_test_patient_ids_work w
+          FROM public.pft_test_patient_ids_work w
           WHERE w.facility_mapping_id = {{ facility_mapping_id | int }}
             AND NOT EXISTS (
-              SELECT 1 FROM public.bhs_test_patient_fetch_status s
+              SELECT 1 FROM public.pft_test_patient_fetch_status s
               WHERE s.pcc_patient_id = w.patient_id
                 AND s.facility_mapping_id = w.facility_mapping_id
                 AND s.data_type = 'medications'
@@ -515,7 +515,7 @@ workflow:
           LIMIT 100
         ),
         claimed AS (
-          INSERT INTO public.bhs_test_patient_fetch_status (pcc_patient_id, facility_mapping_id, data_type)
+          INSERT INTO public.pft_test_patient_fetch_status (pcc_patient_id, facility_mapping_id, data_type)
           SELECT patient_id, facility_mapping_id, 'medications'
           FROM candidates
           ON CONFLICT (pcc_patient_id, facility_mapping_id, data_type) DO NOTHING
@@ -531,7 +531,7 @@ workflow:
         INNER JOIN candidates cand
           ON cand.patient_id = c.patient_id
           AND cand.facility_mapping_id = c.facility_mapping_id
-        INNER JOIN public.bhs_test_facilities f ON f.facility_mapping_id = c.facility_mapping_id
+        INNER JOIN public.pft_test_facilities f ON f.facility_mapping_id = c.facility_mapping_id
         ORDER BY c.patient_id;
     next:
       spec:
@@ -592,7 +592,7 @@ workflow:
         kind: postgres
         auth: pg_k8s
         command: |
-          INSERT INTO public.bhs_test_patient_medications (pcc_patient_id, facility_mapping_id, page_number, payload, is_last_page)
+          INSERT INTO public.pft_test_patient_medications (pcc_patient_id, facility_mapping_id, page_number, payload, is_last_page)
           VALUES (
             {{ iter.patient.patient_id }},
             {{ facility_mapping_id | int }},
@@ -635,10 +635,10 @@ workflow:
       command: |
         WITH candidates AS (
           SELECT w.patient_id, w.facility_mapping_id, w.facility_org_uuid
-          FROM public.bhs_test_patient_ids_work w
+          FROM public.pft_test_patient_ids_work w
           WHERE w.facility_mapping_id = {{ facility_mapping_id | int }}
             AND NOT EXISTS (
-              SELECT 1 FROM public.bhs_test_patient_fetch_status s
+              SELECT 1 FROM public.pft_test_patient_fetch_status s
               WHERE s.pcc_patient_id = w.patient_id
                 AND s.facility_mapping_id = w.facility_mapping_id
                 AND s.data_type = 'vital_signs'
@@ -647,7 +647,7 @@ workflow:
           LIMIT 100
         ),
         claimed AS (
-          INSERT INTO public.bhs_test_patient_fetch_status (pcc_patient_id, facility_mapping_id, data_type)
+          INSERT INTO public.pft_test_patient_fetch_status (pcc_patient_id, facility_mapping_id, data_type)
           SELECT patient_id, facility_mapping_id, 'vital_signs'
           FROM candidates
           ON CONFLICT (pcc_patient_id, facility_mapping_id, data_type) DO NOTHING
@@ -663,7 +663,7 @@ workflow:
         INNER JOIN candidates cand
           ON cand.patient_id = c.patient_id
           AND cand.facility_mapping_id = c.facility_mapping_id
-        INNER JOIN public.bhs_test_facilities f ON f.facility_mapping_id = c.facility_mapping_id
+        INNER JOIN public.pft_test_facilities f ON f.facility_mapping_id = c.facility_mapping_id
         ORDER BY c.patient_id;
     next:
       spec:
@@ -726,7 +726,7 @@ workflow:
         kind: postgres
         auth: pg_k8s
         command: |
-          INSERT INTO public.bhs_test_patient_vital_signs (pcc_patient_id, facility_mapping_id, page_number, payload, is_last_page)
+          INSERT INTO public.pft_test_patient_vital_signs (pcc_patient_id, facility_mapping_id, page_number, payload, is_last_page)
           VALUES (
             {{ iter.patient.patient_id }},
             {{ facility_mapping_id | int }},
@@ -769,10 +769,10 @@ workflow:
       command: |
         WITH candidates AS (
           SELECT w.patient_id, w.facility_mapping_id, w.facility_org_uuid
-          FROM public.bhs_test_patient_ids_work w
+          FROM public.pft_test_patient_ids_work w
           WHERE w.facility_mapping_id = {{ facility_mapping_id | int }}
             AND NOT EXISTS (
-              SELECT 1 FROM public.bhs_test_patient_fetch_status s
+              SELECT 1 FROM public.pft_test_patient_fetch_status s
               WHERE s.pcc_patient_id = w.patient_id
                 AND s.facility_mapping_id = w.facility_mapping_id
                 AND s.data_type = 'demographics'
@@ -781,7 +781,7 @@ workflow:
           LIMIT 100
         ),
         claimed AS (
-          INSERT INTO public.bhs_test_patient_fetch_status (pcc_patient_id, facility_mapping_id, data_type)
+          INSERT INTO public.pft_test_patient_fetch_status (pcc_patient_id, facility_mapping_id, data_type)
           SELECT patient_id, facility_mapping_id, 'demographics'
           FROM candidates
           ON CONFLICT (pcc_patient_id, facility_mapping_id, data_type) DO NOTHING
@@ -797,7 +797,7 @@ workflow:
         INNER JOIN candidates cand
           ON cand.patient_id = c.patient_id
           AND cand.facility_mapping_id = c.facility_mapping_id
-        INNER JOIN public.bhs_test_facilities f ON f.facility_mapping_id = c.facility_mapping_id
+        INNER JOIN public.pft_test_facilities f ON f.facility_mapping_id = c.facility_mapping_id
         ORDER BY c.patient_id;
     next:
       spec:
@@ -846,7 +846,7 @@ workflow:
         kind: postgres
         auth: pg_k8s
         command: |
-          INSERT INTO public.bhs_test_patient_demographics (pcc_patient_id, facility_mapping_id, payload)
+          INSERT INTO public.pft_test_patient_demographics (pcc_patient_id, facility_mapping_id, payload)
           VALUES (
             {{ iter.patient.patient_id }},
             {{ facility_mapping_id | int }},
@@ -879,21 +879,21 @@ workflow:
       kind: postgres
       auth: pg_k8s
       command: |
-        DELETE FROM public.bhs_test_mds_assessment_ids_work
+        DELETE FROM public.pft_test_mds_assessment_ids_work
         WHERE facility_mapping_id = {{ facility_mapping_id | int }};
 
-        INSERT INTO public.bhs_test_mds_assessment_ids_work (assessment_id, pcc_patient_id, facility_mapping_id)
+        INSERT INTO public.pft_test_mds_assessment_ids_work (assessment_id, pcc_patient_id, facility_mapping_id)
         SELECT
           'MDS-' || pcc_patient_id || '-' || page_number AS assessment_id,
           pcc_patient_id,
           facility_mapping_id
-        FROM public.bhs_test_patient_assessments
+        FROM public.pft_test_patient_assessments
         WHERE facility_mapping_id = {{ facility_mapping_id | int }}
           AND is_last_page = TRUE
         ON CONFLICT (assessment_id) DO NOTHING;
 
         SELECT COUNT(*) AS mds_assessment_count
-        FROM public.bhs_test_mds_assessment_ids_work
+        FROM public.pft_test_mds_assessment_ids_work
         WHERE facility_mapping_id = {{ facility_mapping_id | int }};
     next:
       spec:
@@ -908,7 +908,7 @@ workflow:
       auth: pg_k8s
       query: |
         SELECT COUNT(*) AS mds_assessment_count
-        FROM public.bhs_test_mds_assessment_ids_work
+        FROM public.pft_test_mds_assessment_ids_work
         WHERE facility_mapping_id = {{ facility_mapping_id | int }};
     next:
       spec:
@@ -965,7 +965,7 @@ workflow:
         max_in_flight: 1
     tool:
       kind: playbook
-      path: tests/fixtures/playbooks/bhs_flow_test/test_mds_batch_worker
+      path: tests/fixtures/playbooks/pft_flow_test/test_mds_batch_worker
       return_step: end
       timeout: 300
       input:
@@ -998,17 +998,17 @@ workflow:
       auth: pg_k8s
       query: |
         SELECT
-          (SELECT COUNT(DISTINCT pcc_patient_id) FROM public.bhs_test_patient_assessments
+          (SELECT COUNT(DISTINCT pcc_patient_id) FROM public.pft_test_patient_assessments
            WHERE facility_mapping_id = {{ facility_mapping_id | int }}) AS assessments_done,
-          (SELECT COUNT(DISTINCT pcc_patient_id) FROM public.bhs_test_patient_conditions
+          (SELECT COUNT(DISTINCT pcc_patient_id) FROM public.pft_test_patient_conditions
            WHERE facility_mapping_id = {{ facility_mapping_id | int }}) AS conditions_done,
-          (SELECT COUNT(DISTINCT pcc_patient_id) FROM public.bhs_test_patient_medications
+          (SELECT COUNT(DISTINCT pcc_patient_id) FROM public.pft_test_patient_medications
            WHERE facility_mapping_id = {{ facility_mapping_id | int }}) AS medications_done,
-          (SELECT COUNT(DISTINCT pcc_patient_id) FROM public.bhs_test_patient_vital_signs
+          (SELECT COUNT(DISTINCT pcc_patient_id) FROM public.pft_test_patient_vital_signs
            WHERE facility_mapping_id = {{ facility_mapping_id | int }}) AS vital_signs_done,
-          (SELECT COUNT(DISTINCT pcc_patient_id) FROM public.bhs_test_patient_demographics
+          (SELECT COUNT(DISTINCT pcc_patient_id) FROM public.pft_test_patient_demographics
            WHERE facility_mapping_id = {{ facility_mapping_id | int }}) AS demographics_done,
-          (SELECT COUNT(DISTINCT pcc_patient_id) FROM public.bhs_test_patient_fetch_status
+          (SELECT COUNT(DISTINCT pcc_patient_id) FROM public.pft_test_patient_fetch_status
            WHERE facility_mapping_id = {{ facility_mapping_id | int }} AND data_type = 'assessments') AS tombstones_assessments;
     next:
       spec:
@@ -1022,7 +1022,7 @@ workflow:
       kind: postgres
       auth: pg_k8s
       command: |
-        INSERT INTO public.bhs_test_validation_log (
+        INSERT INTO public.pft_test_validation_log (
           execution_id, facility_mapping_id,
           assessments_done, conditions_done, medications_done,
           vital_signs_done, demographics_done, tombstones_assessments, total_expected
@@ -1060,11 +1060,11 @@ workflow:
       kind: postgres
       auth: pg_k8s
       command: |
-        UPDATE public.bhs_test_facilities
+        UPDATE public.pft_test_facilities
         SET active = FALSE, updated_at = NOW()
         WHERE facility_mapping_id = {{ facility_mapping_id | int }};
 
-        SELECT COUNT(*) AS remaining_count FROM public.bhs_test_facilities WHERE active = TRUE;
+        SELECT COUNT(*) AS remaining_count FROM public.pft_test_facilities WHERE active = TRUE;
     next:
       spec:
         mode: exclusive
@@ -1098,7 +1098,7 @@ workflow:
            AND medications_done = total_expected
            AND vital_signs_done = total_expected
            AND demographics_done = total_expected) AS all_passed
-        FROM public.bhs_test_validation_log
+        FROM public.pft_test_validation_log
         WHERE execution_id = '{{ execution_id }}'
         ORDER BY facility_mapping_id;
     next:
@@ -1164,7 +1164,7 @@ workflow:
         - step: end
 
   - step: end
-    desc: BHS flow test complete — all facilities and patients processed
+    desc: PFT flow test complete — all facilities and patients processed
     tool:
       kind: python
       input:

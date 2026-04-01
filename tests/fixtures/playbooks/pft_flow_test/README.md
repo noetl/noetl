@@ -1,4 +1,4 @@
-# BHS Flow Test Playbook
+# PFT Flow Test Playbook
 
 End-to-end integration test that reproduces the full patient-data fetch pipeline from
 `state_report_generation_prod_v13`, without Snowflake. Designed to surface the
@@ -8,13 +8,13 @@ loop.done concurrent-dispatch race bug present in NoETL ≤ v2.14.7.
 
 | File | Purpose |
 |---|---|
-| `test_bhs_flow.yaml` | Main playbook — facility loop, patient batching, 5 fetch steps, MDS batching, validation |
+| `test_pft_flow.yaml` | Main playbook — facility loop, patient batching, 5 fetch steps, MDS batching, validation |
 | `test_mds_batch_worker.yaml` | Sub-playbook — fetches MDS assessment details for one OFFSET/LIMIT slice |
 
 ## What it tests
 
 The critical code path: DB-based patient batching using a `NOT EXISTS` + `INSERT RETURNING LIMIT 100`
-CTE that atomically claims patients into `bhs_test_patient_fetch_status` (tombstones). When the
+CTE that atomically claims patients into `pft_test_patient_fetch_status` (tombstones). When the
 loop.done race fires prematurely, subsequent batches have tombstones inserted but their fetch loop
 is never started — patients are silently lost.
 
@@ -75,20 +75,20 @@ silently dropped all but the first dispatch.
 ## Validation
 
 `validate_facility_results` counts `DISTINCT pcc_patient_id` from each **result table**
-(not tombstones) and `COUNT(*)` from `bhs_test_patient_fetch_status` for comparison:
+(not tombstones) and `COUNT(*)` from `pft_test_patient_fetch_status` for comparison:
 
 ```sql
 SELECT
-  COUNT(DISTINCT pcc_patient_id) FROM bhs_test_patient_assessments  -- actual data
+  COUNT(DISTINCT pcc_patient_id) FROM pft_test_patient_assessments  -- actual data
   ...
-  COUNT(DISTINCT pcc_patient_id) FROM bhs_test_patient_fetch_status -- tombstones
+  COUNT(DISTINCT pcc_patient_id) FROM pft_test_patient_fetch_status -- tombstones
 WHERE facility_mapping_id = N AND data_type = 'assessments';
 ```
 
 On a buggy engine: `tombstones = 1000`, `assessments_done = 100–200` (one or two batches only).
 On a fixed engine: both equal `1000`.
 
-Results are written to `bhs_test_validation_log` and asserted in `check_results`.
+Results are written to `pft_test_validation_log` and asserted in `check_results`.
 
 ## Infrastructure requirements
 
@@ -105,12 +105,12 @@ Register and execute via the HTTP API (the NoETL CLI ≤ v2.13.0 cannot parse mu
 # Register (bump version each time the playbook changes)
 curl -X POST http://localhost:8082/api/catalog \
   -H "Content-Type: application/json" \
-  -d @tests/fixtures/playbooks/bhs_flow_test/test_bhs_flow.yaml
+  -d @tests/fixtures/playbooks/pft_flow_test/test_pft_flow.yaml
 
 # Execute
 curl -X POST http://localhost:8082/api/execute \
   -H "Content-Type: application/json" \
-  -d '{"path": "tests/fixtures/playbooks/bhs_flow_test/test_bhs_flow", "version": <N>}'
+  -d '{"path": "tests/fixtures/playbooks/pft_flow_test/test_pft_flow", "version": <N>}'
 ```
 
 Check results after completion:
@@ -118,14 +118,14 @@ Check results after completion:
 ```sql
 SELECT facility_mapping_id, assessments_done, conditions_done, medications_done,
        vital_signs_done, demographics_done, total_expected, tombstones_assessments
-FROM public.bhs_test_validation_log
+FROM public.pft_test_validation_log
 WHERE execution_id = '<execution_id>'
 ORDER BY facility_mapping_id;
 ```
 
 ## MDS sub-playbook
 
-`test_mds_batch_worker` is invoked once per OFFSET/LIMIT slice of `bhs_test_mds_assessment_ids_work`.
+`test_mds_batch_worker` is invoked once per OFFSET/LIMIT slice of `pft_test_mds_assessment_ids_work`.
 It fetches assessment details from `/api/v1/mds/assessment/{id}` and upserts into
-`bhs_test_mds_assessment_details`. Called with `max_in_flight: 1` from the parent to keep
+`pft_test_mds_assessment_details`. Called with `max_in_flight: 1` from the parent to keep
 concurrency predictable during testing.
