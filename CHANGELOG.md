@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.14.9](https://github.com/noetl/noetl/compare/v2.14.8...v2.14.9) (2026-04-01)
+
+### Bug Fixes
+
+* **test:** rename bhs → pft to pass forbid-client-term check ([d266bb5](https://github.com/noetl/noetl/commit/d266bb5517e3968f0b81c44b40201c5884c67646))
+
 ## [2.14.8](https://github.com/noetl/noetl/compare/v2.14.7...v2.14.8) (2026-03-31)
 
 ### Bug Fixes
