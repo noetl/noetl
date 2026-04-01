@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.14.10](https://github.com/noetl/noetl/compare/v2.14.9...v2.14.10) (2026-04-01)
+
+### Bug Fixes
+
+* **engine:** guard loop.done epoch reset — fresh epoch on loop_done_claimed, CAS on step.exit, skip fallback-count claim ([502ceb7](https://github.com/noetl/noetl/commit/502ceb79b59b28c76a620e82ff023f87f7a6d2e9)), closes [#361](https://github.com/noetl/noetl/issues/361)
+
 ## [2.14.9](https://github.com/noetl/noetl/compare/v2.14.8...v2.14.9) (2026-04-01)
 
 ### Bug Fixes
