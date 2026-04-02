@@ -434,6 +434,58 @@ class NATSKVCache:
 
         return None
 
+    async def release_loop_slot(
+        self,
+        execution_id: str,
+        step_name: str,
+        event_id: Optional[str] = None,
+    ) -> bool:
+        """Release a previously claimed loop iteration slot by decrementing scheduled_count.
+
+        This is the inverse of claim_next_loop_index and must be called when a slot
+        was claimed via NATS but cannot be used (e.g., local collection is smaller than
+        the NATS-side collection_size hint).  Prevents in-flight saturation from leaked
+        slots that block all further loop dispatch.
+
+        Returns True if the slot was successfully released, False otherwise.
+        """
+        if not self._kv:
+            await self.connect()
+
+        key_suffix = f"loop:{step_name}:{event_id}" if event_id else f"loop:{step_name}"
+        key = self._make_key(execution_id, key_suffix)
+
+        max_retries = 5
+        for attempt in range(max_retries):
+            try:
+                entry = await self._kv.get(key)
+                if not entry:
+                    return False
+
+                state = json.loads(entry.value.decode("utf-8"))
+
+                scheduled_count = int(state.get("scheduled_count", 0) or 0)
+                completed_count = int(state.get("completed_count", 0) or 0)
+                if scheduled_count <= completed_count:
+                    # Nothing to release — would underflow below completed
+                    return False
+
+                state["scheduled_count"] = scheduled_count - 1
+                state["updated_at"] = _utcnow_iso()
+
+                value = json.dumps(state).encode("utf-8")
+                await self._kv.update(key, value, last=entry.revision)
+                return True
+
+            except Exception as e:
+                if "wrong last sequence" in str(e).lower() and attempt < max_retries - 1:
+                    await asyncio.sleep(0.01 * (attempt + 1))
+                    continue
+                logger.error(f"Failed to release loop slot: {e}")
+                return False
+
+        return False
+
     async def get_loop_completed_count(self, execution_id: str, step_name: str, event_id: Optional[str] = None) -> int:
         """Get the completed iteration count for a loop.
 
