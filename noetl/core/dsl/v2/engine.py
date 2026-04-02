@@ -3182,6 +3182,7 @@ class ControlFlowEngine:
         loop_retry_index: Optional[int] = None
         loop_event_id_for_metadata: Optional[str] = None
         claimed_index: Optional[int] = None
+        _nats_slot_incremented = False  # tracks whether a NATS scheduled_count was incremented
         if loop_retry_requested and loop_retry_index_raw is not None:
             try:
                 loop_retry_index = int(loop_retry_index_raw)
@@ -3248,6 +3249,18 @@ class ControlFlowEngine:
                 collection_expr = step.loop.in_
                 collection = self._render_template(collection_expr, context)
                 collection = self._normalize_loop_collection(collection, step.step)
+
+                # Guard: if the collection is empty after re-rendering on a loop continuation
+                # or retry, the state reconstruction is incomplete (e.g., a reference-only
+                # step result could not be hydrated from NATS after a cache miss).  Skip
+                # dispatch entirely so we never call claim_next_loop_index and leak a slot.
+                if len(collection) == 0 and (loop_continue_requested or loop_retry_requested):
+                    logger.warning(
+                        "[LOOP] Empty collection after re-render for %s on continuation/retry; "
+                        "skipping dispatch (step result may be unavailable after state rebuild)",
+                        step.step,
+                    )
+                    return None
 
             # Initialize local loop state if needed and refresh collection snapshot.
             # IMPORTANT: A loop step can be re-entered multiple times in the same execution
@@ -3488,6 +3501,8 @@ class ControlFlowEngine:
                         max_in_flight=max_in_flight,
                         event_id=resolved_loop_event_id,
                     )
+                    if claimed_index is not None:
+                        _nats_slot_incremented = True
                 else:
                     # Local fallback when distributed cache is unavailable.
                     completed_count = completed_count_local
@@ -3590,6 +3605,7 @@ class ControlFlowEngine:
                                         event_id=resolved_loop_event_id,
                                     )
                                     if claimed_index is not None:
+                                        _nats_slot_incremented = True
                                         logger.warning(
                                             "[LOOP-COUNTER-RECONCILE] Recovered claim slot for %s "
                                             "(event_id=%s completed=%s scheduled=%s size=%s claimed=%s)",
@@ -3698,12 +3714,28 @@ class ControlFlowEngine:
                     return None
 
             if claimed_index >= len(collection):
-                logger.info(
-                    "[LOOP] Claimed index %s is out of range for %s (size=%s)",
+                logger.warning(
+                    "[LOOP] Claimed index %s is out of range for %s (col_size=%s); %s",
                     claimed_index,
                     step.step,
                     len(collection),
+                    "releasing NATS slot to prevent in-flight saturation"
+                    if _nats_slot_incremented
+                    else "slot was not NATS-claimed (retry/watchdog path)",
                 )
+                if _nats_slot_incremented:
+                    released = await nats_cache.release_loop_slot(
+                        str(state.execution_id),
+                        step.step,
+                        event_id=resolved_loop_event_id,
+                    )
+                    if not released:
+                        logger.warning(
+                            "[LOOP] Failed to release NATS slot for %s index=%s event_id=%s",
+                            step.step,
+                            claimed_index,
+                            resolved_loop_event_id,
+                        )
                 return None
 
             item = collection[claimed_index]
