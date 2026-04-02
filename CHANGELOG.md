@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.14.14](https://github.com/noetl/noetl/compare/v2.14.13...v2.14.14) (2026-04-02)
+
+### Bug Fixes
+
+* **loop:** prevent cross-batch counter inflation in reconciliation ([0325b70](https://github.com/noetl/noetl/commit/0325b705ad8ae0923568cd89bed95c57e7f78f56))
+* **playbook:** restore 100-slot batch loop input via workload list ([09308a3](https://github.com/noetl/noetl/commit/09308a35371e413974c2201deb3fa380dd8f3b13))
+
 ## [2.14.13](https://github.com/noetl/noetl/compare/v2.14.12...v2.14.13) (2026-04-02)
 
 ### Bug Fixes
