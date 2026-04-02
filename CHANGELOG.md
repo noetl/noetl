@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.14.11](https://github.com/noetl/noetl/compare/v2.14.10...v2.14.11) (2026-04-02)
+
+### Bug Fixes
+
+* **engine:** prevent stale call.done from inflating current epoch counter ([7e30193](https://github.com/noetl/noetl/commit/7e30193ea6fcedaec6e0adcda5385d7c761202e0))
+
 ## [2.14.10](https://github.com/noetl/noetl/compare/v2.14.9...v2.14.10) (2026-04-01)
 
 ### Bug Fixes
