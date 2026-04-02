@@ -1784,14 +1784,20 @@ class ControlFlowEngine:
             collection = loop_state.get("collection")
             if not isinstance(collection, list) or len(collection) == 0:
                 continue
-            completed_count = state.get_loop_completed_count(step_name)
-            scheduled_count = int(
-                loop_state.get("scheduled_count", completed_count) or completed_count
+            epoch_size = len(collection)
+            # Cap counts to epoch_size so accumulated multi-batch counts don't inflate the snapshot.
+            # After a state rebuild, state.get_loop_completed_count() returns the total across all
+            # epochs; capping to epoch_size keeps the snapshot epoch-relative.
+            completed_count = min(state.get_loop_completed_count(step_name), epoch_size)
+            scheduled_count = min(
+                int(loop_state.get("scheduled_count", completed_count) or completed_count),
+                epoch_size,
             )
             if scheduled_count < completed_count:
                 scheduled_count = completed_count
             snapshots[step_name] = {
                 "collection": list(collection),
+                "epoch_size": epoch_size,
                 "event_id": (
                     str(loop_state.get("event_id"))
                     if loop_state.get("event_id") is not None
@@ -1835,6 +1841,7 @@ class ControlFlowEngine:
                 if isinstance(current_collection, list)
                 else 0
             )
+            cached_size = len(cached_collection)
             snapshot_completed_count = int(
                 snapshot.get("completed_count", 0) or 0
             )
@@ -1845,6 +1852,11 @@ class ControlFlowEngine:
             if snapshot_scheduled_count < snapshot_completed_count:
                 snapshot_scheduled_count = snapshot_completed_count
 
+            # Use epoch_size from snapshot (= len(collection) at snapshot time) to cap
+            # min_required_size.  Accumulated completion counts span multiple batches and
+            # would falsely inflate the threshold beyond the per-epoch batch size, causing
+            # valid same-epoch snapshots to be rejected after the first batch.
+            snapshot_epoch_size = int(snapshot.get("epoch_size", cached_size) or cached_size)
             completed_count = max(
                 state.get_loop_completed_count(step_name),
                 snapshot_completed_count,
@@ -1854,8 +1866,11 @@ class ControlFlowEngine:
                 completed_count,
                 snapshot_scheduled_count,
             )
-            min_required_size = max(1, completed_count, scheduled_count)
-            cached_size = len(cached_collection)
+            min_required_size = max(
+                1,
+                min(completed_count, snapshot_epoch_size),
+                min(scheduled_count, snapshot_epoch_size),
+            )
 
             loop_mode = str(loop_state.get("mode") or snapshot.get("mode") or "").lower()
             if (
