@@ -179,10 +179,10 @@ workflow:
     # Step-level set ensures ctx.facility_* survives STATE-LOAD (state cache reconstruction).
     # Arc-level set:  is NOT replayed during state reconstruction; step-level set: IS.
     set:
-      ctx.facility_mapping_id: '{{ output.data.rows[0].facility_mapping_id }}'
-      ctx.facility_org_uuid: '{{ output.data.rows[0].facility_org_uuid }}'
-      ctx.facility_id: '{{ output.data.rows[0].facility_id }}'
-      ctx.facility_name: '{{ output.data.rows[0].facility_name }}'
+      ctx.facility_mapping_id: '{{ output.data.rows[0].facility_mapping_id if (output.data.row_count | default(0) | int) > 0 else (ctx.facility_mapping_id | default(0)) }}'
+      ctx.facility_org_uuid: '{{ output.data.rows[0].facility_org_uuid if (output.data.row_count | default(0) | int) > 0 else (ctx.facility_org_uuid | default("")) }}'
+      ctx.facility_id: '{{ output.data.rows[0].facility_id if (output.data.row_count | default(0) | int) > 0 else (ctx.facility_id | default(0)) }}'
+      ctx.facility_name: '{{ output.data.rows[0].facility_name if (output.data.row_count | default(0) | int) > 0 else (ctx.facility_name | default("")) }}'
     next:
       spec:
         mode: exclusive
@@ -252,9 +252,7 @@ workflow:
       arcs:
         - step: fetch_assessments
           when: '{{ (output.data.rows[0].remaining_count | default(0) | int) > 0 }}'
-        # conditions/medications/vital_signs/demographics disabled for assessment-only test run
-        # restore: change target back to load_patients_for_conditions
-        - step: prepare_mds_work
+        - step: load_patients_for_conditions
           when: '{{ (output.data.rows[0].remaining_count | default(0) | int) == 0 }}'
     set:
       ctx.patients_needing_assessments_count: '{{ output.data.rows[0].remaining_count | default(0) }}'
