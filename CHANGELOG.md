@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.15.0](https://github.com/noetl/noetl/compare/v2.14.14...v2.15.0) (2026-04-02)
+
+### Features
+
+* **playbook:** add patient queue batch parallel fixture ([a049e7c](https://github.com/noetl/noetl/commit/a049e7c03cc8033bd8f0b2507d8b3952451aba4e))
+
+### Bug Fixes
+
+* **loop:** bound missing/orphan scans to issued command ids ([3b6a6b4](https://github.com/noetl/noetl/commit/3b6a6b47977efde80cbe7537db063ebc2734cd0d))
+* **playbook:** fix MDS batch worker and facility validation steps in pft_flow_test ([d4d221f](https://github.com/noetl/noetl/commit/d4d221fbea42535ac0b7bcd2ba5c5a684901dac3))
+* **playbook:** restore full pft flow route and guard empty facility set ([b8a5bea](https://github.com/noetl/noetl/commit/b8a5bea170b0e7bac57eb6ad69da1e772624868a))
+
 ## [2.14.14](https://github.com/noetl/noetl/compare/v2.14.13...v2.14.14) (2026-04-02)
 
 ### Bug Fixes
