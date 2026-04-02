@@ -68,7 +68,7 @@ class NATSKVCache:
                     self._kv = await self._js.create_key_value(
                         bucket=self._bucket_name,
                         description="NoETL execution state cache",
-                        ttl=3600,  # 1 hour TTL
+                        ttl=86400,  # 24 hour TTL (long-running jobs may batch across hours)
                         max_value_size=1024 * 1024,  # 1MB max value
                         history=5,  # Keep 5 versions
                     )
