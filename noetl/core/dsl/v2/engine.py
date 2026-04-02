@@ -4194,19 +4194,48 @@ class ControlFlowEngine:
                         )
 
                         new_count = -1
-                        for candidate_event_id in event_id_candidates:
-                            candidate_count = await nats_cache.increment_loop_completed(
+                        _stale_epoch_event = False
+                        if payload_loop_event_id:
+                            # Worker stamped the event with an explicit epoch ID.
+                            # Only try that specific key — if it is gone (TTL expired or
+                            # wrong epoch) the event belongs to an old, already-completed
+                            # batch and must NOT be credited to the current epoch.
+                            primary_count = await nats_cache.increment_loop_completed(
                                 str(state.execution_id),
                                 parent_step,
-                                event_id=candidate_event_id,
+                                event_id=str(payload_loop_event_id),
                             )
-                            if candidate_count >= 0:
-                                new_count = candidate_count
-                                resolved_loop_event_id = candidate_event_id
-                                break
+                            if primary_count >= 0:
+                                new_count = primary_count
+                                resolved_loop_event_id = str(payload_loop_event_id)
+                            else:
+                                # Key missing: epoch key expired or belongs to a different
+                                # execution epoch.  Mark as stale so we do NOT fall through
+                                # and inflate the current epoch's counter.
+                                _stale_epoch_event = True
+                        else:
+                            for candidate_event_id in event_id_candidates:
+                                candidate_count = await nats_cache.increment_loop_completed(
+                                    str(state.execution_id),
+                                    parent_step,
+                                    event_id=candidate_event_id,
+                                )
+                                if candidate_count >= 0:
+                                    new_count = candidate_count
+                                    resolved_loop_event_id = candidate_event_id
+                                    break
 
                         _nats_count_reliable = True
-                        if new_count < 0:
+                        if _stale_epoch_event:
+                            _nats_count_reliable = False
+                            logger.warning(
+                                "[TASK_SEQ-LOOP] Stale call.done for %s (payload_epoch=%s current_epoch=%s) — "
+                                "epoch key not found in NATS (TTL expired?); discarding to protect current epoch",
+                                parent_step,
+                                payload_loop_event_id,
+                                loop_state.get("event_id"),
+                            )
+                        elif new_count < 0:
                             _nats_count_reliable = False
                             # Keep progress moving even if distributed cache increments fail.
                             # Prefer durable count from persisted call.done events over local in-memory counts.
