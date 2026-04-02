@@ -3573,64 +3573,82 @@ class ControlFlowEngine:
                             limit=1,
                         )
                         if not missing_indexes:
-                            persisted_completed = await self._count_step_events(
-                                state.execution_id,
-                                step.step,
-                                "call.done",
-                            )
-                            if persisted_completed >= 0:
-                                persisted_completed = min(
-                                    persisted_completed,
+                            # Only use the all-batch persisted count to repair NATS when all
+                            # iteration slots appear to have been scheduled (scheduled_hint >=
+                            # collection_size_hint).  When the trigger is in_flight saturation
+                            # alone (scheduled_hint < collection_size_hint), there are still
+                            # unscheduled slots; _count_step_events would return the sum across
+                            # ALL prior batches, inflating completed_count and falsely marking
+                            # the current epoch as finished.  In that case, skip the repair and
+                            # let natural backpressure release (workers completing will lower
+                            # in_flight and unblock future claim attempts).
+                            if scheduled_hint < collection_size_hint:
+                                logger.debug(
+                                    "[LOOP-COUNTER-RECONCILE] Skipping persisted-count repair for %s "
+                                    "(scheduled=%s < size=%s — in_flight saturation, not a stall)",
+                                    step.step,
+                                    scheduled_hint,
                                     collection_size_hint,
                                 )
-                                if persisted_completed > completed_count:
-                                    repaired_completed = persisted_completed
-                                    repaired_scheduled = max(
-                                        int(
-                                            (nats_loop_state or {}).get(
-                                                "scheduled_count",
-                                                scheduled_hint,
-                                            )
-                                            or scheduled_hint
-                                        ),
-                                        repaired_completed,
+                            else:
+                                persisted_completed = await self._count_step_events(
+                                    state.execution_id,
+                                    step.step,
+                                    "call.done",
+                                )
+                                if persisted_completed >= 0:
+                                    persisted_completed = min(
+                                        persisted_completed,
+                                        collection_size_hint,
                                     )
-                                    repaired_at = now_utc.isoformat()
-                                    nats_loop_state["completed_count"] = repaired_completed
-                                    nats_loop_state["scheduled_count"] = repaired_scheduled
-                                    nats_loop_state["last_counter_reconcile_at"] = repaired_at
-                                    nats_loop_state["last_progress_at"] = repaired_at
-                                    nats_loop_state["updated_at"] = repaired_at
-                                    loop_state["scheduled_count"] = repaired_scheduled
-                                    loop_state["last_counter_reconcile_at"] = repaired_at
-                                    await nats_cache.set_loop_state(
-                                        str(state.execution_id),
-                                        step.step,
-                                        nats_loop_state,
-                                        event_id=resolved_loop_event_id,
-                                    )
-                                    completed_count = repaired_completed
-                                    scheduled_hint = repaired_scheduled
-                                    in_flight = max(0, scheduled_hint - completed_count)
-                                    claimed_index = await nats_cache.claim_next_loop_index(
-                                        str(state.execution_id),
-                                        step.step,
-                                        collection_size=len(collection),
-                                        max_in_flight=max_in_flight,
-                                        event_id=resolved_loop_event_id,
-                                    )
-                                    if claimed_index is not None:
-                                        _nats_slot_incremented = True
-                                        logger.warning(
-                                            "[LOOP-COUNTER-RECONCILE] Recovered claim slot for %s "
-                                            "(event_id=%s completed=%s scheduled=%s size=%s claimed=%s)",
-                                            step.step,
-                                            resolved_loop_event_id,
-                                            completed_count,
-                                            scheduled_hint,
-                                            collection_size_hint,
-                                            claimed_index,
+                                    if persisted_completed > completed_count:
+                                        repaired_completed = persisted_completed
+                                        repaired_scheduled = max(
+                                            int(
+                                                (nats_loop_state or {}).get(
+                                                    "scheduled_count",
+                                                    scheduled_hint,
+                                                )
+                                                or scheduled_hint
+                                            ),
+                                            repaired_completed,
                                         )
+                                        repaired_at = now_utc.isoformat()
+                                        nats_loop_state["completed_count"] = repaired_completed
+                                        nats_loop_state["scheduled_count"] = repaired_scheduled
+                                        nats_loop_state["last_counter_reconcile_at"] = repaired_at
+                                        nats_loop_state["last_progress_at"] = repaired_at
+                                        nats_loop_state["updated_at"] = repaired_at
+                                        loop_state["scheduled_count"] = repaired_scheduled
+                                        loop_state["last_counter_reconcile_at"] = repaired_at
+                                        await nats_cache.set_loop_state(
+                                            str(state.execution_id),
+                                            step.step,
+                                            nats_loop_state,
+                                            event_id=resolved_loop_event_id,
+                                        )
+                                        completed_count = repaired_completed
+                                        scheduled_hint = repaired_scheduled
+                                        in_flight = max(0, scheduled_hint - completed_count)
+                                        claimed_index = await nats_cache.claim_next_loop_index(
+                                            str(state.execution_id),
+                                            step.step,
+                                            collection_size=len(collection),
+                                            max_in_flight=max_in_flight,
+                                            event_id=resolved_loop_event_id,
+                                        )
+                                        if claimed_index is not None:
+                                            _nats_slot_incremented = True
+                                            logger.warning(
+                                                "[LOOP-COUNTER-RECONCILE] Recovered claim slot for %s "
+                                                "(event_id=%s completed=%s scheduled=%s size=%s claimed=%s)",
+                                                step.step,
+                                                resolved_loop_event_id,
+                                                completed_count,
+                                                scheduled_hint,
+                                                collection_size_hint,
+                                                claimed_index,
+                                            )
 
                 # Runtime loop-stall watchdog:
                 # If there is pending work but no claimable slot is available, stale
