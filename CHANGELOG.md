@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.14.13](https://github.com/noetl/noetl/compare/v2.14.12...v2.14.13) (2026-04-02)
+
+### Bug Fixes
+
+* **loop:** prevent multi-batch snapshot restore rejection via epoch_size cap ([eb77abc](https://github.com/noetl/noetl/commit/eb77abc8693f77329d66fe2fb0448b966786ced5))
+
 ## [2.14.12](https://github.com/noetl/noetl/compare/v2.14.11...v2.14.12) (2026-04-02)
 
 ### Bug Fixes
