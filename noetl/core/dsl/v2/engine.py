@@ -2075,6 +2075,13 @@ class ControlFlowEngine:
                                     result->'context'->>'command_id',
                                     context->>'command_id'
                                   ) IS NOT NULL
+                              AND COALESCE(
+                                    meta->>'command_id',
+                                    result->'context'->>'command_id',
+                                    context->>'command_id'
+                                  ) IN (
+                                    SELECT command_id FROM issued WHERE command_id IS NOT NULL
+                                  )
                             GROUP BY COALESCE(
                                 meta->>'command_id',
                                 result->'context'->>'command_id',
@@ -2097,6 +2104,13 @@ class ControlFlowEngine:
                                     result->'context'->>'command_id',
                                     context->>'command_id'
                                   ) IS NOT NULL
+                              AND COALESCE(
+                                    meta->>'command_id',
+                                    result->'context'->>'command_id',
+                                    context->>'command_id'
+                                  ) IN (
+                                    SELECT command_id FROM issued WHERE command_id IS NOT NULL
+                                  )
                         )
                         SELECT i.loop_iteration_index
                         FROM issued i
@@ -2185,6 +2199,13 @@ class ControlFlowEngine:
                                     result->'context'->>'command_id',
                                     context->>'command_id'
                                   ) IS NOT NULL
+                              AND COALESCE(
+                                    meta->>'command_id',
+                                    result->'context'->>'command_id',
+                                    context->>'command_id'
+                                  ) IN (
+                                    SELECT command_id FROM issued WHERE command_id IS NOT NULL
+                                  )
                         ),
                         terminal AS (
                             SELECT DISTINCT
@@ -2202,6 +2223,13 @@ class ControlFlowEngine:
                                     result->'context'->>'command_id',
                                     context->>'command_id'
                                   ) IS NOT NULL
+                              AND COALESCE(
+                                    meta->>'command_id',
+                                    result->'context'->>'command_id',
+                                    context->>'command_id'
+                                  ) IN (
+                                    SELECT command_id FROM issued WHERE command_id IS NOT NULL
+                                  )
                         )
                         SELECT i.loop_iteration_index
                         FROM issued i
