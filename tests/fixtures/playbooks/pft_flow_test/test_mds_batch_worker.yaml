@@ -57,10 +57,10 @@ workflow:
       query: |
         SELECT assessment_id, pcc_patient_id
         FROM public.pft_test_mds_assessment_ids_work
-        WHERE facility_mapping_id = {{ facility_mapping_id | int }}
+        WHERE facility_mapping_id = {{ start.facility_mapping_id }}
         ORDER BY assessment_id ASC
-        OFFSET {{ offset | int }}
-        LIMIT {{ batch_size | int }};
+        OFFSET {{ start.offset }}
+        LIMIT {{ start.batch_size }};
     next:
       spec:
         mode: exclusive
@@ -75,10 +75,15 @@ workflow:
         db_result: '{{ fetch_batch_ids }}'
       code: |
         rows = []
-        if isinstance(db_result, dict):
-            rows = db_result.get("command_0", {}).get("rows", [])
-        elif isinstance(db_result, list):
+        if isinstance(db_result, list):
             rows = db_result
+        elif isinstance(db_result, dict):
+            # query: result → {rows: [...], row_count: N}
+            # command: result → {command_0: {rows: [...]}, ...}
+            if "rows" in db_result:
+                rows = db_result["rows"]
+            else:
+                rows = db_result.get("command_0", {}).get("rows", [])
         result = {
             "batch_rows": rows,
             "batch_count": len(rows),
@@ -130,7 +135,7 @@ workflow:
           VALUES (
             '{{ iter.mds_row.assessment_id }}',
             {{ iter.mds_row.pcc_patient_id }},
-            {{ facility_mapping_id | int }},
+            {{ start.facility_mapping_id }},
             '{{ iter.detail | tojson | replace("'", "''") }}'::jsonb
           )
           ON CONFLICT (assessment_id) DO UPDATE SET
@@ -157,8 +162,8 @@ workflow:
     tool:
       kind: python
       input:
-        batch_number: '{{ batch_number }}'
-        offset: '{{ offset }}'
+        batch_number: '{{ start.batch_number }}'
+        offset: '{{ start.offset }}'
       code: |
         result = {
             "status": "completed",
