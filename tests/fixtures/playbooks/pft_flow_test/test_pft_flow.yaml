@@ -193,17 +193,19 @@ workflow:
         WHERE active = TRUE
         ORDER BY facility_mapping_id
         LIMIT 1;
+    # Step-level set ensures ctx.facility_* survives STATE-LOAD (state cache reconstruction).
+    # Arc-level set:  is NOT replayed during state reconstruction; step-level set: IS.
+    set:
+      ctx.facility_mapping_id: '{{ output.data.rows[0].facility_mapping_id if (output.data.row_count | default(0) | int) > 0 else (ctx.facility_mapping_id | default(0)) }}'
+      ctx.facility_org_uuid: '{{ output.data.rows[0].facility_org_uuid if (output.data.row_count | default(0) | int) > 0 else (ctx.facility_org_uuid | default("")) }}'
+      ctx.facility_id: '{{ output.data.rows[0].facility_id if (output.data.row_count | default(0) | int) > 0 else (ctx.facility_id | default(0)) }}'
+      ctx.facility_name: '{{ output.data.rows[0].facility_name if (output.data.row_count | default(0) | int) > 0 else (ctx.facility_name | default("")) }}'
     next:
       spec:
         mode: exclusive
       arcs:
         - step: setup_facility_work
           when: '{{ (output.data.row_count | default(0) | int) > 0 }}'
-          set:
-            ctx.facility_mapping_id: '{{ output.data.rows[0].facility_mapping_id }}'
-            ctx.facility_org_uuid: '{{ output.data.rows[0].facility_org_uuid }}'
-            ctx.facility_id: '{{ output.data.rows[0].facility_id }}'
-            ctx.facility_name: '{{ output.data.rows[0].facility_name }}'
         - step: validate_all_results
           when: '{{ (output.data.row_count | default(0) | int) == 0 }}'
 
@@ -271,10 +273,6 @@ workflow:
       arcs:
         - step: load_patients_for_assessments
     set:
-      ctx.facility_mapping_id: '{{ facility_mapping_id }}'
-      ctx.facility_org_uuid: '{{ facility_org_uuid }}'
-      ctx.facility_id: '{{ facility_id }}'
-      ctx.facility_name: '{{ facility_name }}'
       ctx.patient_count: '{{ output.data.rows[0].patient_count }}'
 
   # ------------------------------------------------------------------
@@ -1223,7 +1221,7 @@ workflow:
     tool:
       kind: postgres
       auth: pg_k8s
-      command: |
+      query: |
         SELECT COUNT(*) AS mds_assessment_count
         FROM public.pft_test_mds_assessment_ids_work
         WHERE facility_mapping_id = {{ facility_mapping_id | int }};
@@ -1232,15 +1230,13 @@ workflow:
         mode: exclusive
       arcs:
         - step: build_mds_batch_plan
-    set:
-      ctx.mds_assessment_count: '{{ output.data.rows[0].mds_assessment_count | default(0) }}'
 
   - step: build_mds_batch_plan
     desc: Compute OFFSET/LIMIT batch windows for MDS worker dispatch
     tool:
       kind: python
       input:
-        total_count: '{{ ctx.mds_assessment_count | default(0) }}'
+        total_count: '{{ count_mds_assessments.rows[0].mds_assessment_count }}'
       code: |
         def _to_int(v, d):
             try:
@@ -1274,15 +1270,15 @@ workflow:
         - step: validate_facility_results
           when: '{{ (output.data.batch_count | int) == 0 }}'
     set:
-      ctx.mds_batches: '{{ output.data.batches | default([]) }}'
       ctx.mds_batch_count: '{{ output.data.batch_count | default(0) }}'
 
   - step: run_mds_batch_workers
     desc: Dispatch MDS batch workers serially (max_in_flight 1) via sub-playbook
-    input:
-      batches: '{{ ctx.mds_batches | default([]) }}'
+    # Use extracted field build_mds_batch_plan.batches directly — avoids STATE-LOAD
+    # failure when output.data.batches is unavailable (externalized result → ctx.mds_batches
+    # defaults to [] and loop fires immediately without dispatching any sub-playbooks).
     loop:
-      in: '{{ input.batches | default([]) }}'
+      in: '{{ build_mds_batch_plan.batches }}'
       iterator: batch
       spec:
         mode: parallel
@@ -1320,21 +1316,21 @@ workflow:
     tool:
       kind: postgres
       auth: pg_k8s
-      command: |
+      query: |
         SELECT
           (SELECT COUNT(DISTINCT pcc_patient_id) FROM public.pft_test_patient_assessments
-           WHERE facility_mapping_id = {{ facility_mapping_id | int }}) AS assessments_done,
+           WHERE facility_mapping_id = {{ ctx.facility_mapping_id | int }}) AS assessments_done,
           (SELECT COUNT(DISTINCT pcc_patient_id) FROM public.pft_test_patient_conditions
-           WHERE facility_mapping_id = {{ facility_mapping_id | int }}) AS conditions_done,
+           WHERE facility_mapping_id = {{ ctx.facility_mapping_id | int }}) AS conditions_done,
           (SELECT COUNT(DISTINCT pcc_patient_id) FROM public.pft_test_patient_medications
-           WHERE facility_mapping_id = {{ facility_mapping_id | int }}) AS medications_done,
+           WHERE facility_mapping_id = {{ ctx.facility_mapping_id | int }}) AS medications_done,
           (SELECT COUNT(DISTINCT pcc_patient_id) FROM public.pft_test_patient_vital_signs
-           WHERE facility_mapping_id = {{ facility_mapping_id | int }}) AS vital_signs_done,
+           WHERE facility_mapping_id = {{ ctx.facility_mapping_id | int }}) AS vital_signs_done,
           (SELECT COUNT(DISTINCT pcc_patient_id) FROM public.pft_test_patient_demographics
-           WHERE facility_mapping_id = {{ facility_mapping_id | int }}) AS demographics_done,
+           WHERE facility_mapping_id = {{ ctx.facility_mapping_id | int }}) AS demographics_done,
           (SELECT COUNT(DISTINCT patient_id) FROM public.pft_test_patient_work_queue
            WHERE execution_id = '{{ execution_id }}'
-             AND facility_mapping_id = {{ facility_mapping_id | int }}
+             AND facility_mapping_id = {{ ctx.facility_mapping_id | int }}
              AND data_type = 'assessments'
              AND status = 'done') AS assessments_queue_done;
     next:
@@ -1342,13 +1338,12 @@ workflow:
         mode: exclusive
       arcs:
         - step: log_facility_validation
-    set:
-      ctx.facility_validation: '{{ output.data.rows[0] if (output.data.row_count | int) > 0 else {} }}'
 
   - step: log_facility_validation
-    desc: Write per-facility validation results to log table and print summary
-    input:
-      facility_validation: '{{ ctx.facility_validation | default({}) }}'
+    desc: |
+      Write per-facility validation results to log table and print summary.
+      References validate_facility_results step directly — avoids step-level input:
+      scoping issues and ctx.facility_validation STATE-LOAD loss.
     tool:
       kind: postgres
       auth: pg_k8s
@@ -1360,13 +1355,13 @@ workflow:
         )
         VALUES (
           '{{ execution_id }}',
-          {{ facility_mapping_id | int }},
-          {{ input.facility_validation.assessments_done | default(0) }},
-          {{ input.facility_validation.conditions_done | default(0) }},
-          {{ input.facility_validation.medications_done | default(0) }},
-          {{ input.facility_validation.vital_signs_done | default(0) }},
-          {{ input.facility_validation.demographics_done | default(0) }},
-          {{ input.facility_validation.assessments_queue_done | default(0) }},
+          {{ ctx.facility_mapping_id | int }},
+          {{ validate_facility_results.rows[0].assessments_done | default(0) }},
+          {{ validate_facility_results.rows[0].conditions_done | default(0) }},
+          {{ validate_facility_results.rows[0].medications_done | default(0) }},
+          {{ validate_facility_results.rows[0].vital_signs_done | default(0) }},
+          {{ validate_facility_results.rows[0].demographics_done | default(0) }},
+          {{ validate_facility_results.rows[0].assessments_queue_done | default(0) }},
           1000
         )
         ON CONFLICT (execution_id, facility_mapping_id) DO UPDATE SET
@@ -1393,7 +1388,7 @@ workflow:
       command: |
         UPDATE public.pft_test_facilities
         SET active = FALSE, updated_at = NOW()
-        WHERE facility_mapping_id = {{ facility_mapping_id | int }};
+        WHERE facility_mapping_id = {{ ctx.facility_mapping_id | int }};
 
         SELECT COUNT(*) AS remaining_count FROM public.pft_test_facilities WHERE active = TRUE;
     next:
