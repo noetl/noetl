@@ -6,9 +6,9 @@ metadata:
   description: |
     Full-pipeline PFT flow test — mirrors state_report_generation_prod_v13 without Snowflake.
 
-    Tests the exact bug-prone code path: DB-based patient batching with LIMIT 100 and
-    NOT EXISTS tombstones in patient_fetch_status.  If all patients across all facilities
-    are processed, NoETL is stable and the production playbook should work.
+    Tests queue-based patient batching with execution-scoped claim state.
+    If all patients across all facilities are processed, NoETL is stable and
+    the production playbook should work.
 
     Setup:
     - 10 facilities, 1000 patients each = 10 000 patients total
@@ -55,14 +55,31 @@ workflow:
           PRIMARY KEY (patient_id, facility_mapping_id)
         );
 
-        -- Tombstone table — prevents double-processing per data type
-        CREATE TABLE IF NOT EXISTS public.pft_test_patient_fetch_status (
-          pcc_patient_id      INTEGER NOT NULL,
-          facility_mapping_id INTEGER NOT NULL,
-          data_type           TEXT    NOT NULL,
-          claimed_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-          PRIMARY KEY (pcc_patient_id, facility_mapping_id, data_type)
+        -- Execution-scoped queue table for resilient claim/processing flow
+        CREATE TABLE IF NOT EXISTS public.pft_test_patient_work_queue (
+          execution_id        TEXT        NOT NULL,
+          facility_mapping_id INTEGER     NOT NULL,
+          data_type           TEXT        NOT NULL,
+          patient_id          INTEGER     NOT NULL,
+          status              TEXT        NOT NULL,
+          attempt_count       INTEGER     NOT NULL DEFAULT 0,
+          worker_id           TEXT,
+          claimed_at          TIMESTAMPTZ,
+          done_at             TIMESTAMPTZ,
+          next_retry_at       TIMESTAMPTZ,
+          last_error          TEXT,
+          created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          updated_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          PRIMARY KEY (execution_id, facility_mapping_id, data_type, patient_id)
         );
+
+        CREATE INDEX IF NOT EXISTS idx_pft_queue_pending
+          ON public.pft_test_patient_work_queue (execution_id, facility_mapping_id, data_type, patient_id)
+          WHERE status = 'pending';
+
+        CREATE INDEX IF NOT EXISTS idx_pft_queue_claimed
+          ON public.pft_test_patient_work_queue (execution_id, facility_mapping_id, data_type, patient_id)
+          WHERE status = 'claimed';
 
         -- Result tables
         CREATE TABLE IF NOT EXISTS public.pft_test_patient_assessments (
@@ -135,14 +152,14 @@ workflow:
           medications_done       INTEGER,
           vital_signs_done       INTEGER,
           demographics_done      INTEGER,
-          tombstones_assessments INTEGER,
+          assessments_queue_done INTEGER,
           total_expected         INTEGER,
           logged_at              TIMESTAMPTZ NOT NULL DEFAULT NOW(),
           PRIMARY KEY (execution_id, facility_mapping_id)
         );
-        -- Add column if missing (for reruns on existing table)
+        -- Add columns if missing (for reruns on existing table)
         ALTER TABLE public.pft_test_validation_log
-          ADD COLUMN IF NOT EXISTS tombstones_assessments INTEGER;
+          ADD COLUMN IF NOT EXISTS assessments_queue_done INTEGER;
 
         -- Reset facilities for this run
         DELETE FROM public.pft_test_facilities;
@@ -194,8 +211,8 @@ workflow:
 
   - step: setup_facility_work
     desc: |
-      Truncate patient work table, clear old tombstones, seed 1000 patients for this facility.
-      Mirrors the clear_old_ids + save_ids pattern from fetch_and_extract_patient_ids.
+      Truncate patient work table, clear this execution/facility queue state, and seed 1000 patients.
+      Queue rows are seeded for all data types with status=pending.
     tool:
       kind: postgres
       auth: pg_k8s
@@ -203,9 +220,10 @@ workflow:
         -- Clear previous facility's patient data from work table
         TRUNCATE public.pft_test_patient_ids_work;
 
-        -- Clear tombstones for this facility (simulates clear_old_ids in production)
-        DELETE FROM public.pft_test_patient_fetch_status
-        WHERE facility_mapping_id = {{ facility_mapping_id | int }};
+        -- Clear queue rows for this execution/facility before reseeding
+        DELETE FROM public.pft_test_patient_work_queue
+        WHERE execution_id = '{{ execution_id }}'
+          AND facility_mapping_id = {{ facility_mapping_id | int }};
 
         -- Seed 1000 test patients: facility N gets IDs (N-1)*1000+1 .. N*1000
         INSERT INTO public.pft_test_patient_ids_work (patient_id, facility_mapping_id, facility_org_uuid)
@@ -215,6 +233,36 @@ workflow:
           'org-{{ facility_mapping_id }}' AS facility_org_uuid
         FROM generate_series(1, 1000) AS seq
         ON CONFLICT (patient_id, facility_mapping_id) DO NOTHING;
+
+        -- Seed execution-scoped queue rows for all data types
+        INSERT INTO public.pft_test_patient_work_queue (
+          execution_id, facility_mapping_id, data_type, patient_id, status
+        )
+        SELECT
+          '{{ execution_id }}',
+          w.facility_mapping_id,
+          t.data_type,
+          w.patient_id,
+          'pending'
+        FROM public.pft_test_patient_ids_work w
+        CROSS JOIN (
+          VALUES
+            ('assessments'),
+            ('conditions'),
+            ('medications'),
+            ('vital_signs'),
+            ('demographics')
+        ) AS t(data_type)
+        WHERE w.facility_mapping_id = {{ facility_mapping_id | int }}
+        ON CONFLICT (execution_id, facility_mapping_id, data_type, patient_id) DO UPDATE SET
+          status = 'pending',
+          attempt_count = 0,
+          worker_id = NULL,
+          claimed_at = NULL,
+          done_at = NULL,
+          next_retry_at = NULL,
+          last_error = NULL,
+          updated_at = NOW();
 
         SELECT COUNT(*) AS patient_count
         FROM public.pft_test_patient_ids_work
@@ -239,13 +287,16 @@ workflow:
       auth: pg_k8s
       command: |
         SELECT COUNT(*) AS remaining_count
-        FROM public.pft_test_patient_ids_work w
-        WHERE NOT EXISTS (
-            SELECT 1 FROM public.pft_test_patient_fetch_status s
-            WHERE s.pcc_patient_id = w.patient_id
-              AND s.facility_mapping_id = w.facility_mapping_id
-              AND s.data_type = 'assessments'
-          );
+        FROM public.pft_test_patient_work_queue q
+        WHERE q.execution_id = '{{ execution_id }}'
+          AND EXISTS (
+            SELECT 1
+            FROM public.pft_test_patient_ids_work w
+            WHERE w.patient_id = q.patient_id
+              AND w.facility_mapping_id = q.facility_mapping_id
+          )
+          AND q.data_type = 'assessments'
+          AND q.status IN ('pending', 'claimed');
     next:
       spec:
         mode: exclusive
@@ -272,25 +323,35 @@ workflow:
         kind: postgres
         auth: pg_k8s
         command: |
-          WITH next_patient AS (
-            SELECT w.patient_id, w.facility_mapping_id
-            FROM public.pft_test_patient_ids_work w
-            WHERE NOT EXISTS (
-                SELECT 1 FROM public.pft_test_patient_fetch_status s
-                WHERE s.pcc_patient_id = w.patient_id
-                  AND s.facility_mapping_id = w.facility_mapping_id
-                  AND s.data_type = 'assessments'
+          WITH candidate AS (
+            SELECT q.patient_id, q.facility_mapping_id
+            FROM public.pft_test_patient_work_queue q
+            WHERE q.execution_id = '{{ execution_id }}'
+              AND EXISTS (
+                SELECT 1
+                FROM public.pft_test_patient_ids_work w
+                WHERE w.patient_id = q.patient_id
+                  AND w.facility_mapping_id = q.facility_mapping_id
               )
-            ORDER BY w.patient_id
+              AND q.data_type = 'assessments'
+              AND q.status = 'pending'
+            ORDER BY q.patient_id
             FOR UPDATE SKIP LOCKED
             LIMIT 1
           ),
           claimed AS (
-            INSERT INTO public.pft_test_patient_fetch_status (pcc_patient_id, facility_mapping_id, data_type)
-            SELECT patient_id, facility_mapping_id, 'assessments'
-            FROM next_patient
-            ON CONFLICT (pcc_patient_id, facility_mapping_id, data_type) DO NOTHING
-            RETURNING pcc_patient_id AS patient_id, facility_mapping_id
+            UPDATE public.pft_test_patient_work_queue q
+            SET status = 'claimed',
+                attempt_count = q.attempt_count + 1,
+                worker_id = '{{ execution_id }}:assessments:{{ slot }}',
+                claimed_at = NOW(),
+                updated_at = NOW()
+            FROM candidate c
+            WHERE q.execution_id = '{{ execution_id }}'
+              AND q.facility_mapping_id = c.facility_mapping_id
+              AND q.data_type = 'assessments'
+              AND q.patient_id = c.patient_id
+            RETURNING q.patient_id, q.facility_mapping_id
           )
           SELECT patient_id, facility_mapping_id FROM claimed;
         spec:
@@ -328,7 +389,12 @@ workflow:
             rules:
               - when: '{{ output.status == "error" and (output.http.status in [400, 404]) }}'
                 then:
-                  do: break
+                  do: continue
+                  set:
+                    iter.has_more: false
+                    iter.page_data: {}
+                    iter.current_page: '{{ iter.page | int }}'
+                    iter.skip_save: true
               - when: '{{ output.status == "error" }}'
                 then:
                   do: retry
@@ -340,21 +406,45 @@ workflow:
                       iter.has_more: '{{ output.data.data.paging.hasMore }}'
                       iter.page_data: '{{ output.data.data.data }}'
                       iter.current_page: '{{ output.data.data.paging.page }}'
+                      iter.skip_save: false
       - name: save_page
         kind: postgres
         auth: pg_k8s
         command: |
-          INSERT INTO public.pft_test_patient_assessments (pcc_patient_id, facility_mapping_id, page_number, payload, is_last_page)
-          VALUES (
-            {{ iter.patient_id }},
-            {{ iter.facility_mapping_id | int }},
-            {{ iter.current_page }},
-            '{{ iter.page_data | tojson | replace("'", "''") }}'::jsonb,
-            {{ 'false' if iter.has_more | string | lower == 'true' else 'true' }}
+          WITH save_page AS (
+            INSERT INTO public.pft_test_patient_assessments (pcc_patient_id, facility_mapping_id, page_number, payload, is_last_page)
+            SELECT
+              {{ iter.patient_id }},
+              {{ iter.facility_mapping_id | int }},
+              {{ iter.current_page }},
+              '{{ iter.page_data | tojson | replace("'", "''") }}'::jsonb,
+              {{ 'false' if iter.has_more | string | lower == 'true' else 'true' }}
+            WHERE {{ 'false' if iter.skip_save | string | lower == 'true' else 'true' }}
+            ON CONFLICT (pcc_patient_id, facility_mapping_id, page_number) DO UPDATE SET
+              payload = EXCLUDED.payload,
+              is_last_page = EXCLUDED.is_last_page
+          ),
+          mark_done AS (
+            UPDATE public.pft_test_patient_work_queue q
+            SET status = CASE
+                  WHEN {{ 'true' if iter.has_more | string | lower == 'true' else 'false' }} THEN 'claimed'
+                  ELSE 'done'
+                END,
+                done_at = CASE
+                  WHEN {{ 'true' if iter.has_more | string | lower == 'true' else 'false' }} THEN q.done_at
+                  ELSE NOW()
+                END,
+                worker_id = CASE
+                  WHEN {{ 'true' if iter.has_more | string | lower == 'true' else 'false' }} THEN q.worker_id
+                  ELSE NULL
+                END,
+                updated_at = NOW()
+            WHERE q.execution_id = '{{ execution_id }}'
+              AND q.facility_mapping_id = {{ iter.facility_mapping_id | int }}
+              AND q.data_type = 'assessments'
+              AND q.patient_id = {{ iter.patient_id | int }}
           )
-          ON CONFLICT (pcc_patient_id, facility_mapping_id, page_number) DO UPDATE SET
-            payload = EXCLUDED.payload,
-            is_last_page = EXCLUDED.is_last_page;
+          SELECT 1 AS ok;
       - name: paginate
         kind: noop
         spec:
@@ -386,13 +476,16 @@ workflow:
       auth: pg_k8s
       command: |
         SELECT COUNT(*) AS remaining_count
-        FROM public.pft_test_patient_ids_work w
-        WHERE NOT EXISTS (
-            SELECT 1 FROM public.pft_test_patient_fetch_status s
-            WHERE s.pcc_patient_id = w.patient_id
-              AND s.facility_mapping_id = w.facility_mapping_id
-              AND s.data_type = 'conditions'
-          );
+        FROM public.pft_test_patient_work_queue q
+        WHERE q.execution_id = '{{ execution_id }}'
+          AND EXISTS (
+            SELECT 1
+            FROM public.pft_test_patient_ids_work w
+            WHERE w.patient_id = q.patient_id
+              AND w.facility_mapping_id = q.facility_mapping_id
+          )
+          AND q.data_type = 'conditions'
+          AND q.status IN ('pending', 'claimed');
     next:
       spec:
         mode: exclusive
@@ -417,25 +510,35 @@ workflow:
         kind: postgres
         auth: pg_k8s
         command: |
-          WITH next_patient AS (
-            SELECT w.patient_id, w.facility_mapping_id
-            FROM public.pft_test_patient_ids_work w
-            WHERE NOT EXISTS (
-                SELECT 1 FROM public.pft_test_patient_fetch_status s
-                WHERE s.pcc_patient_id = w.patient_id
-                  AND s.facility_mapping_id = w.facility_mapping_id
-                  AND s.data_type = 'conditions'
+          WITH candidate AS (
+            SELECT q.patient_id, q.facility_mapping_id
+            FROM public.pft_test_patient_work_queue q
+            WHERE q.execution_id = '{{ execution_id }}'
+              AND EXISTS (
+                SELECT 1
+                FROM public.pft_test_patient_ids_work w
+                WHERE w.patient_id = q.patient_id
+                  AND w.facility_mapping_id = q.facility_mapping_id
               )
-            ORDER BY w.patient_id
+              AND q.data_type = 'conditions'
+              AND q.status = 'pending'
+            ORDER BY q.patient_id
             FOR UPDATE SKIP LOCKED
             LIMIT 1
           ),
           claimed AS (
-            INSERT INTO public.pft_test_patient_fetch_status (pcc_patient_id, facility_mapping_id, data_type)
-            SELECT patient_id, facility_mapping_id, 'conditions'
-            FROM next_patient
-            ON CONFLICT (pcc_patient_id, facility_mapping_id, data_type) DO NOTHING
-            RETURNING pcc_patient_id AS patient_id, facility_mapping_id
+            UPDATE public.pft_test_patient_work_queue q
+            SET status = 'claimed',
+                attempt_count = q.attempt_count + 1,
+                worker_id = '{{ execution_id }}:conditions:{{ slot }}',
+                claimed_at = NOW(),
+                updated_at = NOW()
+            FROM candidate c
+            WHERE q.execution_id = '{{ execution_id }}'
+              AND q.facility_mapping_id = c.facility_mapping_id
+              AND q.data_type = 'conditions'
+              AND q.patient_id = c.patient_id
+            RETURNING q.patient_id, q.facility_mapping_id
           )
           SELECT patient_id, facility_mapping_id FROM claimed;
         spec:
@@ -473,7 +576,12 @@ workflow:
             rules:
               - when: '{{ output.status == "error" and (output.http.status in [400, 404]) }}'
                 then:
-                  do: break
+                  do: continue
+                  set:
+                    iter.has_more: false
+                    iter.page_data: {}
+                    iter.current_page: '{{ iter.page | int }}'
+                    iter.skip_save: true
               - when: '{{ output.status == "error" }}'
                 then:
                   do: retry
@@ -485,21 +593,45 @@ workflow:
                       iter.has_more: '{{ output.data.data.paging.hasMore }}'
                       iter.page_data: '{{ output.data.data.data }}'
                       iter.current_page: '{{ output.data.data.paging.page }}'
+                      iter.skip_save: false
       - name: save_page
         kind: postgres
         auth: pg_k8s
         command: |
-          INSERT INTO public.pft_test_patient_conditions (pcc_patient_id, facility_mapping_id, page_number, payload, is_last_page)
-          VALUES (
-            {{ iter.patient_id }},
-            {{ iter.facility_mapping_id | int }},
-            {{ iter.current_page }},
-            '{{ iter.page_data | tojson | replace("'", "''") }}'::jsonb,
-            {{ 'false' if iter.has_more | string | lower == 'true' else 'true' }}
+          WITH save_page AS (
+            INSERT INTO public.pft_test_patient_conditions (pcc_patient_id, facility_mapping_id, page_number, payload, is_last_page)
+            SELECT
+              {{ iter.patient_id }},
+              {{ iter.facility_mapping_id | int }},
+              {{ iter.current_page }},
+              '{{ iter.page_data | tojson | replace("'", "''") }}'::jsonb,
+              {{ 'false' if iter.has_more | string | lower == 'true' else 'true' }}
+            WHERE {{ 'false' if iter.skip_save | string | lower == 'true' else 'true' }}
+            ON CONFLICT (pcc_patient_id, facility_mapping_id, page_number) DO UPDATE SET
+              payload = EXCLUDED.payload,
+              is_last_page = EXCLUDED.is_last_page
+          ),
+          mark_done AS (
+            UPDATE public.pft_test_patient_work_queue q
+            SET status = CASE
+                  WHEN {{ 'true' if iter.has_more | string | lower == 'true' else 'false' }} THEN 'claimed'
+                  ELSE 'done'
+                END,
+                done_at = CASE
+                  WHEN {{ 'true' if iter.has_more | string | lower == 'true' else 'false' }} THEN q.done_at
+                  ELSE NOW()
+                END,
+                worker_id = CASE
+                  WHEN {{ 'true' if iter.has_more | string | lower == 'true' else 'false' }} THEN q.worker_id
+                  ELSE NULL
+                END,
+                updated_at = NOW()
+            WHERE q.execution_id = '{{ execution_id }}'
+              AND q.facility_mapping_id = {{ iter.facility_mapping_id | int }}
+              AND q.data_type = 'conditions'
+              AND q.patient_id = {{ iter.patient_id | int }}
           )
-          ON CONFLICT (pcc_patient_id, facility_mapping_id, page_number) DO UPDATE SET
-            payload = EXCLUDED.payload,
-            is_last_page = EXCLUDED.is_last_page;
+          SELECT 1 AS ok;
       - name: paginate
         kind: noop
         spec:
@@ -531,13 +663,16 @@ workflow:
       auth: pg_k8s
       command: |
         SELECT COUNT(*) AS remaining_count
-        FROM public.pft_test_patient_ids_work w
-        WHERE NOT EXISTS (
-            SELECT 1 FROM public.pft_test_patient_fetch_status s
-            WHERE s.pcc_patient_id = w.patient_id
-              AND s.facility_mapping_id = w.facility_mapping_id
-              AND s.data_type = 'medications'
-          );
+        FROM public.pft_test_patient_work_queue q
+        WHERE q.execution_id = '{{ execution_id }}'
+          AND EXISTS (
+            SELECT 1
+            FROM public.pft_test_patient_ids_work w
+            WHERE w.patient_id = q.patient_id
+              AND w.facility_mapping_id = q.facility_mapping_id
+          )
+          AND q.data_type = 'medications'
+          AND q.status IN ('pending', 'claimed');
     next:
       spec:
         mode: exclusive
@@ -562,25 +697,35 @@ workflow:
         kind: postgres
         auth: pg_k8s
         command: |
-          WITH next_patient AS (
-            SELECT w.patient_id, w.facility_mapping_id
-            FROM public.pft_test_patient_ids_work w
-            WHERE NOT EXISTS (
-                SELECT 1 FROM public.pft_test_patient_fetch_status s
-                WHERE s.pcc_patient_id = w.patient_id
-                  AND s.facility_mapping_id = w.facility_mapping_id
-                  AND s.data_type = 'medications'
+          WITH candidate AS (
+            SELECT q.patient_id, q.facility_mapping_id
+            FROM public.pft_test_patient_work_queue q
+            WHERE q.execution_id = '{{ execution_id }}'
+              AND EXISTS (
+                SELECT 1
+                FROM public.pft_test_patient_ids_work w
+                WHERE w.patient_id = q.patient_id
+                  AND w.facility_mapping_id = q.facility_mapping_id
               )
-            ORDER BY w.patient_id
+              AND q.data_type = 'medications'
+              AND q.status = 'pending'
+            ORDER BY q.patient_id
             FOR UPDATE SKIP LOCKED
             LIMIT 1
           ),
           claimed AS (
-            INSERT INTO public.pft_test_patient_fetch_status (pcc_patient_id, facility_mapping_id, data_type)
-            SELECT patient_id, facility_mapping_id, 'medications'
-            FROM next_patient
-            ON CONFLICT (pcc_patient_id, facility_mapping_id, data_type) DO NOTHING
-            RETURNING pcc_patient_id AS patient_id, facility_mapping_id
+            UPDATE public.pft_test_patient_work_queue q
+            SET status = 'claimed',
+                attempt_count = q.attempt_count + 1,
+                worker_id = '{{ execution_id }}:medications:{{ slot }}',
+                claimed_at = NOW(),
+                updated_at = NOW()
+            FROM candidate c
+            WHERE q.execution_id = '{{ execution_id }}'
+              AND q.facility_mapping_id = c.facility_mapping_id
+              AND q.data_type = 'medications'
+              AND q.patient_id = c.patient_id
+            RETURNING q.patient_id, q.facility_mapping_id
           )
           SELECT patient_id, facility_mapping_id FROM claimed;
         spec:
@@ -618,7 +763,12 @@ workflow:
             rules:
               - when: '{{ output.status == "error" and (output.http.status in [400, 404]) }}'
                 then:
-                  do: break
+                  do: continue
+                  set:
+                    iter.has_more: false
+                    iter.page_data: {}
+                    iter.current_page: '{{ iter.page | int }}'
+                    iter.skip_save: true
               - when: '{{ output.status == "error" }}'
                 then:
                   do: retry
@@ -630,21 +780,45 @@ workflow:
                       iter.has_more: '{{ output.data.data.paging.hasMore }}'
                       iter.page_data: '{{ output.data.data.data }}'
                       iter.current_page: '{{ output.data.data.paging.page }}'
+                      iter.skip_save: false
       - name: save_page
         kind: postgres
         auth: pg_k8s
         command: |
-          INSERT INTO public.pft_test_patient_medications (pcc_patient_id, facility_mapping_id, page_number, payload, is_last_page)
-          VALUES (
-            {{ iter.patient_id }},
-            {{ iter.facility_mapping_id | int }},
-            {{ iter.current_page }},
-            '{{ iter.page_data | tojson | replace("'", "''") }}'::jsonb,
-            {{ 'false' if iter.has_more | string | lower == 'true' else 'true' }}
+          WITH save_page AS (
+            INSERT INTO public.pft_test_patient_medications (pcc_patient_id, facility_mapping_id, page_number, payload, is_last_page)
+            SELECT
+              {{ iter.patient_id }},
+              {{ iter.facility_mapping_id | int }},
+              {{ iter.current_page }},
+              '{{ iter.page_data | tojson | replace("'", "''") }}'::jsonb,
+              {{ 'false' if iter.has_more | string | lower == 'true' else 'true' }}
+            WHERE {{ 'false' if iter.skip_save | string | lower == 'true' else 'true' }}
+            ON CONFLICT (pcc_patient_id, facility_mapping_id, page_number) DO UPDATE SET
+              payload = EXCLUDED.payload,
+              is_last_page = EXCLUDED.is_last_page
+          ),
+          mark_done AS (
+            UPDATE public.pft_test_patient_work_queue q
+            SET status = CASE
+                  WHEN {{ 'true' if iter.has_more | string | lower == 'true' else 'false' }} THEN 'claimed'
+                  ELSE 'done'
+                END,
+                done_at = CASE
+                  WHEN {{ 'true' if iter.has_more | string | lower == 'true' else 'false' }} THEN q.done_at
+                  ELSE NOW()
+                END,
+                worker_id = CASE
+                  WHEN {{ 'true' if iter.has_more | string | lower == 'true' else 'false' }} THEN q.worker_id
+                  ELSE NULL
+                END,
+                updated_at = NOW()
+            WHERE q.execution_id = '{{ execution_id }}'
+              AND q.facility_mapping_id = {{ iter.facility_mapping_id | int }}
+              AND q.data_type = 'medications'
+              AND q.patient_id = {{ iter.patient_id | int }}
           )
-          ON CONFLICT (pcc_patient_id, facility_mapping_id, page_number) DO UPDATE SET
-            payload = EXCLUDED.payload,
-            is_last_page = EXCLUDED.is_last_page;
+          SELECT 1 AS ok;
       - name: paginate
         kind: noop
         spec:
@@ -676,13 +850,16 @@ workflow:
       auth: pg_k8s
       command: |
         SELECT COUNT(*) AS remaining_count
-        FROM public.pft_test_patient_ids_work w
-        WHERE NOT EXISTS (
-            SELECT 1 FROM public.pft_test_patient_fetch_status s
-            WHERE s.pcc_patient_id = w.patient_id
-              AND s.facility_mapping_id = w.facility_mapping_id
-              AND s.data_type = 'vital_signs'
-          );
+        FROM public.pft_test_patient_work_queue q
+        WHERE q.execution_id = '{{ execution_id }}'
+          AND EXISTS (
+            SELECT 1
+            FROM public.pft_test_patient_ids_work w
+            WHERE w.patient_id = q.patient_id
+              AND w.facility_mapping_id = q.facility_mapping_id
+          )
+          AND q.data_type = 'vital_signs'
+          AND q.status IN ('pending', 'claimed');
     next:
       spec:
         mode: exclusive
@@ -709,25 +886,35 @@ workflow:
         kind: postgres
         auth: pg_k8s
         command: |
-          WITH next_patient AS (
-            SELECT w.patient_id, w.facility_mapping_id
-            FROM public.pft_test_patient_ids_work w
-            WHERE NOT EXISTS (
-                SELECT 1 FROM public.pft_test_patient_fetch_status s
-                WHERE s.pcc_patient_id = w.patient_id
-                  AND s.facility_mapping_id = w.facility_mapping_id
-                  AND s.data_type = 'vital_signs'
+          WITH candidate AS (
+            SELECT q.patient_id, q.facility_mapping_id
+            FROM public.pft_test_patient_work_queue q
+            WHERE q.execution_id = '{{ execution_id }}'
+              AND EXISTS (
+                SELECT 1
+                FROM public.pft_test_patient_ids_work w
+                WHERE w.patient_id = q.patient_id
+                  AND w.facility_mapping_id = q.facility_mapping_id
               )
-            ORDER BY w.patient_id
+              AND q.data_type = 'vital_signs'
+              AND q.status = 'pending'
+            ORDER BY q.patient_id
             FOR UPDATE SKIP LOCKED
             LIMIT 1
           ),
           claimed AS (
-            INSERT INTO public.pft_test_patient_fetch_status (pcc_patient_id, facility_mapping_id, data_type)
-            SELECT patient_id, facility_mapping_id, 'vital_signs'
-            FROM next_patient
-            ON CONFLICT (pcc_patient_id, facility_mapping_id, data_type) DO NOTHING
-            RETURNING pcc_patient_id AS patient_id, facility_mapping_id
+            UPDATE public.pft_test_patient_work_queue q
+            SET status = 'claimed',
+                attempt_count = q.attempt_count + 1,
+                worker_id = '{{ execution_id }}:vital_signs:{{ slot }}',
+                claimed_at = NOW(),
+                updated_at = NOW()
+            FROM candidate c
+            WHERE q.execution_id = '{{ execution_id }}'
+              AND q.facility_mapping_id = c.facility_mapping_id
+              AND q.data_type = 'vital_signs'
+              AND q.patient_id = c.patient_id
+            RETURNING q.patient_id, q.facility_mapping_id
           )
           SELECT patient_id, facility_mapping_id FROM claimed;
         spec:
@@ -765,7 +952,12 @@ workflow:
             rules:
               - when: '{{ output.status == "error" and (output.http.status in [400, 404]) }}'
                 then:
-                  do: break
+                  do: continue
+                  set:
+                    iter.has_more: false
+                    iter.page_data: {}
+                    iter.current_page: '{{ iter.page | int }}'
+                    iter.skip_save: true
               - when: '{{ output.status == "error" }}'
                 then:
                   do: retry
@@ -777,21 +969,45 @@ workflow:
                       iter.has_more: '{{ output.data.data.paging.hasMore }}'
                       iter.page_data: '{{ output.data.data.data }}'
                       iter.current_page: '{{ output.data.data.paging.page }}'
+                      iter.skip_save: false
       - name: save_page
         kind: postgres
         auth: pg_k8s
         command: |
-          INSERT INTO public.pft_test_patient_vital_signs (pcc_patient_id, facility_mapping_id, page_number, payload, is_last_page)
-          VALUES (
-            {{ iter.patient_id }},
-            {{ iter.facility_mapping_id | int }},
-            {{ iter.current_page }},
-            '{{ iter.page_data | tojson | replace("'", "''") }}'::jsonb,
-            {{ 'false' if iter.has_more | string | lower == 'true' else 'true' }}
+          WITH save_page AS (
+            INSERT INTO public.pft_test_patient_vital_signs (pcc_patient_id, facility_mapping_id, page_number, payload, is_last_page)
+            SELECT
+              {{ iter.patient_id }},
+              {{ iter.facility_mapping_id | int }},
+              {{ iter.current_page }},
+              '{{ iter.page_data | tojson | replace("'", "''") }}'::jsonb,
+              {{ 'false' if iter.has_more | string | lower == 'true' else 'true' }}
+            WHERE {{ 'false' if iter.skip_save | string | lower == 'true' else 'true' }}
+            ON CONFLICT (pcc_patient_id, facility_mapping_id, page_number) DO UPDATE SET
+              payload = EXCLUDED.payload,
+              is_last_page = EXCLUDED.is_last_page
+          ),
+          mark_done AS (
+            UPDATE public.pft_test_patient_work_queue q
+            SET status = CASE
+                  WHEN {{ 'true' if iter.has_more | string | lower == 'true' else 'false' }} THEN 'claimed'
+                  ELSE 'done'
+                END,
+                done_at = CASE
+                  WHEN {{ 'true' if iter.has_more | string | lower == 'true' else 'false' }} THEN q.done_at
+                  ELSE NOW()
+                END,
+                worker_id = CASE
+                  WHEN {{ 'true' if iter.has_more | string | lower == 'true' else 'false' }} THEN q.worker_id
+                  ELSE NULL
+                END,
+                updated_at = NOW()
+            WHERE q.execution_id = '{{ execution_id }}'
+              AND q.facility_mapping_id = {{ iter.facility_mapping_id | int }}
+              AND q.data_type = 'vital_signs'
+              AND q.patient_id = {{ iter.patient_id | int }}
           )
-          ON CONFLICT (pcc_patient_id, facility_mapping_id, page_number) DO UPDATE SET
-            payload = EXCLUDED.payload,
-            is_last_page = EXCLUDED.is_last_page;
+          SELECT 1 AS ok;
       - name: paginate
         kind: noop
         spec:
@@ -823,13 +1039,16 @@ workflow:
       auth: pg_k8s
       command: |
         SELECT COUNT(*) AS remaining_count
-        FROM public.pft_test_patient_ids_work w
-        WHERE NOT EXISTS (
-            SELECT 1 FROM public.pft_test_patient_fetch_status s
-            WHERE s.pcc_patient_id = w.patient_id
-              AND s.facility_mapping_id = w.facility_mapping_id
-              AND s.data_type = 'demographics'
-          );
+        FROM public.pft_test_patient_work_queue q
+        WHERE q.execution_id = '{{ execution_id }}'
+          AND EXISTS (
+            SELECT 1
+            FROM public.pft_test_patient_ids_work w
+            WHERE w.patient_id = q.patient_id
+              AND w.facility_mapping_id = q.facility_mapping_id
+          )
+          AND q.data_type = 'demographics'
+          AND q.status IN ('pending', 'claimed');
     next:
       spec:
         mode: exclusive
@@ -856,25 +1075,35 @@ workflow:
         kind: postgres
         auth: pg_k8s
         command: |
-          WITH next_patient AS (
-            SELECT w.patient_id, w.facility_mapping_id
-            FROM public.pft_test_patient_ids_work w
-            WHERE NOT EXISTS (
-                SELECT 1 FROM public.pft_test_patient_fetch_status s
-                WHERE s.pcc_patient_id = w.patient_id
-                  AND s.facility_mapping_id = w.facility_mapping_id
-                  AND s.data_type = 'demographics'
+          WITH candidate AS (
+            SELECT q.patient_id, q.facility_mapping_id
+            FROM public.pft_test_patient_work_queue q
+            WHERE q.execution_id = '{{ execution_id }}'
+              AND EXISTS (
+                SELECT 1
+                FROM public.pft_test_patient_ids_work w
+                WHERE w.patient_id = q.patient_id
+                  AND w.facility_mapping_id = q.facility_mapping_id
               )
-            ORDER BY w.patient_id
+              AND q.data_type = 'demographics'
+              AND q.status = 'pending'
+            ORDER BY q.patient_id
             FOR UPDATE SKIP LOCKED
             LIMIT 1
           ),
           claimed AS (
-            INSERT INTO public.pft_test_patient_fetch_status (pcc_patient_id, facility_mapping_id, data_type)
-            SELECT patient_id, facility_mapping_id, 'demographics'
-            FROM next_patient
-            ON CONFLICT (pcc_patient_id, facility_mapping_id, data_type) DO NOTHING
-            RETURNING pcc_patient_id AS patient_id, facility_mapping_id
+            UPDATE public.pft_test_patient_work_queue q
+            SET status = 'claimed',
+                attempt_count = q.attempt_count + 1,
+                worker_id = '{{ execution_id }}:demographics:{{ slot }}',
+                claimed_at = NOW(),
+                updated_at = NOW()
+            FROM candidate c
+            WHERE q.execution_id = '{{ execution_id }}'
+              AND q.facility_mapping_id = c.facility_mapping_id
+              AND q.data_type = 'demographics'
+              AND q.patient_id = c.patient_id
+            RETURNING q.patient_id, q.facility_mapping_id
           )
           SELECT patient_id, facility_mapping_id FROM claimed;
         spec:
@@ -900,7 +1129,10 @@ workflow:
             rules:
               - when: '{{ output.status == "error" and (output.http.status in [400, 404]) }}'
                 then:
-                  do: break
+                  do: continue
+                  set:
+                    iter.skip_save: true
+                    iter.fetch_data: {}
               - when: '{{ output.status == "error" }}'
                 then:
                   do: retry
@@ -909,20 +1141,35 @@ workflow:
                   then:
                     do: continue
                     set:
+                      iter.skip_save: false
                       iter.fetch_data: '{{ output.data.data }}'
       - name: save
         kind: postgres
         auth: pg_k8s
         command: |
-          INSERT INTO public.pft_test_patient_demographics (pcc_patient_id, facility_mapping_id, payload)
-          VALUES (
-            {{ iter.patient_id }},
-            {{ iter.facility_mapping_id | int }},
-            '{{ iter.fetch_data | tojson | replace("'", "''") }}'::jsonb
+          WITH save_row AS (
+            INSERT INTO public.pft_test_patient_demographics (pcc_patient_id, facility_mapping_id, payload)
+            SELECT
+              {{ iter.patient_id }},
+              {{ iter.facility_mapping_id | int }},
+              '{{ iter.fetch_data | tojson | replace("'", "''") }}'::jsonb
+            WHERE {{ 'false' if iter.skip_save | string | lower == 'true' else 'true' }}
+            ON CONFLICT (pcc_patient_id, facility_mapping_id) DO UPDATE SET
+              payload = EXCLUDED.payload,
+              fetched_at = NOW()
+          ),
+          mark_done AS (
+            UPDATE public.pft_test_patient_work_queue q
+            SET status = 'done',
+                done_at = NOW(),
+                worker_id = NULL,
+                updated_at = NOW()
+            WHERE q.execution_id = '{{ execution_id }}'
+              AND q.facility_mapping_id = {{ iter.facility_mapping_id | int }}
+              AND q.data_type = 'demographics'
+              AND q.patient_id = {{ iter.patient_id | int }}
           )
-          ON CONFLICT (pcc_patient_id, facility_mapping_id) DO UPDATE SET
-            payload = EXCLUDED.payload,
-            fetched_at = now();
+          SELECT 1 AS ok;
         spec:
           policy:
             rules:
@@ -1060,10 +1307,10 @@ workflow:
   # ------------------------------------------------------------------
   - step: validate_facility_results
     desc: |
-      Count ACTUAL fetched patient data per data type (not tombstones).
+      Count ACTUAL fetched patient data per data type (not queued claims).
       This is the true correctness check: a patient is "done" only when data
-      was saved to the result tables, not just when a tombstone was claimed.
-      With the v2.14.7 loop.done race bug, tombstones are inserted for all
+      was saved to the result tables, not just when a patient was claimed.
+      With the v2.14.7 loop.done race bug, queue entries can be marked done for all
       patients but data is only saved for ~1 batch worth (100 patients) before
       the race fires loop.done prematurely and cuts off subsequent batches.
     tool:
@@ -1081,8 +1328,11 @@ workflow:
            WHERE facility_mapping_id = {{ ctx.facility_mapping_id | int }}) AS vital_signs_done,
           (SELECT COUNT(DISTINCT pcc_patient_id) FROM public.pft_test_patient_demographics
            WHERE facility_mapping_id = {{ ctx.facility_mapping_id | int }}) AS demographics_done,
-          (SELECT COUNT(DISTINCT pcc_patient_id) FROM public.pft_test_patient_fetch_status
-           WHERE facility_mapping_id = {{ ctx.facility_mapping_id | int }} AND data_type = 'assessments') AS tombstones_assessments;
+          (SELECT COUNT(DISTINCT patient_id) FROM public.pft_test_patient_work_queue
+           WHERE execution_id = '{{ execution_id }}'
+             AND facility_mapping_id = {{ ctx.facility_mapping_id | int }}
+             AND data_type = 'assessments'
+             AND status = 'done') AS assessments_queue_done;
     next:
       spec:
         mode: exclusive
@@ -1101,7 +1351,7 @@ workflow:
         INSERT INTO public.pft_test_validation_log (
           execution_id, facility_mapping_id,
           assessments_done, conditions_done, medications_done,
-          vital_signs_done, demographics_done, tombstones_assessments, total_expected
+          vital_signs_done, demographics_done, assessments_queue_done, total_expected
         )
         VALUES (
           '{{ execution_id }}',
@@ -1111,7 +1361,7 @@ workflow:
           {{ validate_facility_results.rows[0].medications_done | default(0) }},
           {{ validate_facility_results.rows[0].vital_signs_done | default(0) }},
           {{ validate_facility_results.rows[0].demographics_done | default(0) }},
-          {{ validate_facility_results.rows[0].tombstones_assessments | default(0) }},
+          {{ validate_facility_results.rows[0].assessments_queue_done | default(0) }},
           1000
         )
         ON CONFLICT (execution_id, facility_mapping_id) DO UPDATE SET
@@ -1120,7 +1370,7 @@ workflow:
           medications_done       = EXCLUDED.medications_done,
           vital_signs_done       = EXCLUDED.vital_signs_done,
           demographics_done      = EXCLUDED.demographics_done,
-          tombstones_assessments = EXCLUDED.tombstones_assessments,
+          assessments_queue_done = EXCLUDED.assessments_queue_done,
           logged_at              = NOW();
 
         SELECT 'logged' AS status;
@@ -1168,6 +1418,7 @@ workflow:
           medications_done,
           vital_signs_done,
           demographics_done,
+          assessments_queue_done,
           total_expected,
           (assessments_done = total_expected
            AND conditions_done = total_expected
@@ -1188,7 +1439,7 @@ workflow:
   - step: check_results
     desc: |
       Assert all 10 facilities have 1000/1000 patients with ACTUAL data in result tables.
-      If the v2.14.7 loop.done race bug is present, tombstones_assessments will be 1000
+      If the v2.14.7 loop.done race bug is present, assessments_queue_done may be 1000
       but assessments_done will be << 1000 (only ~1 batch worth, due to premature cutoff).
     tool:
       kind: python
@@ -1213,14 +1464,14 @@ workflow:
 
         for r in rows:
             fid = r.get("facility_mapping_id")
-            tombstones = int(r.get("tombstones_assessments") or 0)
+            queue_done = int(r.get("assessments_queue_done") or 0)
             for dtype in ["assessments_done", "conditions_done", "medications_done",
                           "vital_signs_done", "demographics_done"]:
                 count = int(r.get(dtype) or 0)
                 if count != expected_p:
                     note = ""
-                    if dtype == "assessments_done" and tombstones > count:
-                        note = f" [RACE BUG: {tombstones} tombstones claimed but only {count} fetched]"
+                    if dtype == "assessments_done" and queue_done > count:
+                        note = f" [RACE BUG: {queue_done} queue-done but only {count} fetched]"
                     failures.append(
                         f"facility={fid} {dtype}={count} (expected {expected_p}){note}"
                     )
