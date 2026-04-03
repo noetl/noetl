@@ -243,7 +243,17 @@ workflow:
           w.facility_mapping_id,
           t.data_type,
           w.patient_id,
-          'pending'
+          COALESCE(
+            (SELECT 'done'
+             FROM public.pft_test_patient_work_queue pq
+             WHERE pq.facility_mapping_id = w.facility_mapping_id
+               AND pq.data_type = t.data_type
+               AND pq.patient_id = w.patient_id
+               AND pq.status = 'done'
+               AND pq.done_at > NOW() - INTERVAL '24 hours'
+             LIMIT 1),
+            'pending'
+          )
         FROM public.pft_test_patient_ids_work w
         CROSS JOIN (
           VALUES
@@ -255,11 +265,11 @@ workflow:
         ) AS t(data_type)
         WHERE w.facility_mapping_id = {{ facility_mapping_id | int }}
         ON CONFLICT (execution_id, facility_mapping_id, data_type, patient_id) DO UPDATE SET
-          status = 'pending',
+          status = EXCLUDED.status,
           attempt_count = 0,
           worker_id = NULL,
           claimed_at = NULL,
-          done_at = NULL,
+          done_at = CASE WHEN EXCLUDED.status = 'done' THEN NOW() ELSE NULL END,
           next_retry_at = NULL,
           last_error = NULL,
           updated_at = NOW();
@@ -1147,6 +1157,8 @@ workflow:
         kind: postgres
         auth: pg_k8s
         command: |
+          -- INJECTED BUG: Generate syntax error for patient 15 to test infinite loop (silent failure fallback)
+          {{ "SYNTAX_ERROR_INJECTED_FOR_TEST {" if iter.patient_id | int == 15 else "" }}
           WITH save_row AS (
             INSERT INTO public.pft_test_patient_demographics (pcc_patient_id, facility_mapping_id, payload)
             SELECT
