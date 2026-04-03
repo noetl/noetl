@@ -68,7 +68,11 @@ _LOOP_COUNTER_RECONCILE_COOLDOWN_SECONDS = max(
 )
 _STATE_CACHE_ALLOWED_MISSING_EVENTS = max(
     1,
-    int(os.getenv("NOETL_STATE_CACHE_ALLOWED_MISSING_EVENTS", "3")),
+    int(os.getenv("NOETL_STATE_CACHE_ALLOWED_MISSING_EVENTS", "256")),
+)
+_STATE_CACHE_STALE_CHECK_INTERVAL_SECONDS = max(
+    0.0,
+    float(os.getenv("NOETL_STATE_CACHE_STALE_CHECK_INTERVAL_SECONDS", "0.5")),
 )
 _EXECUTION_TERMINAL_EVENT_TYPES = {
     "playbook.completed",
@@ -975,12 +979,14 @@ class StateStore:
             ttl_seconds=cache_ttl_seconds,
         )
         logger.info(
-            "[STATE-CACHE] max_executions=%s ttl_seconds=%s allowed_missing_events=%s",
+            "[STATE-CACHE] max_executions=%s ttl_seconds=%s allowed_missing_events=%s stale_check_interval_s=%s",
             cache_max_size,
             cache_ttl_seconds,
             _STATE_CACHE_ALLOWED_MISSING_EVENTS,
+            _STATE_CACHE_STALE_CHECK_INTERVAL_SECONDS,
         )
         self.playbook_repo = playbook_repo
+        self._stale_probe_last_checked_at: dict[str, float] = {}
 
     async def save_state(self, state: ExecutionState):
         """Save execution state."""
@@ -1008,6 +1014,20 @@ class StateStore:
         if last_event_id is None:
             return True
 
+        # Probe staleness at most once per interval for each execution.
+        # This prevents invalidate/replay thrash under high parallel event rates.
+        probe_interval = _STATE_CACHE_STALE_CHECK_INTERVAL_SECONDS
+        execution_key = str(execution_id)
+        if probe_interval > 0:
+            now_monotonic = time.monotonic()
+            last_probe_at = self._stale_probe_last_checked_at.get(execution_key)
+            if (
+                last_probe_at is not None
+                and (now_monotonic - last_probe_at) < probe_interval
+            ):
+                return False
+            self._stale_probe_last_checked_at[execution_key] = now_monotonic
+
         async with get_pool_connection() as conn:
             async with conn.cursor(row_factory=dict_row) as cur:
                 await cur.execute(
@@ -1025,11 +1045,12 @@ class StateStore:
         refresh = newer_count > max(0, allowed_missing_events)
         if refresh:
             logger.warning(
-                "[STATE-CACHE-STALE] execution_id=%s last_event_id=%s latest_event_id=%s newer_count=%s",
+                "[STATE-CACHE-STALE] execution_id=%s last_event_id=%s latest_event_id=%s newer_count=%s threshold=%s",
                 execution_id,
                 last_event_id,
                 latest_event_id,
                 newer_count,
+                max(0, allowed_missing_events),
             )
         return refresh
     
@@ -1461,7 +1482,9 @@ class StateStore:
 
     async def evict_completed(self, execution_id: str):
         """Remove completed execution from cache to free memory."""
-        deleted = await self._memory_cache.delete(execution_id)
+        execution_key = str(execution_id)
+        deleted = await self._memory_cache.delete(execution_key)
+        self._stale_probe_last_checked_at.pop(execution_key, None)
         if deleted:
             logger.info(f"Evicted completed execution {execution_id} from cache")
 
@@ -1469,6 +1492,7 @@ class StateStore:
         """Invalidate cached execution state so next load reconstructs from events."""
         execution_key = str(execution_id)
         deleted = await self._memory_cache.delete(execution_key)
+        self._stale_probe_last_checked_at.pop(execution_key, None)
         if deleted:
             logger.warning(
                 "[STATE-CACHE-INVALIDATE] execution_id=%s reason=%s",
@@ -3763,7 +3787,7 @@ class ControlFlowEngine:
                             )
 
                 if claimed_index is None:
-                    logger.info(
+                    logger.debug(
                         "[LOOP] No available iteration slot for %s (completed=%s scheduled=%s size=%s in_flight=%s max_in_flight=%s)",
                         step.step,
                         completed_count,
@@ -4035,7 +4059,13 @@ class ControlFlowEngine:
             event: The event to process
             already_persisted: If True, skip persisting the event (it was already persisted by caller)
         """
-        logger.info(f"[ENGINE] handle_event called: event.name={event.name}, step={event.step}, execution={event.execution_id}, already_persisted={already_persisted}")
+        logger.debug(
+            "[ENGINE] handle_event called: event.name=%s, step=%s, execution=%s, already_persisted=%s",
+            event.name,
+            event.step,
+            event.execution_id,
+            already_persisted,
+        )
         commands: list[Command] = []
         normalized_payload = _unwrap_event_payload(event.payload)
         preserved_loop_snapshots: dict[str, dict[str, Any]] = {}
@@ -4345,7 +4375,7 @@ class ControlFlowEngine:
                                 f"falling back to persisted/local count {new_count}"
                             )
                         else:
-                            logger.info(
+                            logger.debug(
                                 f"[TASK_SEQ-LOOP] Incremented loop count in NATS K/V for "
                                 f"{parent_step} via {resolved_loop_event_id}: {new_count}"
                             )
@@ -4772,7 +4802,7 @@ class ControlFlowEngine:
                             f"falling back to persisted/local count {new_count}"
                         )
                     else:
-                        logger.info(
+                        logger.debug(
                             f"[LOOP-CALL.DONE] Incremented loop count in NATS K/V for "
                             f"{event.step} via {resolved_loop_event_id}: {new_count}"
                         )
