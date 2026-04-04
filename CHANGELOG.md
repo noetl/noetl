@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.15.1](https://github.com/noetl/noetl/compare/v2.15.0...v2.15.1) (2026-04-04)
+
+### Bug Fixes
+
+* **engine:** reduce state-cache replay thrash under parallel loops ([b496a8f](https://github.com/noetl/noetl/commit/b496a8f085dfd4810fc0dd5860aed5cf6c9d8ad3))
+* **playbook:** move pft flow to execution-scoped queue claims ([e017447](https://github.com/noetl/noetl/commit/e017447c5378b10a6b034dbb61f8eeec89456bae))
+* **test:** make pft seed_queue idempotent; add SQL error injection for patient 15 ([ebce86d](https://github.com/noetl/noetl/commit/ebce86da4b19c4de5722d4679193eeee6f6fa954))
+
 ## [2.15.0](https://github.com/noetl/noetl/compare/v2.14.14...v2.15.0) (2026-04-02)
 
 ### Features
