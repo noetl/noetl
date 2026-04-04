@@ -161,6 +161,10 @@ workflow:
         ALTER TABLE public.pft_test_validation_log
           ADD COLUMN IF NOT EXISTS assessments_queue_done INTEGER;
 
+        -- Reset all per-run data (truncate keeps tables small and inserts fast)
+        TRUNCATE public.pft_test_patient_work_queue;
+        TRUNCATE public.pft_test_patient_ids_work;
+
         -- Reset facilities for this run
         DELETE FROM public.pft_test_facilities;
         INSERT INTO public.pft_test_facilities (facility_mapping_id, facility_name, facility_id, active)
@@ -263,16 +267,7 @@ workflow:
             ('vital_signs'),
             ('demographics')
         ) AS t(data_type)
-        WHERE w.facility_mapping_id = {{ facility_mapping_id | int }}
-        ON CONFLICT (execution_id, facility_mapping_id, data_type, patient_id) DO UPDATE SET
-          status = EXCLUDED.status,
-          attempt_count = 0,
-          worker_id = NULL,
-          claimed_at = NULL,
-          done_at = CASE WHEN EXCLUDED.status = 'done' THEN NOW() ELSE NULL END,
-          next_retry_at = NULL,
-          last_error = NULL,
-          updated_at = NOW();
+        WHERE w.facility_mapping_id = {{ facility_mapping_id | int }};
 
         SELECT COUNT(*) AS patient_count
         FROM public.pft_test_patient_ids_work
