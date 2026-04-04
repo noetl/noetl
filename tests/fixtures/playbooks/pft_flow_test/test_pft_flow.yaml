@@ -291,6 +291,15 @@ workflow:
       kind: postgres
       auth: pg_k8s
       command: |
+        WITH reclaim_stale AS (
+          UPDATE public.pft_test_patient_work_queue
+          SET status = 'pending', claimed_at = NULL, worker_id = NULL, updated_at = NOW()
+          WHERE execution_id = '{{ execution_id }}'
+            AND data_type = 'assessments'
+            AND status = 'claimed'
+            AND claimed_at < NOW() - INTERVAL '5 minutes'
+          RETURNING patient_id
+        )
         SELECT COUNT(*) AS remaining_count
         FROM public.pft_test_patient_work_queue q
         WHERE q.execution_id = '{{ execution_id }}'
@@ -480,6 +489,15 @@ workflow:
       kind: postgres
       auth: pg_k8s
       command: |
+        WITH reclaim_stale AS (
+          UPDATE public.pft_test_patient_work_queue
+          SET status = 'pending', claimed_at = NULL, worker_id = NULL, updated_at = NOW()
+          WHERE execution_id = '{{ execution_id }}'
+            AND data_type = 'conditions'
+            AND status = 'claimed'
+            AND claimed_at < NOW() - INTERVAL '5 minutes'
+          RETURNING patient_id
+        )
         SELECT COUNT(*) AS remaining_count
         FROM public.pft_test_patient_work_queue q
         WHERE q.execution_id = '{{ execution_id }}'
@@ -667,6 +685,15 @@ workflow:
       kind: postgres
       auth: pg_k8s
       command: |
+        WITH reclaim_stale AS (
+          UPDATE public.pft_test_patient_work_queue
+          SET status = 'pending', claimed_at = NULL, worker_id = NULL, updated_at = NOW()
+          WHERE execution_id = '{{ execution_id }}'
+            AND data_type = 'medications'
+            AND status = 'claimed'
+            AND claimed_at < NOW() - INTERVAL '5 minutes'
+          RETURNING patient_id
+        )
         SELECT COUNT(*) AS remaining_count
         FROM public.pft_test_patient_work_queue q
         WHERE q.execution_id = '{{ execution_id }}'
@@ -854,6 +881,15 @@ workflow:
       kind: postgres
       auth: pg_k8s
       command: |
+        WITH reclaim_stale AS (
+          UPDATE public.pft_test_patient_work_queue
+          SET status = 'pending', claimed_at = NULL, worker_id = NULL, updated_at = NOW()
+          WHERE execution_id = '{{ execution_id }}'
+            AND data_type = 'vital_signs'
+            AND status = 'claimed'
+            AND claimed_at < NOW() - INTERVAL '5 minutes'
+          RETURNING patient_id
+        )
         SELECT COUNT(*) AS remaining_count
         FROM public.pft_test_patient_work_queue q
         WHERE q.execution_id = '{{ execution_id }}'
@@ -1043,6 +1079,15 @@ workflow:
       kind: postgres
       auth: pg_k8s
       command: |
+        WITH reclaim_stale AS (
+          UPDATE public.pft_test_patient_work_queue
+          SET status = 'pending', claimed_at = NULL, worker_id = NULL, updated_at = NOW()
+          WHERE execution_id = '{{ execution_id }}'
+            AND data_type = 'demographics'
+            AND status = 'claimed'
+            AND claimed_at < NOW() - INTERVAL '5 minutes'
+          RETURNING patient_id
+        )
         SELECT COUNT(*) AS remaining_count
         FROM public.pft_test_patient_work_queue q
         WHERE q.execution_id = '{{ execution_id }}'
