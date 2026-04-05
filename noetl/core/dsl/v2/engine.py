@@ -1459,6 +1459,34 @@ class StateStore:
                             state.loop_state[step_name]["event_id"] = loop_event_id
                         logger.debug(f"[STATE-LOAD] Updated loop_state for {step_name}: index={iteration_count}")
                 
+                # Restore loop completion status from NATS for loop steps that
+                # completed their loop before this state rebuild. Without this,
+                # `completed_steps` is empty for loop steps after rebuild, causing the
+                # dedup guard in `_evaluate_next_transitions` to block loopback
+                # re-dispatch (e.g. fetch_medications re-invoked after re-check step).
+                try:
+                    nats_cache = await get_nats_cache()
+                    for step_name in loop_steps:
+                        event_id = loop_event_ids.get(step_name)
+                        if event_id:
+                            nats_loop = await nats_cache.get_loop_state(
+                                execution_id, step_name, event_id
+                            )
+                            if nats_loop and nats_loop.get("loop_done_claimed", False):
+                                state.loop_state[step_name]["completed"] = True
+                                state.loop_state[step_name]["aggregation_finalized"] = True
+                                state.completed_steps.add(step_name)
+                                logger.debug(
+                                    "[STATE-LOAD] Restored loop completion from NATS for %s "
+                                    "(loop_done_claimed=True, event_id=%s)",
+                                    step_name,
+                                    event_id,
+                                )
+                except Exception as _nats_exc:
+                    logger.debug(
+                        "[STATE-LOAD] NATS loop-completion restore skipped: %s", _nats_exc
+                    )
+
                 # Log reconstructed state for debugging
                 if state.issued_steps:
                     logger.debug(
@@ -2455,9 +2483,20 @@ class ControlFlowEngine:
             # DEDUPLICATION: Skip if command for this step is already pending.
             # A matched-but-deduplicated arc is NOT a dead-end — the command is
             # already in flight from a concurrent event processor.
+            # Exception: loop steps whose previous epoch is done (loop_done_claimed)
+            # must be allowed to re-dispatch for loopback patterns. After a state
+            # rebuild completed_steps is empty for loop steps, but is_loop_done()
+            # returns True when NATS loop_done_claimed was restored during rebuild.
             if target_step in state.issued_steps and target_step not in state.completed_steps:
-                logger.warning(f"[NEXT-EVAL] Skipping duplicate command for step '{target_step}' - already in issued_steps")
-                continue
+                if state.is_loop_done(target_step):
+                    logger.debug(
+                        "[NEXT-EVAL] Allowing re-dispatch of loop step '%s' — "
+                        "previous epoch is done (loopback pattern)",
+                        target_step,
+                    )
+                else:
+                    logger.warning(f"[NEXT-EVAL] Skipping duplicate command for step '{target_step}' - already in issued_steps")
+                    continue
 
             # Apply arc-level set mutations to state before issuing the command.
             # Canonical DSL v2: arc.set writes to ctx/iter/step scopes.
