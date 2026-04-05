@@ -3568,6 +3568,11 @@ class ControlFlowEngine:
 
             # Ensure distributed loop metadata exists before claiming next slot.
             if not nats_loop_state:
+                # New epoch: discard cross-epoch accumulated counts so the fresh
+                # NATS entry starts from 0 instead of being poisoned by prior
+                # facility runs (fixes stale-count / no-slot bug for reused loops).
+                if force_new_loop_instance:
+                    completed_count = 0
                 scheduled_seed = max(
                     int(loop_state.get("scheduled_count", completed_count) or completed_count),
                     completed_count,
