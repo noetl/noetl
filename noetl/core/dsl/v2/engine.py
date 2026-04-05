@@ -1991,6 +1991,31 @@ class ControlFlowEngine:
                 restored_event_id,
             )
 
+            # After a STATE-CACHE-STALE rebuild mid-epoch, load_state accumulates results
+            # from ALL prior epochs in loop_state["results"] + omitted_results_count.
+            # This inflates get_loop_completed_count() to a cross-epoch total (e.g. 806 for
+            # a 10×100 loop), causing previous_exhausted=True in _create_command_for_step
+            # even though only ~5/100 iterations of the current epoch have completed.
+            # Fix: when the cross-epoch total exceeds one epoch's size, reset results/counts
+            # and index to the snapshot's epoch-relative values so downstream exhaustion
+            # checks operate on the current epoch only.
+            if completed_count > snapshot_epoch_size:
+                epoch_relative_count = max(0, snapshot_completed_count)
+                epoch_relative_scheduled = max(epoch_relative_count, snapshot_scheduled_count)
+                loop_state["results"] = []
+                loop_state["omitted_results_count"] = epoch_relative_count
+                loop_state["index"] = epoch_relative_count
+                loop_state["scheduled_count"] = epoch_relative_scheduled
+                logger.warning(
+                    "[LOOP-CACHE-RESTORE] Reset loop counts to epoch-relative for %s "
+                    "(cross_epoch_total=%s epoch_size=%s epoch_relative=%s epoch_scheduled=%s)",
+                    step_name,
+                    completed_count,
+                    snapshot_epoch_size,
+                    epoch_relative_count,
+                    epoch_relative_scheduled,
+                )
+
         return restored_count
 
     async def _count_step_events(
