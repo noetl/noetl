@@ -149,7 +149,7 @@ class NATSKVBackend(StorageBackend):
 
     def _make_key(self, key: str) -> str:
         """Sanitize key for NATS KV (dots as separators)."""
-        return key.replace("/", ".").replace(":", ".")
+        return str(key).replace("/", ".").replace(":", ".")
 
     async def put(self, key: str, data: bytes, metadata: Optional[Dict[str, Any]] = None) -> str:
         await self._ensure_connected()

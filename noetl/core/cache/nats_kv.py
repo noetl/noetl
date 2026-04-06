@@ -98,9 +98,11 @@ class NATSKVCache:
         NATS K/V keys must use dots as separators, not colons.
         Format: exec.{execution_id}.{key_type}
         """
-        # Replace colons with dots in key_type (for nested keys like "loop:step:event")
-        safe_key_type = key_type.replace(":", ".")
-        return f"exec.{execution_id}.{safe_key_type}"
+        # Replace colons with dots in execution_id and key_type
+        # (NATS KV keys must be alphanumeric plus '.', '_', '-')
+        safe_exec_id = str(execution_id).replace(":", ".")
+        safe_key_type = str(key_type).replace(":", ".")
+        return f"exec.{safe_exec_id}.{safe_key_type}"
     
     async def get_loop_state(self, execution_id: str, step_name: str, event_id: Optional[str] = None) -> Optional[dict[str, Any]]:
         """Get loop state for a specific step instance.
