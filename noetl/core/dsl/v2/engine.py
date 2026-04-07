@@ -4817,6 +4817,7 @@ class ControlFlowEngine:
                                             "result": loop_aggregation
                                         }
                                     )
+                                    await self._persist_event(loop_done_event, state)
                                     loop_done_commands = await self._evaluate_next_transitions(state, parent_step_def, loop_done_event)
                                     commands.extend(loop_done_commands)
                                     logger.info(f"[TASK_SEQ-LOOP] Generated {len(loop_done_commands)} commands from loop.done")
@@ -5123,6 +5124,7 @@ class ControlFlowEngine:
                                         "result": loop_aggregation,
                                     },
                                 )
+                                await self._persist_event(loop_done_event, state)
                                 loop_done_commands = await self._evaluate_next_transitions(
                                     state, step_def, loop_done_event
                                 )
@@ -5485,6 +5487,7 @@ class ControlFlowEngine:
                                     "result": loop_aggregation  # Include aggregated result in payload
                                 }
                             )
+                            await self._persist_event(loop_done_event, state)
                             loop_done_commands = await self._evaluate_next_transitions(state, step_def, loop_done_event)
                             commands.extend(loop_done_commands)
 
