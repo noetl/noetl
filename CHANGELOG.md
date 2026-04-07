@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.16.3](https://github.com/noetl/noetl/compare/v2.16.2...v2.16.3) (2026-04-07)
+
+### Bug Fixes
+
+* persist loop.done events to database ([9070f2a](https://github.com/noetl/noetl/commit/9070f2a01387acf511829ea915dc29442c4ba5de))
+
 ## [2.16.2](https://github.com/noetl/noetl/compare/v2.16.1...v2.16.2) (2026-04-07)
 
 ### Bug Fixes
