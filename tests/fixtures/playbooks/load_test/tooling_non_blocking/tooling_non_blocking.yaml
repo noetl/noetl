@@ -13,6 +13,9 @@ workload:
   noetl_api_url: "http://noetl.noetl.svc.cluster.local:8082"
   expected_total: 5
   expected_min_parallel: 2
+  enable_snowflake_probe: false
+  enable_nats_kv_probe: false
+  enable_nats_object_probe: false
   mandatory_steps:
     - run_http_probe
     - run_postgres_probe
