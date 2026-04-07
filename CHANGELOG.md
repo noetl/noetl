@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.16.1](https://github.com/noetl/noetl/compare/v2.16.0...v2.16.1) (2026-04-07)
+
+### Bug Fixes
+
+* NATS state synchronization for dead loop detection ([be59dd7](https://github.com/noetl/noetl/commit/be59dd7fb7b6333bf6f7ad2efbb77ddda5b66e5c))
+
 ## [2.16.0](https://github.com/noetl/noetl/compare/v2.15.2...v2.16.0) (2026-04-07)
 
 ### Features
