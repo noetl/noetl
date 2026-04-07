@@ -103,6 +103,7 @@ _STATE_REPLAY_EVENT_TYPES = (
     "command.cancelled",
     "step.exit",
     "call.done",
+    "loop.done",
     "playbook.completed",
     "playbook.failed",
     "workflow.completed",
@@ -712,7 +713,7 @@ class ExecutionState:
             "iterator": iterator,
             "index": 0,
             "mode": mode,
-            "completed": False,
+            "completed": replay_loop_state.get("completed", False),
             "results": [],  # Track iteration results for aggregation
             "failed_count": 0,  # Track failed iterations
             "break_count": 0,  # Track skipped/break iterations
@@ -1200,7 +1201,7 @@ class StateStore:
                         event_id,
                         node_name,
                         event_type,
-                        CASE WHEN event_type IN ('step.exit', 'call.done') THEN result ELSE NULL END AS result,
+                        CASE WHEN event_type IN ('step.exit', 'call.done', 'loop.done') THEN result ELSE NULL END AS result,
                         CASE WHEN event_type = 'command.issued' THEN meta ELSE NULL END AS meta
                     FROM noetl.event
                     WHERE execution_id = %s
@@ -1374,6 +1375,14 @@ class StateStore:
                                     step_loop_state.get("failed_count", 0) or 0
                                 ) + 1
 
+                    # Mark loop steps completed based on loop.done events
+                    if event_type == 'loop.done' and event_payload and node_name in loop_steps:
+                        step_result = event_payload.get("result", event_payload) if isinstance(event_payload, dict) else event_payload
+                        state.mark_step_completed(node_name, step_result)
+                        if node_name in loop_iteration_state:
+                            loop_iteration_state[node_name]["completed"] = True
+                            loop_iteration_state[node_name]["aggregation_finalized"] = True
+
                     # Restore step results from step.exit events (final result only)
                     if event_type == 'step.exit' and event_payload:
                         # Task-sequence substeps are iteration-level internals; parent completion
@@ -1457,11 +1466,11 @@ class StateStore:
                             "iterator": loop_iterator,
                             "index": iteration_count,  # Start from number of completed iterations
                             "mode": loop_mode,
-                            "completed": False,
+                            "completed": replay_loop_state.get("completed", False),
                             "results": replay_loop_state.get("results", []),
                             "failed_count": int(replay_loop_state.get("failed_count", 0) or 0),
                             "scheduled_count": iteration_count,
-                            "aggregation_finalized": False,
+                            "aggregation_finalized": replay_loop_state.get("aggregation_finalized", False),
                             "event_id": loop_event_ids.get(step_name),
                             "omitted_results_count": int(
                                 replay_loop_state.get("omitted_results_count", 0) or 0
@@ -1471,6 +1480,9 @@ class StateStore:
                     else:
                         # Restore collected results and update index
                         state.loop_state[step_name]["results"] = replay_loop_state.get("results", [])
+                        if replay_loop_state.get("completed"):
+                            state.loop_state[step_name]["completed"] = True
+                            state.loop_state[step_name]["aggregation_finalized"] = True
                         state.loop_state[step_name]["failed_count"] = int(
                             replay_loop_state.get("failed_count", 0) or 0
                         )
@@ -4446,11 +4458,11 @@ class ControlFlowEngine:
                     "iterator": loop_iterator,
                     "index": 0,
                     "mode": loop_mode,
-                    "completed": False,
+                    "completed": replay_loop_state.get("completed", False),
                     "results": [],
                     "failed_count": 0,
                     "scheduled_count": 0,
-                    "aggregation_finalized": False,
+                    "aggregation_finalized": replay_loop_state.get("aggregation_finalized", False),
                     "event_id": payload_loop_event_id,
                     "omitted_results_count": 0,
                 }

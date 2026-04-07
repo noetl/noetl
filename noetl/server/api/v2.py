@@ -3151,7 +3151,7 @@ async def get_execution_status(execution_id: str, full: bool = False):
                         SELECT node_name
                         FROM noetl.event
                         WHERE execution_id = %s
-                          AND event_type = 'step.exit'
+                          AND event_type IN ('step.exit', 'loop.done')
                           AND status = 'COMPLETED'
                         ORDER BY event_id ASC
                     """, (exec_id_int,))
@@ -3182,11 +3182,11 @@ async def get_execution_status(execution_id: str, full: bool = False):
             if terminal_type in terminal_complete_events:
                 completed = True
                 failed = False
-                completion_inferred = True
+                completion_inferred = False
             elif terminal_type in terminal_failed_events:
                 completed = terminal_type == "execution.cancelled"
                 failed = terminal_type in {"playbook.failed", "workflow.failed"}
-                completion_inferred = True
+                completion_inferred = False
             elif (
                 latest_event["node_name"] == "end"
                 and latest_event["status"] == "COMPLETED"
@@ -3211,7 +3211,7 @@ async def get_execution_status(execution_id: str, full: bool = False):
             seen_steps: set[str] = set()
             for row in step_rows or []:
                 step_name = row.get("node_name")
-                if not step_name or step_name in seen_steps:
+                if not step_name or step_name in seen_steps or step_name.endswith(':task_sequence'):
                     continue
                 seen_steps.add(step_name)
                 completed_steps.append(step_name)
@@ -3303,11 +3303,11 @@ async def get_execution_status(execution_id: str, full: bool = False):
 
                 if terminal_type in terminal_complete_events:
                     completed = True
-                    completion_inferred = True
+                    completion_inferred = False
                 elif terminal_type in terminal_failed_events:
                     completed = terminal_type == "execution.cancelled"
                     failed = terminal_type in {"playbook.failed", "workflow.failed"}
-                    completion_inferred = True
+                    completion_inferred = False
                 elif latest_event and (
                     latest_event["node_name"] == "end"
                     and latest_event["status"] == "COMPLETED"
