@@ -3431,6 +3431,19 @@ class ControlFlowEngine:
             # distributed loop key so claim slots are not stuck at old scheduled/completed
             # counts (e.g., 100/100 from the previous batch).
             #
+            def _is_loop_epoch_transition_emitted(
+                state: ExecutionState, step_name: str, event_name: str, loop_event_id: str
+            ) -> bool:
+                """Check if a specific transition event (e.g. loop.done) for a given epoch was already emitted."""
+                for event in reversed(state.event_history):
+                    if (
+                        event.step == step_name
+                        and event.name == event_name
+                        and str(event.payload.get("loop_event_id")) == str(loop_event_id)
+                    ):
+                        return True
+                return False
+
             # EPOCH UNIQUENESS: For fresh dispatches (not continuation/retry), always create
             # a new epoch with a time-based suffix to guarantee uniqueness. This prevents
             # epoch ID collisions when state.last_event_id is the same across epoch resets
@@ -4808,6 +4821,19 @@ class ControlFlowEngine:
                                             parent_step,
                                             state.get_loop_aggregation(parent_step),
                                         )
+
+                                        # [CLAIM-RECOVERY] If the claim was lost (claimed in KV but event never persisted),
+                                        # proceed with the transition anyway to avoid stalling the workflow.
+                                        if not _is_loop_epoch_transition_emitted(
+                                            state, parent_step, "loop.done", resolved_loop_event_id
+                                        ):
+                                            logger.warning(
+                                                "[TASK_SEQ-LOOP] loop.done claim held for %s (epoch=%s) but no event found in history — "
+                                                "RECOVERING transition to avoid stall",
+                                                parent_step,
+                                                resolved_loop_event_id,
+                                            )
+                                            _skip_loop_done = False
                                 except Exception as _claim_err:
                                     logger.warning(
                                         "[TASK_SEQ-LOOP] try_claim_loop_done failed for %s: %s — proceeding with aggregation_finalized guard",
@@ -4834,7 +4860,8 @@ class ControlFlowEngine:
                                         payload={
                                             "status": "completed",
                                             "iterations": new_count,
-                                            "result": loop_aggregation
+                                            "result": loop_aggregation,
+                                            "loop_event_id": resolved_loop_event_id
                                         }
                                     )
                                     loop_done_commands = await self._evaluate_next_transitions(state, parent_step_def, loop_done_event)
@@ -5133,6 +5160,19 @@ class ControlFlowEngine:
                                         event.step,
                                         state.get_loop_aggregation(event.step),
                                     )
+
+                                    # [CLAIM-RECOVERY] If the claim was lost (claimed in KV but event never persisted),
+                                    # proceed with the transition anyway to avoid stalling the workflow.
+                                    if not _is_loop_epoch_transition_emitted(
+                                        state, event.step, "loop.done", resolved_loop_event_id
+                                    ):
+                                        logger.warning(
+                                            "[LOOP-CALL.DONE] loop.done claim held for %s (epoch=%s) but no event found in history — "
+                                            "RECOVERING transition to avoid stall",
+                                            event.step,
+                                            resolved_loop_event_id,
+                                        )
+                                        _skip_loop_done = False
                             except Exception as _claim_err:
                                 logger.warning(
                                     "[LOOP-CALL.DONE] try_claim_loop_done failed for %s: %s — proceeding with aggregation_finalized guard",
@@ -5157,6 +5197,7 @@ class ControlFlowEngine:
                                         "status": "completed",
                                         "iterations": new_count,
                                         "result": loop_aggregation,
+                                        "loop_event_id": resolved_loop_event_id
                                     },
                                 )
                                 loop_done_commands = await self._evaluate_next_transitions(
@@ -5518,7 +5559,8 @@ class ControlFlowEngine:
                                 payload={
                                     "status": "completed",
                                     "iterations": state.loop_state[event.step]["index"],
-                                    "result": loop_aggregation  # Include aggregated result in payload
+                                    "result": loop_aggregation,  # Include aggregated result in payload
+                                    "loop_event_id": resolved_loop_event_id
                                 }
                             )
                             loop_done_commands = await self._evaluate_next_transitions(state, step_def, loop_done_event)
