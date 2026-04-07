@@ -128,6 +128,14 @@ def _estimate_json_size(value: Any) -> int:
     return _estimate_size_fast(value)
 
 
+def _is_loop_epoch_transition_emitted(
+    state: "ExecutionState", step_name: str, event_name: str, loop_event_id: str
+) -> bool:
+    """Check if a specific transition event (e.g. loop.done) for a given epoch was already emitted."""
+    key = f"{step_name}:{event_name}:{loop_event_id}"
+    return key in state.emitted_loop_epochs
+
+
 def _parse_iso_utc(value: Any) -> Optional[datetime]:
     if not value or not isinstance(value, str):
         return None
@@ -587,6 +595,7 @@ class ExecutionState:
         # Loop state tracking
         self.loop_state: dict[str, dict[str, Any]] = {}  # step_name -> {collection, index, item, mode}
         self.step_stall_counts: dict[str, int] = {}  # step_name -> consecutive times loop ended with zero successful slots
+        self.emitted_loop_epochs: set[str] = set()  # "step_name:event_name:loop_event_id"
 
 
         # Pagination state tracking for collect+retry pattern
@@ -819,6 +828,11 @@ class ExecutionState:
             return 0
         return _loop_results_total(self.loop_state[step_name])
     
+    def add_emitted_loop_epoch(self, step_name: str, event_name: str, loop_event_id: str):
+        """Mark a specific transition event as already emitted for deduplication."""
+        logger.info(f"[ENGINE-STATE] Marking transition emitted: {step_name}:{event_name}:{loop_event_id}")
+        self.emitted_loop_epochs.add(f"{step_name}:{event_name}:{loop_event_id}")
+
     def get_render_context(self, event: Event) -> dict[str, Any]:
         """Get context for Jinja2 rendering.
 
@@ -1198,6 +1212,7 @@ class StateStore:
                 await cur.execute("""
                     SELECT
                         event_id,
+                        parent_event_id,
                         node_name,
                         event_type,
                         CASE WHEN event_type IN ('step.exit', 'call.done') THEN result ELSE NULL END AS result,
@@ -1222,16 +1237,18 @@ class StateStore:
                 for row in rows:
                     if isinstance(row, dict):
                         event_id = row.get("event_id")
+                        parent_event_id = row.get("parent_event_id")
                         node_name = row.get("node_name")
                         event_type = row.get("event_type")
                         result_data = row.get("result")
                         meta_data = row.get("meta")
                     else:
                         event_id = row[0]
-                        node_name = row[1]
-                        event_type = row[2]
-                        result_data = row[3]
-                        meta_data = row[4] if len(row) > 4 else None
+                        parent_event_id = row[1]
+                        node_name = row[2]
+                        event_type = row[3]
+                        result_data = row[4]
+                        meta_data = row[5] if len(row) > 5 else None
 
                     if event_id is not None:
                         state.last_event_id = int(event_id)
@@ -1386,6 +1403,12 @@ class StateStore:
                         if node_name in loop_steps:
                             continue
 
+                    # Track emitted loop transitions to prevent duplicate restarts during replay/races
+                    if event_type in {"loop.done", "loop.failed"}:
+                        loop_event_id = event_payload.get("loop_event_id") if isinstance(event_payload, dict) else None
+                        if loop_event_id:
+                            state.add_emitted_loop_epoch(node_name, event_type, str(loop_event_id))
+
                         step_result = (
                             event_payload.get("result", event_payload)
                             if isinstance(event_payload, dict)
@@ -1425,6 +1448,14 @@ class StateStore:
                                         exc,
                                     )
                             _apply_set_mutations(state.variables, rendered_set)
+
+                    # Track emitted loop epochs during replay to prevent duplicate recovery
+                    if event_type in {"loop.done", "step.done", "step.exit"} and event_payload:
+                        loop_event_id = event_payload.get("loop_event_id")
+                        if loop_event_id:
+                            # Unique key for this specific transition batch
+                            key = f"{node_name}:{event_type}:{loop_event_id}:{parent_event_id}"
+                            state.emitted_loop_epochs.add(key)
                 
                 # Initialize loop_state for loop steps with collected iteration results
                 for step_name in loop_steps:
@@ -3434,20 +3465,6 @@ class ControlFlowEngine:
             # distributed loop key so claim slots are not stuck at old scheduled/completed
             # counts (e.g., 100/100 from the previous batch).
             #
-            def _is_loop_epoch_transition_emitted(
-                state: ExecutionState, step_name: str, event_name: str, loop_event_id: str
-            ) -> bool:
-                """Check if a specific transition event (e.g. loop.done) for a given epoch was already emitted."""
-                for event in reversed(state.event_history):
-                    if (
-                        event.step == step_name
-                        and event.name == event_name
-                        and str(event.payload.get("loop_event_id")) == str(loop_event_id)
-                    ):
-                        return True
-                return False
-
-            # EPOCH UNIQUENESS: For fresh dispatches (not continuation/retry), always create
             # a new epoch with a time-based suffix to guarantee uniqueness. This prevents
             # epoch ID collisions when state.last_event_id is the same across epoch resets
             # (e.g. during STATE-CACHE-INVALIDATE / rebuild races where try_claim_loop_done
@@ -4861,14 +4878,16 @@ class ControlFlowEngine:
                                     loop_done_event = Event(
                                         execution_id=event.execution_id,
                                         step=parent_step,
-                                        name="loop.done",
-                                        payload={
-                                            "status": "completed",
-                                            "iterations": new_count,
-                                            "result": loop_aggregation,
-                                            "loop_event_id": resolved_loop_event_id
-                                        }
-                                    )
+                                            name="loop.done",
+                                            payload={
+                                                "status": "completed",
+                                                "iterations": new_count,
+                                                "result": loop_aggregation,
+                                                "loop_event_id": resolved_loop_event_id
+                                            },
+                                            parent_event_id=state.root_event_id
+                                        )
+                                    state.add_emitted_loop_epoch(parent_step, "loop.done", str(resolved_loop_event_id))
                                     loop_done_commands = await self._evaluate_next_transitions(state, parent_step_def, loop_done_event)
                                     commands.extend(loop_done_commands)
                                     logger.info(f"[TASK_SEQ-LOOP] Generated {len(loop_done_commands)} commands from loop.done")
@@ -5204,7 +5223,9 @@ class ControlFlowEngine:
                                         "result": loop_aggregation,
                                         "loop_event_id": resolved_loop_event_id
                                     },
+                                    parent_event_id=state.root_event_id
                                 )
+                                state.add_emitted_loop_epoch(event.step, "loop.done", str(resolved_loop_event_id))
                                 loop_done_commands = await self._evaluate_next_transitions(
                                     state, step_def, loop_done_event
                                 )
@@ -5417,6 +5438,11 @@ class ControlFlowEngine:
         )
         if step_def.loop and event.name == "step.exit":
             logger.debug(f"[LOOP-DEBUG] Entering loop completion check for {event.step}")
+
+            # Extract loop event ID for recovery check
+            loop_state = state.loop_state.get(event.step)
+            resolved_loop_event_id = loop_state.get("event_id") if loop_state else None
+
             pagination_retry_pending = state.pagination_state.get(event.step, {}).get("pending_retry", False)
             if pagination_retry_pending:
                 logger.debug(f"[LOOP_DEBUG] Pagination retry pending for {event.step}; skipping completion/next iteration")
@@ -5516,6 +5542,24 @@ class ControlFlowEngine:
                                         event.step,
                                         state.get_loop_aggregation(event.step),
                                     )
+
+                                    # [CLAIM-RECOVERY] If the claim was lost (claimed in KV but event never persisted),
+                                    # proceed with the transition anyway to avoid stalling the workflow.
+                                    if (
+                                        not _is_loop_epoch_transition_emitted(
+                                            state,
+                                            event.step,
+                                            "loop.done",
+                                            _loop_event_id_for_cas,
+                                        )
+                                    ):
+                                        logger.warning(
+                                            "[LOOP-STEP.EXIT] loop.done claim held for %s (epoch=%s) but no event found in history — "
+                                            "RECOVERING transition to avoid stall",
+                                            event.step,
+                                            _loop_event_id_for_cas,
+                                        )
+                                        _skip_loop_done = False
                         except Exception as _cas_err:
                             logger.warning(
                                 "[LOOP-STEP.EXIT] try_claim_loop_done failed for %s: %s — proceeding",
@@ -5566,8 +5610,10 @@ class ControlFlowEngine:
                                     "iterations": state.loop_state[event.step]["index"],
                                     "result": loop_aggregation,  # Include aggregated result in payload
                                     "loop_event_id": resolved_loop_event_id
-                                }
+                                },
+                                parent_event_id=state.root_event_id
                             )
+                            state.add_emitted_loop_epoch(event.step, "loop.done", str(resolved_loop_event_id))
                             loop_done_commands = await self._evaluate_next_transitions(state, step_def, loop_done_event)
                             commands.extend(loop_done_commands)
 
@@ -5941,7 +5987,7 @@ class ControlFlowEngine:
         return commands
     
     async def _persist_event(self, event: Event, state: ExecutionState):
-        """Persist event to database."""
+        """Persist event to database with state tracking."""
         # Use catalog_id from state, or lookup from existing events
         catalog_id = state.catalog_id
         
