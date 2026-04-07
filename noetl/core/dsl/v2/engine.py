@@ -74,6 +74,10 @@ _STATE_CACHE_STALE_CHECK_INTERVAL_SECONDS = max(
     0.0,
     float(os.getenv("NOETL_STATE_CACHE_STALE_CHECK_INTERVAL_SECONDS", "0.5")),
 )
+_MAX_LOOP_STALL_RESTARTS = max(
+    1,
+    int(os.getenv("NOETL_MAX_LOOP_STALL_RESTARTS", "5")),
+)
 _EXECUTION_TERMINAL_EVENT_TYPES = {
     "playbook.completed",
     "playbook.failed",
@@ -582,6 +586,8 @@ class ExecutionState:
         
         # Loop state tracking
         self.loop_state: dict[str, dict[str, Any]] = {}  # step_name -> {collection, index, item, mode}
+        self.step_stall_counts: dict[str, int] = {}  # step_name -> consecutive times loop ended with zero successful slots
+
 
         # Pagination state tracking for collect+retry pattern
         self.pagination_state: dict[str, dict[str, Any]] = {}  # step_name -> {collected_data: [], iteration_count: int}
@@ -678,6 +684,27 @@ class ExecutionState:
             mode: Iteration mode (sequential or parallel)
             event_id: Event ID that initiated this loop instance (for uniqueness)
         """
+        # Evaluate previous invocation for dead-loop detection BEFORE resetting
+        if step_name in self.loop_state:
+            prev_state = self.loop_state[step_name]
+            # Check if previous loop had items but 0 successful completions
+            prev_size = len(prev_state.get("collection", []))
+            prev_completed = _loop_results_total(prev_state)
+            prev_failed = prev_state.get("failed_count", 0)
+            prev_break = prev_state.get("break_count", 0)
+            successful_slots = prev_completed - prev_failed - prev_break
+            
+            # If the loop executed fully (or partially), but yielded 0 successful slots
+            if prev_size > 0 and prev_completed > 0 and successful_slots <= 0:
+                self.step_stall_counts[step_name] = self.step_stall_counts.get(step_name, 0) + 1
+                logger.warning(
+                    "[DEAD-LOOP-TRACK] Loop %s yielded 0 successful slots on previous run. Stall count: %s",
+                    step_name,
+                    self.step_stall_counts[step_name]
+                )
+            else:
+                self.step_stall_counts[step_name] = 0
+
         self.loop_state[step_name] = {
             # Keep a local snapshot so downstream in-place list mutations outside loop_state
             # do not alter continuation/retry scheduling.
@@ -688,6 +715,7 @@ class ExecutionState:
             "completed": False,
             "results": [],  # Track iteration results for aggregation
             "failed_count": 0,  # Track failed iterations
+            "break_count": 0,  # Track skipped/break iterations
             "scheduled_count": 0,  # Track issued iterations for max_in_flight gating
             "event_id": event_id,  # Track which event initiated this loop instance
             "omitted_results_count": 0,  # Number of older results evicted from memory buffer
@@ -739,6 +767,9 @@ class ExecutionState:
         loop_state["omitted_results_count"] = omitted_count
         if failed:
             loop_state["failed_count"] += 1
+        elif isinstance(result, dict) and str(result.get("status", "")).lower() == "break":
+            loop_state["break_count"] = loop_state.get("break_count", 0) + 1
+
         if stored_result is not result:
             logger.info(
                 "[LOOP] Compacted large iteration result for %s (max=%s bytes)",
@@ -3409,6 +3440,21 @@ class ControlFlowEngine:
                     step.loop.mode,
                     event_id=loop_event_id,
                 )
+
+                if state.step_stall_counts.get(step.step, 0) >= _MAX_LOOP_STALL_RESTARTS:
+                    state.failed = True
+                    logger.error("[DEAD-LOOP] Loop step %s stalled for %s consecutive restarts. Halting execution.", step.step, _MAX_LOOP_STALL_RESTARTS)
+                    stalled_event = Event(
+                        execution_id=state.execution_id,
+                        step=step.step,
+                        name="loop.stalled",
+                        payload={
+                            "message": f"Dead-loop detected: zero successful slots across {_MAX_LOOP_STALL_RESTARTS} consecutive loop runs."
+                        }
+                    )
+                    await self._persist_event(stalled_event, state)
+                    return None
+
                 existing_loop_state = state.loop_state[step.step]
             else:
                 previous_collection = existing_loop_state.get("collection")
@@ -3441,6 +3487,21 @@ class ControlFlowEngine:
                         step.loop.mode,
                         event_id=loop_event_id,
                     )
+                    
+                    if state.step_stall_counts.get(step.step, 0) >= _MAX_LOOP_STALL_RESTARTS:
+                        state.failed = True
+                        logger.error("[DEAD-LOOP] Loop step %s stalled for %s consecutive restarts. Halting execution.", step.step, _MAX_LOOP_STALL_RESTARTS)
+                        stalled_event = Event(
+                            execution_id=state.execution_id,
+                            step=step.step,
+                            name="loop.stalled",
+                            payload={
+                                "message": f"Dead-loop detected: zero successful slots across {_MAX_LOOP_STALL_RESTARTS} consecutive loop runs."
+                            }
+                        )
+                        await self._persist_event(stalled_event, state)
+                        return None
+
                     existing_loop_state = state.loop_state[step.step]
                     force_new_loop_instance = True
 
@@ -3531,6 +3592,21 @@ class ControlFlowEngine:
                         step.loop.mode,
                         event_id=loop_event_id,
                     )
+
+                    if state.step_stall_counts.get(step.step, 0) >= _MAX_LOOP_STALL_RESTARTS:
+                        state.failed = True
+                        logger.error("[DEAD-LOOP] Loop step %s stalled for %s consecutive restarts. Halting execution.", step.step, _MAX_LOOP_STALL_RESTARTS)
+                        stalled_event = Event(
+                            execution_id=state.execution_id,
+                            step=step.step,
+                            name="loop.stalled",
+                            payload={
+                                "message": f"Dead-loop detected: zero successful slots across {_MAX_LOOP_STALL_RESTARTS} consecutive loop runs."
+                            }
+                        )
+                        await self._persist_event(stalled_event, state)
+                        return None
+
                     loop_state = state.loop_state[step.step]
                     force_new_loop_instance = True
                     loop_event_id_candidates = [loop_event_id]
