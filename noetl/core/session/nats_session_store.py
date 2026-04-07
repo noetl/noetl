@@ -17,9 +17,13 @@ Architecture:
 import asyncio
 import logging
 import os
+import re
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Optional
+
+# NATS KV valid key characters: alphanumeric, hyphen, forward slash, underscore, equals, dot
+_NATS_KEY_INVALID_RE = re.compile(r"[^-/_=.a-zA-Z0-9]")
 
 import nats
 from nats.js.api import KeyValueConfig
@@ -112,11 +116,11 @@ class NatsSessionStore:
     - Watch support for real-time invalidation
 
     Bucket: noetl_sessions
-    Key format: session:{session_token}
+    Key format: session.{session_token}
     """
 
     BUCKET_NAME = "noetl_sessions"
-    KEY_PREFIX = "session:"
+    KEY_PREFIX = "session."
 
     def __init__(
         self,
@@ -196,8 +200,13 @@ class NatsSessionStore:
             logger.info("Closed NATS K/V session store connection")
 
     def _key(self, session_token: str) -> str:
-        """Generate K/V key from session token."""
-        return f"{self.KEY_PREFIX}{session_token}"
+        """Generate K/V key from session token.
+
+        Sanitizes the token so only valid NATS K/V characters remain
+        ([-/_=.a-zA-Z0-9]).  Invalid characters are replaced with '_'.
+        """
+        safe_token = _NATS_KEY_INVALID_RE.sub("_", str(session_token))
+        return f"{self.KEY_PREFIX}{safe_token}"
 
     async def get(self, session_token: str) -> Optional[SessionData]:
         """

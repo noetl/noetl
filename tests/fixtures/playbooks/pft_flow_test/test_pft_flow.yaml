@@ -161,6 +161,10 @@ workflow:
         ALTER TABLE public.pft_test_validation_log
           ADD COLUMN IF NOT EXISTS assessments_queue_done INTEGER;
 
+        -- Reset all per-run data (truncate keeps tables small and inserts fast)
+        TRUNCATE public.pft_test_patient_work_queue;
+        TRUNCATE public.pft_test_patient_ids_work;
+
         -- Reset facilities for this run
         DELETE FROM public.pft_test_facilities;
         INSERT INTO public.pft_test_facilities (facility_mapping_id, facility_name, facility_id, active)
@@ -263,16 +267,7 @@ workflow:
             ('vital_signs'),
             ('demographics')
         ) AS t(data_type)
-        WHERE w.facility_mapping_id = {{ facility_mapping_id | int }}
-        ON CONFLICT (execution_id, facility_mapping_id, data_type, patient_id) DO UPDATE SET
-          status = EXCLUDED.status,
-          attempt_count = 0,
-          worker_id = NULL,
-          claimed_at = NULL,
-          done_at = CASE WHEN EXCLUDED.status = 'done' THEN NOW() ELSE NULL END,
-          next_retry_at = NULL,
-          last_error = NULL,
-          updated_at = NOW();
+        WHERE w.facility_mapping_id = {{ facility_mapping_id | int }};
 
         SELECT COUNT(*) AS patient_count
         FROM public.pft_test_patient_ids_work
@@ -296,6 +291,15 @@ workflow:
       kind: postgres
       auth: pg_k8s
       command: |
+        WITH reclaim_stale AS (
+          UPDATE public.pft_test_patient_work_queue
+          SET status = 'pending', claimed_at = NULL, worker_id = NULL, updated_at = NOW()
+          WHERE execution_id = '{{ execution_id }}'
+            AND data_type = 'assessments'
+            AND status = 'claimed'
+            AND claimed_at < NOW() - INTERVAL '5 minutes'
+          RETURNING patient_id
+        )
         SELECT COUNT(*) AS remaining_count
         FROM public.pft_test_patient_work_queue q
         WHERE q.execution_id = '{{ execution_id }}'
@@ -485,6 +489,15 @@ workflow:
       kind: postgres
       auth: pg_k8s
       command: |
+        WITH reclaim_stale AS (
+          UPDATE public.pft_test_patient_work_queue
+          SET status = 'pending', claimed_at = NULL, worker_id = NULL, updated_at = NOW()
+          WHERE execution_id = '{{ execution_id }}'
+            AND data_type = 'conditions'
+            AND status = 'claimed'
+            AND claimed_at < NOW() - INTERVAL '5 minutes'
+          RETURNING patient_id
+        )
         SELECT COUNT(*) AS remaining_count
         FROM public.pft_test_patient_work_queue q
         WHERE q.execution_id = '{{ execution_id }}'
@@ -672,6 +685,15 @@ workflow:
       kind: postgres
       auth: pg_k8s
       command: |
+        WITH reclaim_stale AS (
+          UPDATE public.pft_test_patient_work_queue
+          SET status = 'pending', claimed_at = NULL, worker_id = NULL, updated_at = NOW()
+          WHERE execution_id = '{{ execution_id }}'
+            AND data_type = 'medications'
+            AND status = 'claimed'
+            AND claimed_at < NOW() - INTERVAL '5 minutes'
+          RETURNING patient_id
+        )
         SELECT COUNT(*) AS remaining_count
         FROM public.pft_test_patient_work_queue q
         WHERE q.execution_id = '{{ execution_id }}'
@@ -859,6 +881,15 @@ workflow:
       kind: postgres
       auth: pg_k8s
       command: |
+        WITH reclaim_stale AS (
+          UPDATE public.pft_test_patient_work_queue
+          SET status = 'pending', claimed_at = NULL, worker_id = NULL, updated_at = NOW()
+          WHERE execution_id = '{{ execution_id }}'
+            AND data_type = 'vital_signs'
+            AND status = 'claimed'
+            AND claimed_at < NOW() - INTERVAL '5 minutes'
+          RETURNING patient_id
+        )
         SELECT COUNT(*) AS remaining_count
         FROM public.pft_test_patient_work_queue q
         WHERE q.execution_id = '{{ execution_id }}'
@@ -1048,6 +1079,15 @@ workflow:
       kind: postgres
       auth: pg_k8s
       command: |
+        WITH reclaim_stale AS (
+          UPDATE public.pft_test_patient_work_queue
+          SET status = 'pending', claimed_at = NULL, worker_id = NULL, updated_at = NOW()
+          WHERE execution_id = '{{ execution_id }}'
+            AND data_type = 'demographics'
+            AND status = 'claimed'
+            AND claimed_at < NOW() - INTERVAL '5 minutes'
+          RETURNING patient_id
+        )
         SELECT COUNT(*) AS remaining_count
         FROM public.pft_test_patient_work_queue q
         WHERE q.execution_id = '{{ execution_id }}'
@@ -1157,31 +1197,39 @@ workflow:
         kind: postgres
         auth: pg_k8s
         command: |
-          -- INJECTED BUG: Generate syntax error for patient 15 to test infinite loop (silent failure fallback)
+          -- INJECTED BUG: Generate syntax error for patient 15 to test silent-failure fallback
           {{ "SYNTAX_ERROR_INJECTED_FOR_TEST {" if iter.patient_id | int == 15 else "" }}
-          WITH save_row AS (
-            INSERT INTO public.pft_test_patient_demographics (pcc_patient_id, facility_mapping_id, payload)
-            SELECT
-              {{ iter.patient_id }},
-              {{ iter.facility_mapping_id | int }},
-              '{{ iter.fetch_data | tojson | replace("'", "''") }}'::jsonb
-            WHERE {{ 'false' if iter.skip_save | string | lower == 'true' else 'true' }}
-            ON CONFLICT (pcc_patient_id, facility_mapping_id) DO UPDATE SET
-              payload = EXCLUDED.payload,
-              fetched_at = NOW()
-          ),
-          mark_done AS (
-            UPDATE public.pft_test_patient_work_queue q
-            SET status = 'done',
-                done_at = NOW(),
-                worker_id = NULL,
-                updated_at = NOW()
-            WHERE q.execution_id = '{{ execution_id }}'
-              AND q.facility_mapping_id = {{ iter.facility_mapping_id | int }}
-              AND q.data_type = 'demographics'
-              AND q.patient_id = {{ iter.patient_id | int }}
-          )
-          SELECT 1 AS ok;
+          INSERT INTO public.pft_test_patient_demographics (pcc_patient_id, facility_mapping_id, payload)
+          SELECT
+            {{ iter.patient_id }},
+            {{ iter.facility_mapping_id | int }},
+            '{{ iter.fetch_data | tojson | replace("'", "''") }}'::jsonb
+          WHERE {{ 'false' if iter.skip_save | string | lower == 'true' else 'true' }}
+          ON CONFLICT (pcc_patient_id, facility_mapping_id) DO UPDATE SET
+            payload = EXCLUDED.payload,
+            fetched_at = NOW();
+        spec:
+          policy:
+            rules:
+              - when: '{{ output.status == "error" }}'
+                then:
+                  do: continue
+              - else:
+                  then:
+                    do: continue
+      - name: mark_done
+        kind: postgres
+        auth: pg_k8s
+        command: |
+          UPDATE public.pft_test_patient_work_queue q
+          SET status = 'done',
+              done_at = NOW(),
+              worker_id = NULL,
+              updated_at = NOW()
+          WHERE q.execution_id = '{{ execution_id }}'
+            AND q.facility_mapping_id = {{ iter.facility_mapping_id | int }}
+            AND q.data_type = 'demographics'
+            AND q.patient_id = {{ iter.patient_id | int }};
         spec:
           policy:
             rules:

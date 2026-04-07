@@ -1459,6 +1459,34 @@ class StateStore:
                             state.loop_state[step_name]["event_id"] = loop_event_id
                         logger.debug(f"[STATE-LOAD] Updated loop_state for {step_name}: index={iteration_count}")
                 
+                # Restore loop completion status from NATS for loop steps that
+                # completed their loop before this state rebuild. Without this,
+                # `completed_steps` is empty for loop steps after rebuild, causing the
+                # dedup guard in `_evaluate_next_transitions` to block loopback
+                # re-dispatch (e.g. fetch_medications re-invoked after re-check step).
+                try:
+                    nats_cache = await get_nats_cache()
+                    for step_name in loop_steps:
+                        event_id = loop_event_ids.get(step_name)
+                        if event_id:
+                            nats_loop = await nats_cache.get_loop_state(
+                                execution_id, step_name, event_id
+                            )
+                            if nats_loop and nats_loop.get("loop_done_claimed", False):
+                                state.loop_state[step_name]["completed"] = True
+                                state.loop_state[step_name]["aggregation_finalized"] = True
+                                state.completed_steps.add(step_name)
+                                logger.debug(
+                                    "[STATE-LOAD] Restored loop completion from NATS for %s "
+                                    "(loop_done_claimed=True, event_id=%s)",
+                                    step_name,
+                                    event_id,
+                                )
+                except Exception as _nats_exc:
+                    logger.debug(
+                        "[STATE-LOAD] NATS loop-completion restore skipped: %s", _nats_exc
+                    )
+
                 # Log reconstructed state for debugging
                 if state.issued_steps:
                     logger.debug(
@@ -1963,6 +1991,31 @@ class ControlFlowEngine:
                 restored_event_id,
             )
 
+            # After a STATE-CACHE-STALE rebuild mid-epoch, load_state accumulates results
+            # from ALL prior epochs in loop_state["results"] + omitted_results_count.
+            # This inflates get_loop_completed_count() to a cross-epoch total (e.g. 806 for
+            # a 10×100 loop), causing previous_exhausted=True in _create_command_for_step
+            # even though only ~5/100 iterations of the current epoch have completed.
+            # Fix: when the cross-epoch total exceeds one epoch's size, reset results/counts
+            # and index to the snapshot's epoch-relative values so downstream exhaustion
+            # checks operate on the current epoch only.
+            if completed_count > snapshot_epoch_size:
+                epoch_relative_count = max(0, snapshot_completed_count)
+                epoch_relative_scheduled = max(epoch_relative_count, snapshot_scheduled_count)
+                loop_state["results"] = []
+                loop_state["omitted_results_count"] = epoch_relative_count
+                loop_state["index"] = epoch_relative_count
+                loop_state["scheduled_count"] = epoch_relative_scheduled
+                logger.warning(
+                    "[LOOP-CACHE-RESTORE] Reset loop counts to epoch-relative for %s "
+                    "(cross_epoch_total=%s epoch_size=%s epoch_relative=%s epoch_scheduled=%s)",
+                    step_name,
+                    completed_count,
+                    snapshot_epoch_size,
+                    epoch_relative_count,
+                    epoch_relative_scheduled,
+                )
+
         return restored_count
 
     async def _count_step_events(
@@ -2455,9 +2508,20 @@ class ControlFlowEngine:
             # DEDUPLICATION: Skip if command for this step is already pending.
             # A matched-but-deduplicated arc is NOT a dead-end — the command is
             # already in flight from a concurrent event processor.
+            # Exception: loop steps whose previous epoch is done (loop_done_claimed)
+            # must be allowed to re-dispatch for loopback patterns. After a state
+            # rebuild completed_steps is empty for loop steps, but is_loop_done()
+            # returns True when NATS loop_done_claimed was restored during rebuild.
             if target_step in state.issued_steps and target_step not in state.completed_steps:
-                logger.warning(f"[NEXT-EVAL] Skipping duplicate command for step '{target_step}' - already in issued_steps")
-                continue
+                if state.is_loop_done(target_step):
+                    logger.debug(
+                        "[NEXT-EVAL] Allowing re-dispatch of loop step '%s' — "
+                        "previous epoch is done (loopback pattern)",
+                        target_step,
+                    )
+                else:
+                    logger.warning(f"[NEXT-EVAL] Skipping duplicate command for step '{target_step}' - already in issued_steps")
+                    continue
 
             # Apply arc-level set mutations to state before issuing the command.
             # Canonical DSL v2: arc.set writes to ctx/iter/step scopes.
@@ -3529,10 +3593,21 @@ class ControlFlowEngine:
 
             # Ensure distributed loop metadata exists before claiming next slot.
             if not nats_loop_state:
-                scheduled_seed = max(
-                    int(loop_state.get("scheduled_count", completed_count) or completed_count),
-                    completed_count,
-                )
+                # New epoch: discard cross-epoch accumulated counts so the fresh
+                # NATS entry starts from 0 instead of being poisoned by prior
+                # facility runs (fixes stale-count / no-slot bug for reused loops).
+                if force_new_loop_instance:
+                    completed_count = 0
+                    # Also reset scheduled_count: the in-memory loop_state still carries
+                    # the previous epoch's scheduled_count (e.g. 100) which would poison
+                    # the new NATS entry, causing claim_next_loop_index to return None
+                    # immediately (scheduled >= collection_size).
+                    scheduled_seed = 0
+                else:
+                    scheduled_seed = max(
+                        int(loop_state.get("scheduled_count", completed_count) or completed_count),
+                        completed_count,
+                    )
                 await nats_cache.set_loop_state(
                     str(state.execution_id),
                     step.step,
@@ -4262,6 +4337,44 @@ class ControlFlowEngine:
             # set templates like {{ fetch_with_limit.collected_data }} need the step result
             # to already be in state.step_results when get_render_context() is called.
             _is_loop_step = parent_step_def and parent_step_def.loop and parent_step in state.loop_state
+
+            # Guard: if the parent is a loop step but loop_state is missing, this pod
+            # never initialised the loop (another pod started it while this pod had older
+            # cached state).  Seed a minimal loop_state entry so the call.done is processed
+            # as a loop iteration — otherwise the engine falls into the "not in loop" branch,
+            # skips the NATS completion increment, and the loop stalls permanently.
+            if parent_step_def and parent_step_def.loop and not _is_loop_step:
+                logger.warning(
+                    "[TASK_SEQ] loop_state missing for loop step '%s' (execution=%s) — "
+                    "initialising from step definition to handle late call.done",
+                    parent_step,
+                    state.execution_id,
+                )
+                loop_iterator = (
+                    parent_step_def.loop.iterator
+                    if parent_step_def.loop.iterator
+                    else "item"
+                )
+                loop_mode = (
+                    parent_step_def.loop.mode
+                    if parent_step_def.loop.mode
+                    else "sequential"
+                )
+                state.loop_state[parent_step] = {
+                    "collection": [],
+                    "iterator": loop_iterator,
+                    "index": 0,
+                    "mode": loop_mode,
+                    "completed": False,
+                    "results": [],
+                    "failed_count": 0,
+                    "scheduled_count": 0,
+                    "aggregation_finalized": False,
+                    "event_id": payload_loop_event_id,
+                    "omitted_results_count": 0,
+                }
+                _is_loop_step = True
+
             if not _is_loop_step:
                 state.mark_step_completed(parent_step, _promoted_data)
                 logger.debug("[TASK_SEQ] Pre-marked parent step '%s' completed with promoted result (before set)", parent_step)
@@ -4530,12 +4643,26 @@ class ControlFlowEngine:
                                 logger.warning(
                                     "[TASK_SEQ-LOOP] Fallback count %s >= size %s but NATS increment failed — "
                                     "skipping loop.done claim for %s (execution=%s); "
-                                    "next reliable call.done will claim it",
+                                    "issuing continuation commands to avoid stall (cross-epoch inflation possible)",
                                     new_count,
                                     collection_size,
                                     parent_step,
                                     state.execution_id,
                                 )
+                                # When NATS is unreliable the fallback (_count_step_events) is cross-epoch
+                                # inflated: it counts ALL call.done events across every prior epoch, not just
+                                # the current one.  Treating that inflated total as a completion signal causes
+                                # a silent deadlock: the loop-done path is skipped (guard below) AND the
+                                # else-branch that issues more commands is never reached.  Instead, try to
+                                # continue issuing commands; NATS claim_next_loop_index will gate on actual
+                                # in-flight state and the DB work-queue's FOR UPDATE SKIP LOCKED handles the
+                                # case where no patients remain.
+                                next_cmds = await self._issue_loop_commands(
+                                    state,
+                                    parent_step_def,
+                                    {"__loop_continue": True},
+                                )
+                                commands.extend(next_cmds)
                             else:
                                 # Guard: atomically claim the right to fire loop.done for this epoch.
                                 # Prevents duplicate loopback dispatches when multiple concurrent
@@ -4554,6 +4681,20 @@ class ControlFlowEngine:
                                             state.execution_id,
                                         )
                                         _skip_loop_done = True
+                                        # Still update local state so the dedup guard in
+                                        # _evaluate_next_transitions recognises the loop as
+                                        # completed when a subsequent step routes back to it
+                                        # (e.g. loopback pattern: fetch_assessments → load_patients
+                                        # → fetch_assessments epoch 2).  Without this the pod that
+                                        # did NOT fire loop.done has completed=False in its in-memory
+                                        # loop_state and completed_steps, causing it to block the
+                                        # re-dispatch via the issued_steps dedup guard.
+                                        loop_state["completed"] = True
+                                        loop_state["aggregation_finalized"] = True
+                                        state.mark_step_completed(
+                                            parent_step,
+                                            state.get_loop_aggregation(parent_step),
+                                        )
                                 except Exception as _claim_err:
                                     logger.warning(
                                         "[TASK_SEQ-LOOP] try_claim_loop_done failed for %s: %s — proceeding with aggregation_finalized guard",
@@ -4853,6 +4994,16 @@ class ControlFlowEngine:
                                         state.execution_id,
                                     )
                                     _skip_loop_done = True
+                                    # Update local state so subsequent routing from a
+                                    # loopback step (e.g. load_patients → fetch_assessments
+                                    # epoch 2) is not blocked by the issued_steps dedup guard
+                                    # on this pod, which did not fire loop.done itself.
+                                    loop_state["completed"] = True
+                                    loop_state["aggregation_finalized"] = True
+                                    state.mark_step_completed(
+                                        event.step,
+                                        state.get_loop_aggregation(event.step),
+                                    )
                             except Exception as _claim_err:
                                 logger.warning(
                                     "[LOOP-CALL.DONE] try_claim_loop_done failed for %s: %s — proceeding with aggregation_finalized guard",
@@ -5181,6 +5332,15 @@ class ControlFlowEngine:
                                     state.execution_id,
                                 )
                                 _skip_loop_done = True
+                                # Update local state so the dedup guard does not block
+                                # re-dispatch of this loop step in loopback patterns.
+                                if loop_state:
+                                    loop_state["completed"] = True
+                                    loop_state["aggregation_finalized"] = True
+                                    state.mark_step_completed(
+                                        event.step,
+                                        state.get_loop_aggregation(event.step),
+                                    )
                         except Exception as _cas_err:
                             logger.warning(
                                 "[LOOP-STEP.EXIT] try_claim_loop_done failed for %s: %s — proceeding",

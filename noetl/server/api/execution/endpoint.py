@@ -190,36 +190,28 @@ async def _fetch_pending_command_counts_for_executions(
 
     await cursor.execute(
         """
-        WITH target_executions AS (
-            SELECT unnest(%s::text[]) AS execution_id
-        ),
-        issued AS (
+        WITH filtered_events AS (
             SELECT
-                te.execution_id,
-                e.meta->>'command_id' AS command_id
-            FROM target_executions te
-            JOIN noetl.event e
-              ON e.execution_id::text = te.execution_id
-            WHERE e.event_type = 'command.issued'
-              AND e.meta ? 'command_id'
+                execution_id,
+                event_type,
+                meta->>'command_id' AS command_id
+            FROM noetl.event
+            WHERE execution_id::text IN (SELECT unnest(%s::text[]))
+              AND meta ? 'command_id'
+              AND event_type IN ('command.issued', 'command.completed', 'command.failed', 'command.cancelled')
         ),
-        terminal AS (
+        command_status AS (
             SELECT
-                te.execution_id,
-                e.meta->>'command_id' AS command_id
-            FROM target_executions te
-            JOIN noetl.event e
-              ON e.execution_id::text = te.execution_id
-            WHERE e.event_type IN ('command.completed', 'command.failed', 'command.cancelled')
-              AND e.meta ? 'command_id'
-        ),
-        pending AS (
-            SELECT execution_id, command_id FROM issued
-            EXCEPT
-            SELECT execution_id, command_id FROM terminal
+                execution_id,
+                command_id,
+                MAX(CASE WHEN event_type = 'command.issued' THEN 1 ELSE 0 END) AS is_issued,
+                MAX(CASE WHEN event_type IN ('command.completed', 'command.failed', 'command.cancelled') THEN 1 ELSE 0 END) AS is_terminal
+            FROM filtered_events
+            GROUP BY execution_id, command_id
         )
         SELECT execution_id, COUNT(*) AS pending_count
-        FROM pending
+        FROM command_status
+        WHERE is_issued = 1 AND is_terminal = 0
         GROUP BY execution_id
         """,
         (execution_ids,),
