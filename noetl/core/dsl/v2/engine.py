@@ -767,8 +767,11 @@ class ExecutionState:
         loop_state["omitted_results_count"] = omitted_count
         if failed:
             loop_state["failed_count"] += 1
-        elif isinstance(result, dict) and str(result.get("status", "")).lower() == "break":
-            loop_state["break_count"] = loop_state.get("break_count", 0) + 1
+        elif isinstance(result, dict):
+            status = str(result.get("status", "")).lower()
+            is_policy_break = result.get("policy_break") is True
+            if status == "break" or is_policy_break:
+                loop_state["break_count"] = loop_state.get("break_count", 0) + 1
 
         if stored_result is not result:
             logger.info(
@@ -3647,6 +3650,8 @@ class ControlFlowEngine:
                     nats_loop_state["collection_size"] = len(collection)
                     nats_loop_state["completed_count"] = completed_count
                     nats_loop_state["scheduled_count"] = repaired_scheduled
+                    nats_loop_state["failed_count"] = existing_loop_state.get("failed_count", 0) if existing_loop_state else 0
+                    nats_loop_state["break_count"] = existing_loop_state.get("break_count", 0) if existing_loop_state else 0
                     await nats_cache.set_loop_state(
                         str(state.execution_id),
                         step.step,
