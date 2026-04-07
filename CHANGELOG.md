@@ -2,6 +2,19 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.15.2](https://github.com/noetl/noetl/compare/v2.15.1...v2.15.2) (2026-04-07)
+
+### Bug Fixes
+
+* **engine:** handle missing loop_state and cross-epoch NATS stall ([2d45477](https://github.com/noetl/noetl/commit/2d45477b8d6d62aa65466db3446ad4b81075d968))
+* **loop:** reset completed_count to 0 for new epoch when force_new_loop_instance=True ([4226957](https://github.com/noetl/noetl/commit/42269575ac14b3fc561913881fb9bd7dbdf11f83))
+* **loop:** reset epoch-relative counts after LOOP-CACHE-RESTORE for multi-pass loops ([fb61287](https://github.com/noetl/noetl/commit/fb61287f7962544c08ac6b21078e10807c9c3724))
+* **loop:** restore loop completion from NATS on state rebuild to unblock loopback re-dispatch ([3e29e29](https://github.com/noetl/noetl/commit/3e29e295c1ca967df3a0bc6198faaaddd4758b73))
+* **nats:** comprehensive NATS KV key sanitization ([6277039](https://github.com/noetl/noetl/commit/6277039f63ee0db3e6c31465e9edf3a8c70d5f78))
+* **nats:** sanitize colons in execution_id for NATS KV keys ([5b58ca3](https://github.com/noetl/noetl/commit/5b58ca3881af49fd9ea66b96f2c832737bf60ef7))
+* **playbook:** reset stale claimed rows in load_patients_for_* steps ([1f74033](https://github.com/noetl/noetl/commit/1f74033b0ae7007b2f60e76c8d4aa46a6eba0a51))
+* **playbook:** split demographics save/mark_done to survive injected SQL error ([51e5469](https://github.com/noetl/noetl/commit/51e54691d4d28f77964c633e0abd40df883f6563))
+
 ## [2.15.1](https://github.com/noetl/noetl/compare/v2.15.0...v2.15.1) (2026-04-04)
 
 ### Bug Fixes
