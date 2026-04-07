@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.16.0](https://github.com/noetl/noetl/compare/v2.15.2...v2.16.0) (2026-04-07)
+
+### Features
+
+* **engine:** add dead-loop detection for zero-success loop executions ([8af1a38](https://github.com/noetl/noetl/commit/8af1a3865fb5c5b32eb50cc6403451c8170ae4e5))
+
 ## [2.15.2](https://github.com/noetl/noetl/compare/v2.15.1...v2.15.2) (2026-04-07)
 
 ### Bug Fixes
