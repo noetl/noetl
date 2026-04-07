@@ -3430,9 +3430,16 @@ class ControlFlowEngine:
             # invocation is already finalized, reset counters/results and use a fresh
             # distributed loop key so claim slots are not stuck at old scheduled/completed
             # counts (e.g., 100/100 from the previous batch).
+            #
+            # EPOCH UNIQUENESS: For fresh dispatches (not continuation/retry), always create
+            # a new epoch with a time-based suffix to guarantee uniqueness. This prevents
+            # epoch ID collisions when state.last_event_id is the same across epoch resets
+            # (e.g. during STATE-CACHE-INVALIDATE / rebuild races where try_claim_loop_done
+            # has not yet written loop_done_claimed=True to NATS).
             force_new_loop_instance = False
+            _is_fresh_dispatch = not loop_continue_requested and not loop_retry_requested
             if existing_loop_state is None:
-                loop_event_id = f"loop_{state.last_event_id or time.time_ns()}"
+                loop_event_id = f"loop_{state.last_event_id or time.time_ns()}_{time.time_ns()}"
                 state.init_loop(
                     step.step,
                     collection,
@@ -3472,14 +3479,16 @@ class ControlFlowEngine:
                     and previous_scheduled >= previous_size
                 )
 
-                should_reset_existing_loop = (
-                    not loop_continue_requested
-                    and not loop_retry_requested
-                    and (previous_finalized or previous_exhausted)
-                )
+                # EPOCH UNIQUENESS: On fresh dispatch for a newly routed loop, reset the 
+                # loop state (which generates a new loop_event_id) only if the previous 
+                # run was cleanly finalized or exhausted. This ensures race conditions
+                # during STATE-CACHE-INVALIDATE do not accidentally use a stale epoch,
+                # but ALSO prevents resetting the loop 5 times concurrently when issuing
+                # multiple commands for mode=parallel max_in_flight=5.
+                should_reset_existing_loop = _is_fresh_dispatch and (previous_finalized or previous_exhausted)
 
                 if should_reset_existing_loop:
-                    loop_event_id = f"loop_{state.last_event_id or time.time_ns()}"
+                    loop_event_id = f"loop_{state.last_event_id or time.time_ns()}_{time.time_ns()}"
                     state.init_loop(
                         step.step,
                         collection,
@@ -4172,6 +4181,7 @@ class ControlFlowEngine:
                 {
                     "loop_step": step.step,
                     "loop_event_id": loop_event_id_for_metadata,
+                    "__loop_epoch_id": loop_event_id_for_metadata,
                     "loop_iteration_index": claimed_index,
                 }
             )
@@ -4491,14 +4501,33 @@ class ControlFlowEngine:
                     # Sync completed count to NATS K/V
                     try:
                         nats_cache = await get_nats_cache()
+                        # Prefer the epoch ID baked into the command at dispatch time.
+                        # The worker propagates __loop_epoch_id (or loop_event_id) back in
+                        # the call.done payload, so we can pin the epoch without going
+                        # through _build_loop_event_id_candidates which may return stale
+                        # candidates (e.g. step_event_ids from a previous epoch after a
+                        # STATE-CACHE-INVALIDATE).
+                        _pinned_epoch_id = (
+                            str(normalized_payload.get("__loop_epoch_id"))
+                            if isinstance(normalized_payload, dict) and normalized_payload.get("__loop_epoch_id")
+                            else (str(payload_loop_event_id) if payload_loop_event_id else None)
+                        )
                         event_id_candidates = []
-                        if payload_loop_event_id:
-                            event_id_candidates.append(str(payload_loop_event_id))
-                        for candidate in self._build_loop_event_id_candidates(
-                            state, parent_step, loop_state
-                        ):
-                            if candidate not in event_id_candidates:
-                                event_id_candidates.append(candidate)
+                        if _pinned_epoch_id:
+                            # Epoch is pinned from the command: skip stale candidate resolution.
+                            event_id_candidates.append(_pinned_epoch_id)
+                            # Add exec fallback only (not step_event_ids which may be stale).
+                            exec_fallback = f"exec_{state.execution_id}"
+                            if exec_fallback not in event_id_candidates:
+                                event_id_candidates.append(exec_fallback)
+                        else:
+                            if payload_loop_event_id:
+                                event_id_candidates.append(str(payload_loop_event_id))
+                            for candidate in self._build_loop_event_id_candidates(
+                                state, parent_step, loop_state
+                            ):
+                                if candidate not in event_id_candidates:
+                                    event_id_candidates.append(candidate)
                         resolved_loop_event_id = (
                             event_id_candidates[0]
                             if event_id_candidates
@@ -4578,11 +4607,19 @@ class ControlFlowEngine:
 
                         nats_loop_state = None
                         if collection_size == 0:
-                            lookup_event_ids = [resolved_loop_event_id] + [
-                                candidate
-                                for candidate in event_id_candidates
-                                if candidate != resolved_loop_event_id
-                            ]
+                            # When the epoch is pinned (command stamped __loop_epoch_id /
+                            # loop_event_id), do NOT fall through to stale candidates that
+                            # could override resolved_loop_event_id with an old epoch key
+                            # still present in NATS (causing try_claim_loop_done to find an
+                            # already-claimed epoch and silently skip loop.done dispatch).
+                            if _pinned_epoch_id:
+                                lookup_event_ids = [resolved_loop_event_id]
+                            else:
+                                lookup_event_ids = [resolved_loop_event_id] + [
+                                    candidate
+                                    for candidate in event_id_candidates
+                                    if candidate != resolved_loop_event_id
+                                ]
                             for candidate_event_id in lookup_event_ids:
                                 candidate_state = await nats_cache.get_loop_state(
                                     str(state.execution_id),
@@ -4984,13 +5021,29 @@ class ControlFlowEngine:
                         if isinstance(event.payload, dict)
                         else None
                     )
-                    loop_event_id = payload_loop_event_id or loop_state.get("event_id")
+                    # Prefer the epoch ID baked into the command at dispatch time
+                    # (__loop_epoch_id) over candidates that may include stale step_event_ids
+                    # from a previous epoch after STATE-CACHE-INVALIDATE.
+                    _pinned_epoch_id = (
+                        str(event.payload.get("__loop_epoch_id"))
+                        if isinstance(event.payload, dict) and event.payload.get("__loop_epoch_id")
+                        else (str(payload_loop_event_id) if payload_loop_event_id else None)
+                    )
+                    loop_event_id = _pinned_epoch_id or loop_state.get("event_id")
                     event_id_candidates = []
                     if loop_event_id:
                         event_id_candidates.append(str(loop_event_id))
-                    for candidate in self._build_loop_event_id_candidates(state, event.step, loop_state):
-                        if candidate not in event_id_candidates:
-                            event_id_candidates.append(candidate)
+                    if not _pinned_epoch_id:
+                        # No pinned epoch: fall back to full candidate resolution which
+                        # may include stale step_event_ids (kept for backward compatibility).
+                        for candidate in self._build_loop_event_id_candidates(state, event.step, loop_state):
+                            if candidate not in event_id_candidates:
+                                event_id_candidates.append(candidate)
+                    else:
+                        # Epoch is pinned: only add exec fallback, not stale step_event_ids.
+                        exec_fallback = f"exec_{state.execution_id}"
+                        if exec_fallback not in event_id_candidates:
+                            event_id_candidates.append(exec_fallback)
                     resolved_loop_event_id = (
                         event_id_candidates[0] if event_id_candidates else f"exec_{state.execution_id}"
                     )
