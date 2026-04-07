@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.16.2](https://github.com/noetl/noetl/compare/v2.16.1...v2.16.2) (2026-04-07)
+
+### Bug Fixes
+
+* status endpoint parity and engine loop.done state replay ([c002af0](https://github.com/noetl/noetl/commit/c002af0215985237e27d5381a4a07f01f830361b))
+
 ## [2.16.1](https://github.com/noetl/noetl/compare/v2.16.0...v2.16.1) (2026-04-07)
 
 ### Bug Fixes
