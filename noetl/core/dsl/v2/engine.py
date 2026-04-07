@@ -1412,12 +1412,6 @@ class StateStore:
                         if node_name in loop_steps:
                             continue
 
-                    # Track emitted loop transitions to prevent duplicate restarts during replay/races
-                    if event_type in {"loop.done", "loop.failed"}:
-                        loop_event_id = event_payload.get("loop_event_id") if isinstance(event_payload, dict) else None
-                        if loop_event_id:
-                            state.add_emitted_loop_epoch(node_name, event_type, str(loop_event_id))
-
                         step_result = (
                             event_payload.get("result", event_payload)
                             if isinstance(event_payload, dict)
@@ -1457,6 +1451,12 @@ class StateStore:
                                         exc,
                                     )
                             _apply_set_mutations(state.variables, rendered_set)
+
+                    # Track emitted loop transitions to prevent duplicate restarts during replay/races
+                    if event_type in {"loop.done", "loop.failed"} and event_payload:
+                        loop_event_id = event_payload.get("loop_event_id") if isinstance(event_payload, dict) else None
+                        if loop_event_id:
+                            state.add_emitted_loop_epoch(node_name, event_type, str(loop_event_id))
 
                     # Track emitted loop epochs during replay to prevent duplicate recovery
                     if event_type in {"loop.done", "step.done", "step.exit"} and event_payload:
