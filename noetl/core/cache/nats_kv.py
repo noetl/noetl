@@ -16,6 +16,7 @@ event table and retrieved via the aggregate service when needed.
 import json
 import asyncio
 import random
+import re
 from typing import Any, Optional
 from datetime import datetime, timezone
 import nats
@@ -24,6 +25,9 @@ from nats.js.kv import KeyValue
 from nats.js.errors import KeyNotFoundError
 from noetl.core.logger import setup_logger
 from noetl.core.config import get_settings
+
+# NATS KV valid key characters: alphanumeric, hyphen, forward slash, underscore, equals, dot
+_NATS_KEY_INVALID_RE = re.compile(r"[^-/_=.a-zA-Z0-9]")
 
 logger = setup_logger(__name__, include_location=True)
 settings = get_settings()
@@ -94,14 +98,17 @@ class NATSKVCache:
     
     def _make_key(self, execution_id: str, key_type: str) -> str:
         """Create namespaced key for execution state.
-        
-        NATS K/V keys must use dots as separators, not colons.
-        Format: exec.{execution_id}.{key_type}
+
+        NATS K/V valid characters: [-/_=.a-zA-Z0-9].  Keys must not start or
+        end with '.'.  Format: exec.{execution_id}.{key_type}
         """
-        # Replace colons with dots in execution_id and key_type
-        # (NATS KV keys must be alphanumeric plus '.', '_', '-')
-        safe_exec_id = str(execution_id).replace(":", ".")
-        safe_key_type = str(key_type).replace(":", ".")
+        # Replace colons with dots (primary separator conversion), then
+        # replace any remaining invalid character with '_'.
+        safe_exec_id = _NATS_KEY_INVALID_RE.sub("_", str(execution_id).replace(":", "."))
+        safe_key_type = _NATS_KEY_INVALID_RE.sub("_", str(key_type).replace(":", "."))
+        # Strip leading/trailing dots so the composite key is always valid.
+        safe_exec_id = safe_exec_id.strip(".")
+        safe_key_type = safe_key_type.strip(".")
         return f"exec.{safe_exec_id}.{safe_key_type}"
     
     async def get_loop_state(self, execution_id: str, step_name: str, event_id: Optional[str] = None) -> Optional[dict[str, Any]]:
@@ -508,9 +515,11 @@ class NATSKVCache:
         """Delete all state for an execution (cleanup)."""
         if not self._kv:
             await self.connect()
-        
-        # Delete all keys for this execution (using dot separator)
-        prefix = f"exec.{execution_id}."
+
+        # Delete all keys for this execution (using dot separator).
+        # Sanitize execution_id the same way _make_key does so the prefix matches.
+        safe_exec_id = _NATS_KEY_INVALID_RE.sub("_", str(execution_id).replace(":", ".")).strip(".")
+        prefix = f"exec.{safe_exec_id}."
         try:
             keys = await self._kv.keys()
             for key in keys:
