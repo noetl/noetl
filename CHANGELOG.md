@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.16.5](https://github.com/noetl/noetl/compare/v2.16.4...v2.16.5) (2026-04-08)
+
+### Bug Fixes
+
+* **engine:** preserve loop event payloads in database persistence ([d09756d](https://github.com/noetl/noetl/commit/d09756dce40315068bb9a13bba58fb79f1f68ab9))
+
 ## [2.16.4](https://github.com/noetl/noetl/compare/v2.16.3...v2.16.4) (2026-04-08)
 
 ### Bug Fixes
