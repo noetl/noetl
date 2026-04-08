@@ -29,15 +29,6 @@ from noetl.server.auto_resume import (
     resume_interrupted_executions,
     get_auto_resume_metrics_snapshot,
 )
-from noetl.server.command_reaper import (
-    reap_orphaned_commands_once,
-    get_reaper_interval_seconds,
-)
-from noetl.server.stuck_execution_reaper import (
-    cleanup_inactive_executions_once,
-    is_stuck_execution_reaper_enabled,
-    get_stuck_execution_reaper_interval_seconds,
-)
 from noetl.server.runtime_leases import RuntimeLease, load_control_lease_seconds
 
 logger = setup_logger(__name__, include_location=True)
@@ -67,11 +58,8 @@ def create_app() -> FastAPI:
     return _create_app(settings=settings)
 
 
-def _create_app(settings: Settings, enable_ui: Optional[bool] = None) -> FastAPI:
+def _create_app(settings: Settings) -> FastAPI:
     from contextlib import asynccontextmanager
-    if enable_ui is None:
-        enable_ui = settings.enable_ui
-
     # Simple in-process metrics without external deps
     _process_start_time = time.time()
     _request_count_key = "noetl_request_total"
@@ -177,14 +165,6 @@ def _create_app(settings: Settings, enable_ui: Optional[bool] = None) -> FastAPI
                 logical_name=logical_name,
                 lease_seconds=control_lease_seconds,
             )
-            command_reaper_lease = RuntimeLease(
-                task_name="command_reaper",
-                instance_name=instance_name,
-                server_url=server_url,
-                hostname=hostname,
-                logical_name=logical_name,
-                lease_seconds=control_lease_seconds,
-            )
             auto_resume_lease = RuntimeLease(
                 task_name="auto_resume",
                 instance_name=instance_name,
@@ -193,15 +173,6 @@ def _create_app(settings: Settings, enable_ui: Optional[bool] = None) -> FastAPI
                 logical_name=logical_name,
                 lease_seconds=control_lease_seconds,
             )
-            stuck_execution_reaper_lease = RuntimeLease(
-                task_name="stuck_execution_reaper",
-                instance_name=instance_name,
-                server_url=server_url,
-                hostname=hostname,
-                logical_name=logical_name,
-                lease_seconds=control_lease_seconds,
-            )
-
             async def _server_heartbeat_loop():
                 while not stop_event.is_set():
                     try:
@@ -298,21 +269,6 @@ def _create_app(settings: Settings, enable_ui: Optional[bool] = None) -> FastAPI
                         logger.info("Runtime sweeper task cancelled; exiting")
                         break
 
-            async def _command_reaper_loop():
-                interval_seconds = get_reaper_interval_seconds()
-                while not stop_event.is_set():
-                    try:
-                        lease_state = await command_reaper_lease.try_acquire_or_renew()
-                        if lease_state.acquired:
-                            await reap_orphaned_commands_once(command_server_url)
-                    except Exception as exc:
-                        logger.exception("Command reaper loop failed: %s", exc)
-                    try:
-                        await asyncio.sleep(interval_seconds)
-                    except asyncio.CancelledError:
-                        logger.info("Command reaper task cancelled; exiting")
-                        break
-
             async def _auto_resume_loop():
                 completed = False
                 retry_delay = min(5.0, max(1.0, float(sweep_interval)))
@@ -338,21 +294,6 @@ def _create_app(settings: Settings, enable_ui: Optional[bool] = None) -> FastAPI
                         logger.info("Auto-resume task cancelled; exiting")
                         break
 
-            async def _stuck_execution_reaper_loop():
-                interval_seconds = get_stuck_execution_reaper_interval_seconds()
-                while not stop_event.is_set():
-                    try:
-                        lease_state = await stuck_execution_reaper_lease.try_acquire_or_renew()
-                        if lease_state.acquired:
-                            await cleanup_inactive_executions_once()
-                    except Exception as exc:
-                        logger.exception("Stuck execution reaper loop failed: %s", exc)
-                    try:
-                        await asyncio.sleep(interval_seconds)
-                    except asyncio.CancelledError:
-                        logger.info("Stuck execution reaper task cancelled; exiting")
-                        break
-
             # Start async batch acceptance workers (202 + request_id contract).
             try:
                 await ensure_batch_acceptor_started()
@@ -374,32 +315,7 @@ def _create_app(settings: Settings, enable_ui: Optional[bool] = None) -> FastAPI
                 sweeper_task = asyncio.create_task(_runtime_sweeper())
                 logger.info("Runtime sweeper background task started successfully")
             except Exception as e:
-                logger.exception(f"Failed to start runtime sweeper: {e}")
-
-            reaper_task: Optional[asyncio.Task] = None
-            stuck_execution_reaper_task: Optional[asyncio.Task] = None
-            try:
-                logger.info("Starting command reaper background task...")
-                reaper_task = asyncio.create_task(
-                    _command_reaper_loop(),
-                    name="command-reaper",
-                )
-                logger.info("Command reaper background task started successfully")
-            except Exception as e:
-                logger.exception(f"Failed to start command reaper: {e}")
-
-            if is_stuck_execution_reaper_enabled():
-                try:
-                    logger.info("Starting stuck execution reaper background task...")
-                    stuck_execution_reaper_task = asyncio.create_task(
-                        _stuck_execution_reaper_loop(),
-                        name="stuck-execution-reaper",
-                    )
-                    logger.info("Stuck execution reaper background task started successfully")
-                except Exception as e:
-                    logger.exception(f"Failed to start stuck execution reaper: {e}")
-            else:
-                logger.info("Stuck execution reaper is disabled by configuration")
+                logger.exception(f"Failed to start task: {e}")
 
             try:
                 logger.info("Starting auto-resume coordination task...")
@@ -428,20 +344,6 @@ def _create_app(settings: Settings, enable_ui: Optional[bool] = None) -> FastAPI
                         await sweeper_task
                 except Exception as e:
                     logger.exception(f"Critical error during sweeper task shutdown: {e}")
-            if reaper_task:
-                try:
-                    reaper_task.cancel()
-                    with contextlib.suppress(asyncio.CancelledError):
-                        await reaper_task
-                except Exception as e:
-                    logger.exception(f"Critical error during command reaper shutdown: {e}")
-            if stuck_execution_reaper_task:
-                try:
-                    stuck_execution_reaper_task.cancel()
-                    with contextlib.suppress(asyncio.CancelledError):
-                        await stuck_execution_reaper_task
-                except Exception as e:
-                    logger.exception(f"Critical error during stuck execution reaper shutdown: {e}")
             if auto_resume_task:
                 try:
                     auto_resume_task.cancel()
@@ -459,9 +361,7 @@ def _create_app(settings: Settings, enable_ui: Optional[bool] = None) -> FastAPI
                 logger.error(f"Batch acceptor shutdown failed: {e}", exc_info=True)
             try:
                 await runtime_sweeper_lease.release()
-                await command_reaper_lease.release()
                 await auto_resume_lease.release()
-                await stuck_execution_reaper_lease.release()
                 deregister_server_directly(instance_name)
             except Exception as e:
                 logger.error(f"Server deregistration failed during shutdown: {e}")
@@ -498,8 +398,6 @@ def _create_app(settings: Settings, enable_ui: Optional[bool] = None) -> FastAPI
                 pass
         response = await call_next(request)
         return response
-
-    ui_build_path = settings.ui_build_path
 
     app.include_router(router, prefix="/api")
 
@@ -620,45 +518,9 @@ def _create_app(settings: Settings, enable_ui: Optional[bool] = None) -> FastAPI
         body = "\n".join(lines) + "\n"
         return Response(content=body, media_type="text/plain; version=0.0.4; charset=utf-8")
 
-    if enable_ui and ui_build_path.exists():
-        @app.get("/favicon.ico", include_in_schema=False)
-        async def favicon():
-            favicon_file = settings.favicon_file
-            if favicon_file.exists():
-                return FileResponse(favicon_file)
-            return FileResponse(ui_build_path / "index.html")
 
-        app.mount("/assets", StaticFiles(directory=ui_build_path / "assets"), name="assets")
-
-        @app.get("/{catchall:path}", include_in_schema=False)
-        async def spa_catchall(catchall: str):
-            # Don't serve UI for API paths
-            if catchall.startswith("api/"):
-                from fastapi import HTTPException
-                raise HTTPException(status_code=404, detail="API endpoint not found")
-            return FileResponse(
-                ui_build_path / "index.html",
-                headers={
-                    "Cache-Control": "no-cache, no-store, must-revalidate",
-                    "Pragma": "no-cache",
-                    "Expires": "0"
-                }
-            )
-
-        @app.get("/", include_in_schema=False)
-        async def root():
-            return FileResponse(
-                ui_build_path / "index.html",
-                headers={
-                    "Cache-Control": "no-cache, no-store, must-revalidate",
-                    "Pragma": "no-cache",
-                    "Expires": "0"
-                }
-            )
-    else:
-        @app.get("/", include_in_schema=False)
-        async def root_no_ui():
-            logger.error(f"ERROR: UI not available you need to build it first (see docs) and put dist to {ui_build_path}")
-            return {"message": "NoETL API is running, but UI is not available"}
+    @app.get("/", include_in_schema=False)
+    async def root():
+        return {"message": "NoETL API is running (Standalone GUI available externally)"}
 
     return app
