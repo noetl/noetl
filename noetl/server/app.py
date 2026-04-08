@@ -58,11 +58,8 @@ def create_app() -> FastAPI:
     return _create_app(settings=settings)
 
 
-def _create_app(settings: Settings, enable_ui: Optional[bool] = None) -> FastAPI:
+def _create_app(settings: Settings) -> FastAPI:
     from contextlib import asynccontextmanager
-    if enable_ui is None:
-        enable_ui = settings.enable_ui
-
     # Simple in-process metrics without external deps
     _process_start_time = time.time()
     _request_count_key = "noetl_request_total"
@@ -167,7 +164,8 @@ def _create_app(settings: Settings, enable_ui: Optional[bool] = None) -> FastAPI
                 hostname=hostname,
                 logical_name=logical_name,
                 lease_seconds=control_lease_seconds,
-            )            auto_resume_lease = RuntimeLease(
+            )
+            auto_resume_lease = RuntimeLease(
                 task_name="auto_resume",
                 instance_name=instance_name,
                 server_url=server_url,
@@ -269,7 +267,7 @@ def _create_app(settings: Settings, enable_ui: Optional[bool] = None) -> FastAPI
                         await asyncio.sleep(sweep_interval)
                     except asyncio.CancelledError:
                         logger.info("Runtime sweeper task cancelled; exiting")
-                        break                        break
+                        break
 
             async def _auto_resume_loop():
                 completed = False
@@ -294,7 +292,7 @@ def _create_app(settings: Settings, enable_ui: Optional[bool] = None) -> FastAPI
                         await asyncio.sleep(retry_delay)
                     except asyncio.CancelledError:
                         logger.info("Auto-resume task cancelled; exiting")
-                        break                        break
+                        break
 
             # Start async batch acceptance workers (202 + request_id contract).
             try:
@@ -317,6 +315,7 @@ def _create_app(settings: Settings, enable_ui: Optional[bool] = None) -> FastAPI
                 sweeper_task = asyncio.create_task(_runtime_sweeper())
                 logger.info("Runtime sweeper background task started successfully")
             except Exception as e:
+                logger.exception(f"Failed to start task: {e}")
 
             try:
                 logger.info("Starting auto-resume coordination task...")
@@ -344,7 +343,8 @@ def _create_app(settings: Settings, enable_ui: Optional[bool] = None) -> FastAPI
                     with contextlib.suppress(asyncio.CancelledError):
                         await sweeper_task
                 except Exception as e:
-                    logger.exception(f"Critical error during sweeper task shutdown: {e}")            if auto_resume_task:
+                    logger.exception(f"Critical error during sweeper task shutdown: {e}")
+            if auto_resume_task:
                 try:
                     auto_resume_task.cancel()
                     with contextlib.suppress(asyncio.CancelledError):
@@ -360,7 +360,9 @@ def _create_app(settings: Settings, enable_ui: Optional[bool] = None) -> FastAPI
             except Exception as e:
                 logger.error(f"Batch acceptor shutdown failed: {e}", exc_info=True)
             try:
-                await runtime_sweeper_lease.release()                await auto_resume_lease.release()                deregister_server_directly(instance_name)
+                await runtime_sweeper_lease.release()
+                await auto_resume_lease.release()
+                deregister_server_directly(instance_name)
             except Exception as e:
                 logger.error(f"Server deregistration failed during shutdown: {e}")
                 # Don't pass this silently - log but continue shutdown
@@ -396,8 +398,6 @@ def _create_app(settings: Settings, enable_ui: Optional[bool] = None) -> FastAPI
                 pass
         response = await call_next(request)
         return response
-
-    ui_build_path = settings.ui_build_path
 
     app.include_router(router, prefix="/api")
 
@@ -518,45 +518,9 @@ def _create_app(settings: Settings, enable_ui: Optional[bool] = None) -> FastAPI
         body = "\n".join(lines) + "\n"
         return Response(content=body, media_type="text/plain; version=0.0.4; charset=utf-8")
 
-    if enable_ui and ui_build_path.exists():
-        @app.get("/favicon.ico", include_in_schema=False)
-        async def favicon():
-            favicon_file = settings.favicon_file
-            if favicon_file.exists():
-                return FileResponse(favicon_file)
-            return FileResponse(ui_build_path / "index.html")
 
-        app.mount("/assets", StaticFiles(directory=ui_build_path / "assets"), name="assets")
-
-        @app.get("/{catchall:path}", include_in_schema=False)
-        async def spa_catchall(catchall: str):
-            # Don't serve UI for API paths
-            if catchall.startswith("api/"):
-                from fastapi import HTTPException
-                raise HTTPException(status_code=404, detail="API endpoint not found")
-            return FileResponse(
-                ui_build_path / "index.html",
-                headers={
-                    "Cache-Control": "no-cache, no-store, must-revalidate",
-                    "Pragma": "no-cache",
-                    "Expires": "0"
-                }
-            )
-
-        @app.get("/", include_in_schema=False)
-        async def root():
-            return FileResponse(
-                ui_build_path / "index.html",
-                headers={
-                    "Cache-Control": "no-cache, no-store, must-revalidate",
-                    "Pragma": "no-cache",
-                    "Expires": "0"
-                }
-            )
-    else:
-        @app.get("/", include_in_schema=False)
-        async def root_no_ui():
-            logger.error(f"ERROR: UI not available you need to build it first (see docs) and put dist to {ui_build_path}")
-            return {"message": "NoETL API is running, but UI is not available"}
+    @app.get("/", include_in_schema=False)
+    async def root():
+        return {"message": "NoETL API is running (Standalone GUI available externally)"}
 
     return app

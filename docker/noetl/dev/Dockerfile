@@ -1,11 +1,3 @@
-FROM node:20-alpine AS ui-builder
-WORKDIR /ui
-COPY ui-src/package.json ui-src/package-lock.json ./ui-src/
-RUN cd ui-src && npm ci --verbose
-COPY ui-src ./ui-src
-ENV VITE_API_BASE_URL=/api
-RUN cd ui-src && npm run build
-
 # Rust builder stage - can be skipped if using pre-compiled binary
 # To use pre-compiled binary: docker build --build-arg USE_PREBUILT_BINARY=true
 FROM python:3.12-slim AS builder
@@ -30,8 +22,6 @@ RUN uv venv && \
 
 COPY noetl ./noetl
 COPY scripts ./scripts
-COPY --from=ui-builder /ui/ui-src/dist ./noetl/core/ui
-
 COPY LICENSE README.md ./
 
 RUN uv pip install -e .
@@ -69,8 +59,6 @@ ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
 ENV PYTHONPATH="/opt/noetl"
 ENV PATH="/opt/noetl/.venv/bin:$PATH"
-
-ENV NOETL_ENABLE_UI=false
 
 # Default command: Use Python directly (more reliable across architectures)
 # Rust CLI can be used manually: noetl server start --host 0.0.0.0 --port 8082
