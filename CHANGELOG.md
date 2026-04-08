@@ -2,6 +2,15 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.16.4](https://github.com/noetl/noetl/compare/v2.16.3...v2.16.4) (2026-04-08)
+
+### Bug Fixes
+
+* **dsl:** restore correct parallel loop epoch uniqueness; revert test_pft_flow syntax bug ([21affcb](https://github.com/noetl/noetl/commit/21affcb5ca1c52c80f7e6f8ab5916d5418285da7))
+* **engine:** correct step.exit block indentation broken by loop deduplication ([a5afcb2](https://github.com/noetl/noetl/commit/a5afcb255a476d4395359a4582f84eb058b47aad))
+* **engine:** recover from lost loop transition claims during state-cache invalidations ([083976d](https://github.com/noetl/noetl/commit/083976d3c41c2c9d3cf28862d7376bbba2da37aa))
+* **engine:** simplify loop deduplication to use loop_event_id ([d2735dd](https://github.com/noetl/noetl/commit/d2735ddada3668792eaa9d1081d5b4eb6df426a3))
+
 ## [2.16.3](https://github.com/noetl/noetl/compare/v2.16.2...v2.16.3) (2026-04-07)
 
 ### Bug Fixes
