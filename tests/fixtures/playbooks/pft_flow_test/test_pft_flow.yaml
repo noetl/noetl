@@ -173,7 +173,7 @@ workflow:
           'Test Facility ' || seq AS facility_name,
           seq AS facility_id,
           TRUE AS active
-        FROM generate_series(1, 10) AS seq;
+        FROM generate_series(1, {{ workload.num_facilities | int }}) AS seq;
 
         SELECT COUNT(*) AS facility_count FROM public.pft_test_facilities WHERE active = TRUE;
     next:
@@ -235,7 +235,7 @@ workflow:
           ({{ facility_mapping_id | int }} - 1) * 1000 + seq AS patient_id,
           {{ facility_mapping_id | int }} AS facility_mapping_id,
           'org-{{ facility_mapping_id }}' AS facility_org_uuid
-        FROM generate_series(1, 1000) AS seq
+        FROM generate_series(1, {{ workload.patients_per_facility | int }}) AS seq
         ON CONFLICT (patient_id, facility_mapping_id) DO NOTHING;
 
         -- Seed execution-scoped queue rows for all data types

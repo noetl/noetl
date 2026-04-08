@@ -6168,6 +6168,13 @@ class ControlFlowEngine:
                 if isinstance(payload_reference, dict):
                     result_obj["reference"] = payload_reference
 
+                if event.name in ("loop.done", "loop.failed") and isinstance(event.payload, dict):
+                    if "context" not in result_obj:
+                        result_obj["context"] = {}
+                    for k, v in event.payload.items():
+                        if k not in result_obj["context"]:
+                            result_obj["context"][k] = v
+
                 await cur.execute("""
                     INSERT INTO noetl.event (
                         execution_id, catalog_id, event_id, parent_event_id, parent_execution_id, event_type,
