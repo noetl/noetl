@@ -1276,6 +1276,15 @@ class StateStore:
                                     else node_name
                                 )
                                 loop_event_ids[loop_step] = str(loop_event_id)
+                                
+                                # CRITICAL FIX: If a loop is re-dispatched (new command.issued),
+                                # we are starting a new epoch. Clear any stale aggregation_finalized
+                                # flags from previous epochs so the new epoch's results aren't dropped.
+                                if loop_step in loop_iteration_state:
+                                    loop_iteration_state[loop_step].pop("completed", None)
+                                    loop_iteration_state[loop_step].pop("aggregation_finalized", None)
+                                state.completed_steps.discard(loop_step)
+                                state.step_results.pop(loop_step, None)
                     elif event_type in {'command.completed', 'command.failed', 'command.cancelled'}:
                         pending_key = _pending_step_key(node_name)
                         if pending_key:
