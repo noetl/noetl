@@ -797,86 +797,28 @@ async def get_executions(
                 # Keep this endpoint lightweight for UI polling. Avoid scanning giant payload columns.
                 await cursor.execute("SET LOCAL statement_timeout = '8s'")
                 await cursor.execute("""
-                    WITH recent_executions AS (
-                        SELECT
-                            e.execution_id,
-                            e.catalog_id,
-                            e.parent_execution_id,
-                            e.event_id AS initialized_event_id,
-                            e.created_at AS start_time
-                        FROM noetl.event e
-                        WHERE e.event_type = 'playbook.initialized'
-                        ORDER BY e.created_at DESC, e.event_id DESC
-                        LIMIT %(limit)s
-                        OFFSET %(offset)s
-                    ),
-                    latest_event AS (
-                        SELECT
-                            re.execution_id,
-                            re.catalog_id,
-                            re.parent_execution_id,
-                            re.initialized_event_id,
-                            re.start_time,
-                            le.event_type,
-                            le.node_name,
-                            le.status,
-                            le.created_at AS end_time,
-                            le.error,
-                            te.event_type AS terminal_event_type,
-                            te.status AS terminal_status,
-                            te.created_at AS terminal_end_time
-                        FROM recent_executions re
-                        JOIN LATERAL (
-                            SELECT
-                                e.event_type,
-                                e.node_name,
-                                e.status,
-                                e.created_at,
-                                e.error
-                            FROM noetl.event e
-                            WHERE e.execution_id = re.execution_id
-                            ORDER BY e.event_id DESC
-                            LIMIT 1
-                        ) le ON TRUE
-                        LEFT JOIN LATERAL (
-                            SELECT
-                                e.event_type,
-                                e.status,
-                                e.created_at
-                            FROM noetl.event e
-                            WHERE e.execution_id = re.execution_id
-                              AND e.event_type IN (
-                                'execution.cancelled',
-                                'playbook.failed',
-                                'workflow.failed',
-                                'command.failed',
-                                'playbook.completed',
-                                'workflow.completed'
-                              )
-                            ORDER BY e.event_id DESC
-                            LIMIT 1
-                        ) te ON TRUE
-                    )
                     SELECT
-                        le.execution_id,
-                        le.catalog_id,
-                        le.event_type,
-                        le.node_name,
-                        le.status AS status,
-                        le.event_type AS derived_event_type,
-                        le.start_time,
-                        le.end_time,
+                        e.execution_id,
+                        e.catalog_id,
+                        e.last_event_type AS event_type,
+                        e.last_node_name AS node_name,
+                        e.status,
+                        e.last_event_type AS derived_event_type,
+                        e.start_time,
+                        COALESCE(e.end_time, e.updated_at) AS end_time,
                         NULL::jsonb AS result,
-                        le.error,
-                        le.parent_execution_id,
-                        le.terminal_event_type,
-                        le.terminal_status,
-                        le.terminal_end_time,
+                        e.error,
+                        e.parent_execution_id,
+                        CASE WHEN e.status IN ('COMPLETED', 'FAILED', 'CANCELLED') THEN e.last_event_type ELSE NULL END AS terminal_event_type,
+                        CASE WHEN e.status IN ('COMPLETED', 'FAILED', 'CANCELLED') THEN e.status ELSE NULL END AS terminal_status,
+                        e.end_time AS terminal_end_time,
                         COALESCE(c.path, 'unknown') AS path,
                         COALESCE(c.version, 0) AS version
-                    FROM latest_event le
-                    LEFT JOIN noetl.catalog c ON c.catalog_id = le.catalog_id
-                    ORDER BY le.start_time DESC, le.initialized_event_id DESC
+                    FROM noetl.execution e
+                    LEFT JOIN noetl.catalog c ON c.catalog_id = e.catalog_id
+                    ORDER BY e.start_time DESC NULLS LAST, e.execution_id DESC
+                    LIMIT %(limit)s
+                    OFFSET %(offset)s
                 """, {"limit": page_size, "offset": offset})
                 rows = await cursor.fetchall()
                 candidate_execution_ids = [
