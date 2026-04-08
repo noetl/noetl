@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.16.6](https://github.com/noetl/noetl/compare/v2.16.5...v2.16.6) (2026-04-08)
+
+### Bug Fixes
+
+* **engine:** remove invalid replay_loop_state references ([d929334](https://github.com/noetl/noetl/commit/d929334283ec3488b055456273b3d24978635331))
+
 ## [2.16.5](https://github.com/noetl/noetl/compare/v2.16.4...v2.16.5) (2026-04-08)
 
 ### Bug Fixes
