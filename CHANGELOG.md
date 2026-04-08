@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.16.7](https://github.com/noetl/noetl/compare/v2.16.6...v2.16.7) (2026-04-08)
+
+### Bug Fixes
+
+* **engine:** clear loop aggregation flags on new epoch dispatch ([1a8d5fe](https://github.com/noetl/noetl/commit/1a8d5fec9c422d134e9539f69a9e019143f2e4ef))
+
 ## [2.16.6](https://github.com/noetl/noetl/compare/v2.16.5...v2.16.6) (2026-04-08)
 
 ### Bug Fixes
