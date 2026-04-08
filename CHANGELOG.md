@@ -2,6 +2,20 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.17.0](https://github.com/noetl/noetl/compare/v2.16.7...v2.17.0) (2026-04-08)
+
+### Features
+
+* **execution:** introduce execution table and remove reaper ([435e3aa](https://github.com/noetl/noetl/commit/435e3aa6d2ffac04ee0b81cc5b3ee9dd6a3e6cbb))
+
+### Bug Fixes
+
+* **engine:** use NATS snapshot counts directly across epoch boundaries ([68cedb4](https://github.com/noetl/noetl/commit/68cedb4c72ec93063f20fb2a004b69eb6d8a9e8f))
+
+### Performance Improvements
+
+* **api:** select execution list directly from execution table ([9341bbd](https://github.com/noetl/noetl/commit/9341bbd9608d1b3deceb74c30ae1080221fa4e1a))
+
 ## [2.16.7](https://github.com/noetl/noetl/compare/v2.16.6...v2.16.7) (2026-04-08)
 
 ### Bug Fixes
