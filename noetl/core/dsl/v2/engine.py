@@ -129,6 +129,14 @@ def _estimate_json_size(value: Any) -> int:
     return _estimate_size_fast(value)
 
 
+def _is_loop_epoch_transition_emitted(
+    state: "ExecutionState", step_name: str, event_name: str, loop_event_id: str
+) -> bool:
+    """Check if a specific transition event (e.g. loop.done) for a given epoch was already emitted."""
+    key = f"{step_name}:{event_name}:{loop_event_id}"
+    return key in state.emitted_loop_epochs
+
+
 def _parse_iso_utc(value: Any) -> Optional[datetime]:
     if not value or not isinstance(value, str):
         return None
@@ -588,6 +596,7 @@ class ExecutionState:
         # Loop state tracking
         self.loop_state: dict[str, dict[str, Any]] = {}  # step_name -> {collection, index, item, mode}
         self.step_stall_counts: dict[str, int] = {}  # step_name -> consecutive times loop ended with zero successful slots
+        self.emitted_loop_epochs: set[str] = set()  # "step_name:event_name:loop_event_id"
 
 
         # Pagination state tracking for collect+retry pattern
@@ -820,6 +829,11 @@ class ExecutionState:
             return 0
         return _loop_results_total(self.loop_state[step_name])
     
+    def add_emitted_loop_epoch(self, step_name: str, event_name: str, loop_event_id: str):
+        """Mark a specific transition event as already emitted for deduplication."""
+        logger.info(f"[ENGINE-STATE] Marking transition emitted: {step_name}:{event_name}:{loop_event_id}")
+        self.emitted_loop_epochs.add(f"{step_name}:{event_name}:{loop_event_id}")
+
     def get_render_context(self, event: Event) -> dict[str, Any]:
         """Get context for Jinja2 rendering.
 
@@ -1199,6 +1213,7 @@ class StateStore:
                 await cur.execute("""
                     SELECT
                         event_id,
+                        parent_event_id,
                         node_name,
                         event_type,
                         CASE WHEN event_type IN ('step.exit', 'call.done', 'loop.done') THEN result ELSE NULL END AS result,
@@ -1223,16 +1238,18 @@ class StateStore:
                 for row in rows:
                     if isinstance(row, dict):
                         event_id = row.get("event_id")
+                        parent_event_id = row.get("parent_event_id")
                         node_name = row.get("node_name")
                         event_type = row.get("event_type")
                         result_data = row.get("result")
                         meta_data = row.get("meta")
                     else:
                         event_id = row[0]
-                        node_name = row[1]
-                        event_type = row[2]
-                        result_data = row[3]
-                        meta_data = row[4] if len(row) > 4 else None
+                        parent_event_id = row[1]
+                        node_name = row[2]
+                        event_type = row[3]
+                        result_data = row[4]
+                        meta_data = row[5] if len(row) > 5 else None
 
                     if event_id is not None:
                         state.last_event_id = int(event_id)
@@ -1434,6 +1451,20 @@ class StateStore:
                                         exc,
                                     )
                             _apply_set_mutations(state.variables, rendered_set)
+
+                    # Track emitted loop transitions to prevent duplicate restarts during replay/races
+                    if event_type in {"loop.done", "loop.failed"} and event_payload:
+                        loop_event_id = event_payload.get("loop_event_id") if isinstance(event_payload, dict) else None
+                        if loop_event_id:
+                            state.add_emitted_loop_epoch(node_name, event_type, str(loop_event_id))
+
+                    # Track emitted loop epochs during replay to prevent duplicate recovery
+                    if event_type in {"loop.done", "step.done", "step.exit"} and event_payload:
+                        loop_event_id = event_payload.get("loop_event_id")
+                        if loop_event_id:
+                            # Unique key for this specific transition batch
+                            key = f"{node_name}:{event_type}:{loop_event_id}:{parent_event_id}"
+                            state.emitted_loop_epochs.add(key)
                 
                 # Initialize loop_state for loop steps with collected iteration results
                 for step_name in loop_steps:
@@ -3445,9 +3476,15 @@ class ControlFlowEngine:
             # invocation is already finalized, reset counters/results and use a fresh
             # distributed loop key so claim slots are not stuck at old scheduled/completed
             # counts (e.g., 100/100 from the previous batch).
+            #
+            # a new epoch with a time-based suffix to guarantee uniqueness. This prevents
+            # epoch ID collisions when state.last_event_id is the same across epoch resets
+            # (e.g. during STATE-CACHE-INVALIDATE / rebuild races where try_claim_loop_done
+            # has not yet written loop_done_claimed=True to NATS).
             force_new_loop_instance = False
+            _is_fresh_dispatch = not loop_continue_requested and not loop_retry_requested
             if existing_loop_state is None:
-                loop_event_id = f"loop_{state.last_event_id or time.time_ns()}"
+                loop_event_id = f"loop_{state.last_event_id or time.time_ns()}_{time.time_ns()}"
                 state.init_loop(
                     step.step,
                     collection,
@@ -3487,14 +3524,16 @@ class ControlFlowEngine:
                     and previous_scheduled >= previous_size
                 )
 
-                should_reset_existing_loop = (
-                    not loop_continue_requested
-                    and not loop_retry_requested
-                    and (previous_finalized or previous_exhausted)
-                )
+                # EPOCH UNIQUENESS: On fresh dispatch for a newly routed loop, reset the 
+                # loop state (which generates a new loop_event_id) only if the previous 
+                # run was cleanly finalized or exhausted. This ensures race conditions
+                # during STATE-CACHE-INVALIDATE do not accidentally use a stale epoch,
+                # but ALSO prevents resetting the loop 5 times concurrently when issuing
+                # multiple commands for mode=parallel max_in_flight=5.
+                should_reset_existing_loop = _is_fresh_dispatch and (previous_finalized or previous_exhausted)
 
                 if should_reset_existing_loop:
-                    loop_event_id = f"loop_{state.last_event_id or time.time_ns()}"
+                    loop_event_id = f"loop_{state.last_event_id or time.time_ns()}_{time.time_ns()}"
                     state.init_loop(
                         step.step,
                         collection,
@@ -4189,6 +4228,7 @@ class ControlFlowEngine:
                 {
                     "loop_step": step.step,
                     "loop_event_id": loop_event_id_for_metadata,
+                    "__loop_epoch_id": loop_event_id_for_metadata,
                     "loop_iteration_index": claimed_index,
                 }
             )
@@ -4508,14 +4548,33 @@ class ControlFlowEngine:
                     # Sync completed count to NATS K/V
                     try:
                         nats_cache = await get_nats_cache()
+                        # Prefer the epoch ID baked into the command at dispatch time.
+                        # The worker propagates __loop_epoch_id (or loop_event_id) back in
+                        # the call.done payload, so we can pin the epoch without going
+                        # through _build_loop_event_id_candidates which may return stale
+                        # candidates (e.g. step_event_ids from a previous epoch after a
+                        # STATE-CACHE-INVALIDATE).
+                        _pinned_epoch_id = (
+                            str(normalized_payload.get("__loop_epoch_id"))
+                            if isinstance(normalized_payload, dict) and normalized_payload.get("__loop_epoch_id")
+                            else (str(payload_loop_event_id) if payload_loop_event_id else None)
+                        )
                         event_id_candidates = []
-                        if payload_loop_event_id:
-                            event_id_candidates.append(str(payload_loop_event_id))
-                        for candidate in self._build_loop_event_id_candidates(
-                            state, parent_step, loop_state
-                        ):
-                            if candidate not in event_id_candidates:
-                                event_id_candidates.append(candidate)
+                        if _pinned_epoch_id:
+                            # Epoch is pinned from the command: skip stale candidate resolution.
+                            event_id_candidates.append(_pinned_epoch_id)
+                            # Add exec fallback only (not step_event_ids which may be stale).
+                            exec_fallback = f"exec_{state.execution_id}"
+                            if exec_fallback not in event_id_candidates:
+                                event_id_candidates.append(exec_fallback)
+                        else:
+                            if payload_loop_event_id:
+                                event_id_candidates.append(str(payload_loop_event_id))
+                            for candidate in self._build_loop_event_id_candidates(
+                                state, parent_step, loop_state
+                            ):
+                                if candidate not in event_id_candidates:
+                                    event_id_candidates.append(candidate)
                         resolved_loop_event_id = (
                             event_id_candidates[0]
                             if event_id_candidates
@@ -4595,11 +4654,19 @@ class ControlFlowEngine:
 
                         nats_loop_state = None
                         if collection_size == 0:
-                            lookup_event_ids = [resolved_loop_event_id] + [
-                                candidate
-                                for candidate in event_id_candidates
-                                if candidate != resolved_loop_event_id
-                            ]
+                            # When the epoch is pinned (command stamped __loop_epoch_id /
+                            # loop_event_id), do NOT fall through to stale candidates that
+                            # could override resolved_loop_event_id with an old epoch key
+                            # still present in NATS (causing try_claim_loop_done to find an
+                            # already-claimed epoch and silently skip loop.done dispatch).
+                            if _pinned_epoch_id:
+                                lookup_event_ids = [resolved_loop_event_id]
+                            else:
+                                lookup_event_ids = [resolved_loop_event_id] + [
+                                    candidate
+                                    for candidate in event_id_candidates
+                                    if candidate != resolved_loop_event_id
+                                ]
                             for candidate_event_id in lookup_event_ids:
                                 candidate_state = await nats_cache.get_loop_state(
                                     str(state.execution_id),
@@ -4788,6 +4855,19 @@ class ControlFlowEngine:
                                             parent_step,
                                             state.get_loop_aggregation(parent_step),
                                         )
+
+                                        # [CLAIM-RECOVERY] If the claim was lost (claimed in KV but event never persisted),
+                                        # proceed with the transition anyway to avoid stalling the workflow.
+                                        if not _is_loop_epoch_transition_emitted(
+                                            state, parent_step, "loop.done", resolved_loop_event_id
+                                        ):
+                                            logger.warning(
+                                                "[TASK_SEQ-LOOP] loop.done claim held for %s (epoch=%s) but no event found in history — "
+                                                "RECOVERING transition to avoid stall",
+                                                parent_step,
+                                                resolved_loop_event_id,
+                                            )
+                                            _skip_loop_done = False
                                 except Exception as _claim_err:
                                     logger.warning(
                                         "[TASK_SEQ-LOOP] try_claim_loop_done failed for %s: %s — proceeding with aggregation_finalized guard",
@@ -4814,10 +4894,13 @@ class ControlFlowEngine:
                                         payload={
                                             "status": "completed",
                                             "iterations": new_count,
-                                            "result": loop_aggregation
-                                        }
+                                            "result": loop_aggregation,
+                                            "loop_event_id": resolved_loop_event_id
+                                        },
+                                        parent_event_id=state.root_event_id
                                     )
                                     await self._persist_event(loop_done_event, state)
+                                    state.add_emitted_loop_epoch(parent_step, "loop.done", str(resolved_loop_event_id))
                                     loop_done_commands = await self._evaluate_next_transitions(state, parent_step_def, loop_done_event)
                                     commands.extend(loop_done_commands)
                                     logger.info(f"[TASK_SEQ-LOOP] Generated {len(loop_done_commands)} commands from loop.done")
@@ -5002,13 +5085,29 @@ class ControlFlowEngine:
                         if isinstance(event.payload, dict)
                         else None
                     )
-                    loop_event_id = payload_loop_event_id or loop_state.get("event_id")
+                    # Prefer the epoch ID baked into the command at dispatch time
+                    # (__loop_epoch_id) over candidates that may include stale step_event_ids
+                    # from a previous epoch after STATE-CACHE-INVALIDATE.
+                    _pinned_epoch_id = (
+                        str(event.payload.get("__loop_epoch_id"))
+                        if isinstance(event.payload, dict) and event.payload.get("__loop_epoch_id")
+                        else (str(payload_loop_event_id) if payload_loop_event_id else None)
+                    )
+                    loop_event_id = _pinned_epoch_id or loop_state.get("event_id")
                     event_id_candidates = []
                     if loop_event_id:
                         event_id_candidates.append(str(loop_event_id))
-                    for candidate in self._build_loop_event_id_candidates(state, event.step, loop_state):
-                        if candidate not in event_id_candidates:
-                            event_id_candidates.append(candidate)
+                    if not _pinned_epoch_id:
+                        # No pinned epoch: fall back to full candidate resolution which
+                        # may include stale step_event_ids (kept for backward compatibility).
+                        for candidate in self._build_loop_event_id_candidates(state, event.step, loop_state):
+                            if candidate not in event_id_candidates:
+                                event_id_candidates.append(candidate)
+                    else:
+                        # Epoch is pinned: only add exec fallback, not stale step_event_ids.
+                        exec_fallback = f"exec_{state.execution_id}"
+                        if exec_fallback not in event_id_candidates:
+                            event_id_candidates.append(exec_fallback)
                     resolved_loop_event_id = (
                         event_id_candidates[0] if event_id_candidates else f"exec_{state.execution_id}"
                     )
@@ -5098,6 +5197,19 @@ class ControlFlowEngine:
                                         event.step,
                                         state.get_loop_aggregation(event.step),
                                     )
+
+                                    # [CLAIM-RECOVERY] If the claim was lost (claimed in KV but event never persisted),
+                                    # proceed with the transition anyway to avoid stalling the workflow.
+                                    if not _is_loop_epoch_transition_emitted(
+                                        state, event.step, "loop.done", resolved_loop_event_id
+                                    ):
+                                        logger.warning(
+                                            "[LOOP-CALL.DONE] loop.done claim held for %s (epoch=%s) but no event found in history — "
+                                            "RECOVERING transition to avoid stall",
+                                            event.step,
+                                            resolved_loop_event_id,
+                                        )
+                                        _skip_loop_done = False
                             except Exception as _claim_err:
                                 logger.warning(
                                     "[LOOP-CALL.DONE] try_claim_loop_done failed for %s: %s — proceeding with aggregation_finalized guard",
@@ -5122,9 +5234,12 @@ class ControlFlowEngine:
                                         "status": "completed",
                                         "iterations": new_count,
                                         "result": loop_aggregation,
+                                        "loop_event_id": resolved_loop_event_id
                                     },
+                                    parent_event_id=state.root_event_id
                                 )
                                 await self._persist_event(loop_done_event, state)
+                                state.add_emitted_loop_epoch(event.step, "loop.done", str(resolved_loop_event_id))
                                 loop_done_commands = await self._evaluate_next_transitions(
                                     state, step_def, loop_done_event
                                 )
@@ -5337,6 +5452,11 @@ class ControlFlowEngine:
         )
         if step_def.loop and event.name == "step.exit":
             logger.debug(f"[LOOP-DEBUG] Entering loop completion check for {event.step}")
+
+            # Extract loop event ID for recovery check
+            loop_state = state.loop_state.get(event.step)
+            resolved_loop_event_id = loop_state.get("event_id") if loop_state else None
+
             pagination_retry_pending = state.pagination_state.get(event.step, {}).get("pending_retry", False)
             if pagination_retry_pending:
                 logger.debug(f"[LOOP_DEBUG] Pagination retry pending for {event.step}; skipping completion/next iteration")
@@ -5436,6 +5556,24 @@ class ControlFlowEngine:
                                         event.step,
                                         state.get_loop_aggregation(event.step),
                                     )
+
+                                    # [CLAIM-RECOVERY] If the claim was lost (claimed in KV but event never persisted),
+                                    # proceed with the transition anyway to avoid stalling the workflow.
+                                    if (
+                                        not _is_loop_epoch_transition_emitted(
+                                            state,
+                                            event.step,
+                                            "loop.done",
+                                            _loop_event_id_for_cas,
+                                        )
+                                    ):
+                                        logger.warning(
+                                            "[LOOP-STEP.EXIT] loop.done claim held for %s (epoch=%s) but no event found in history — "
+                                            "RECOVERING transition to avoid stall",
+                                            event.step,
+                                            _loop_event_id_for_cas,
+                                        )
+                                        _skip_loop_done = False
                         except Exception as _cas_err:
                             logger.warning(
                                 "[LOOP-STEP.EXIT] try_claim_loop_done failed for %s: %s — proceeding",
@@ -5484,10 +5622,13 @@ class ControlFlowEngine:
                                 payload={
                                     "status": "completed",
                                     "iterations": state.loop_state[event.step]["index"],
-                                    "result": loop_aggregation  # Include aggregated result in payload
-                                }
+                                    "result": loop_aggregation,  # Include aggregated result in payload
+                                    "loop_event_id": resolved_loop_event_id
+                                },
+                                parent_event_id=state.root_event_id
                             )
                             await self._persist_event(loop_done_event, state)
+                            state.add_emitted_loop_epoch(event.step, "loop.done", str(resolved_loop_event_id))
                             loop_done_commands = await self._evaluate_next_transitions(state, step_def, loop_done_event)
                             commands.extend(loop_done_commands)
 
@@ -5861,7 +6002,7 @@ class ControlFlowEngine:
         return commands
     
     async def _persist_event(self, event: Event, state: ExecutionState):
-        """Persist event to database."""
+        """Persist event to database with state tracking."""
         # Use catalog_id from state, or lookup from existing events
         catalog_id = state.catalog_id
         

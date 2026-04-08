@@ -470,9 +470,6 @@ workflow:
                   to: fetch_page
                   set:
                     iter.page: '{{ (iter.page | int) + 1 }}'
-              - else:
-                  then:
-                    do: break
     next:
       spec:
         mode: exclusive
@@ -666,9 +663,6 @@ workflow:
                   to: fetch_page
                   set:
                     iter.page: '{{ (iter.page | int) + 1 }}'
-              - else:
-                  then:
-                    do: break
     next:
       spec:
         mode: exclusive
@@ -862,9 +856,6 @@ workflow:
                   to: fetch_page
                   set:
                     iter.page: '{{ (iter.page | int) + 1 }}'
-              - else:
-                  then:
-                    do: break
     next:
       spec:
         mode: exclusive
@@ -1060,9 +1051,6 @@ workflow:
                   to: fetch_page
                   set:
                     iter.page: '{{ (iter.page | int) + 1 }}'
-              - else:
-                  then:
-                    do: break
     next:
       spec:
         mode: exclusive
