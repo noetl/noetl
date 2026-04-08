@@ -2086,8 +2086,22 @@ class ControlFlowEngine:
             # and index to the snapshot's epoch-relative values so downstream exhaustion
             # checks operate on the current epoch only.
             if completed_count > snapshot_epoch_size:
-                epoch_relative_count = max(0, snapshot_completed_count)
-                epoch_relative_scheduled = max(epoch_relative_count, snapshot_scheduled_count)
+                # Use modulus to get the actual completed/scheduled count within the CURRENT epoch,
+                # ensuring that exactly completing a multiple of epoch_size returns the full size,
+                # rather than 0, unless no work has been done in the current epoch.
+                # Prefer the explicit epoch-scoped progress tracked in the NATS snapshot,
+                # falling back to modulus estimation if the snapshot is empty/missing.
+                epoch_relative_count = snapshot_completed_count
+                if epoch_relative_count == 0 and completed_count > 0 and (completed_count % snapshot_epoch_size) > 0:
+                    epoch_relative_count = completed_count % snapshot_epoch_size
+                elif epoch_relative_count == 0 and completed_count > 0 and (completed_count % snapshot_epoch_size) == 0:
+                    epoch_relative_count = snapshot_epoch_size
+                    
+                epoch_relative_scheduled = snapshot_scheduled_count
+                if epoch_relative_scheduled == 0 and scheduled_count > 0 and (scheduled_count % snapshot_epoch_size) > 0:
+                    epoch_relative_scheduled = scheduled_count % snapshot_epoch_size
+                elif epoch_relative_scheduled == 0 and scheduled_count > 0 and (scheduled_count % snapshot_epoch_size) == 0:
+                    epoch_relative_scheduled = snapshot_epoch_size
                 loop_state["results"] = []
                 loop_state["omitted_results_count"] = epoch_relative_count
                 loop_state["index"] = epoch_relative_count
