@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.17.13](https://github.com/noetl/noetl/compare/v2.17.12...v2.17.13) (2026-04-09)
+
+### Bug Fixes
+
+* remove residual debug traces from loop execution engine ([a6ec298](https://github.com/noetl/noetl/commit/a6ec298fd1d0783c309fcdd0d07497c53a3beebd))
+
 ## [2.17.12](https://github.com/noetl/noetl/compare/v2.17.11...v2.17.12) (2026-04-09)
 
 ### Bug Fixes
