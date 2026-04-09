@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.17.2](https://github.com/noetl/noetl/compare/v2.17.1...v2.17.2) (2026-04-09)
+
+### Bug Fixes
+
+* **engine:** inherit new epoch event_id on loop redispatch during rebuild ([e9a7143](https://github.com/noetl/noetl/commit/e9a71436a3b243d8e579126af5530417fbbf8d04))
+
 ## [2.17.1](https://github.com/noetl/noetl/compare/v2.17.0...v2.17.1) (2026-04-09)
 
 ### Bug Fixes
