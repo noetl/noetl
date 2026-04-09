@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.17.6](https://github.com/noetl/noetl/compare/v2.17.5...v2.17.6) (2026-04-09)
+
+### Bug Fixes
+
+* **engine:** only clear epoch state on new loop_event_id during rebuild ([ef20855](https://github.com/noetl/noetl/commit/ef20855bd5ee77639ebb4b00b7ffd174c16ab108))
+
 ## [2.17.5](https://github.com/noetl/noetl/compare/v2.17.4...v2.17.5) (2026-04-09)
 
 ### Bug Fixes
