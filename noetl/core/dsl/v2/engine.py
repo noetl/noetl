@@ -4344,7 +4344,7 @@ class ControlFlowEngine:
             already_persisted,
         )
         if event.name == "call.done" and "task_sequence" in str(event.step):
-            logger.error(f"[DEBUG-TRACE-2] ENTERED handle_event for {event.step} id={event.execution_id}")
+            pass
         commands: list[Command] = []
         normalized_payload = _unwrap_event_payload(event.payload)
         preserved_loop_snapshots: dict[str, dict[str, Any]] = {}
@@ -4610,7 +4610,6 @@ class ControlFlowEngine:
             if parent_step_def and parent_step_def.loop and parent_step in state.loop_state:
                 loop_state = state.loop_state[parent_step]
                 if not loop_state.get("aggregation_finalized", False):
-                    logger.error(f"[DEBUG-TRACE-3] AGGREGATION NOT FINALIZED for {parent_step}")
                     # Add iteration result to loop aggregation
                     failed = response_data.get("status", "").upper() == "FAILED"
                     iteration_result = response_data.get("results", response_data)
@@ -5144,7 +5143,6 @@ class ControlFlowEngine:
                 else normalized_payload
             )
             loop_state = state.loop_state[event.step]
-            logger.error(f"[DEBUG-TRACE] call.done for {event.step} aggregation_finalized={loop_state.get('aggregation_finalized', False)}")
             if not loop_state.get("aggregation_finalized", False):
                 status_str = ""
                 if isinstance(response_data, dict):
