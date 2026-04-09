@@ -1286,6 +1286,16 @@ class StateStore:
 
                             loop_event_id = meta_data.get("loop_event_id")
                             if loop_event_id:
+                                if loop_step not in loop_iteration_state:
+                                    loop_iteration_state[loop_step] = {
+                                        "results": [],
+                                        "failed_count": 0,
+                                        "break_count": 0,
+                                        "scheduled_count": 0,
+                                        "omitted_results_count": 0,
+                                        "completed": False,
+                                        "aggregation_finalized": False
+                                    }
                                 loop_iteration_state[loop_step]["event_id"] = str(loop_event_id)
                                 loop_event_ids[loop_step] = str(loop_event_id)
                                 loop_step = (
