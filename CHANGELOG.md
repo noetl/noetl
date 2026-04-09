@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.17.9](https://github.com/noetl/noetl/compare/v2.17.8...v2.17.9) (2026-04-09)
+
+### Bug Fixes
+
+* **engine:** prioritize resolved loop event id in command metadata ([ebb17b0](https://github.com/noetl/noetl/commit/ebb17b03c26a0efa6f8d83b25204cc35b12d8e1a))
+
 ## [2.17.8](https://github.com/noetl/noetl/compare/v2.17.7...v2.17.8) (2026-04-09)
 
 ### Bug Fixes

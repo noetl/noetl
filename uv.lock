@@ -2084,7 +2084,7 @@ wheels = [
 
 [[package]]
 name = "noetl"
-version = "2.17.8"
+version = "2.17.9"
 source = { editable = "." }
 dependencies = [
     { name = "aiofiles" },
