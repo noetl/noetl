@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.17.1](https://github.com/noetl/noetl/compare/v2.17.0...v2.17.1) (2026-04-09)
+
+### Bug Fixes
+
+* **engine:** fully reset loop iteration arrays across epoch boundaries ([ecbaead](https://github.com/noetl/noetl/commit/ecbaead6e4fc726fae9bb5b2ded2def34c87aafb))
+
 ## [2.17.0](https://github.com/noetl/noetl/compare/v2.16.7...v2.17.0) (2026-04-08)
 
 ### Features
