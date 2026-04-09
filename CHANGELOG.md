@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.17.5](https://github.com/noetl/noetl/compare/v2.17.4...v2.17.5) (2026-04-09)
+
+### Bug Fixes
+
+* **engine:** do not block loop redispatch based on stale in-memory completion flags ([6fa1953](https://github.com/noetl/noetl/commit/6fa1953bc505d6cd51b3018596bada9fd2d963c4))
+
 ## [2.17.4](https://github.com/noetl/noetl/compare/v2.17.3...v2.17.4) (2026-04-09)
 
 ### Bug Fixes
