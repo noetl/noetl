@@ -2632,7 +2632,15 @@ class ControlFlowEngine:
             # rebuild completed_steps is empty for loop steps, but is_loop_done()
             # returns True when NATS loop_done_claimed was restored during rebuild.
             if target_step in state.issued_steps and target_step not in state.completed_steps:
-                if state.is_loop_done(target_step):
+                target_def = state.get_step(target_step)
+                # Loop steps manage their own epoch transitions via NATS and local state resets.
+                # Do not block re-dispatch based purely on stale in-memory 'completed' flags across pods.
+                if target_def and getattr(target_def, "loop", None):
+                    logger.debug(
+                        "[NEXT-EVAL] Allowing re-dispatch of loop step '%s' — delegating epoch check to command creation",
+                        target_step,
+                    )
+                elif state.is_loop_done(target_step):
                     logger.debug(
                         "[NEXT-EVAL] Allowing re-dispatch of loop step '%s' — "
                         "previous epoch is done (loopback pattern)",
