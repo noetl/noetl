@@ -4700,13 +4700,12 @@ class ControlFlowEngine:
                             # Keep progress moving even if distributed cache increments fail.
                             # Prefer durable count from persisted call.done events over local in-memory counts.
                             new_count = state.get_loop_completed_count(parent_step)
-                            persisted_count = await self._count_step_events(
-                                state.execution_id,
-                                event.step,
-                                "call.done",
-                            )
-                            if persisted_count >= 0:
-                                new_count = max(new_count, persisted_count)
+                            
+                            # DO NOT fall back to global count(*), which artificially inflates cross-epoch values
+                            # and causes immediate loop termination for multi-pass runs!
+                            # Let the memory state or NATS state be authoritative.
+                            if new_count <= 0 and nats_loop_state:
+                                new_count = int(nats_loop_state.get("completed_count", 0))
                             logger.warning(
                                 f"[TASK_SEQ-LOOP] Could not increment NATS loop count for {parent_step}; "
                                 f"falling back to persisted/local count {new_count}"
