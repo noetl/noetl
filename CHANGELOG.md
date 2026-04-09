@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.17.4](https://github.com/noetl/noetl/compare/v2.17.3...v2.17.4) (2026-04-09)
+
+### Bug Fixes
+
+* **engine:** initialize loop iteration state on command.issued if missing ([22e9bb2](https://github.com/noetl/noetl/commit/22e9bb260cd4d0b6ce881ec6bfb7ff01174ac610))
+
 ## [2.17.3](https://github.com/noetl/noetl/compare/v2.17.2...v2.17.3) (2026-04-09)
 
 ### Bug Fixes
