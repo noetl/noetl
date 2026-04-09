@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.17.14](https://github.com/noetl/noetl/compare/v2.17.13...v2.17.14) (2026-04-09)
+
+### Bug Fixes
+
+* **api:** remove batch.completed inference from execution status ([0e0fabb](https://github.com/noetl/noetl/commit/0e0fabbda6eae6cc50263a5b5e4107d99a69011b))
+
 ## [2.17.13](https://github.com/noetl/noetl/compare/v2.17.12...v2.17.13) (2026-04-09)
 
 ### Bug Fixes
