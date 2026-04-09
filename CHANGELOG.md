@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.17.8](https://github.com/noetl/noetl/compare/v2.17.7...v2.17.8) (2026-04-09)
+
+### Bug Fixes
+
+* **engine:** ensure loop commands retain active epoch ID in metadata ([78ec8ac](https://github.com/noetl/noetl/commit/78ec8ac2f17bdd8f1b2c54dae188ddb42f9502a8))
+
 ## [2.17.7](https://github.com/noetl/noetl/compare/v2.17.6...v2.17.7) (2026-04-09)
 
 ### Bug Fixes
