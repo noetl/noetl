@@ -702,7 +702,7 @@ def _upload_with_gcs_hmac_http(
         headers["x-goog-project-id"] = project_hint
 
     url = f"{endpoint.rstrip('/')}/{bucket}/{quote(object_path)}"
-    response = requests.put(url, headers=headers, data=data)
+    response = requests.put(url, headers=headers, data=data, timeout=10.0)
 
     if response.status_code >= 300:
         message = response.text.strip() or response.reason
