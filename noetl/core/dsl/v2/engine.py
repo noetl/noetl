@@ -2124,8 +2124,16 @@ class ControlFlowEngine:
                     epoch_relative_scheduled = scheduled_count % snapshot_epoch_size
                 elif epoch_relative_scheduled == 0 and scheduled_count > 0 and (scheduled_count % snapshot_epoch_size) == 0:
                     epoch_relative_scheduled = snapshot_epoch_size
-                loop_state["results"] = []
-                loop_state["omitted_results_count"] = epoch_relative_count
+                
+                # Do NOT unconditionally clear results array here. 
+                # This causes the engine to forget completed iterations if the rebuilt epoch matches the cached epoch.
+                # Only collapse the array if we are synthesizing an entirely new relative count and missing the granular results.
+                # It is safer to truncate to omitted_results_count=epoch_relative_count if and only if we truly lost the granular results.
+                # However, load_state ALREADY properly clears `results` when crossing an epoch boundary (via command.issued).
+                # The only time we are here is if the cross-epoch total leaked into the current iteration state.
+                if len(loop_state.get("results", [])) > epoch_relative_count:
+                    loop_state["results"] = loop_state.get("results", [])[-epoch_relative_count:]
+                loop_state["omitted_results_count"] = max(0, epoch_relative_count - len(loop_state.get("results", [])))
                 loop_state["index"] = epoch_relative_count
                 loop_state["scheduled_count"] = epoch_relative_scheduled
                 logger.warning(
@@ -4125,6 +4133,7 @@ class ControlFlowEngine:
             coll_len = len(collection) if 'collection' in dir() and collection else 0
             context["iter"]["_first"] = claimed_index == 0
             context["iter"]["_last"] = claimed_index >= coll_len - 1 if coll_len > 0 else True
+            context["iter"]["loop_event_id"] = loop_event_id_for_metadata
             # Update loop metadata
             loop_s = state.loop_state.get(step.step)
             if loop_s:
