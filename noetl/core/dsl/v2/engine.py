@@ -1268,29 +1268,32 @@ class StateStore:
                             state.issued_steps.add(pending_key)
                             logger.debug(f"[STATE-LOAD] Reconstructed issued_step: {pending_key}")
                         if isinstance(meta_data, dict):
+                            loop_step = (
+                                node_name.replace(":task_sequence", "")
+                                if isinstance(node_name, str)
+                                else node_name
+                            )
+                            if loop_step in loop_iteration_state:
+                                loop_iteration_state[loop_step].pop("completed", None)
+                                loop_iteration_state[loop_step].pop("aggregation_finalized", None)
+                                loop_iteration_state[loop_step]["results"] = []
+                                loop_iteration_state[loop_step]["omitted_results_count"] = 0
+                                loop_iteration_state[loop_step]["scheduled_count"] = 0
+                                loop_iteration_state[loop_step]["failed_count"] = 0
+                                loop_iteration_state[loop_step]["index"] = 0
+                                state.completed_steps.discard(loop_step)
+                                state.step_results.pop(loop_step, None)
+
                             loop_event_id = meta_data.get("loop_event_id")
                             if loop_event_id:
+                                loop_iteration_state[loop_step]["event_id"] = str(loop_event_id)
+                                loop_event_ids[loop_step] = str(loop_event_id)
                                 loop_step = (
                                     node_name.replace(":task_sequence", "")
                                     if isinstance(node_name, str)
                                     else node_name
                                 )
                                 loop_event_ids[loop_step] = str(loop_event_id)
-                                
-                                # CRITICAL FIX: If a loop is re-dispatched (new command.issued),
-                                # we are starting a new epoch. Clear any stale aggregation_finalized
-                                # flags from previous epochs so the new epoch's results aren't dropped.
-                                if loop_step in loop_iteration_state:
-                                    loop_iteration_state[loop_step].pop("completed", None)
-                                    loop_iteration_state[loop_step].pop("aggregation_finalized", None)
-                                    loop_iteration_state[loop_step]["results"] = []
-                                    loop_iteration_state[loop_step]["omitted_results_count"] = 0
-                                    loop_iteration_state[loop_step]["scheduled_count"] = 0
-                                    loop_iteration_state[loop_step]["failed_count"] = 0
-                                    loop_iteration_state[loop_step]["index"] = 0
-                                    loop_iteration_state[loop_step]["event_id"] = str(loop_event_id)
-                                state.completed_steps.discard(loop_step)
-                                state.step_results.pop(loop_step, None)
                     elif event_type in {'command.completed', 'command.failed', 'command.cancelled'}:
                         pending_key = _pending_step_key(node_name)
                         if pending_key:
