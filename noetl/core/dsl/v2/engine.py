@@ -3660,6 +3660,7 @@ class ControlFlowEngine:
 
             # Resolve distributed loop key candidates.
             if force_new_loop_instance:
+                loop_event_id_for_metadata = loop_state.get("event_id")
                 loop_event_id_candidates = [str(loop_state.get("event_id"))]
             else:
                 loop_event_id_candidates = self._build_loop_event_id_candidates(state, step.step, loop_state)
@@ -3682,6 +3683,7 @@ class ControlFlowEngine:
                     nats_loop_state = candidate_state
                     resolved_loop_event_id = candidate_event_id
                     loop_state["event_id"] = candidate_event_id
+                    loop_event_id_for_metadata = candidate_event_id
                     break
 
             # If we're entering this loop from upstream routing (not loop continuation/retry)
@@ -4920,6 +4922,10 @@ class ControlFlowEngine:
 
                                         # [CLAIM-RECOVERY] If the claim was lost (claimed in KV but event never persisted),
                                         # proceed with the transition anyway to avoid stalling the workflow.
+                                        # Or if we just successfully pulled the claim, we shouldn't skip. Wait,
+                                        # the problem is that `loop_done_commands` is NOT appended to `commands` in the 
+                                        # Recovery branch if `_skip_loop_done` is flipped to False!
+                                        # Ah! No, it falls through to `if not _skip_loop_done:`.
                                         if not _is_loop_epoch_transition_emitted(
                                             state, parent_step, "loop.done", resolved_loop_event_id
                                         ):
