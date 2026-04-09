@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.17.7](https://github.com/noetl/noetl/compare/v2.17.6...v2.17.7) (2026-04-09)
+
+### Bug Fixes
+
+* **engine:** do not destroy loop results array during mid-epoch cache restore ([d5f2df1](https://github.com/noetl/noetl/commit/d5f2df1a598b2198ef59dae0038bac25ee3a607e))
+
 ## [2.17.6](https://github.com/noetl/noetl/compare/v2.17.5...v2.17.6) (2026-04-09)
 
 ### Bug Fixes
