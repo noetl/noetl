@@ -3728,6 +3728,7 @@ class ControlFlowEngine:
                     force_new_loop_instance = True
                     loop_event_id_candidates = [loop_event_id]
                     resolved_loop_event_id = loop_event_id
+                    loop_event_id_for_metadata = loop_event_id
                     nats_loop_state = None
 
                     state.completed_steps.discard(step.step)
