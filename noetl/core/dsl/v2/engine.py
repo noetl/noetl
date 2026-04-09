@@ -1288,6 +1288,7 @@ class StateStore:
                                     loop_iteration_state[loop_step]["scheduled_count"] = 0
                                     loop_iteration_state[loop_step]["failed_count"] = 0
                                     loop_iteration_state[loop_step]["index"] = 0
+                                    loop_iteration_state[loop_step]["event_id"] = str(loop_event_id)
                                 state.completed_steps.discard(loop_step)
                                 state.step_results.pop(loop_step, None)
                     elif event_type in {'command.completed', 'command.failed', 'command.cancelled'}:
