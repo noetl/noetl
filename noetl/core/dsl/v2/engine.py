@@ -5142,6 +5142,7 @@ class ControlFlowEngine:
                 else normalized_payload
             )
             loop_state = state.loop_state[event.step]
+            logger.error(f"[DEBUG-TRACE] call.done for {event.step} aggregation_finalized={loop_state.get('aggregation_finalized', False)}")
             if not loop_state.get("aggregation_finalized", False):
                 status_str = ""
                 if isinstance(response_data, dict):
