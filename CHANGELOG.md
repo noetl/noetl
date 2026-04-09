@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.17.10](https://github.com/noetl/noetl/compare/v2.17.9...v2.17.10) (2026-04-09)
+
+### Bug Fixes
+
+* **engine:** inject newly generated epoch ID into loop commands immediately ([685cea8](https://github.com/noetl/noetl/commit/685cea887022479239f2ce597677c90264fac474))
+
 ## [2.17.9](https://github.com/noetl/noetl/compare/v2.17.8...v2.17.9) (2026-04-09)
 
 ### Bug Fixes
