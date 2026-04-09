@@ -4096,9 +4096,9 @@ class ControlFlowEngine:
             item = collection[claimed_index]
             loop_state["index"] = max(int(loop_state.get("index", 0) or 0), claimed_index + 1)
             loop_event_id_for_metadata = (
-                str(loop_state.get("event_id"))
-                if loop_state.get("event_id") is not None
-                else loop_event_id_for_metadata
+                str(resolved_loop_event_id)
+                if resolved_loop_event_id is not None
+                else (str(loop_state.get("event_id")) if loop_state.get("event_id") is not None else loop_event_id_for_metadata)
             )
             logger.info(
                 "[LOOP] Claimed loop iteration %s for step %s (mode=%s max_in_flight=%s)",
