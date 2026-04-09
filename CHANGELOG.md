@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.17.3](https://github.com/noetl/noetl/compare/v2.17.2...v2.17.3) (2026-04-09)
+
+### Bug Fixes
+
+* **engine:** trigger epoch reconstruction regardless of loop_event_id in meta ([40d86a0](https://github.com/noetl/noetl/commit/40d86a0c79e9b57a2aeeca7a0799a76e9a6196ab))
+
 ## [2.17.2](https://github.com/noetl/noetl/compare/v2.17.1...v2.17.2) (2026-04-09)
 
 ### Bug Fixes
