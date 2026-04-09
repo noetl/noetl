@@ -3195,14 +3195,6 @@ async def get_execution_status(execution_id: str, full: bool = False):
                 completed = True
                 failed = False
                 completion_inferred = True
-            elif (
-                latest_event["event_type"] == "batch.completed"
-                and latest_event["status"] == "COMPLETED"
-                and pending_count == 0
-            ):
-                completed = True
-                failed = False
-                completion_inferred = True
 
             if failed:
                 completed = False
@@ -3312,13 +3304,6 @@ async def get_execution_status(execution_id: str, full: bool = False):
                     latest_event["node_name"] == "end"
                     and latest_event["status"] == "COMPLETED"
                     and latest_event["event_type"] in {"command.completed", "call.done", "step.exit"}
-                ):
-                    completed = True
-                    completion_inferred = True
-                elif latest_event and (
-                    latest_event["event_type"] == "batch.completed"
-                    and latest_event["status"] == "COMPLETED"
-                    and pending_count == 0
                 ):
                     completed = True
                     completion_inferred = True

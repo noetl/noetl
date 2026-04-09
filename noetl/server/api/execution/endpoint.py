@@ -489,13 +489,6 @@ def _infer_execution_completion_from_events(
     ):
         return "COMPLETED", latest_event.get("created_at")
 
-    if latest_event and (
-        latest_event.get("event_type") == "batch.completed"
-        and latest_event.get("status") == "COMPLETED"
-        and pending_count == 0
-    ):
-        return "COMPLETED", latest_event.get("created_at")
-
     return "RUNNING", None
 
 
