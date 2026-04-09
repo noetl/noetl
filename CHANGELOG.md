@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.17.12](https://github.com/noetl/noetl/compare/v2.17.11...v2.17.12) (2026-04-09)
+
+### Bug Fixes
+
+* **engine:** do not fall back to global count during cross-epoch loop iteration ([2853915](https://github.com/noetl/noetl/commit/2853915c0b88b2975784defda7775735eaa74d5d))
+
 ## [2.17.11](https://github.com/noetl/noetl/compare/v2.17.10...v2.17.11) (2026-04-09)
 
 ### Bug Fixes
