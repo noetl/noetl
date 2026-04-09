@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.17.11](https://github.com/noetl/noetl/compare/v2.17.10...v2.17.11) (2026-04-09)
+
+### Bug Fixes
+
+* **engine:** prevent late call.done from corrupting active loop epoch ID ([fb6cc17](https://github.com/noetl/noetl/commit/fb6cc17fcbb2de5c298a1d3e63742eb396119d0a))
+
 ## [2.17.10](https://github.com/noetl/noetl/compare/v2.17.9...v2.17.10) (2026-04-09)
 
 ### Bug Fixes
