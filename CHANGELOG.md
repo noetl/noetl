@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.17.17](https://github.com/noetl/noetl/compare/v2.17.16...v2.17.17) (2026-04-10)
+
+### Bug Fixes
+
+* **engine:** properly use _pinned_epoch_id for loop count increments to prevent cross-epoch leakage ([da84506](https://github.com/noetl/noetl/commit/da84506e3e627b1c5b4e57bc72f3e005e9e19ef8))
+
 ## [2.17.16](https://github.com/noetl/noetl/compare/v2.17.15...v2.17.16) (2026-04-10)
 
 ### Bug Fixes
