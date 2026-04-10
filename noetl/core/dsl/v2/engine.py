@@ -4729,6 +4729,18 @@ class ControlFlowEngine:
                                 f"{parent_step} via {resolved_loop_event_id}: {new_count}"
                             )
 
+                        is_late_arrival = bool(
+                            loop_state.get("event_id") 
+                            and resolved_loop_event_id 
+                            and resolved_loop_event_id != loop_state.get("event_id")
+                        )
+                        if is_late_arrival:
+                            logger.info(
+                                f"[TASK_SEQ-LOOP] Late call.done for {parent_step} epoch {resolved_loop_event_id} "
+                                f"(active: {loop_state.get('event_id')}) — detaching loop_state"
+                            )
+                            loop_state = dict(loop_state)
+                        
                         loop_state["event_id"] = resolved_loop_event_id
 
                         # Resolve collection size with distributed-safe fallback order:
@@ -4933,12 +4945,13 @@ class ControlFlowEngine:
                                         # did NOT fire loop.done has completed=False in its in-memory
                                         # loop_state and completed_steps, causing it to block the
                                         # re-dispatch via the issued_steps dedup guard.
-                                        loop_state["completed"] = True
-                                        loop_state["aggregation_finalized"] = True
-                                        state.mark_step_completed(
-                                            parent_step,
-                                            state.get_loop_aggregation(parent_step),
-                                        )
+                                        if not is_late_arrival:
+                                            loop_state["completed"] = True
+                                            loop_state["aggregation_finalized"] = True
+                                            state.mark_step_completed(
+                                                parent_step,
+                                                state.get_loop_aggregation(parent_step),
+                                            )
 
                                         # [CLAIM-RECOVERY] If the claim was lost (claimed in KV but event never persisted),
                                         # proceed with the transition anyway to avoid stalling the workflow.
@@ -4946,7 +4959,7 @@ class ControlFlowEngine:
                                         # the problem is that `loop_done_commands` is NOT appended to `commands` in the 
                                         # Recovery branch if `_skip_loop_done` is flipped to False!
                                         # Ah! No, it falls through to `if not _skip_loop_done:`.
-                                        if not _is_loop_epoch_transition_emitted(
+                                        if not is_late_arrival and not _is_loop_epoch_transition_emitted(
                                             state, parent_step, "loop.done", resolved_loop_event_id
                                         ):
                                             logger.warning(
@@ -4964,7 +4977,7 @@ class ControlFlowEngine:
                                     )
                                     # Fall through: aggregation_finalized is a second-layer in-process guard.
 
-                                if not _skip_loop_done:
+                                if not _skip_loop_done and not is_late_arrival:
                                     # Loop done - mark completed and create loop.done event
                                     loop_state["completed"] = True
                                     loop_state["aggregation_finalized"] = True
@@ -5253,6 +5266,18 @@ class ControlFlowEngine:
                             f"{event.step} via {resolved_loop_event_id}: {new_count}"
                         )
 
+                    is_late_arrival = bool(
+                        loop_state.get("event_id") 
+                        and resolved_loop_event_id 
+                        and resolved_loop_event_id != loop_state.get("event_id")
+                    )
+                    if is_late_arrival:
+                        logger.info(
+                            f"[LOOP-CALL.DONE] Late call.done for {event.step} epoch {resolved_loop_event_id} "
+                            f"(active: {loop_state.get('event_id')}) — detaching loop_state"
+                        )
+                        loop_state = dict(loop_state)
+
                     loop_state["event_id"] = resolved_loop_event_id
 
                     # Resolve collection size from NATS or re-render
@@ -5303,16 +5328,17 @@ class ControlFlowEngine:
                                     # loopback step (e.g. load_patients → fetch_assessments
                                     # epoch 2) is not blocked by the issued_steps dedup guard
                                     # on this pod, which did not fire loop.done itself.
-                                    loop_state["completed"] = True
-                                    loop_state["aggregation_finalized"] = True
-                                    state.mark_step_completed(
-                                        event.step,
-                                        state.get_loop_aggregation(event.step),
-                                    )
+                                    if not is_late_arrival:
+                                        loop_state["completed"] = True
+                                        loop_state["aggregation_finalized"] = True
+                                        state.mark_step_completed(
+                                            event.step,
+                                            state.get_loop_aggregation(event.step),
+                                        )
 
                                     # [CLAIM-RECOVERY] If the claim was lost (claimed in KV but event never persisted),
                                     # proceed with the transition anyway to avoid stalling the workflow.
-                                    if not _is_loop_epoch_transition_emitted(
+                                    if not is_late_arrival and not _is_loop_epoch_transition_emitted(
                                         state, event.step, "loop.done", resolved_loop_event_id
                                     ):
                                         logger.warning(
@@ -5330,7 +5356,7 @@ class ControlFlowEngine:
                                 )
                                 # Fall through: aggregation_finalized is a second-layer in-process guard.
 
-                            if not _skip_loop_done:
+                            if not _skip_loop_done and not is_late_arrival:
                                 loop_state["completed"] = True
                                 loop_state["aggregation_finalized"] = True
                                 logger.info(f"[LOOP-CALL.DONE] Loop completed for {event.step}: {new_count}/{collection_size}")
