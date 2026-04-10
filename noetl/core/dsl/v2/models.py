@@ -165,6 +165,7 @@ class Event(BaseModel):
     step: Optional[str] = Field(None, description="Step name that emitted the event")
     name: str = Field(..., description="Event name (step.enter, call.done, step.exit, command.*, etc.)")
     payload: dict[str, Any] = Field(default_factory=dict, description="Event data (response, error, metadata) - always dict at runtime")
+    meta: Optional[dict[str, Any]] = Field(default_factory=dict, description="Event metadata (command_id, etc)")
     timestamp: datetime = Field(default_factory=datetime.utcnow, description="Event timestamp")
     worker_id: Optional[str] = Field(None, description="Worker that executed the command")
     attempt: int = Field(default=1, description="Attempt number for retries")

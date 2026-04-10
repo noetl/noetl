@@ -236,8 +236,11 @@ def _unwrap_event_payload(payload: Any) -> Any:
     return payload
 
 
-def _extract_command_id_from_event_payload(payload: Any) -> Optional[str]:
+def _extract_command_id_from_event_payload(payload: Any, meta: Optional[dict[str, Any]] = None) -> Optional[str]:
     """Best-effort extraction of command_id from worker event payloads."""
+    if isinstance(meta, dict) and "command_id" in meta:
+        return meta.get("command_id")
+
     if not isinstance(payload, dict):
         return None
 
@@ -4400,7 +4403,7 @@ class ControlFlowEngine:
         # duplicates can trigger the same routing side-effects multiple times.
         # Guard by command_id and only orchestrate the first persisted instance.
         if already_persisted and event.name in {"call.done", "call.error"}:
-            command_id = _extract_command_id_from_event_payload(normalized_payload)
+            command_id = _extract_command_id_from_event_payload(normalized_payload, event.meta)
             if command_id:
                 persisted_count = await self._count_persisted_command_events(
                     event.execution_id,
@@ -4629,10 +4632,17 @@ class ControlFlowEngine:
                         # through _build_loop_event_id_candidates which may return stale
                         # candidates (e.g. step_event_ids from a previous epoch after a
                         # STATE-CACHE-INVALIDATE).
+                        
+                        meta_loop_epoch_id = event.meta.get("__loop_epoch_id") if isinstance(event.meta, dict) else None
+                        
                         _pinned_epoch_id = (
-                            str(normalized_payload.get("__loop_epoch_id"))
-                            if isinstance(normalized_payload, dict) and normalized_payload.get("__loop_epoch_id")
-                            else (str(payload_loop_event_id) if payload_loop_event_id else None)
+                            str(meta_loop_epoch_id)
+                            if meta_loop_epoch_id
+                            else (
+                                str(normalized_payload.get("__loop_epoch_id"))
+                                if isinstance(normalized_payload, dict) and normalized_payload.get("__loop_epoch_id")
+                                else (str(payload_loop_event_id) if payload_loop_event_id else None)
+                            )
                         )
                         event_id_candidates = []
                         if _pinned_epoch_id:
