@@ -4668,7 +4668,7 @@ class ControlFlowEngine:
 
                         new_count = -1
                         _stale_epoch_event = False
-                        if payload_loop_event_id:
+                        if _pinned_epoch_id:
                             # Worker stamped the event with an explicit epoch ID.
                             # Only try that specific key — if it is gone (TTL expired or
                             # wrong epoch) the event belongs to an old, already-completed
@@ -4676,11 +4676,11 @@ class ControlFlowEngine:
                             primary_count = await nats_cache.increment_loop_completed(
                                 str(state.execution_id),
                                 parent_step,
-                                event_id=str(payload_loop_event_id),
+                                event_id=str(_pinned_epoch_id),
                             )
                             if primary_count >= 0:
                                 new_count = primary_count
-                                resolved_loop_event_id = str(payload_loop_event_id)
+                                resolved_loop_event_id = str(_pinned_epoch_id)
                             else:
                                 # Key missing: epoch key expired or belongs to a different
                                 # execution epoch.  Mark as stale so we do NOT fall through
@@ -5176,10 +5176,15 @@ class ControlFlowEngine:
                     # Prefer the epoch ID baked into the command at dispatch time
                     # (__loop_epoch_id) over candidates that may include stale step_event_ids
                     # from a previous epoch after STATE-CACHE-INVALIDATE.
+                    meta_loop_epoch_id = event.meta.get("__loop_epoch_id") if isinstance(event.meta, dict) else None
                     _pinned_epoch_id = (
-                        str(event.payload.get("__loop_epoch_id"))
-                        if isinstance(event.payload, dict) and event.payload.get("__loop_epoch_id")
-                        else (str(payload_loop_event_id) if payload_loop_event_id else None)
+                        str(meta_loop_epoch_id)
+                        if meta_loop_epoch_id
+                        else (
+                            str(event.payload.get("__loop_epoch_id"))
+                            if isinstance(event.payload, dict) and event.payload.get("__loop_epoch_id")
+                            else (str(payload_loop_event_id) if payload_loop_event_id else None)
+                        )
                     )
                     loop_event_id = _pinned_epoch_id or loop_state.get("event_id")
                     event_id_candidates = []
@@ -5201,17 +5206,36 @@ class ControlFlowEngine:
                     )
 
                     new_count = -1
-                    for candidate_event_id in event_id_candidates:
-                        candidate_count = await nats_cache.increment_loop_completed(
-                            str(state.execution_id), event.step, event_id=candidate_event_id
+                    _stale_epoch_event = False
+                    if _pinned_epoch_id:
+                        primary_count = await nats_cache.increment_loop_completed(
+                            str(state.execution_id), event.step, event_id=str(_pinned_epoch_id)
                         )
-                        if candidate_count >= 0:
-                            new_count = candidate_count
-                            resolved_loop_event_id = candidate_event_id
-                            break
+                        if primary_count >= 0:
+                            new_count = primary_count
+                            resolved_loop_event_id = str(_pinned_epoch_id)
+                        else:
+                            _stale_epoch_event = True
+                    else:
+                        for candidate_event_id in event_id_candidates:
+                            candidate_count = await nats_cache.increment_loop_completed(
+                                str(state.execution_id), event.step, event_id=candidate_event_id
+                            )
+                            if candidate_count >= 0:
+                                new_count = candidate_count
+                                resolved_loop_event_id = candidate_event_id
+                                break
 
                     _nats_count_reliable = True
-                    if new_count < 0:
+                    if _stale_epoch_event:
+                        _nats_count_reliable = False
+                        logger.warning(
+                            "[LOOP-CALL.DONE] Stale call.done for %s (payload_epoch=%s) — "
+                            "epoch key not found in NATS (TTL expired?); discarding to protect current epoch",
+                            event.step,
+                            payload_loop_event_id,
+                        )
+                    elif new_count < 0:
                         _nats_count_reliable = False
                         new_count = state.get_loop_completed_count(event.step)
                         persisted_count = await self._count_step_events(
