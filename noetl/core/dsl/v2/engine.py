@@ -4740,8 +4740,8 @@ class ControlFlowEngine:
                                 f"(active: {loop_state.get('event_id')}) — detaching loop_state"
                             )
                             loop_state = dict(loop_state)
-                        
-                        loop_state["event_id"] = resolved_loop_event_id
+                        else:
+                            loop_state["event_id"] = resolved_loop_event_id
 
                         # Resolve collection size with distributed-safe fallback order:
                         # local cache -> NATS K/V metadata -> re-render loop expression.
@@ -5277,8 +5277,8 @@ class ControlFlowEngine:
                             f"(active: {loop_state.get('event_id')}) — detaching loop_state"
                         )
                         loop_state = dict(loop_state)
-
-                    loop_state["event_id"] = resolved_loop_event_id
+                    else:
+                        loop_state["event_id"] = resolved_loop_event_id
 
                     # Resolve collection size from NATS or re-render
                     nats_loop_state = await nats_cache.get_loop_state(
