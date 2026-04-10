@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.17.16](https://github.com/noetl/noetl/compare/v2.17.15...v2.17.16) (2026-04-10)
+
+### Bug Fixes
+
+* **loop:** ensure loop_event_id is extracted from event metadata during call.done to prevent cross-epoch tracking failure ([276f5ea](https://github.com/noetl/noetl/commit/276f5ea5d2a4af3a1656fbed25005e1951885b13))
+* **worker:** ensure __loop_epoch_id is propagated in event metadata when emitting call.done/call.error ([1ad66dd](https://github.com/noetl/noetl/commit/1ad66dd993ca6da7935e23ac6e3b93249472ce23))
+
 ## [2.17.15](https://github.com/noetl/noetl/compare/v2.17.14...v2.17.15) (2026-04-10)
 
 ### Bug Fixes
