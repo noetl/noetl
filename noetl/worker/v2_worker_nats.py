@@ -2063,7 +2063,8 @@ class V2Worker:
                                 "loop_event_id": loop_event_id,
                             },
                             actionable=True,
-                            informative=True
+                            informative=True,
+                            meta={"__loop_epoch_id": loop_event_id, "command_id": command_id} if loop_event_id else {"command_id": command_id} if command_id else None
                         )
                     
                     await self._emit_event(
@@ -2133,7 +2134,8 @@ class V2Worker:
                         "command_id": command_id,
                     },
                     actionable=True,  # Server may want to handle failure
-                    informative=True
+                    informative=True,
+                    meta={"__loop_epoch_id": loop_event_id, "command_id": command_id} if loop_event_id else {"command_id": command_id} if command_id else None
                 )
                 
                 # Emit command.failed event
@@ -2188,7 +2190,8 @@ class V2Worker:
                         "loop_event_id": loop_event_id,
                     },
                     actionable=True,  # Server should evaluate next/case routing
-                    informative=True
+                    informative=True,
+                    meta={"__loop_epoch_id": loop_event_id, "command_id": command_id} if loop_event_id else {"command_id": command_id} if command_id else None
                 )
 
                 # Batch step.exit + command.completed in a single HTTP call
@@ -3257,6 +3260,7 @@ class V2Worker:
         informative: bool = True,
         correlation: dict = None,
         inputs: dict = None,
+        meta: Optional[dict] = None,
         timeout_seconds: Optional[float] = None,
         max_retries: Optional[int] = None,
         raise_on_failure: bool = True,
@@ -3302,6 +3306,8 @@ class V2Worker:
             "actionable": actionable,
             "informative": informative,
         }
+        if meta:
+            event_data["meta"] = meta
             
         # Add correlation keys if provided
         if correlation:
