@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.17.15](https://github.com/noetl/noetl/compare/v2.17.14...v2.17.15) (2026-04-10)
+
+### Bug Fixes
+
+* **loop:** correct epoch id extraction to prevent multi-pass cross-epoch leakage ([551d6a8](https://github.com/noetl/noetl/commit/551d6a8e379c874ad91e3311d8c332d12444cec4))
+
 ## [2.17.14](https://github.com/noetl/noetl/compare/v2.17.13...v2.17.14) (2026-04-09)
 
 ### Bug Fixes
