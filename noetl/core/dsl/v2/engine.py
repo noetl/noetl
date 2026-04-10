@@ -4514,6 +4514,10 @@ class ControlFlowEngine:
             )
             if not payload_loop_event_id and isinstance(response_data, dict):
                 payload_loop_event_id = response_data.get("loop_event_id")
+            if not payload_loop_event_id and isinstance(normalized_payload, dict):
+                context_data = normalized_payload.get("context")
+                if isinstance(context_data, dict):
+                    payload_loop_event_id = context_data.get("loop_event_id")
 
             # Extract ctx variables from task sequence result and merge into execution state.
             # This syncs scoped set mutations from task policy rules back to the server.

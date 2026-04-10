@@ -1765,7 +1765,7 @@ class V2Worker:
         # Extract catalog_id from meta (where server stores it)
         meta = command.get("meta", {})
         catalog_id = meta.get("catalog_id")
-        loop_event_id = meta.get("loop_event_id")
+        loop_event_id = meta.get("loop_event_id") or meta.get("__loop_epoch_id")
 
         # Ensure execution_id and catalog_id are in render_context for keychain resolution
         if "execution_id" not in render_context:
