@@ -5,15 +5,23 @@ from .state import ExecutionState
 from .store import PlaybookRepo, StateStore
 
 class LifecycleMixin:
-    async def _persist_event(self, event: Event, state: ExecutionState):
+    async def _persist_event(self, event: Event, state: ExecutionState, conn=None):
         """Persist event to database with state tracking."""
         # Use catalog_id from state, or lookup from existing events
         catalog_id = state.catalog_id
         
         if not catalog_id:
-            # Fallback: lookup from existing events
-            async with get_pool_connection() as conn:
+            if conn is None:
+                async with get_pool_connection() as c:
+                    async with c.cursor() as cur:
+                        await cur.execute("SELECT catalog_id FROM noetl.event WHERE execution_id = %s LIMIT 1", (int(event.execution_id),))
+                        result = await cur.fetchone()
+                        catalog_id = result['catalog_id'] if result else None
+            else:
                 async with conn.cursor() as cur:
+                    await cur.execute("SELECT catalog_id FROM noetl.event WHERE execution_id = %s LIMIT 1", (int(event.execution_id),))
+                    result = await cur.fetchone()
+                    catalog_id = result['catalog_id'] if result else None
                     await cur.execute("""
                         SELECT catalog_id FROM noetl.event 
                         WHERE execution_id = %s 

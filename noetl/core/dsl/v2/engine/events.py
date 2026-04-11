@@ -50,7 +50,7 @@ class EventHandlingMixin:
                 event.step,
             )
             if not already_persisted:
-                await self._persist_event(event, state)
+                await self._persist_event(event, state, conn=conn)
                 await self.state_store.save_state(state, conn)
             return commands
         
@@ -94,7 +94,7 @@ class EventHandlingMixin:
             # Persist the event but don't generate commands (no orchestration needed)
             # Skip if already persisted by API caller
             if not already_persisted:
-                await self._persist_event(event, state)
+                await self._persist_event(event, state, conn=conn)
             # CRITICAL: Mark synthetic step as completed when step.exit received
             # This ensures issued_steps - completed_steps doesn't block workflow completion
             if event.name == "step.exit":
@@ -140,7 +140,7 @@ class EventHandlingMixin:
                         timestamp=datetime.now(timezone.utc),
                         parent_event_id=state.last_event_id
                     )
-                    await self._persist_event(workflow_completion_event, state)
+                    await self._persist_event(workflow_completion_event, state, conn=conn)
                     logger.info(f"Workflow completed (after inline task): execution_id={event.execution_id}")
 
                     playbook_completion_event = Event(
@@ -156,7 +156,7 @@ class EventHandlingMixin:
                         timestamp=datetime.now(timezone.utc),
                         parent_event_id=state.last_event_id
                     )
-                    await self._persist_event(playbook_completion_event, state)
+                    await self._persist_event(playbook_completion_event, state, conn=conn)
                     logger.info(f"Playbook completed (after inline task): execution_id={event.execution_id}")
 
                     await self.state_store.save_state(state, conn)
@@ -712,7 +712,7 @@ class EventHandlingMixin:
                                         },
                                         parent_event_id=state.root_event_id
                                     )
-                                    await self._persist_event(loop_done_event, state)
+                                    await self._persist_event(loop_done_event, state, conn=conn)
                                     state.add_emitted_loop_epoch(parent_step, "loop.done", str(resolved_loop_event_id))
                                     loop_done_commands = await self._evaluate_next_transitions(state, parent_step_def, loop_done_event)
                                     commands.extend(loop_done_commands)
@@ -775,7 +775,7 @@ class EventHandlingMixin:
             # do not see a stale pre-continuation snapshot.
             await self.state_store.save_state(state, conn)
             if not already_persisted:
-                await self._persist_event(event, state)
+                await self._persist_event(event, state, conn=conn)
             return commands
 
         # Task-sequence lifecycle is driven by call.done/call.error. The corresponding
@@ -1127,7 +1127,7 @@ class EventHandlingMixin:
                                     },
                                     parent_event_id=state.root_event_id
                                 )
-                                await self._persist_event(loop_done_event, state)
+                                await self._persist_event(loop_done_event, state, conn=conn)
                                 state.add_emitted_loop_epoch(event.step, "loop.done", str(resolved_loop_event_id))
                                 loop_done_commands = await self._evaluate_next_transitions(
                                     state, step_def, loop_done_event
@@ -1549,7 +1549,7 @@ class EventHandlingMixin:
                                 },
                                 parent_event_id=state.root_event_id
                             )
-                            await self._persist_event(loop_done_event, state)
+                            await self._persist_event(loop_done_event, state, conn=conn)
                             state.add_emitted_loop_epoch(event.step, "loop.done", str(resolved_loop_event_id))
                             loop_done_commands = await self._evaluate_next_transitions(state, step_def, loop_done_event)
                             commands.extend(loop_done_commands)
@@ -1821,7 +1821,7 @@ class EventHandlingMixin:
             # Persist current event FIRST to get its event_id for parent_event_id
             # Skip if already persisted by API caller
             if not already_persisted:
-                await self._persist_event(event, state)
+                await self._persist_event(event, state, conn=conn)
             
             # Now create completion events with current event as parent
             # This ensures proper ordering: call.done -> workflow_completion -> playbook_completion
@@ -1868,14 +1868,14 @@ class EventHandlingMixin:
         # Persist current event to database (if not already done for completion case)
         # Skip if event was already persisted by API caller
         if not completion_events and not already_persisted:
-            await self._persist_event(event, state)
+            await self._persist_event(event, state, conn=conn)
         
         # Persist completion events in order with proper parent_event_id chain
         for i, completion_event in enumerate(completion_events):
             if i > 0:
                 # Set parent to previous completion event
                 completion_event.parent_event_id = state.last_event_id
-            await self._persist_event(completion_event, state)
+            await self._persist_event(completion_event, state, conn=conn)
         
         # CRITICAL: Stop generating commands if this is a failure event
         # Check AFTER persisting and completion events so they're all stored
@@ -1903,7 +1903,7 @@ class EventHandlingMixin:
                     timestamp=datetime.now(timezone.utc),
                     parent_event_id=current_event_id,
                 )
-                await self._persist_event(workflow_failed_event, state)
+                await self._persist_event(workflow_failed_event, state, conn=conn)
 
                 playbook_failed_event = Event(
                     execution_id=event.execution_id,
@@ -1918,7 +1918,7 @@ class EventHandlingMixin:
                     timestamp=datetime.now(timezone.utc),
                     parent_event_id=state.last_event_id,
                 )
-                await self._persist_event(playbook_failed_event, state)
+                await self._persist_event(playbook_failed_event, state, conn=conn)
                 await self.state_store.save_state(state, conn)
 
             if event.name == "command.failed":

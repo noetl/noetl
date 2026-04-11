@@ -1966,12 +1966,15 @@ async def claim_command(event_id: int, req: ClaimRequest):
         if retry_after is not None:
             raise HTTPException(
                 status_code=503,
-                detail={
-                    "code": "db_unavailable",
-                    "message": "Database temporarily unavailable; retry shortly",
-                },
+                detail={"code": "db_unavailable", "message": "Database temporarily unavailable; retry shortly"},
                 headers={"Retry-After": retry_after},
             )
+        logger.error(f"claim_command failed with unhandled error: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail={"code": "internal_error", "message": str(e)}
+        )
+
         logger.error(f"claim_command failed: {e}", exc_info=True)
         raise HTTPException(500, str(e))
 
