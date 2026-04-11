@@ -2206,10 +2206,15 @@ async def handle_event(req: EventRequest) -> EventResponse:
         # Skip engine for administrative events to prevent duplicate command generation
         commands = []
         if req.name not in skip_engine_events:
-            # Pass already_persisted=True because we already persisted the event above
-            commands = await engine.handle_event(event, already_persisted=True)
+            # We wrap engine handling in a transaction and advisory lock to serialize parallel events
+            async with get_pool_connection() as engine_conn:
+                async with engine_conn.transaction():
+                    async with engine_conn.cursor() as cur:
+                        await cur.execute("SELECT pg_advisory_xact_lock(%s)", (int(req.execution_id),))
+                    commands = await engine.handle_event(event, conn=engine_conn, already_persisted=True)
             commands_generated = bool(commands)
             logger.debug(f"[ENGINE] Processed {req.name} for step {req.step}, generated {len(commands)} commands")
+
         else:
             logger.debug(f"[ENGINE] Skipped engine for administrative event {req.name}")
         
@@ -2826,7 +2831,12 @@ async def _process_accepted_batch(job: _BatchAcceptJob) -> int:
     engine: Optional[ControlFlowEngine] = None
     if job.last_actionable_event:
         engine = get_engine()
-        commands = await engine.handle_event(job.last_actionable_event, already_persisted=True)
+        async with get_pool_connection() as engine_conn:
+            async with engine_conn.transaction():
+                async with engine_conn.cursor() as cur:
+                    await cur.execute("SELECT pg_advisory_xact_lock(%s)", (int(job.last_actionable_event.execution_id),))
+                commands = await engine.handle_event(job.last_actionable_event, conn=engine_conn, already_persisted=True)
+
     try:
         await _issue_commands_for_batch(job, commands)
     except Exception as e:
@@ -3136,7 +3146,7 @@ async def get_execution_status(execution_id: str, full: bool = False):
     """Get execution status from engine state."""
     try:
         engine = get_engine()
-        state = engine.state_store.get_state(execution_id)
+        state = await engine.state_store.load_state(execution_id)
         
         if not state:
             async with get_pool_connection() as conn:

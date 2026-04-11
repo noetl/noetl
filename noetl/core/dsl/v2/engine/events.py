@@ -5,7 +5,7 @@ from .state import ExecutionState
 from .store import PlaybookRepo, StateStore
 
 class EventHandlingMixin:
-    async def handle_event(self, event: Event, already_persisted: bool = False) -> list[Command]:
+    async def handle_event(self, event: Event, conn=None, already_persisted: bool = False) -> list[Command]:
         """
         Handle an event and return commands to enqueue.
         
@@ -29,27 +29,12 @@ class EventHandlingMixin:
         preserved_loop_snapshots: dict[str, dict[str, Any]] = {}
         cache_refreshed = False
         
-        # Load execution state. For already-persisted events we must guard against
-        # stale per-pod memory snapshots when another server advanced this execution.
-        if already_persisted:
-            cached_state = self.state_store.get_state(event.execution_id)
-            if (
-                cached_state
-                and cached_state.last_event_id is not None
-                and await self.state_store.should_refresh_cached_state(
-                    event.execution_id,
-                    cached_state.last_event_id,
-                    allowed_missing_events=_STATE_CACHE_ALLOWED_MISSING_EVENTS,
-                )
-            ):
-                preserved_loop_snapshots = self._snapshot_loop_collections(cached_state)
-                await self.state_store.invalidate_state(
-                    event.execution_id,
-                    reason="stale_cache_newer_persisted_events",
-                )
-                cache_refreshed = True
 
-        state = await self.state_store.load_state(event.execution_id)
+
+        if conn:
+            state = await self.state_store.load_state_for_update(event.execution_id, conn)
+        else:
+            state = await self.state_store.load_state(event.execution_id)
         if not state:
             logger.error(f"Execution state not found: {event.execution_id}")
             return commands
@@ -66,7 +51,7 @@ class EventHandlingMixin:
             )
             if not already_persisted:
                 await self._persist_event(event, state)
-                await self.state_store.save_state(state)
+                await self.state_store.save_state(state, conn)
             return commands
         
         # Get current step
@@ -132,7 +117,7 @@ class EventHandlingMixin:
                         )
                     logger.info(f"[INLINE-TASK] Processed deferred next actions, generated {len(deferred_commands)} command(s)")
                     # Save state after processing deferred actions
-                    await self.state_store.save_state(state)
+                    await self.state_store.save_state(state, conn)
                     return commands
 
                 # Check if all issued steps are now completed (workflow might be done)
@@ -174,7 +159,7 @@ class EventHandlingMixin:
                     await self._persist_event(playbook_completion_event, state)
                     logger.info(f"Playbook completed (after inline task): execution_id={event.execution_id}")
 
-                    await self.state_store.save_state(state)
+                    await self.state_store.save_state(state, conn)
             return commands
 
         # Handle task sequence completion events
@@ -788,7 +773,7 @@ class EventHandlingMixin:
             # even when the next actionable command is emitted by the API after this method
             # returns. Persist that state before returning so later status/completion checks
             # do not see a stale pre-continuation snapshot.
-            await self.state_store.save_state(state)
+            await self.state_store.save_state(state, conn)
             if not already_persisted:
                 await self._persist_event(event, state)
             return commands
@@ -1759,7 +1744,15 @@ class EventHandlingMixin:
 
             if pending_count is None:
                 # Only fall back to database query if in-memory state might be stale (e.g., after restart)
-                async with get_pool_connection() as conn:
+                if conn is None:
+                    async with get_pool_connection() as c:
+                        async with c.cursor(row_factory=dict_row) as cur:
+                            await cur.execute("SELECT pending_count FROM noetl.runtime WHERE scope = 'cluster'")
+                            row = await cur.fetchone()
+                else:
+                    async with conn.cursor(row_factory=dict_row) as cur:
+                        await cur.execute("SELECT pending_count FROM noetl.runtime WHERE scope = 'cluster'")
+                        row = await cur.fetchone()
                     async with conn.cursor(row_factory=dict_row) as cur:
                         await cur.execute(
                             """
@@ -1870,7 +1863,7 @@ class EventHandlingMixin:
             logger.info(f"Playbook {completion_status}: execution_id={event.execution_id}, final_step={event.step}")
         
         # Save state
-        await self.state_store.save_state(state)
+        await self.state_store.save_state(state, conn)
         
         # Persist current event to database (if not already done for completion case)
         # Skip if event was already persisted by API caller
@@ -1926,7 +1919,7 @@ class EventHandlingMixin:
                     parent_event_id=state.last_event_id,
                 )
                 await self._persist_event(playbook_failed_event, state)
-                await self.state_store.save_state(state)
+                await self.state_store.save_state(state, conn)
 
             if event.name == "command.failed":
                 state.failed = True  # Track failure for final status

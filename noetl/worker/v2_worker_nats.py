@@ -1767,7 +1767,10 @@ class V2Worker:
         catalog_id = meta.get("catalog_id")
         loop_event_id = meta.get("loop_event_id") or meta.get("__loop_epoch_id")
         loop_iteration_index = meta.get("loop_iteration_index")
+        state_ref = meta.get("state_ref")
         loop_event_meta = {"command_id": command_id} if command_id else {}
+        if state_ref:
+            loop_event_meta["state_ref"] = state_ref
         if loop_event_id:
             loop_event_meta["__loop_epoch_id"] = loop_event_id
         if loop_iteration_index is not None:

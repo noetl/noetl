@@ -619,3 +619,4 @@ CREATE TRIGGER trg_event_to_execution
 AFTER INSERT ON noetl.event
 FOR EACH ROW
 EXECUTE FUNCTION noetl.trg_execution_state_upsert();
+ALTER TABLE noetl.execution ADD COLUMN IF NOT EXISTS state JSONB;
