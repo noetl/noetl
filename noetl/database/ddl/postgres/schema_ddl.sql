@@ -542,6 +542,12 @@ CREATE TABLE IF NOT EXISTS noetl.execution (
     updated_at            TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
+ALTER TABLE noetl.execution
+    ADD COLUMN IF NOT EXISTS parent_execution_id BIGINT,
+    ADD COLUMN IF NOT EXISTS last_event_type VARCHAR,
+    ADD COLUMN IF NOT EXISTS last_node_name VARCHAR,
+    ADD COLUMN IF NOT EXISTS last_event_id BIGINT;
+
 CREATE INDEX IF NOT EXISTS idx_execution_status ON noetl.execution (status);
 CREATE INDEX IF NOT EXISTS idx_execution_catalog_id ON noetl.execution (catalog_id);
 CREATE INDEX IF NOT EXISTS idx_execution_start_time ON noetl.execution (start_time DESC);

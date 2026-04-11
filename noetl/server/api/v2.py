@@ -31,6 +31,7 @@ from noetl.core.messaging import NATSCommandPublisher
 from noetl.core.storage import Scope, default_store, estimate_size
 from noetl.claim_policy import decide_reclaim_for_existing_claim
 from noetl.server.api.event_queries import PENDING_COMMAND_COUNT_SQL
+from noetl.server.api.supervision import supervise_command_issued, supervise_persisted_event
 
 from noetl.core.logger import setup_logger
 logger = setup_logger(__name__, include_location=True)
@@ -1457,6 +1458,7 @@ async def execute(req: ExecuteRequest) -> ExecuteResponse:
         # Emit command.issued events
         server_url = os.getenv("NOETL_SERVER_URL", "http://noetl.noetl.svc.cluster.local:8082")
         command_events = []
+        supervisor_commands: list[tuple[str, str, str, int, dict[str, Any]]] = []
         
         async with get_pool_connection() as conn:
             async with conn.cursor(row_factory=dict_row) as cur:
@@ -1521,8 +1523,20 @@ async def execute(req: ExecuteRequest) -> ExecuteResponse:
                         "created_at": datetime.now(timezone.utc)
                     })
                     command_events.append((int(execution_id), evt_id, cmd_id, cmd.step))
+                    supervisor_commands.append(
+                        (str(execution_id), cmd_id, cmd.step, int(evt_id), dict(meta))
+                    )
             
             await conn.commit()
+
+        for supervisor_execution_id, supervisor_command_id, supervisor_step, supervisor_event_id, supervisor_meta in supervisor_commands:
+            await supervise_command_issued(
+                supervisor_execution_id,
+                supervisor_command_id,
+                supervisor_step,
+                event_id=supervisor_event_id,
+                meta=supervisor_meta,
+            )
         
         await _publish_commands_with_recovery(command_events, server_url=server_url)
         
@@ -2163,6 +2177,15 @@ async def handle_event(req: EventRequest) -> EventResponse:
                 await conn.commit()
                 _record_db_operation_success()
 
+        await supervise_persisted_event(
+            req.execution_id,
+            req.step,
+            req.name,
+            req.payload,
+            event_meta,
+            event_id=int(evt_id),
+        )
+
         if req.name in {"command.completed", "command.failed"}:
             if command_id:
                 _active_claim_cache_invalidate(command_id=command_id)
@@ -2193,6 +2216,7 @@ async def handle_event(req: EventRequest) -> EventResponse:
         # Emit command.issued for next steps
         server_url = os.getenv("NOETL_SERVER_URL", "http://noetl.noetl.svc.cluster.local:8082")
         command_events = []
+        supervisor_commands: list[tuple[str, str, str, int, dict[str, Any]]] = []
         
         async with get_pool_connection() as conn:
             async with conn.cursor(row_factory=dict_row) as cur:
@@ -2261,8 +2285,20 @@ async def handle_event(req: EventRequest) -> EventResponse:
                         "created_at": datetime.now(timezone.utc)
                     })
                     command_events.append((int(cmd.execution_id), new_evt_id, cmd_id, cmd.step))
+                    supervisor_commands.append(
+                        (str(cmd.execution_id), cmd_id, cmd.step, int(new_evt_id), dict(meta))
+                    )
                 
                 await conn.commit()
+
+        for supervisor_execution_id, supervisor_command_id, supervisor_step, supervisor_event_id, supervisor_meta in supervisor_commands:
+            await supervise_command_issued(
+                supervisor_execution_id,
+                supervisor_command_id,
+                supervisor_step,
+                event_id=supervisor_event_id,
+                meta=supervisor_meta,
+            )
         
         await _publish_commands_with_recovery(command_events, server_url=server_url)
         

@@ -18,7 +18,7 @@ import pytest
 import yaml
 
 from noetl.core.dsl.v2.engine import ControlFlowEngine, ExecutionState, PlaybookRepo, StateStore
-from noetl.core.dsl.v2.models import Event, Playbook
+from noetl.core.dsl.v2.models import Event, NextRouter, Playbook
 
 
 PLAYBOOK_WITH_UNCONDITIONAL_FALLBACK = """
@@ -33,7 +33,10 @@ workflow:
       kind: python
       code: "def main(): return {}"
     next:
-      - step: step_b
+      spec:
+        mode: exclusive
+      arcs:
+        - step: step_b
 
   - step: step_b
     tool:
@@ -53,9 +56,12 @@ workflow:
       kind: python
       code: "def main(): return {}"
     next:
-      - step: step_b
-        when: "{{ ctx.row_count > 0 }}"
-      - step: step_c
+      spec:
+        mode: exclusive
+      arcs:
+        - step: step_b
+          when: "{{ ctx.row_count > 0 }}"
+        - step: step_c
 
   - step: step_b
     tool:
@@ -151,7 +157,9 @@ async def test_missing_target_step_does_not_set_any_matched(engine):
     # Override next to point at a step that doesn't exist in the playbook
     step_def = state.get_step("step_a")
     assert step_def is not None
-    step_def.next = [{"step": "nonexistent_step"}]
+    step_def.next = NextRouter.model_validate(
+        {"spec": {"mode": "exclusive"}, "arcs": [{"step": "nonexistent_step"}]}
+    )
 
     event = Event(
         execution_id="dedup-test-003",

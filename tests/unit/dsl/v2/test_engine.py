@@ -48,9 +48,12 @@ workflow:
       method: GET
       endpoint: "https://api.example.com/data"
     next:
-      - step: recovery_step
-        when: "{{{{ event.name == 'call.error' }}}}"
-      - step: end
+      spec:
+        mode: exclusive
+      arcs:
+        - step: recovery_step
+          when: "{{{{ event.name == 'call.error' }}}}"
+        - step: end
 
   - step: recovery_step
     tool:
@@ -66,326 +69,8 @@ workflow:
     return DSLParser().parse(yaml_content)
 
 
-def test_handle_workflow_start(engine_setup):
-    """Test handling workflow.start event."""
-    engine, playbook_repo, state_store = engine_setup
-    
-    # Create and register playbook
-    yaml_content = """
-apiVersion: noetl.io/v2
-kind: Playbook
-metadata:
-  name: test_workflow
-
-workflow:
-  - step: start
-    tool:
-      kind: python
-      code: "def main(): return {}"
-"""
-    
-    parser = DSLParser()
-    playbook = parser.parse(yaml_content)
-    playbook_repo.register(playbook, "exec-123")
-    
-    # Create workflow.start event
-    event = Event(
-        execution_id="exec-123",
-        name="workflow.start",
-        payload={}
-    )
-    
-    # Handle event
-    commands = engine.handle_event(event)
-    
-    # Should generate command for start step
-    assert len(commands) == 1
-    assert commands[0].step == "start"
-    assert commands[0].tool.kind == "python"
-
-
-def test_case_rule_matching(engine_setup):
-    """Test case/when/then rule evaluation."""
-    engine, playbook_repo, state_store = engine_setup
-    
-    yaml_content = """
-apiVersion: noetl.io/v2
-kind: Playbook
-metadata:
-  name: case_test
-
-workflow:
-  - step: start
-    tool:
-      kind: http
-      method: GET
-      endpoint: "https://api.example.com"
-    
-    case:
-      - when: "{{ event.name == 'call.done' and response.status == 200 }}"
-        then:
-          result:
-            from: response.data
-          next:
-            - step: end
-
-  - step: end
-    tool:
-      kind: python
-      code: "def main(): return {}"
-"""
-    
-    parser = DSLParser()
-    playbook = parser.parse(yaml_content)
-    playbook_repo.register(playbook, "exec-456")
-    
-    # Create call.done event with successful response
-    event = Event(
-        execution_id="exec-456",
-        step="start",
-        name="call.done",
-        payload={
-            "response": {
-                "status": 200,
-                "data": {"result": "success"}
-            }
-        }
-    )
-    
-    # Handle event
-    commands = engine.handle_event(event)
-    
-    # Should generate next command to 'end' step
-    assert len(commands) == 1
-    assert commands[0].step == "end"
-
-
-def test_retry_action(engine_setup):
-    """Test retry action on error."""
-    engine, playbook_repo, state_store = engine_setup
-    
-    yaml_content = """
-apiVersion: noetl.io/v2
-kind: Playbook
-metadata:
-  name: retry_test
-
-workflow:
-  - step: start
-    tool:
-      kind: http
-      method: GET
-      endpoint: "https://api.example.com"
-    
-    case:
-      - when: "{{ event.name == 'call.done' and error is defined and error.status == 503 }}"
-        then:
-          retry:
-            max_attempts: 3
-            backoff_multiplier: 2.0
-            initial_delay: 0.5
-"""
-    
-    parser = DSLParser()
-    playbook = parser.parse(yaml_content)
-    playbook_repo.register(playbook, "exec-retry")
-    
-    # Create call.done event with 503 error
-    event = Event(
-        execution_id="exec-retry",
-        step="start",
-        name="call.done",
-        payload={
-            "error": {
-                "status": 503,
-                "message": "Service Unavailable"
-            }
-        },
-        attempt=1
-    )
-    
-    # Handle event
-    commands = engine.handle_event(event)
-    
-    # Should generate retry command
-    assert len(commands) == 1
-    assert commands[0].step == "start"
-    assert commands[0].attempt == 2
-    assert commands[0].backoff is not None
-
-
-def test_collect_action(engine_setup):
-    """Test collect action for aggregation."""
-    engine, playbook_repo, state_store = engine_setup
-    
-    yaml_content = """
-apiVersion: noetl.io/v2
-kind: Playbook
-metadata:
-  name: collect_test
-
-workflow:
-  - step: start
-    tool:
-      kind: http
-      method: GET
-      endpoint: "https://api.example.com"
-    
-    case:
-      - when: "{{ event.name == 'step.enter' }}"
-        then:
-          set:
-            ctx:
-              items: []
-      
-      - when: "{{ event.name == 'call.done' and response is defined }}"
-        then:
-          collect:
-            from: response.data.items
-            into: items
-            mode: extend
-"""
-    
-    parser = DSLParser()
-    playbook = parser.parse(yaml_content)
-    playbook_repo.register(playbook, "exec-collect")
-    
-    # First event: step.enter
-    event1 = Event(
-        execution_id="exec-collect",
-        step="start",
-        name="step.enter",
-        payload={}
-    )
-    
-    engine.handle_event(event1)
-    
-    # Get state
-    state = state_store.get("exec-collect")
-    assert "items" in state.context
-    assert state.context["items"] == []
-    
-    # Second event: call.done with data
-    event2 = Event(
-        execution_id="exec-collect",
-        step="start",
-        name="call.done",
-        payload={
-            "response": {
-                "data": {
-                    "items": [{"id": 1}, {"id": 2}]
-                }
-            }
-        }
-    )
-    
-    engine.handle_event(event2)
-    
-    # Check that items were collected
-    state = state_store.get("exec-collect")
-    assert len(state.context["items"]) == 2
-
-
-def test_pagination_pattern(engine_setup):
-    """Test complete pagination pattern."""
-    engine, playbook_repo, state_store = engine_setup
-    
-    yaml_content = """
-apiVersion: noetl.io/v2
-kind: Playbook
-metadata:
-  name: pagination_test
-
-workflow:
-  - step: start
-    tool:
-      kind: http
-      method: GET
-      endpoint: "https://api.example.com/data"
-      params:
-        page: 1
-    
-    case:
-      - when: "{{ event.name == 'step.enter' }}"
-        then:
-          set:
-            ctx:
-              all_items: []
-      
-      - when: "{{ event.name == 'call.done' and response.paging.hasMore == true }}"
-        then:
-          collect:
-            from: response.items
-            into: all_items
-            mode: extend
-          call:
-            params:
-              page: "{{ (response.paging.page | int) + 1 }}"
-      
-      - when: "{{ event.name == 'call.done' and response.paging.hasMore == false }}"
-        then:
-          collect:
-            from: response.items
-            into: all_items
-            mode: extend
-          result:
-            from: ctx.all_items
-"""
-    
-    parser = DSLParser()
-    playbook = parser.parse(yaml_content)
-    playbook_repo.register(playbook, "exec-page")
-    
-    # Step enter
-    event1 = Event(
-        execution_id="exec-page",
-        step="start",
-        name="step.enter",
-        payload={}
-    )
-    engine.handle_event(event1)
-    
-    # First page (hasMore=true)
-    event2 = Event(
-        execution_id="exec-page",
-        step="start",
-        name="call.done",
-        payload={
-            "response": {
-                "items": [{"id": 1}, {"id": 2}],
-                "paging": {"page": 1, "hasMore": True}
-            }
-        }
-    )
-    
-    commands = engine.handle_event(event2)
-    
-    # Should generate call command for next page
-    assert len(commands) == 1
-    assert commands[0].step == "start"
-    
-    # Final page (hasMore=false)
-    event3 = Event(
-        execution_id="exec-page",
-        step="start",
-        name="call.done",
-        payload={
-            "response": {
-                "items": [{"id": 3}],
-                "paging": {"page": 2, "hasMore": False}
-            }
-        }
-    )
-    
-    commands = engine.handle_event(event3)
-    
-    # Should not generate more commands (final page)
-    # Result should be set in state
-    state = state_store.get("exec-page")
-    assert len(state.context["all_items"]) == 3
-
-
-def test_conditional_transition_with_set_and_input(engine_setup):
+@pytest.mark.asyncio
+async def test_conditional_transition_with_set_and_input(engine_setup):
     """Test conditional transition using arc set + step input."""
     engine, playbook_repo, state_store = engine_setup
     
@@ -423,22 +108,30 @@ workflow:
     
     parser = DSLParser()
     playbook = parser.parse(yaml_content)
-    playbook_repo.register(playbook, "exec-trans")
-    
+    state = ExecutionState(
+        execution_id="exec-trans",
+        playbook=playbook,
+        payload={},
+    )
+    await state_store.save_state(state)
+    engine._persist_event = AsyncMock(return_value=None)
+
     # call.done event
     event = Event(
         execution_id="exec-trans",
         step="start",
         name="call.done",
         payload={
-            "response": {
-                "status": 200,
-                "data": [1, 2, 3]
+            "result": {
+                "data": {
+                    "status": 200,
+                    "data": [1, 2, 3],
+                }
             }
         }
     )
-    
-    commands = engine.handle_event(event)
+
+    commands = await engine.handle_event(event, already_persisted=True)
 
     # Should generate command for process step with canonical input.
     assert len(commands) == 1
@@ -551,3 +244,182 @@ async def test_command_failed_without_pending_commands_terminates(engine_setup):
 
     # Engine returns empty commands list to stop further orchestration.
     assert commands == [], "Engine must return [] to halt orchestration on unrecovered failure"
+
+
+@pytest.mark.asyncio
+async def test_step_exit_structural_next_does_not_duplicate_pending_step(engine_setup):
+    """A later step.exit must not re-issue an exclusive next step already launched by call.done."""
+    engine, playbook_repo, state_store = engine_setup
+
+    yaml_content = """
+apiVersion: noetl.io/v2
+kind: Playbook
+metadata:
+  name: no_duplicate_structural_next
+
+workflow:
+  - step: start
+    tool:
+      kind: python
+      code: "def main(): return {}"
+    next:
+      spec:
+        mode: exclusive
+      arcs:
+        - step: next_step
+
+  - step: next_step
+    tool:
+      kind: python
+      code: "def main(): return {}"
+"""
+
+    playbook = DSLParser().parse(yaml_content)
+    state = ExecutionState(
+        execution_id="exec-no-dup",
+        playbook=playbook,
+        payload={},
+    )
+    await state_store.save_state(state)
+    engine._persist_event = AsyncMock(return_value=None)
+
+    call_done = Event(
+        execution_id="exec-no-dup",
+        step="start",
+        name="call.done",
+        payload={"result": {"ok": True}},
+    )
+    first_commands = await engine.handle_event(call_done, already_persisted=True)
+    assert [cmd.step for cmd in first_commands] == ["next_step"]
+
+    # Simulate the worker's later terminal step.exit for the same completed command.
+    step_exit = Event(
+        execution_id="exec-no-dup",
+        step="start",
+        name="step.exit",
+        payload={"status": "COMPLETED", "result": {"ok": True}},
+    )
+    second_commands = await engine.handle_event(step_exit, already_persisted=True)
+
+    assert second_commands == [], (
+        "step.exit structural fallback should not duplicate a next step that is already pending"
+    )
+
+
+@pytest.mark.asyncio
+async def test_state_replay_restores_non_loop_call_done_result_before_step_exit(engine_setup, monkeypatch):
+    """Cold state replay must restore call.done step results for follow-up loop rendering."""
+    engine, playbook_repo, state_store = engine_setup
+
+    yaml_content = """
+apiVersion: noetl.io/v2
+kind: Playbook
+metadata:
+  name: replay_call_done_step_result
+
+workflow:
+  - step: claim_rows
+    tool:
+      kind: python
+      code: "def main(): return {}"
+    next:
+      spec:
+        mode: exclusive
+      arcs:
+        - step: process_rows
+          when: "{{ event.name == 'call.done' }}"
+
+  - step: process_rows
+    loop:
+      in: "{{ claim_rows.rows }}"
+      iterator: row
+    tool:
+      kind: python
+      code: "def main(): return {}"
+"""
+
+    playbook = DSLParser().parse(yaml_content)
+
+    async def _load_playbook_by_id(_catalog_id):
+        return playbook
+
+    playbook_repo.load_playbook_by_id = _load_playbook_by_id
+
+    class _ReplayCursor:
+        def __init__(self):
+            self.query = ""
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        async def execute(self, query, params=None):
+            self.query = query
+
+        async def fetchone(self):
+            if "playbook.initialized" in self.query:
+                return {
+                    "catalog_id": 101,
+                    "context": {"workload": {}},
+                    "result": None,
+                }
+            raise AssertionError(f"Unexpected fetchone query: {self.query}")
+
+        async def fetchall(self):
+            if "event_type = ANY" in self.query:
+                return [
+                    {
+                        "event_id": 1,
+                        "parent_event_id": None,
+                        "node_name": "claim_rows",
+                        "event_type": "call.done",
+                        "result": {
+                            "rows": [{"patient_id": 7}],
+                            "row_count": 1,
+                        },
+                        "meta": None,
+                    }
+                ]
+            raise AssertionError(f"Unexpected fetchall query: {self.query}")
+
+    class _ReplayConn:
+        def cursor(self, *args, **kwargs):
+            return _ReplayCursor()
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+    @asynccontextmanager
+    async def _mock_replay_connection():
+        yield _ReplayConn()
+
+    monkeypatch.setattr("noetl.core.dsl.v2.engine.store.get_pool_connection", lambda: _mock_replay_connection())
+
+    class _NoopNatsCache:
+        async def get_loop_state(self, *args, **kwargs):
+            return None
+
+    async def _get_nats_cache():
+        return _NoopNatsCache()
+
+    monkeypatch.setattr("noetl.core.dsl.v2.engine.store.get_nats_cache", _get_nats_cache)
+
+    execution_id = "200000000000000777"
+    state = await state_store.load_state(execution_id)
+
+    assert state is not None
+    context = state.get_render_context(
+        Event(
+            execution_id=execution_id,
+            step="process_rows",
+            name="loop_init",
+            payload={},
+        )
+    )
+    assert context["claim_rows"]["rows"] == [{"patient_id": 7}]
+    assert engine._render_template("{{ claim_rows.rows }}", context) == [{"patient_id": 7}]

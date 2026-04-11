@@ -102,6 +102,42 @@ class RepairingNATSCache:
         self.state["event_id"] = event_id
         return claim_index
 
+    async def count_observed_loop_iteration_terminals(
+        self,
+        _execution_id,
+        _step_name,
+        *,
+        event_id=None,
+    ):
+        return int(self.state.get("observed_terminal_count", -1))
+
+    async def find_supervisor_missing_loop_iteration_indices(
+        self,
+        _execution_id,
+        _step_name,
+        *,
+        event_id=None,
+        limit=10,
+        min_age_seconds=0.0,
+    ):
+        indexes = self.state.get("supervisor_missing_indexes")
+        if indexes is None:
+            return None
+        return list(indexes)[:limit]
+
+    async def find_supervisor_orphaned_loop_iteration_indices(
+        self,
+        _execution_id,
+        _step_name,
+        *,
+        event_id=None,
+        limit=10,
+    ):
+        indexes = self.state.get("supervisor_orphaned_indexes")
+        if indexes is None:
+            return None
+        return list(indexes)[:limit]
+
 
 class RecordingCursor:
     def __init__(self, rows=None):
@@ -654,12 +690,12 @@ async def test_loop_counter_reconcile_recovers_no_slot_without_watchdog(monkeypa
     async def fake_find_missing(*_args, **_kwargs):
         return []
 
-    async def fake_count_step_events(*_args, **_kwargs):
+    async def fake_count_epoch_terminals(*_args, **_kwargs):
         return 4
 
     monkeypatch.setattr(engine_module, "get_nats_cache", fake_get_nats_cache)
     monkeypatch.setattr(engine, "_find_missing_loop_iteration_indices", fake_find_missing)
-    monkeypatch.setattr(engine, "_count_step_events", fake_count_step_events)
+    monkeypatch.setattr(engine, "_count_loop_terminal_iterations", fake_count_epoch_terminals)
     monkeypatch.setattr(engine_module, "_LOOP_COUNTER_RECONCILE_COOLDOWN_SECONDS", 0.0)
     monkeypatch.setattr(engine_module, "_LOOP_STALL_WATCHDOG_SECONDS", 300.0)
 
@@ -673,6 +709,197 @@ async def test_loop_counter_reconcile_recovers_no_slot_without_watchdog(monkeypa
     assert int(fake_cache.state.get("completed_count", 0)) == 4
     assert int(fake_cache.state.get("scheduled_count", 0)) == 6
     assert fake_cache.state.get("last_counter_reconcile_at")
+
+
+@pytest.mark.asyncio
+async def test_loop_counter_reconcile_uses_epoch_terminal_count_for_ghost_inflight(monkeypatch):
+    fixture = Path(
+        "tests/fixtures/playbooks/batch_execution/heavy_payload_pipeline_in_step_parallel/"
+        "heavy_payload_pipeline_in_step_parallel.yaml"
+    )
+    playbook = yaml.safe_load(fixture.read_text(encoding="utf-8"))
+    run_batch_workers = next(
+        step for step in playbook["workflow"] if step.get("step") == "run_batch_workers"
+    )
+    run_batch_workers["input"] = {
+        "claimed_batch": "{{ iter.batch.batch_number }}",
+        "claimed_index": "{{ loop_index }}",
+    }
+
+    parsed_playbook = engine_module.Playbook(**playbook)
+    playbook_repo = PlaybookRepo()
+    state_store = StateStore(playbook_repo)
+    engine = ControlFlowEngine(playbook_repo, state_store)
+    state = ExecutionState(
+        "9403d",
+        parsed_playbook,
+        payload={
+            "build_batch_plan": {
+                "batches": [{"batch_number": i} for i in range(1, 21)]
+            }
+        },
+    )
+
+    fake_cache = RepairingNATSCache(
+        {
+            "collection_size": 20,
+            "completed_count": 2,
+            "scheduled_count": 7,
+            "event_id": "loop_9403d_epoch_2",
+        }
+    )
+
+    async def fake_get_nats_cache():
+        return fake_cache
+
+    async def fake_find_missing(*_args, **_kwargs):
+        return []
+
+    async def fake_count_epoch_terminals(*_args, **_kwargs):
+        return 7
+
+    monkeypatch.setattr(engine_module, "get_nats_cache", fake_get_nats_cache)
+    monkeypatch.setattr(engine, "_find_missing_loop_iteration_indices", fake_find_missing)
+    monkeypatch.setattr(engine, "_count_loop_terminal_iterations", fake_count_epoch_terminals)
+    monkeypatch.setattr(engine_module, "_LOOP_COUNTER_RECONCILE_COOLDOWN_SECONDS", 0.0)
+    monkeypatch.setattr(engine_module, "_LOOP_STALL_WATCHDOG_SECONDS", 300.0)
+
+    step_def = state.get_step("run_batch_workers")
+    step_def.loop.spec.max_in_flight = 5
+    command = await engine._create_command_for_step(state, step_def, {})
+
+    assert command is not None
+    assert command.input.get("claimed_batch") == 8
+    assert command.input.get("claimed_index") == 7
+    assert int(fake_cache.state.get("completed_count", 0)) == 7
+    assert int(fake_cache.state.get("scheduled_count", 0)) == 8
+    assert fake_cache.state.get("last_counter_reconcile_at")
+
+
+@pytest.mark.asyncio
+async def test_loop_counter_reconcile_prefers_supervisor_terminal_count(monkeypatch):
+    fixture = Path(
+        "tests/fixtures/playbooks/batch_execution/heavy_payload_pipeline_in_step_parallel/"
+        "heavy_payload_pipeline_in_step_parallel.yaml"
+    )
+    playbook = yaml.safe_load(fixture.read_text(encoding="utf-8"))
+    run_batch_workers = next(
+        step for step in playbook["workflow"] if step.get("step") == "run_batch_workers"
+    )
+    run_batch_workers["input"] = {
+        "claimed_batch": "{{ iter.batch.batch_number }}",
+        "claimed_index": "{{ loop_index }}",
+    }
+
+    parsed_playbook = engine_module.Playbook(**playbook)
+    playbook_repo = PlaybookRepo()
+    state_store = StateStore(playbook_repo)
+    engine = ControlFlowEngine(playbook_repo, state_store)
+    state = ExecutionState(
+        "9403e",
+        parsed_playbook,
+        payload={
+            "build_batch_plan": {
+                "batches": [{"batch_number": i} for i in range(1, 21)]
+            }
+        },
+    )
+
+    fake_cache = RepairingNATSCache(
+        {
+            "collection_size": 20,
+            "completed_count": 2,
+            "scheduled_count": 7,
+            "event_id": "loop_9403e_epoch_2",
+            "observed_terminal_count": 7,
+        }
+    )
+
+    async def fake_get_nats_cache():
+        return fake_cache
+
+    async def fake_find_missing(*_args, **_kwargs):
+        return []
+
+    async def fake_count_epoch_terminals(*_args, **_kwargs):
+        return -1
+
+    monkeypatch.setattr(engine_module, "get_nats_cache", fake_get_nats_cache)
+    monkeypatch.setattr(engine, "_find_missing_loop_iteration_indices", fake_find_missing)
+    monkeypatch.setattr(engine, "_count_loop_terminal_iterations", fake_count_epoch_terminals)
+    monkeypatch.setattr(engine_module, "_LOOP_COUNTER_RECONCILE_COOLDOWN_SECONDS", 30.0)
+    monkeypatch.setattr(engine_module, "_LOOP_STALL_WATCHDOG_SECONDS", 300.0)
+
+    step_def = state.get_step("run_batch_workers")
+    step_def.loop.spec.max_in_flight = 5
+    command = await engine._create_command_for_step(state, step_def, {})
+
+    assert command is not None
+    assert command.input.get("claimed_batch") == 8
+    assert command.input.get("claimed_index") == 7
+    assert int(fake_cache.state.get("completed_count", 0)) == 7
+    assert int(fake_cache.state.get("scheduled_count", 0)) == 8
+    assert fake_cache.state.get("last_counter_reconcile_at")
+
+
+@pytest.mark.asyncio
+async def test_loop_watchdog_prefers_supervisor_orphaned_indexes(monkeypatch):
+    fixture = Path(
+        "tests/fixtures/playbooks/batch_execution/heavy_payload_pipeline_in_step_parallel/"
+        "heavy_payload_pipeline_in_step_parallel.yaml"
+    )
+    playbook = yaml.safe_load(fixture.read_text(encoding="utf-8"))
+    run_batch_workers = next(
+        step for step in playbook["workflow"] if step.get("step") == "run_batch_workers"
+    )
+    run_batch_workers["input"] = {
+        "claimed_batch": "{{ iter.batch.batch_number }}",
+        "claimed_index": "{{ loop_index }}",
+    }
+
+    parsed_playbook = engine_module.Playbook(**playbook)
+    playbook_repo = PlaybookRepo()
+    state_store = StateStore(playbook_repo)
+    engine = ControlFlowEngine(playbook_repo, state_store)
+    state = ExecutionState(
+        "9403f",
+        parsed_playbook,
+        payload={
+            "build_batch_plan": {
+                "batches": [{"batch_number": i} for i in range(1, 7)]
+            }
+        },
+    )
+
+    stale_progress_at = (datetime.now(timezone.utc) - timedelta(seconds=300)).isoformat()
+    fake_cache = RepairingNATSCache(
+        {
+            "collection_size": 6,
+            "completed_count": 2,
+            "scheduled_count": 5,
+            "last_progress_at": stale_progress_at,
+            "supervisor_orphaned_indexes": [3],
+        }
+    )
+
+    async def fake_get_nats_cache():
+        return fake_cache
+
+    async def unexpected_orphaned_scan(*_args, **_kwargs):
+        raise AssertionError("event-table orphaned scan should not run when supervisor state is available")
+
+    monkeypatch.setattr(engine_module, "get_nats_cache", fake_get_nats_cache)
+    monkeypatch.setattr(engine, "_find_orphaned_loop_iteration_indices", unexpected_orphaned_scan)
+    monkeypatch.setattr(engine_module, "_LOOP_STALL_WATCHDOG_SECONDS", 1.0)
+    monkeypatch.setattr(engine_module, "_LOOP_STALL_RECOVERY_COOLDOWN_SECONDS", 0.0)
+
+    step_def = state.get_step("run_batch_workers")
+    step_def.loop.spec.max_in_flight = 3
+    command = await engine._create_command_for_step(state, step_def, {})
+
+    assert command is not None
+    assert command.input.get("claimed_batch") == 4
+    assert command.input.get("claimed_index") == 3
 
 
 @pytest.mark.asyncio
@@ -1155,3 +1382,56 @@ def test_restore_loop_collection_snapshot_allows_valid_single_item_parallel_loop
     assert restored == 1
     assert len(state.loop_state["run_batch_workers"]["collection"]) == 1
     assert int(state.loop_state["run_batch_workers"].get("scheduled_count", 0)) == 1
+
+
+def test_restore_loop_collection_snapshot_clamps_cross_epoch_scheduled_count():
+    fixture = Path(
+        "tests/fixtures/playbooks/batch_execution/heavy_payload_pipeline_in_step_parallel/"
+        "heavy_payload_pipeline_in_step_parallel.yaml"
+    )
+    playbook = yaml.safe_load(fixture.read_text(encoding="utf-8"))
+    parsed_playbook = engine_module.Playbook(**playbook)
+    playbook_repo = PlaybookRepo()
+    state_store = StateStore(playbook_repo)
+    engine = ControlFlowEngine(playbook_repo, state_store)
+
+    state = ExecutionState(
+        "9507",
+        parsed_playbook,
+        payload={
+            "build_batch_plan": {
+                "batches": [{"batch_number": i} for i in range(1, 101)]
+            }
+        },
+    )
+    state.loop_state["run_batch_workers"] = {
+        "collection": [],
+        "iterator": "batch",
+        "index": 0,
+        "mode": "parallel",
+        "completed": False,
+        "results": [],
+        "failed_count": 0,
+        "scheduled_count": 381,
+        "aggregation_finalized": False,
+        "event_id": "loop_epoch_9507",
+        "omitted_results_count": 0,
+    }
+
+    snapshots = {
+        "run_batch_workers": {
+            "collection": [{"batch_number": i} for i in range(1, 101)],
+            "epoch_size": 100,
+            "event_id": "loop_epoch_9507",
+            "iterator": "batch",
+            "mode": "parallel",
+            "completed_count": 84,
+            "scheduled_count": 84,
+        }
+    }
+
+    restored = engine._restore_loop_collection_snapshots(state, snapshots)
+
+    assert restored == 1
+    assert len(state.loop_state["run_batch_workers"]["collection"]) == 100
+    assert int(state.loop_state["run_batch_workers"].get("scheduled_count", 0)) == 84

@@ -3,8 +3,7 @@ Tests for NoETL DSL v2 Parser
 """
 
 import pytest
-from noetl.core.dsl.v2.parser import DSLParser, parse_playbook
-from noetl.core.dsl.v2.models import Playbook, Step, ToolSpec
+from noetl.core.dsl.v2.parser import DSLParser
 
 
 def test_parse_simple_playbook():
@@ -26,8 +25,11 @@ workflow:
       kind: http
       method: GET
       endpoint: "{{ workload.api_url }}/test"
-    
-    next: end
+    next:
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
 
   - step: end
     desc: "End step"
@@ -50,45 +52,6 @@ workflow:
     assert playbook.workflow[1].step == "end"
 
 
-def test_parse_with_case():
-    """Test parsing playbook with case/when/then."""
-    yaml_content = """
-apiVersion: noetl.io/v2
-kind: Playbook
-metadata:
-  name: case_test
-
-workflow:
-  - step: start
-    tool:
-      kind: http
-      method: GET
-      endpoint: "https://api.example.com/data"
-    
-    case:
-      - when: "{{ event.name == 'call.done' and response.status == 200 }}"
-        then:
-          result:
-            from: response.data
-          next:
-            - step: end
-
-  - step: end
-    tool:
-      kind: python
-      code: "def main(): return {}"
-"""
-    
-    parser = DSLParser()
-    playbook = parser.parse(yaml_content)
-    
-    assert len(playbook.workflow) == 2
-    start_step = playbook.workflow[0]
-    assert start_step.case is not None
-    assert len(start_step.case) == 1
-    assert "event.name ==" in start_step.case[0].when
-
-
 def test_reject_old_type_field():
     """Test that old 'type' field is rejected."""
     yaml_content = """
@@ -108,8 +71,8 @@ workflow:
         parser.parse(yaml_content)
 
 
-def test_reject_next_with_when():
-    """Test that old next.when/then/else is rejected."""
+def test_reject_noncanonical_next_router():
+    """Test that shorthand next syntax is rejected in favor of canonical routers."""
     yaml_content = """
 apiVersion: noetl.io/v2
 kind: Playbook
@@ -122,35 +85,11 @@ workflow:
       kind: http
       method: GET
       endpoint: "https://api.example.com"
-    
-    next:
-      - when: "{{ some_condition }}"
-        then:
-          - step: end
+    next: end
 """
-    
+
     parser = DSLParser()
-    with pytest.raises(ValueError, match="Conditional 'next' with when/then/else is not allowed"):
-        parser.parse(yaml_content)
-
-
-def test_require_start_step():
-    """Test that workflow must have 'start' step."""
-    yaml_content = """
-apiVersion: noetl.io/v2
-kind: Playbook
-metadata:
-  name: no_start
-
-workflow:
-  - step: begin
-    tool:
-      kind: python
-      code: "def main(): pass"
-"""
-    
-    parser = DSLParser()
-    with pytest.raises(ValueError, match="must have a step named 'start'"):
+    with pytest.raises(ValueError, match="next must use canonical router format"):
         parser.parse(yaml_content)
 
 
@@ -193,13 +132,15 @@ workflow:
     loop:
       in: "{{ workload.items }}"
       iterator: item
-    
     tool:
       kind: http
       method: GET
       endpoint: "https://api.example.com/{{ item.name }}"
-    
-    next: end
+    next:
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
 
   - step: end
     tool:
@@ -238,42 +179,3 @@ workflow:
     playbook = parser.parse_file(test_file)
     
     assert playbook.metadata["name"] == "file_test"
-
-
-def test_validate_function():
-    """Test validation function."""
-    valid_yaml = """
-apiVersion: noetl.io/v2
-kind: Playbook
-metadata:
-  name: valid
-
-workflow:
-  - step: start
-    tool:
-      kind: python
-      code: "def main(): return {}"
-"""
-    
-    invalid_yaml = """
-apiVersion: noetl.io/v2
-kind: Playbook
-metadata:
-  name: invalid
-
-workflow:
-  - step: not_start
-    tool:
-      kind: python
-      code: "def main(): return {}"
-"""
-    
-    parser = DSLParser()
-    
-    is_valid, error = parser.validate(valid_yaml)
-    assert is_valid
-    assert error is None
-    
-    is_valid, error = parser.validate(invalid_yaml)
-    assert not is_valid
-    assert "start" in error

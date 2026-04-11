@@ -1766,6 +1766,12 @@ class V2Worker:
         meta = command.get("meta", {})
         catalog_id = meta.get("catalog_id")
         loop_event_id = meta.get("loop_event_id") or meta.get("__loop_epoch_id")
+        loop_iteration_index = meta.get("loop_iteration_index")
+        loop_event_meta = {"command_id": command_id} if command_id else {}
+        if loop_event_id:
+            loop_event_meta["__loop_epoch_id"] = loop_event_id
+        if loop_iteration_index is not None:
+            loop_event_meta["loop_iteration_index"] = loop_iteration_index
 
         # Ensure execution_id and catalog_id are in render_context for keychain resolution
         if "execution_id" not in render_context:
@@ -2046,9 +2052,11 @@ class V2Worker:
                                 "case_handled": True,
                                 "command_id": command_id,
                                 "loop_event_id": loop_event_id,
+                                "loop_iteration_index": loop_iteration_index,
                             },
                             actionable=True,  # Case evaluated - server may route/retry
-                            informative=True
+                            informative=True,
+                            meta=loop_event_meta or None,
                         )
                     else:
                         await self._emit_event(
@@ -2061,10 +2069,11 @@ class V2Worker:
                                 "case_handled": True,
                                 "command_id": command_id,
                                 "loop_event_id": loop_event_id,
+                                "loop_iteration_index": loop_iteration_index,
                             },
                             actionable=True,
                             informative=True,
-                            meta={"__loop_epoch_id": loop_event_id, "command_id": command_id} if loop_event_id else {"command_id": command_id} if command_id else None
+                            meta=loop_event_meta or None,
                         )
                     
                     await self._emit_event(
@@ -2116,9 +2125,16 @@ class V2Worker:
                     execution_id,
                     step,
                     "call.error",
-                    {"error": tool_error, "response": error_event_response},
+                    {
+                        "error": tool_error,
+                        "response": error_event_response,
+                        "command_id": command_id,
+                        "loop_event_id": loop_event_id,
+                        "loop_iteration_index": loop_iteration_index,
+                    },
                     actionable=True,  # Server should evaluate case blocks or fail
-                    informative=True
+                    informative=True,
+                    meta=loop_event_meta or None,
                 )
                 
                 # Emit step.exit with failed status
@@ -2132,10 +2148,11 @@ class V2Worker:
                         "error": tool_error,
                         "result": error_event_response,
                         "command_id": command_id,
+                        "loop_iteration_index": loop_iteration_index,
                     },
                     actionable=True,  # Server may want to handle failure
                     informative=True,
-                    meta={"__loop_epoch_id": loop_event_id, "command_id": command_id} if loop_event_id else {"command_id": command_id} if command_id else None
+                    meta=loop_event_meta or None
                 )
                 
                 # Emit command.failed event
@@ -2188,10 +2205,11 @@ class V2Worker:
                         "response": response_for_events,
                         "command_id": command_id,
                         "loop_event_id": loop_event_id,
+                        "loop_iteration_index": loop_iteration_index,
                     },
                     actionable=True,  # Server should evaluate next/case routing
                     informative=True,
-                    meta={"__loop_epoch_id": loop_event_id, "command_id": command_id} if loop_event_id else {"command_id": command_id} if command_id else None
+                    meta=loop_event_meta or None
                 )
 
                 # Batch step.exit + command.completed in a single HTTP call

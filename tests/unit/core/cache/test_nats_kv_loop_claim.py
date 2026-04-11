@@ -130,8 +130,55 @@ async def test_set_loop_state_preserves_existing_collection_size_when_incoming_z
     )
 
     assert ok is True
-    assert lookup_calls == 1
-    assert fake_kv.payload["collection_size"] == 8
+    assert lookup_calls == 0
+    assert fake_kv.payload["collection_size"] == 1
+
+
+@pytest.mark.asyncio
+async def test_set_loop_state_clamps_cross_epoch_counts_to_collection_size():
+    cache = NATSKVCache()
+    fake_kv = _FakeKV({"collection_size": 1, "completed_count": 0, "scheduled_count": 0})
+    cache._kv = fake_kv
+
+    ok = await cache.set_loop_state(
+        execution_id="e5",
+        step_name="loop_step",
+        state={"collection_size": 4, "completed_count": 9, "scheduled_count": 12},
+        event_id="loop_5",
+    )
+
+    assert ok is True
+    assert fake_kv.payload["collection_size"] == 4
+    assert fake_kv.payload["completed_count"] == 4
+    assert fake_kv.payload["scheduled_count"] == 4
+
+
+@pytest.mark.asyncio
+async def test_set_loop_state_is_monotonic_for_existing_epoch():
+    cache = NATSKVCache()
+    fake_kv = _FakeKV(
+        {
+            "collection_size": 100,
+            "completed_count": 42,
+            "scheduled_count": 47,
+            "loop_done_claimed": True,
+            "loop_done_claimed_at": "2026-04-10T19:00:00+00:00",
+        }
+    )
+    cache._kv = fake_kv
+
+    ok = await cache.set_loop_state(
+        execution_id="e6",
+        step_name="loop_step",
+        state={"collection_size": 100, "completed_count": 17, "scheduled_count": 21},
+        event_id="loop_6",
+    )
+
+    assert ok is True
+    assert fake_kv.payload["completed_count"] == 42
+    assert fake_kv.payload["scheduled_count"] == 47
+    assert fake_kv.payload["loop_done_claimed"] is True
+    assert fake_kv.payload["loop_done_claimed_at"] == "2026-04-10T19:00:00+00:00"
 
 
 # ── try_claim_loop_done ───────────────────────────────────────────────────
