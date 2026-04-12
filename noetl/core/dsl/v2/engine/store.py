@@ -133,6 +133,10 @@ class StateStore:
             UPDATE noetl.execution 
             SET state = %s, 
                 updated_at = CURRENT_TIMESTAMP,
+                end_time = CASE
+                    WHEN noetl.execution.end_time IS NULL AND %s IN ('COMPLETED', 'FAILED', 'CANCELLED') THEN CURRENT_TIMESTAMP
+                    ELSE noetl.execution.end_time
+                END,
                 status = CASE 
                     WHEN status IN ('COMPLETED', 'FAILED', 'CANCELLED') THEN status 
                     ELSE %s 
@@ -140,7 +144,7 @@ class StateStore:
                 last_event_id = GREATEST(COALESCE(last_event_id, 0), %s)
             WHERE execution_id = %s
         """
-        params = (json.dumps(state_dict), status, last_event_id, int(state.execution_id))
+        params = (json.dumps(state_dict), status, status, last_event_id, int(state.execution_id))
         
         if conn is None:
             async with get_pool_connection() as c:
