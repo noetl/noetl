@@ -71,6 +71,42 @@ class QueryMixin:
             )
             return -1
 
+    async def _is_first_persisted_command_event(
+        self,
+        execution_id: str,
+        event_type: str,
+        command_id: str,
+        persisted_event_id: int,
+    ) -> bool:
+        """Return True when the provided persisted event_id is the earliest duplicate candidate."""
+        try:
+            async with get_pool_connection() as conn:
+                async with conn.cursor(row_factory=dict_row) as cur:
+                    await cur.execute(
+                        """
+                        SELECT MIN(event_id) AS first_event_id
+                        FROM noetl.event
+                        WHERE execution_id = %s
+                          AND event_type = %s
+                          AND meta ? 'command_id'
+                          AND meta->>'command_id' = %s
+                        """,
+                        (int(execution_id), event_type, str(command_id)),
+                    )
+                    row = await cur.fetchone()
+                    first_event_id = int((row or {}).get("first_event_id", 0) or 0)
+                    return first_event_id > 0 and first_event_id == int(persisted_event_id)
+        except Exception as exc:
+            logger.warning(
+                "[EVENT-DEDUPE] Failed to resolve first persisted %s event for %s command_id=%s event_id=%s: %s",
+                event_type,
+                execution_id,
+                command_id,
+                persisted_event_id,
+                exc,
+            )
+            return False
+
     async def _count_loop_terminal_iterations(
         self,
         execution_id: str,
@@ -466,4 +502,3 @@ class QueryMixin:
                 exc,
             )
             return []
-

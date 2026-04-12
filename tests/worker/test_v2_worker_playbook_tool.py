@@ -302,6 +302,7 @@ async def test_execute_playbook_retries_transient_errors_while_polling_status(mo
 async def test_execute_command_error_events_use_externalized_response(monkeypatch):
     worker = V2Worker(worker_id="test-worker")
     emitted = []
+    batch_payloads = []
 
     async def fake_execute_tool(*_args, **_kwargs):
         # Simulate large failed task_sequence output (contains bulky payload).
@@ -333,7 +334,8 @@ async def test_execute_command_error_events_use_externalized_response(monkeypatc
     async def fake_emit_event(_server_url, _execution_id, _step, event_name, payload, **_kwargs):
         emitted.append((event_name, payload))
 
-    async def fake_emit_batch_events(*_args, **_kwargs):
+    async def fake_emit_batch_events(_server_url, _execution_id, events, **_kwargs):
+        batch_payloads.extend(events)
         return True
 
     monkeypatch.setattr(worker, "_execute_tool", fake_execute_tool)
@@ -355,9 +357,9 @@ async def test_execute_command_error_events_use_externalized_response(monkeypatc
 
     await worker._execute_command(command, server_url="http://noetl.test", command_id="cmd-1")
 
-    call_error = next(payload for name, payload in emitted if name == "call.error")
-    step_exit = next(payload for name, payload in emitted if name == "step.exit")
-    command_failed = next(payload for name, payload in emitted if name == "command.failed")
+    call_error = next(item["payload"] for item in batch_payloads if item["name"] == "call.error")
+    step_exit = next(item["payload"] for item in batch_payloads if item["name"] == "step.exit")
+    command_failed = next(item["payload"] for item in batch_payloads if item["name"] == "command.failed")
 
     # Error events should carry the compact externalized response, not raw large payload.
     assert "_ref" in call_error["response"]
@@ -423,7 +425,7 @@ async def test_execute_command_forces_reference_persistence_for_event_payloads(m
     assert seen_output_configs
     assert seen_output_configs[0]["inline_max_bytes"] == 0
 
-    call_done = next(payload for name, payload in emitted if name == "call.done")
+    call_done = next(item["payload"] for item in batch_payloads if item["name"] == "call.done")
     assert "_ref" in call_done["response"]
 
     step_exit = next(item["payload"] for item in batch_payloads if item["name"] == "step.exit")
@@ -503,11 +505,13 @@ async def test_execute_command_normalizes_stringified_context_sections(monkeypat
 async def test_execute_command_postgres_requires_auth_in_context(monkeypatch):
     worker = V2Worker(worker_id="test-worker")
     emitted = []
+    batch_payloads = []
 
     async def fake_emit_event(_server_url, _execution_id, _step, event_name, payload, **_kwargs):
         emitted.append((event_name, payload))
 
-    async def fake_emit_batch_events(*_args, **_kwargs):
+    async def fake_emit_batch_events(_server_url, _execution_id, events, **_kwargs):
+        batch_payloads.extend(events)
         return True
 
     async def fail_execute_tool(*_args, **_kwargs):
@@ -530,7 +534,7 @@ async def test_execute_command_postgres_requires_auth_in_context(monkeypatch):
 
     await worker._execute_command(command, server_url="http://noetl.test", command_id="cmd-3")
 
-    failed_payload = next(payload for name, payload in emitted if name == "command.failed")
+    failed_payload = next(item["payload"] for item in batch_payloads if item["name"] == "command.failed")
     assert "missing auth" in failed_payload["error"]
 
 
@@ -538,11 +542,13 @@ async def test_execute_command_postgres_requires_auth_in_context(monkeypatch):
 async def test_execute_command_postgres_rejects_direct_connection_fields(monkeypatch):
     worker = V2Worker(worker_id="test-worker")
     emitted = []
+    batch_payloads = []
 
     async def fake_emit_event(_server_url, _execution_id, _step, event_name, payload, **_kwargs):
         emitted.append((event_name, payload))
 
-    async def fake_emit_batch_events(*_args, **_kwargs):
+    async def fake_emit_batch_events(_server_url, _execution_id, events, **_kwargs):
+        batch_payloads.extend(events)
         return True
 
     async def fail_execute_tool(*_args, **_kwargs):
@@ -565,7 +571,7 @@ async def test_execute_command_postgres_rejects_direct_connection_fields(monkeyp
 
     await worker._execute_command(command, server_url="http://noetl.test", command_id="cmd-4")
 
-    failed_payload = next(payload for name, payload in emitted if name == "command.failed")
+    failed_payload = next(item["payload"] for item in batch_payloads if item["name"] == "command.failed")
     assert "forbidden direct connection fields" in failed_payload["error"]
 
 

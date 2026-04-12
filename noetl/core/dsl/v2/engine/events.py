@@ -72,16 +72,44 @@ class EventHandlingMixin:
                     command_id,
                 )
                 if persisted_count > 1:
-                    logger.warning(
-                        "[EVENT-DEDUPE] Ignoring duplicate persisted %s for execution=%s "
-                        "step=%s command_id=%s count=%s",
-                        event.name,
-                        event.execution_id,
-                        event.step,
-                        command_id,
-                        persisted_count,
-                    )
-                    return commands
+                    persisted_event_id_raw = (event.meta or {}).get("persisted_event_id")
+                    persisted_event_id = None
+                    if persisted_event_id_raw is not None:
+                        try:
+                            persisted_event_id = int(persisted_event_id_raw)
+                        except (TypeError, ValueError):
+                            persisted_event_id = None
+
+                    if persisted_event_id is not None:
+                        is_first_persisted = await self._is_first_persisted_command_event(
+                            event.execution_id,
+                            event.name,
+                            command_id,
+                            persisted_event_id,
+                        )
+                        if not is_first_persisted:
+                            logger.warning(
+                                "[EVENT-DEDUPE] Ignoring duplicate persisted %s for execution=%s "
+                                "step=%s command_id=%s count=%s event_id=%s",
+                                event.name,
+                                event.execution_id,
+                                event.step,
+                                command_id,
+                                persisted_count,
+                                persisted_event_id,
+                            )
+                            return commands
+                    else:
+                        logger.warning(
+                            "[EVENT-DEDUPE] Ignoring duplicate persisted %s for execution=%s "
+                            "step=%s command_id=%s count=%s (persisted_event_id unavailable)",
+                            event.name,
+                            event.execution_id,
+                            event.step,
+                            command_id,
+                            persisted_count,
+                        )
+                        return commands
         
         # Handle inline tasks (dynamically created from pipeline task execution)
         # These have format "parent_step:task_name" (e.g., "success:send_callback")

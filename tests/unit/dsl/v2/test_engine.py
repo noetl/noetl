@@ -140,6 +140,65 @@ workflow:
 
 
 @pytest.mark.asyncio
+async def test_first_persisted_duplicate_call_done_still_orchestrates(engine_setup, monkeypatch):
+    """Async batch ingestion may persist duplicates before orchestration; the earliest copy must still drive routing."""
+    engine, playbook_repo, state_store = engine_setup
+
+    yaml_content = """
+apiVersion: noetl.io/v2
+kind: Playbook
+metadata:
+  name: duplicate_call_done_first_wins
+
+workflow:
+  - step: start
+    tool:
+      kind: python
+      code: "def main(): return {'ok': True}"
+    next:
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
+          when: "{{ event.name == 'call.done' }}"
+
+  - step: end
+    tool:
+      kind: python
+      code: "def main(): return {'done': True}"
+"""
+
+    playbook = DSLParser().parse(yaml_content)
+    state = ExecutionState(
+        execution_id="200000000000009991",
+        playbook=playbook,
+        payload={},
+    )
+    monkeypatch.setattr(state_store, "load_state", AsyncMock(return_value=state))
+    monkeypatch.setattr(state_store, "load_state_for_update", AsyncMock(return_value=state))
+    monkeypatch.setattr(state_store, "save_state", AsyncMock(return_value=None))
+    engine._persist_event = AsyncMock(return_value=None)
+    monkeypatch.setattr(engine, "_count_persisted_command_events", AsyncMock(return_value=2))
+    monkeypatch.setattr(engine, "_is_first_persisted_command_event", AsyncMock(return_value=True))
+
+    event = Event(
+        execution_id="200000000000009991",
+        step="start",
+        name="call.done",
+        payload={"result": {"data": {"ok": True}}},
+        meta={
+            "command_id": "200000000000009991:start:cmd-1",
+            "persisted_event_id": "1001",
+        },
+    )
+
+    commands = await engine.handle_event(event, already_persisted=True)
+
+    assert len(commands) == 1
+    assert commands[0].step == "end"
+
+
+@pytest.mark.asyncio
 async def test_command_failed_with_pending_recovery_does_not_terminate(engine_setup):
     """
     When command.failed arrives while recovery commands are in-flight (issued via a

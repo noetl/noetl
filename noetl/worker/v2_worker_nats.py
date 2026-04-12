@@ -2121,59 +2121,26 @@ class V2Worker:
                 # Use processed response (externalized when large) to avoid persisting
                 # raw oversized payloads in failure events.
                 error_event_response = response_for_events if error_response is not None else error_response
-                
-                # Emit call.error with error payload - ACTIONABLE for server to handle
-                await self._emit_event(
+                await self._emit_terminal_event_batch(
                     server_url,
                     execution_id,
                     step,
-                    "call.error",
-                    {
+                    primary_name="call.error",
+                    primary_payload={
                         "error": tool_error,
                         "response": error_event_response,
                         "command_id": command_id,
                         "loop_event_id": loop_event_id,
                         "loop_iteration_index": loop_iteration_index,
                     },
-                    actionable=True,  # Server should evaluate case blocks or fail
-                    informative=True,
-                    meta=loop_event_meta or None,
+                    terminal_status="FAILED",
+                    result_payload=error_event_response,
+                    error_payload=tool_error,
+                    command_id=command_id,
+                    loop_event_meta=loop_event_meta,
+                    worker_error_text=tool_error,
+                    command_terminal_name="command.failed",
                 )
-                
-                # Emit step.exit with failed status
-                await self._emit_event(
-                    server_url,
-                    execution_id,
-                    step,
-                    "step.exit",
-                    {
-                        "status": "FAILED",  # Uppercase to match database status values
-                        "error": tool_error,
-                        "result": error_event_response,
-                        "command_id": command_id,
-                        "loop_iteration_index": loop_iteration_index,
-                    },
-                    actionable=True,  # Server may want to handle failure
-                    informative=True,
-                    meta=loop_event_meta or None
-                )
-                
-                # Emit command.failed event
-                if command_id:
-                    await self._emit_event(
-                        server_url,
-                        execution_id,
-                        step,
-                        "command.failed",
-                        {
-                            "command_id": command_id,
-                            "worker_id": self.worker_id,
-                            "error": tool_error,
-                            "result": error_event_response
-                        },
-                        actionable=False,  # Informational
-                        informative=True
-                    )
                 
                 logger.error(f"[EVENT] Failed {step} for execution {execution_id}" + (f" command={command_id}" if command_id else ""))
                 return  # Exit without emitting completed events
@@ -2197,56 +2164,22 @@ class V2Worker:
                             )
                             logger.info(f"[CLEANUP] Response now contains only reference: {response_data.get('data_reference', {})}")
                 
-                # Emit call.done event - ACTIONABLE so server evaluates routing
-                # Use response_for_events which may have externalized large results
-                await self._emit_event(
+                await self._emit_terminal_event_batch(
                     server_url,
                     execution_id,
                     step,
-                    "call.done",
-                    {
+                    primary_name="call.done",
+                    primary_payload={
                         "response": response_for_events,
                         "command_id": command_id,
                         "loop_event_id": loop_event_id,
                         "loop_iteration_index": loop_iteration_index,
                     },
-                    actionable=True,  # Server should evaluate next/case routing
-                    informative=True,
-                    meta=loop_event_meta or None
-                )
-
-                # Batch step.exit + command.completed in a single HTTP call
-                # (both are informational - call.done already handled routing)
-                terminal_events = [
-                    {
-                        "step": step,
-                        "name": "step.exit",
-                        "payload": {
-                            "result": response_for_events,
-                            "status": "completed",
-                            "command_id": command_id,
-                        },
-                        "actionable": False,
-                        "informative": True,
-                    },
-                ]
-                if command_id:
-                    terminal_events.append({
-                        "step": step,
-                        "name": "command.completed",
-                        "payload": {
-                            "command_id": command_id,
-                            "worker_id": self.worker_id,
-                            "result": response_for_events,
-                        },
-                        "actionable": False,
-                        "informative": True,
-                    })
-                await self._emit_batch_events(
-                    server_url,
-                    execution_id,
-                    terminal_events,
-                    raise_on_failure=False,
+                    terminal_status="COMPLETED",
+                    result_payload=response_for_events,
+                    command_id=command_id,
+                    loop_event_meta=loop_event_meta,
+                    command_terminal_name="command.completed",
                 )
                 
                 logger.info(f"[EVENT] Completed {step} for execution {execution_id}" + (f" command={command_id}" if command_id else ""))
@@ -2277,42 +2210,19 @@ class V2Worker:
             logger.error(f"Execution error for {step}: {e}", exc_info=True)
             
             # Emit error event
-            await self._emit_event(
+            await self._emit_terminal_event_batch(
                 server_url,
                 execution_id,
                 step,
-                "call.error",
-                {"error": str(e)}
+                primary_name="call.error",
+                primary_payload={"error": str(e)},
+                terminal_status="FAILED",
+                error_payload=str(e),
+                command_id=command_id,
+                worker_error_text=str(e),
+                command_terminal_name="command.failed",
+                command_terminal_payload={"error_type": type(e).__name__},
             )
-            
-            # Emit step.exit with error status
-            await self._emit_event(
-                server_url,
-                execution_id,
-                step,
-                "step.exit",
-                {
-                    "status": "failed",
-                    "error": str(e),
-                    "error_type": type(e).__name__,
-                    "command_id": command_id,
-                }
-            )
-            
-            # Emit command.failed event (for event-driven tracking)
-            if command_id:
-                await self._emit_event(
-                    server_url,
-                    execution_id,
-                    step,
-                    "command.failed",
-                    {
-                        "command_id": command_id,
-                        "worker_id": self.worker_id,
-                        "error": str(e),
-                        "error_type": type(e).__name__
-                    }
-                )
             
             # Pure event-driven: No queue table operations needed
     
@@ -3269,6 +3179,71 @@ class V2Worker:
                     delay * 1000,
                 )
                 await asyncio.sleep(delay)
+
+    async def _emit_terminal_event_batch(
+        self,
+        server_url: str,
+        execution_id: int,
+        step: str,
+        *,
+        primary_name: str,
+        primary_payload: dict,
+        terminal_status: str,
+        result_payload: Any = None,
+        error_payload: Any = None,
+        command_id: Optional[str] = None,
+        loop_event_meta: Optional[dict] = None,
+        worker_error_text: Optional[str] = None,
+        command_terminal_name: Optional[str] = None,
+        command_terminal_payload: Optional[dict] = None,
+    ) -> bool:
+        """Emit a terminal actionable event plus informational tail events via /events/batch."""
+        events: list[dict[str, Any]] = [
+            {
+                "step": step,
+                "name": primary_name,
+                "payload": primary_payload,
+                "actionable": True,
+                "informative": True,
+                "meta": loop_event_meta or None,
+            },
+            {
+                "step": step,
+                "name": "step.exit",
+                "payload": {
+                    "status": terminal_status,
+                    "result": result_payload,
+                    "error": error_payload,
+                    "command_id": command_id,
+                },
+                "actionable": False,
+                "informative": True,
+                "meta": loop_event_meta or None,
+            },
+        ]
+        if command_id and command_terminal_name:
+            terminal_payload = dict(command_terminal_payload or {})
+            terminal_payload.setdefault("command_id", command_id)
+            terminal_payload.setdefault("worker_id", self.worker_id)
+            if result_payload is not None:
+                terminal_payload.setdefault("result", result_payload)
+            if worker_error_text is not None:
+                terminal_payload.setdefault("error", worker_error_text)
+            events.append(
+                {
+                    "step": step,
+                    "name": command_terminal_name,
+                    "payload": terminal_payload,
+                    "actionable": False,
+                    "informative": True,
+                }
+            )
+        return await self._emit_batch_events(
+            server_url,
+            execution_id,
+            events,
+            raise_on_failure=True,
+        )
 
     async def _emit_event(
         self,

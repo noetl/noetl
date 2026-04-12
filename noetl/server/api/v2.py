@@ -67,8 +67,16 @@ _BATCH_ACCEPT_WORKERS = max(
     int(os.getenv("NOETL_BATCH_ACCEPT_WORKERS", "1")),
 )
 _BATCH_PROCESSING_TIMEOUT_SECONDS = max(
+    0.0,
+    float(os.getenv("NOETL_BATCH_PROCESSING_TIMEOUT_SECONDS", "0")),
+)
+_BATCH_PROCESSING_WARN_SECONDS = max(
     0.1,
-    float(os.getenv("NOETL_BATCH_PROCESSING_TIMEOUT_SECONDS", "15.0")),
+    float(os.getenv("NOETL_BATCH_PROCESSING_WARN_SECONDS", "15.0")),
+)
+_BATCH_PROCESSING_STATEMENT_TIMEOUT_MS = max(
+    60000,
+    int(os.getenv("NOETL_BATCH_PROCESSING_STATEMENT_TIMEOUT_MS", "300000")),
 )
 _BATCH_STATUS_STREAM_POLL_SECONDS = max(
     0.1,
@@ -2166,6 +2174,7 @@ async def handle_event(req: EventRequest) -> EventResponse:
                         )
 
                 evt_id = await _next_snowflake_id(cur)
+                event_meta["persisted_event_id"] = str(evt_id)
 
                 await cur.execute("""
                     INSERT INTO noetl.event (
@@ -2633,6 +2642,7 @@ async def _persist_batch_acceptance(
                     "actionable": item.actionable,
                     "informative": item.informative,
                     "batch_request_id": request_id,
+                    "persisted_event_id": str(evt_id),
                 }
                 if req.worker_id:
                     meta_obj["worker_id"] = req.worker_id
@@ -2835,9 +2845,15 @@ async def _process_accepted_batch(job: _BatchAcceptJob) -> int:
     if job.last_actionable_event:
         engine = get_engine()
         async with get_pool_connection() as engine_conn:
-            async with engine_conn.transaction():
-                async with engine_conn.cursor() as cur:
-                    await cur.execute("SELECT pg_advisory_xact_lock(%s)", (int(job.last_actionable_event.execution_id),))
+                async with engine_conn.transaction():
+                    async with engine_conn.cursor() as cur:
+                        # Batch orchestration runs off the request path and can legitimately
+                        # exceed the default API statement timeout under fan-out load.
+                        timeout_ms = int(_BATCH_PROCESSING_STATEMENT_TIMEOUT_MS)
+                        await cur.execute(
+                            f"SET LOCAL statement_timeout = {timeout_ms}"
+                        )
+                        await cur.execute("SELECT pg_advisory_xact_lock(%s)", (int(job.last_actionable_event.execution_id),))
                 commands = await engine.handle_event(job.last_actionable_event, conn=engine_conn, already_persisted=True)
 
     try:
@@ -2885,10 +2901,13 @@ async def _batch_accept_worker_loop(worker_idx: int) -> None:
 
             process_start = time.perf_counter()
             try:
-                commands_generated = await asyncio.wait_for(
-                    _process_accepted_batch(job),
-                    timeout=_BATCH_PROCESSING_TIMEOUT_SECONDS,
-                )
+                if _BATCH_PROCESSING_TIMEOUT_SECONDS > 0:
+                    commands_generated = await asyncio.wait_for(
+                        _process_accepted_batch(job),
+                        timeout=_BATCH_PROCESSING_TIMEOUT_SECONDS,
+                    )
+                else:
+                    commands_generated = await _process_accepted_batch(job)
             except asyncio.TimeoutError:
                 _inc_batch_metric("processing_timeout_total")
                 await _persist_batch_failed_event(
@@ -2897,6 +2916,18 @@ async def _batch_accept_worker_loop(worker_idx: int) -> None:
                     f"Batch processing exceeded {_BATCH_PROCESSING_TIMEOUT_SECONDS}s timeout",
                 )
                 continue
+
+            processing_seconds = time.perf_counter() - process_start
+            if processing_seconds > _BATCH_PROCESSING_WARN_SECONDS:
+                logger.warning(
+                    "[BATCH-EVENTS] Slow async batch processing request_id=%s execution_id=%s "
+                    "event_count=%s processing_seconds=%.3f commands_generated=%s",
+                    job.request_id,
+                    job.execution_id,
+                    len(job.events),
+                    processing_seconds,
+                    commands_generated,
+                )
 
             await _persist_batch_status_event(
                 execution_id=job.execution_id,
@@ -2909,7 +2940,7 @@ async def _batch_accept_worker_loop(worker_idx: int) -> None:
                 payload={
                     "request_id": job.request_id,
                     "commands_generated": commands_generated,
-                    "processing_ms": round((time.perf_counter() - process_start) * 1000, 3),
+                    "processing_ms": round(processing_seconds * 1000, 3),
                 },
             )
         except Exception as e:
