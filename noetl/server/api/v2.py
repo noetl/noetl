@@ -2845,16 +2845,16 @@ async def _process_accepted_batch(job: _BatchAcceptJob) -> int:
     if job.last_actionable_event:
         engine = get_engine()
         async with get_pool_connection() as engine_conn:
-                async with engine_conn.transaction():
-                    async with engine_conn.cursor() as cur:
-                        # Batch orchestration runs off the request path and can legitimately
-                        # exceed the default API statement timeout under fan-out load.
-                        timeout_ms = int(_BATCH_PROCESSING_STATEMENT_TIMEOUT_MS)
-                        await cur.execute(
-                            f"SET LOCAL statement_timeout = {timeout_ms}"
-                        )
-                        await cur.execute("SELECT pg_advisory_xact_lock(%s)", (int(job.last_actionable_event.execution_id),))
-                commands = await engine.handle_event(job.last_actionable_event, conn=engine_conn, already_persisted=True)
+            async with engine_conn.transaction():
+                async with engine_conn.cursor() as cur:
+                    # Batch orchestration runs off the request path and can legitimately
+                    # exceed the default API statement timeout under fan-out load.
+                    timeout_ms = int(_BATCH_PROCESSING_STATEMENT_TIMEOUT_MS)
+                    await cur.execute(
+                        f"SET LOCAL statement_timeout = {timeout_ms}"
+                    )
+                    await cur.execute("SELECT pg_advisory_xact_lock(%s)", (int(job.last_actionable_event.execution_id),))
+                    commands = await engine.handle_event(job.last_actionable_event, conn=engine_conn, already_persisted=True)
 
     try:
         await _issue_commands_for_batch(job, commands)
