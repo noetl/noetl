@@ -109,7 +109,7 @@ workflow:
     parser = DSLParser()
     playbook = parser.parse(yaml_content)
     state = ExecutionState(
-        execution_id="exec-trans",
+        execution_id="1000",
         playbook=playbook,
         payload={},
     )
@@ -118,7 +118,7 @@ workflow:
 
     # call.done event
     event = Event(
-        execution_id="exec-trans",
+        execution_id="1000",
         step="start",
         name="call.done",
         payload={
@@ -214,7 +214,7 @@ async def test_command_failed_with_pending_recovery_does_not_terminate(engine_se
     # Pre-build execution state that mirrors what the engine would have after
     # call.error fired and issued recovery_step (recovery command is in-flight).
     state = ExecutionState(
-        execution_id="exec-recovery",
+        execution_id="1001",
         playbook=playbook,
         payload={},
     )
@@ -230,7 +230,7 @@ async def test_command_failed_with_pending_recovery_does_not_terminate(engine_se
     engine._persist_event = AsyncMock(return_value=None)
 
     event = Event(
-        execution_id="exec-recovery",
+        execution_id="1001",
         step="fetch_data",
         name="command.failed",
         payload={"error": {"message": "infra retry exhausted"}},
@@ -239,7 +239,7 @@ async def test_command_failed_with_pending_recovery_does_not_terminate(engine_se
     commands = await engine.handle_event(event, already_persisted=True)
 
     # Execution must NOT be terminated: state.completed remains False.
-    reloaded = await state_store.load_state("exec-recovery")
+    reloaded = await state_store.load_state("1001")
     assert reloaded is not None
     assert reloaded.completed is False, (
         "Execution should not be completed — recovery commands are still in-flight"
@@ -335,7 +335,7 @@ workflow:
 
     playbook = DSLParser().parse(yaml_content)
     state = ExecutionState(
-        execution_id="exec-no-dup",
+        execution_id="1002",
         playbook=playbook,
         payload={},
     )
@@ -343,7 +343,7 @@ workflow:
     engine._persist_event = AsyncMock(return_value=None)
 
     call_done = Event(
-        execution_id="exec-no-dup",
+        execution_id="1002",
         step="start",
         name="call.done",
         payload={"result": {"ok": True}},
@@ -353,7 +353,7 @@ workflow:
 
     # Simulate the worker's later terminal step.exit for the same completed command.
     step_exit = Event(
-        execution_id="exec-no-dup",
+        execution_id="1002",
         step="start",
         name="step.exit",
         payload={"status": "COMPLETED", "result": {"ok": True}},
