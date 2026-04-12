@@ -17,8 +17,8 @@ completion.
 import pytest
 import yaml
 
-from noetl.core.dsl.v2.engine import ControlFlowEngine, ExecutionState, PlaybookRepo, StateStore
-from noetl.core.dsl.v2.models import Event, NextRouter, Playbook
+from noetl.core.dsl.engine.engine import ControlFlowEngine, ExecutionState, PlaybookRepo, StateStore
+from noetl.core.dsl.engine.models import Event, NextRouter, Playbook
 
 
 PLAYBOOK_WITH_UNCONDITIONAL_FALLBACK = """

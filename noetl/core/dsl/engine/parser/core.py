@@ -6,7 +6,7 @@ from .validation import ParserValidationMixin
 
 class DSLParser(ParserValidationMixin):
     """
-    YAML parser for NoETL DSL v2 playbooks (canonical v10 format).
+    YAML parser for NoETL DSL Core playbooks (canonical v10 format).
 
     Validates:
     - tool.kind pattern (rejects old 'type' field)

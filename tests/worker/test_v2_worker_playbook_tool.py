@@ -1,8 +1,8 @@
 import pytest
 import httpx
 
-import noetl.worker.v2_worker_nats as worker_module
-from noetl.worker.v2_worker_nats import V2Worker
+import noetl.worker.nats_worker as worker_module
+from noetl.worker.nats_worker import V2Worker
 
 
 @pytest.mark.asyncio

@@ -101,7 +101,7 @@ async def _check_postgres_ready() -> tuple[bool, str]:
 async def _check_nats_ready() -> tuple[bool, str]:
     try:
         # Reuse server's publisher bootstrap and verify active connection.
-        from noetl.server.api.v2 import get_nats_publisher
+        from noetl.server.api.core import get_nats_publisher
 
         publisher = await get_nats_publisher()
         nc = getattr(publisher, "_nc", None)
@@ -406,7 +406,7 @@ async def mark_execution_cancelled(
 async def _restart_execution(candidate: Dict[str, Any]) -> Optional[str]:
     """Start a replacement playbook execution for interrupted parent run."""
     try:
-        from noetl.server.api.v2 import execute, ExecuteRequest
+        from noetl.server.api.core import execute, ExecuteRequest
 
         workload = _extract_workload_from_result(candidate.get("result"))
         req = ExecuteRequest(

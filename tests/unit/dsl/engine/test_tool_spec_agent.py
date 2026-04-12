@@ -1,6 +1,6 @@
 """DSL v2 ToolSpec agent kind coverage."""
 
-from noetl.core.dsl.v2.models import ToolSpec
+from noetl.core.dsl.engine.models import ToolSpec
 
 
 def test_tool_spec_accepts_agent_kind():

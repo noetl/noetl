@@ -3,8 +3,8 @@ from pathlib import Path
 import pytest
 import yaml
 
-import noetl.core.dsl.v2.engine as engine_module
-from noetl.core.dsl.v2.engine import ExecutionState, Playbook, PlaybookRepo, StateStore
+import noetl.core.dsl.engine.engine as engine_module
+from noetl.core.dsl.engine.engine import ExecutionState, Playbook, PlaybookRepo, StateStore
 
 
 def _load_heavy_payload_playbook() -> Playbook:

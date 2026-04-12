@@ -7,7 +7,7 @@ from psycopg.rows import dict_row
 from psycopg_pool import PoolTimeout
 from psycopg.types.json import Json
 from noetl.core.db.pool import get_pool_connection
-from noetl.core.dsl.v2.models import Event
+from noetl.core.dsl.engine.models import Event
 from noetl.server.api.supervision import supervise_persisted_event, supervise_command_issued
 from .core import (
     logger,

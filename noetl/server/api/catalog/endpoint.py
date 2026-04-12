@@ -540,8 +540,8 @@ async def explain_playbook_with_ai(
         payload["openai_secret_path"] = request.openai_secret_path
 
     try:
-        from noetl.server.api.v2 import ExecuteRequest as V2ExecuteRequest
-        from noetl.server.api.v2 import execute as execute_v2
+        from noetl.server.api.core import ExecuteRequest as V2ExecuteRequest
+        from noetl.server.api.core import execute as execute_v2
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"V2 execute endpoint is unavailable: {exc}") from exc
 
@@ -618,8 +618,8 @@ async def generate_playbook_with_ai(
         payload["openai_secret_path"] = request.openai_secret_path
 
     try:
-        from noetl.server.api.v2 import ExecuteRequest as V2ExecuteRequest
-        from noetl.server.api.v2 import execute as execute_v2
+        from noetl.server.api.core import ExecuteRequest as V2ExecuteRequest
+        from noetl.server.api.core import execute as execute_v2
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"V2 execute endpoint is unavailable: {exc}") from exc
 

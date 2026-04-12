@@ -2,7 +2,7 @@ import asyncio
 
 import pytest
 
-from noetl.worker.v2_worker_nats import V2Worker
+from noetl.worker.nats_worker import V2Worker
 
 
 @pytest.mark.asyncio

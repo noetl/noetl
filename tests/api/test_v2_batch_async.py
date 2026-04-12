@@ -5,7 +5,7 @@ import pytest
 from fastapi import HTTPException
 from starlette.requests import Request
 
-import noetl.server.api.v2 as v2_api
+import noetl.server.api.core as v2_api
 
 
 def _make_request(headers: dict[str, str] | None = None) -> Request:

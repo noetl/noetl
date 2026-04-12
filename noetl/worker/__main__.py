@@ -11,7 +11,7 @@ Usage:
 
 import argparse
 import sys
-from noetl.worker.v2_worker_nats import run_worker_v2_sync
+from noetl.worker.nats_worker import run_worker_v2_sync
 
 
 def main():

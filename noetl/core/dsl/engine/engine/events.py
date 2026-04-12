@@ -153,7 +153,7 @@ class EventHandlingMixin:
                 if not pending_steps and not state.completed:
                     # All steps completed - emit workflow/playbook completion events
                     state.completed = True
-                    from noetl.core.dsl.v2.models import LifecycleEventPayload
+                    from noetl.core.dsl.engine.models import LifecycleEventPayload
 
                     workflow_completion_event = Event(
                         execution_id=event.execution_id,
@@ -1841,7 +1841,7 @@ class EventHandlingMixin:
             state.completed = True
             # Check if ANY step failed during execution (state.failed) OR if this final step has error
             # This ensures we report failure even if execution continued past failed steps
-            from noetl.core.dsl.v2.models import LifecycleEventPayload
+            from noetl.core.dsl.engine.models import LifecycleEventPayload
             completion_status = "failed" if (state.failed or has_error) else "completed"
             if state.failed:
                 logger.info(f"[COMPLETION] Execution {event.execution_id} marked as failed due to earlier step failures")
@@ -1913,7 +1913,7 @@ class EventHandlingMixin:
                 if state.completed:
                     return
 
-                from noetl.core.dsl.v2.models import LifecycleEventPayload
+                from noetl.core.dsl.engine.models import LifecycleEventPayload
 
                 state.completed = True
                 current_event_id = state.last_event_id

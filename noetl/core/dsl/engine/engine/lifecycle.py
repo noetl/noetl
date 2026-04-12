@@ -5,7 +5,7 @@ from typing import Any, Optional
 from .common import *
 from .state import ExecutionState
 from .store import PlaybookRepo, StateStore
-from noetl.core.dsl.v2.models import Event, Command
+from noetl.core.dsl.engine.models import Event, Command
 
 class LifecycleMixin:
     async def _persist_event(self, event: Event, state: ExecutionState, conn=None):
@@ -158,7 +158,7 @@ class LifecycleMixin:
         
         workload_snapshot = {k: v for k, v in state.variables.items() if not (isinstance(v, dict) and 'status' in v)}
 
-        from noetl.core.dsl.v2.models import LifecycleEventPayload
+        from noetl.core.dsl.engine.models import LifecycleEventPayload
         playbook_init_event = Event(
             execution_id=execution_id,
             step=playbook_path,

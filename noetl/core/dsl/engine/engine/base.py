@@ -39,7 +39,7 @@ class EngineBase:
             reason,
         )
 
-        from noetl.core.dsl.v2.models import LifecycleEventPayload
+        from noetl.core.dsl.engine.models import LifecycleEventPayload
 
         current_event_id = state.last_event_id
         workflow_failed_event = Event(

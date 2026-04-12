@@ -1,6 +1,6 @@
 import pytest
 
-import noetl.server.api.v2 as v2_api
+import noetl.server.api.core as v2_api
 
 
 def test_build_reference_only_result_uses_strict_result_envelope():

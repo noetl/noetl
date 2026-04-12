@@ -1,7 +1,7 @@
 import os
 import asyncio
 from typing import Optional
-from noetl.core.dsl.v2.engine import ControlFlowEngine, PlaybookRepo, StateStore
+from noetl.core.dsl.engine.engine import ControlFlowEngine, PlaybookRepo, StateStore
 from noetl.core.messaging import NATSCommandPublisher
 from noetl.core.logger import setup_logger
 

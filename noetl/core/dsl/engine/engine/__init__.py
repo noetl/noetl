@@ -1,4 +1,4 @@
-"""NoETL V2 execution engine package."""
+"""NoETL Core execution engine package."""
 
 from .common import *  # noqa: F401,F403
 from .state import ExecutionState

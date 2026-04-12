@@ -1,5 +1,5 @@
 """
-NoETL DSL v2 parser package.
+NoETL DSL Core parser package.
 """
 
 from pathlib import Path

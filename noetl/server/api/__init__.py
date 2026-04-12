@@ -11,7 +11,7 @@ from fastapi import APIRouter
 from fastapi.responses import JSONResponse
 
 # V2 unified API (execute, events, commands)
-from . import v2
+from . import core
 
 # Essential management APIs (catalog, credentials, database utilities)
 from . import credential, catalog, database, keychain, playbook_tests
@@ -35,7 +35,7 @@ async def api_health():
     return {"status": "ok"}
 
 # V2 unified endpoints (execute, events, commands)
-router.include_router(v2.router)
+router.include_router(core.router)
 
 # Essential APIs
 router.include_router(catalog.router)
@@ -62,7 +62,7 @@ router.include_router(temp.router)
 
 __all__ = [
     "router",
-    "v2",
+    "core",
     "catalog", "credential", "database", "keychain", "playbook_tests",
     "execution", "vars", "dashboard", "system", "runtime",
     "context", "result", "temp"

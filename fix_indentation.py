@@ -1,6 +1,6 @@
 import re
 
-with open("noetl/server/api/v2.py", "r") as f:
+with open("noetl.server.api.core.py", "r") as f:
     content = f.read()
 
 fixed = """        async with get_pool_connection() as engine_conn:
@@ -21,6 +21,6 @@ content = re.sub(
     content
 )
 
-with open("noetl/server/api/v2.py", "w") as f:
+with open("noetl.server.api.core.py", "w") as f:
     f.write(content)
 

@@ -3,7 +3,7 @@ Tests for NoETL DSL v2 Parser
 """
 
 import pytest
-from noetl.core.dsl.v2.parser import DSLParser
+from noetl.core.dsl.engine.parser import DSLParser
 
 
 def test_parse_simple_playbook():

@@ -1,5 +1,5 @@
 """
-Shared parser imports and aliases for the DSL v2 parser package.
+Shared parser imports and aliases for the DSL Core parser package.
 """
 
 import yaml

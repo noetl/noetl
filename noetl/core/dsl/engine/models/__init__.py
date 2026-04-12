@@ -1,4 +1,4 @@
-"""NoETL DSL v2 models package."""
+"""NoETL DSL Core models package."""
 
 from .common import *  # noqa: F401,F403
 from .events import *  # noqa: F401,F403

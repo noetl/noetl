@@ -357,7 +357,7 @@ class ExecutionState:
             "ctx": self.variables,  # Execution-scoped variables (canonical v10)
             "iter": iter_vars,      # Iteration-scoped variables (canonical v10)
             # Backward compatibility: workload namespace for {{ workload.xxx }}
-            "workload": self.variables,  # Legacy alias for v2 playbooks
+            "workload": self.variables,  # Legacy alias for Core playbooks
             **self.step_results,  # Make step results accessible (e.g., {{ process }})
         }
         

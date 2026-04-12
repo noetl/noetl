@@ -1,5 +1,5 @@
 """
-NoETL V2 Worker with NATS Integration
+NoETL Core Worker with NATS Integration
 
 Pure event-sourced worker that:
 1. Subscribes to NATS JetStream for command notifications (event_id references)
@@ -136,7 +136,7 @@ class ClaimTerminalError(RuntimeError):
 
 class V2Worker:
     """
-    V2 Worker that receives command notifications from NATS and executes them.
+    Core Worker that receives command notifications from NATS and executes them.
     
     Architecture (Pure Event Sourcing):
     - Subscribes to NATS JetStream for command notifications
@@ -2323,8 +2323,8 @@ class V2Worker:
         t_jinja_end = time.perf_counter()
         logger.debug(f"[PERF] Jinja2 setup took {t_jinja_end - t_jinja_start:.4f}s")
         
-        # Map V2 config format to plugin task_config format
-        # Plugins use different field names than V2 DSL
+        # Map Core config format to plugin task_config format
+        # Plugins use different field names than Core DSL
         # For workbook tool, preserve 'name' field from config (it's the workbook action name)
         # For other tools, add 'name' as step name for logging
         task_config = {**config}
@@ -2991,7 +2991,7 @@ class V2Worker:
     async def _execute_container(self, config: dict, args: dict) -> Any:
         """Execute code in a container (Kubernetes Job)."""
         raise NotImplementedError(
-            "Container execution is not yet implemented in V2 worker. "
+            "Container execution is not yet implemented in Core worker. "
             "This feature requires Kubernetes Job creation and monitoring. "
             "Please use Python/HTTP tools or submit a feature request."
         )
@@ -3262,7 +3262,7 @@ class V2Worker:
         raise_on_failure: bool = True,
     ):
         """
-        Emit an event to the server using the v2 API schema with retry logic.
+        Emit an event to the server using the Core API schema with retry logic.
         
         Implements ResultRef pattern for efficient result storage:
         - Small results (< inline_max_bytes) stored directly in output_inline
@@ -3410,7 +3410,7 @@ async def run_v2_worker(
     nats_url: str = "nats://noetl:noetl@nats.nats.svc.cluster.local:4222",
     server_url: Optional[str] = None
 ):
-    """Run a V2 worker instance."""
+    """Run a Core worker instance."""
     # Set environment variable to indicate worker context (for TransientVars API routing)
     os.environ["NOETL_WORKER_MODE"] = "true"
     
@@ -3462,7 +3462,7 @@ def run_worker_v2_sync(
             f.write(f"Server URL: {server_url}\n")
             f.flush()
         
-        logger.info(f"Starting V2 worker {worker_id} | NATS={nats_url} | Server={server_url}")
+        logger.info(f"Starting Core worker {worker_id} | NATS={nats_url} | Server={server_url}")
         
         with open("/tmp/worker_before_run.txt", "w") as f:
             f.write(f"About to call asyncio.run at {datetime.now()}\n")

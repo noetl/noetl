@@ -1,5 +1,5 @@
 """
-NoETL DSL v2 Models - Canonical v10 Format
+NoETL DSL Core Models - Canonical v10 Format
 
 Canonical v10 implementation with:
 - `when` is the ONLY conditional keyword (no `expr`)

@@ -18,8 +18,8 @@ from noetl.server.api import router as api_router
 from noetl.server.middleware import catch_exceptions_middleware
 
 # Import V2 API
-from noetl.server.api.v2 import (
-    router as v2_router,
+from noetl.server.api.core import (
+    router as core_router,
     ensure_batch_acceptor_started,
     shutdown_batch_acceptor,
     shutdown_publish_recovery_tasks,
@@ -35,9 +35,9 @@ logger = setup_logger(__name__, include_location=True)
 
 
 router = APIRouter()
-# v2 (event-driven) routes are the primary API; legacy routes are still included
+# core (event-driven) routes are the primary API; legacy routes are still included
 # for non-execution resources.
-router.include_router(v2_router)
+router.include_router(core_router)
 router.include_router(api_router)
 
 

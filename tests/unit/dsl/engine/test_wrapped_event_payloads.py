@@ -1,9 +1,9 @@
 import pytest
 
-import noetl.core.dsl.v2.engine as engine_module
-from noetl.core.dsl.v2.engine import ControlFlowEngine, ExecutionState, PlaybookRepo, StateStore
-from noetl.core.dsl.v2.models import Event
-from noetl.core.dsl.v2.parser import DSLParser
+import noetl.core.dsl.engine.engine as engine_module
+from noetl.core.dsl.engine.engine import ControlFlowEngine, ExecutionState, PlaybookRepo, StateStore
+from noetl.core.dsl.engine.models import Event
+from noetl.core.dsl.engine.parser import DSLParser
 
 
 def _build_engine(playbook_yaml: str, execution_id: str):

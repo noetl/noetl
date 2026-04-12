@@ -8,7 +8,7 @@ print("=== Direct Worker Test ===", flush=True)
 print(f"Python: {sys.version}", flush=True)
 
 try:
-    from noetl.worker.v2_worker_nats import V2Worker
+    from noetl.worker.nats_worker import V2Worker
     print("Successfully imported V2Worker", flush=True)
     
     async def test():

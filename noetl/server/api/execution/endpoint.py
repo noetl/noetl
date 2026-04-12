@@ -30,7 +30,7 @@ from .schema import (
 
 # V2 engine fallback
 try:
-    from noetl.server.api.v2 import get_engine as get_v2_engine
+    from noetl.server.api.core import get_engine as get_v2_engine
 except Exception:  # pragma: no cover
     get_v2_engine = None
 
@@ -1685,8 +1685,8 @@ async def analyze_execution_with_ai(
         ai_payload["openai_secret_path"] = openai_secret_path
 
     try:
-        from noetl.server.api.v2 import ExecuteRequest as V2ExecuteRequest
-        from noetl.server.api.v2 import execute as execute_v2
+        from noetl.server.api.core import ExecuteRequest as V2ExecuteRequest
+        from noetl.server.api.core import execute as execute_v2
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"V2 execute endpoint is unavailable: {exc}") from exc
 

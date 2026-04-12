@@ -11,7 +11,7 @@ from psycopg.rows import dict_row
 from psycopg_pool import PoolTimeout
 from psycopg.types.json import Json
 from noetl.core.db.pool import get_pool_connection
-from noetl.core.dsl.v2.models import Event
+from noetl.core.dsl.engine.models import Event
 from .core import (
     logger, get_engine,
     _BATCH_ACCEPT_QUEUE_MAXSIZE, _BATCH_ACCEPT_WORKERS,

@@ -1,5 +1,5 @@
 """
-NoETL V2 Execution Engine - Canonical Format
+NoETL Core Execution Engine - Canonical Format
 
 Event-driven control flow engine that:
 1. Consumes events from workers
@@ -22,7 +22,7 @@ from jinja2 import Template, Environment, StrictUndefined
 from psycopg.types.json import Json
 from psycopg.rows import dict_row
 
-from noetl.core.dsl.v2.models import Event, Command, Playbook, Step, ToolCall, CommandSpec, NextRouter, Arc
+from noetl.core.dsl.engine.models import Event, Command, Playbook, Step, ToolCall, CommandSpec, NextRouter, Arc
 from noetl.core.db.pool import get_pool_connection, get_snowflake_id
 from noetl.core.cache import get_nats_cache
 from noetl.core.storage import default_store
@@ -341,7 +341,7 @@ def _extract_loop_iteration_index_from_event_payload(
 
 
 def _apply_set_mutations(variables: dict, mutations: dict) -> None:
-    """Apply DSL v2 `set` mutations to the execution variable store.
+    """Apply DSL Core `set` mutations to the execution variable store.
 
     Handles scoped keys (ctx.x, iter.x, step.x) by stripping the scope prefix
     and writing the bare key. Bare keys (no dot prefix) are written as-is.

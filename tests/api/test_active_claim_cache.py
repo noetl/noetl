@@ -3,7 +3,7 @@ from types import SimpleNamespace
 import pytest
 from fastapi import HTTPException
 
-import noetl.server.api.v2 as v2_api
+import noetl.server.api.core as v2_api
 
 
 def _clear_cache() -> None:

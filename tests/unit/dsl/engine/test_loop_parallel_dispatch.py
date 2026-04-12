@@ -4,9 +4,9 @@ from datetime import datetime, timedelta, timezone
 import pytest
 import yaml
 
-import noetl.core.dsl.v2.engine as engine_module
-from noetl.core.dsl.v2.engine import ControlFlowEngine, ExecutionState, PlaybookRepo, StateStore
-from noetl.core.dsl.v2.models import Event
+import noetl.core.dsl.engine.engine as engine_module
+from noetl.core.dsl.engine.engine import ControlFlowEngine, ExecutionState, PlaybookRepo, StateStore
+from noetl.core.dsl.engine.models import Event
 
 
 class ClaimingNATSCache:
