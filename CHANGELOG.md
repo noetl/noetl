@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.17.19](https://github.com/noetl/noetl/compare/v2.17.18...v2.17.19) (2026-04-13)
+
+### Bug Fixes
+
+* remove O(N^2) SQL parsing overhead from DuckDB and Postgres tools ([12e7134](https://github.com/noetl/noetl/commit/12e71345fb92561a4829ca50d7a252b1b32717cc))
+
 ## [2.17.18](https://github.com/noetl/noetl/compare/v2.17.17...v2.17.18) (2026-04-13)
 
 ### Bug Fixes
