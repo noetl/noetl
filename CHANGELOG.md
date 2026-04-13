@@ -2,6 +2,24 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.17.18](https://github.com/noetl/noetl/compare/v2.17.17...v2.17.18) (2026-04-13)
+
+### Bug Fixes
+
+* **engine:** detach loop_state on late epoch call.done to prevent active loop stall ([322ad7c](https://github.com/noetl/noetl/commit/322ad7c9cc476e3833f1b6c8fb434f356a8652e8))
+* **engine:** do not update active loop_state event_id on late arrival either ([138c10e](https://github.com/noetl/noetl/commit/138c10ed7706c3a3644807e9f48e06796295f3bd))
+* rename double nested engine to executor and stabilize v10 loop execution ([e5bd204](https://github.com/noetl/noetl/commit/e5bd204585a6f9794c7fa0af2e1088954f6df536))
+* resolve db constraint violations and lock contention in event-sourced execution engine ([d800f8a](https://github.com/noetl/noetl/commit/d800f8a90b15e94e061f683a07931c8e19156551))
+* resolve deadlocks in state cache and connection pool during high-concurrency event sourcing ([021be31](https://github.com/noetl/noetl/commit/021be317fdcf1dfb293fe52db77b729fb765b492))
+* resolve replay failures and optimize batch throughput ([f203c06](https://github.com/noetl/noetl/commit/f203c0684312bdf1ea8e1ddee1a32d0aca0c29b4))
+* resolve statement timeout in batch orchestration and optimize event deduplication ([c8f4ca4](https://github.com/noetl/noetl/commit/c8f4ca409049cbab1ec430443934b74a306827ab))
+* restore api db resilience tests and server startup ([fabbb75](https://github.com/noetl/noetl/commit/fabbb75a19e80d39c5c37766718c553709c1a1ab))
+* **server:** correct indentation of engine.handle_event in batch orchestration to prevent async blocking ([99e5218](https://github.com/noetl/noetl/commit/99e5218b0eb3e6b262eb10d15ef007db7513ca63))
+
+### Performance Improvements
+
+* reduce command context hot-path overhead ([42b62be](https://github.com/noetl/noetl/commit/42b62be0ddde81fca4a265a63440f040c91bf21d))
+
 ## [2.17.17](https://github.com/noetl/noetl/compare/v2.17.16...v2.17.17) (2026-04-10)
 
 ### Bug Fixes
