@@ -494,38 +494,38 @@ def render_duckdb_commands(env: Environment, commands: Union[str, List[str]], co
 
     if isinstance(commands, str):
         rendered_sql = render_sql_template(env, commands, full_context)
-
+        
+        # Fast regex-based SQL statement splitting that handles strings and comments
+        import re
+        pattern = re.compile(
+            r"('(?:''|\\.|[^'])*')|"
+            r'("(?:""|\\.|[^"])*")|'
+            r'(--[^\n]*)|'
+            r'(/\*.*?\*/)|'
+            r'(;)|'
+            r'([^;\'"-/]+|.)',
+            re.DOTALL
+        )
+        
         commands_list = []
-        current_command = ""
-        in_string = False
-        string_char = None
-
-        i = 0
-        while i < len(rendered_sql):
-            char = rendered_sql[i]
-
-            if char in ('"', "'") and (i == 0 or rendered_sql[i-1] != '\\'):
-                if not in_string:
-                    in_string = True
-                    string_char = char
-                elif char == string_char:
-                    in_string = False
-                    string_char = None
-
-            if char == ';' and not in_string:
-                command = current_command.strip()
-                if command:
-                    commands_list.append(command)
-                current_command = ""
+        current = []
+        for match in pattern.finditer(rendered_sql):
+            if match.group(5):  # Semicolon
+                stmt = "".join(current).strip()
+                if stmt:
+                    commands_list.append(stmt)
+                current.clear()
+            elif match.group(3) or match.group(4):
+                pass  # Ignore comments
             else:
-                current_command += char
+                current.append(match.group(0))
+                
+        if current:
+            stmt = "".join(current).strip()
+            if stmt:
+                commands_list.append(stmt)
 
-            i += 1
-
-        if current_command.strip():
-            commands_list.append(current_command.strip())
-
-        return [cmd for cmd in commands_list if cmd and not cmd.strip().startswith('--')]
+        return commands_list
 
     elif isinstance(commands, list):
         rendered_commands = []

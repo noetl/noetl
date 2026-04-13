@@ -106,11 +106,11 @@ def render_and_split_commands(commands: str, jinja_env: Environment, context: Di
     
     This function:
     1. Renders the commands string with Jinja2 templates
-    2. Removes comment-only lines
-    3. Splits commands on semicolons while respecting:
+    2. Splits commands on semicolons while respecting:
        - Single quotes (')
        - Double quotes (")
        - Dollar-quoted strings ($tag$...$tag$)
+       - Single line and multi-line comments
     
     Args:
         commands: The SQL commands string (may contain Jinja2 templates)
@@ -131,70 +131,36 @@ def render_and_split_commands(commands: str, jinja_env: Environment, context: Di
     # Render commands with combined context
     commands_rendered = render_template(jinja_env, commands, {**context, **task_with})
     
-    # Remove comment-only lines and squash whitespace
-    cmd_lines = []
-    for line in commands_rendered.split('\n'):
-        s = line.strip()
-        if s and not s.startswith('--'):
-            cmd_lines.append(s)
-    commands_text = ' '.join(cmd_lines)
-
-    # Split on semicolons, respecting single/double quotes and dollar-quoted strings
+    # Fast regex-based SQL statement splitting
+    import re
+    pattern = re.compile(
+        r"('(?:''|\\.|[^'])*')|"            # Single quote strings
+        r'("(?:""|\\.|[^"])*")|'            # Double quote strings
+        r'(\$[a-zA-Z0-9_]*\$.*?\3)|'        # Dollar quoted strings
+        r'(--[^\n]*)|'                      # Single-line comments
+        r'(/\*.*?\*/)|'                     # Multi-line comments
+        r'(;)|'                             # Semicolons
+        r'([^;\'"$-/]+|.)',                 # Anything else
+        re.DOTALL
+    )
+    
     statements = []
     current = []
-    in_single = False
-    in_double = False
-    dollar_quote = False
-    dollar_tag = ""
-    i = 0
-    n = len(commands_text)
     
-    while i < n:
-        ch = commands_text[i]
-        
-        # Handle dollar-quoted strings when not inside standard quotes
-        if not in_single and not in_double and ch == '$':
-            j = i + 1
-            while j < n and (commands_text[j].isalnum() or commands_text[j] in ['_', '$']):
-                j += 1
-            tag = commands_text[i:j]
-            if dollar_quote and tag == dollar_tag:
-                dollar_quote = False
-                dollar_tag = ""
-            elif not dollar_quote and tag.startswith('$') and tag.endswith('$'):
-                dollar_quote = True
-                dollar_tag = tag
-            current.append(commands_text[i:j])
-            i = j
-            continue
-        
-        # Toggle single/double quotes (ignore when in dollar-quote)
-        if not dollar_quote and ch == "'" and not in_double:
-            in_single = not in_single
-            current.append(ch)
-            i += 1
-            continue
-        if not dollar_quote and ch == '"' and not in_single:
-            in_double = not in_double
-            current.append(ch)
-            i += 1
-            continue
-        
-        # Statement split
-        if ch == ';' and not in_single and not in_double and not dollar_quote:
-            stmt = ''.join(current).strip()
+    for match in pattern.finditer(commands_rendered):
+        if match.group(6):  # Semicolon
+            stmt = "".join(current).strip()
             if stmt:
                 statements.append(stmt)
-            current = []
-            i += 1
-            continue
-        
-        current.append(ch)
-        i += 1
-    
-    # Add final statement if exists
-    stmt = ''.join(current).strip()
-    if stmt:
-        statements.append(stmt)
+            current.clear()
+        elif match.group(4) or match.group(5):
+            pass  # Ignore comments
+        else:
+            current.append(match.group(0))
+            
+    if current:
+        stmt = "".join(current).strip()
+        if stmt:
+            statements.append(stmt)
 
     return statements
