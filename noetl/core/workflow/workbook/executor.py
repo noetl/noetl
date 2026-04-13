@@ -44,13 +44,13 @@ def build_action_config(
     )
 
     # Create task config for the actual action type
-    # V2 DSL: tool is an object with 'kind' field
-    # V1 DSL: tool is a string
+    # Canonical DSL: tool is an object with 'kind' field.
+    # Legacy shape: tool may still be provided as a string.
     tool_spec = target_action.get("tool")
     if not tool_spec:
         raise ValueError(f"Workbook action '{task_name}' must define a 'tool' field")
     
-    # Handle both V2 (tool: {kind: python, ...}) and V1 (tool: python)
+    # Handle both object and legacy string tool specifications.
     if isinstance(tool_spec, dict):
         tool_name = tool_spec.get("kind")
         action_config = {

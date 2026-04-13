@@ -1,5 +1,5 @@
 """
-Case Evaluator for DSL v2 with exclusive/inclusive mode support.
+Case evaluator for the canonical DSL with exclusive/inclusive mode support.
 
 This module implements the case evaluation logic as described in the DSL specification:
 

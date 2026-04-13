@@ -253,7 +253,7 @@ NoETL v2 provides these variables in template context:
 
 - [iterator_save_test](../iterator_save_test/) - Per-iteration sink execution
 - [save_storage_test](../save_storage_test/) - Multiple storage backends
-- [v2_postgres_test](../v2_postgres_test.yaml) - Basic postgres operations
+- [postgres_test](../postgres_test.yaml) - Basic postgres operations
 
 ## Technical Details
 

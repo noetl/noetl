@@ -106,23 +106,23 @@ def main():
     """Run all playbook tests"""
     tests = [
         # Basic tests
-        ('tests/fixtures/playbooks/v2_simple_python.yaml', 'v2_simple_python', 3),
-        ('tests/fixtures/playbooks/v2_actions_test.yaml', 'v2_actions_test', 5),
+        ('tests/fixtures/playbooks/simple_python.yaml', 'simple_python', 3),
+        ('tests/fixtures/playbooks/actions_test.yaml', 'actions_test', 5),
         
         # Control flow tests
-        ('tests/fixtures/playbooks/v2_loop_test.yaml', 'v2_loop_test', 5),
+        ('tests/fixtures/playbooks/loop_test.yaml', 'loop_test', 5),
         ('tests/fixtures/playbooks/iterator_save_test.yaml', 'iterator_save_test', 5),
         
         # HTTP tests
-        ('tests/fixtures/playbooks/v2_http_test.yaml', 'v2_http_test', 5),
+        ('tests/fixtures/playbooks/http_test.yaml', 'http_test', 5),
         
         # Database tests
-        ('tests/fixtures/playbooks/v2_postgres_test.yaml', 'v2_postgres_test', 5),
-        ('tests/fixtures/playbooks/v2_duckdb_test.yaml', 'v2_duckdb_test', 5),
+        ('tests/fixtures/playbooks/postgres_test.yaml', 'postgres_test', 5),
+        ('tests/fixtures/playbooks/duckdb_test.yaml', 'duckdb_test', 5),
         
         # Examples
-        ('tests/fixtures/playbooks/examples/simple_http_v2.yaml', 'simple_http_v2', 5),
-        ('tests/fixtures/playbooks/examples/weather_loop_v2.yaml', 'weather_loop_v2', 10),
+        ('tests/fixtures/playbooks/examples/simple_http.yaml', 'simple_http', 5),
+        ('tests/fixtures/playbooks/examples/weather_loop.yaml', 'weather_loop', 10),
     ]
     
     results = []

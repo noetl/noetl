@@ -10,6 +10,6 @@ def test_worker_pool_register_requires_fields():
 
     # Missing required fields
     r = client.post("/api/worker/pool/register", json={})
-    assert r.status_code == 400
-    assert "required" in r.json().get("detail", "")
-
+    assert r.status_code == 422
+    detail = str(r.json().get("detail", ""))
+    assert "required" in detail.lower()

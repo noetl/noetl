@@ -12,7 +12,7 @@ class _FailStore:
 @pytest.mark.asyncio
 async def test_result_handler_store_failure_returns_bounded_payload(monkeypatch):
     monkeypatch.setattr(result_handler_module, "PREVIEW_MAX_BYTES", 64)
-    handler = ResultHandler(execution_id="123", store=_FailStore(), inline_max_bytes=8)
+    handler = ResultHandler(execution_id = "123", store=_FailStore(), inline_max_bytes=8)
     large_result = {"rows": [{"id": i, "payload": "x" * 80} for i in range(20)]}
 
     processed = await handler.process_result(

@@ -89,7 +89,6 @@ CREATE TABLE IF NOT EXISTS noetl.event (
     context_value       TEXT,
     trace_component     JSONB,
     stack_trace         TEXT,
-    CONSTRAINT chk_event_result_shape
         CHECK (
             result IS NULL
             OR (
@@ -119,7 +118,6 @@ BEGIN
              AND t.relname = 'event'
        ) THEN
         ALTER TABLE noetl.event
-            ADD CONSTRAINT chk_event_result_shape
                 CHECK (
                     result IS NULL
                     OR (
@@ -172,6 +170,11 @@ CREATE INDEX IF NOT EXISTS idx_event_exec_id_event_id_desc ON noetl.event (execu
 
 -- Composite index for filtering by event_type within execution
 CREATE INDEX IF NOT EXISTS idx_event_exec_type ON noetl.event (execution_id, event_type, event_id DESC);
+
+-- Fast idempotency lookup for batch acceptance
+CREATE INDEX IF NOT EXISTS idx_event_idempotency_key
+    ON noetl.event (execution_id, ((meta->>'idempotency_key')))
+    WHERE meta ? 'idempotency_key';
 
 -- Command lifecycle lookups (claim/start/completed/failed) by command_id stored in meta
 CREATE INDEX IF NOT EXISTS idx_event_exec_type_meta_command_id_event_id_desc
@@ -542,6 +545,12 @@ CREATE TABLE IF NOT EXISTS noetl.execution (
     updated_at            TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
+ALTER TABLE noetl.execution
+    ADD COLUMN IF NOT EXISTS parent_execution_id BIGINT,
+    ADD COLUMN IF NOT EXISTS last_event_type VARCHAR,
+    ADD COLUMN IF NOT EXISTS last_node_name VARCHAR,
+    ADD COLUMN IF NOT EXISTS last_event_id BIGINT;
+
 CREATE INDEX IF NOT EXISTS idx_execution_status ON noetl.execution (status);
 CREATE INDEX IF NOT EXISTS idx_execution_catalog_id ON noetl.execution (catalog_id);
 CREATE INDEX IF NOT EXISTS idx_execution_start_time ON noetl.execution (start_time DESC);
@@ -552,6 +561,16 @@ DECLARE
     new_status VARCHAR;
     is_terminal BOOLEAN := FALSE;
 BEGIN
+    -- OPTIMIZATION: Skip execution table updates for high-frequency informational events
+    -- to reduce lock contention on the execution table.
+    IF NOT (NEW.event_type IN (
+        'playbook.initialized', 'playbook.completed', 'playbook.failed',
+        'workflow.initialized', 'workflow.completed', 'workflow.failed',
+        'execution.cancelled', 'step.enter', 'step.exit', 'loop.done', 'command.failed'
+    )) THEN
+        RETURN NEW;
+    END IF;
+
     -- Determine the overall execution status from the event
     -- By default, it's RUNNING unless it's a terminal event.
     IF NEW.event_type IN ('playbook.completed', 'workflow.completed') THEN
@@ -613,3 +632,4 @@ CREATE TRIGGER trg_event_to_execution
 AFTER INSERT ON noetl.event
 FOR EACH ROW
 EXECUTE FUNCTION noetl.trg_execution_state_upsert();
+ALTER TABLE noetl.execution ADD COLUMN IF NOT EXISTS state JSONB;

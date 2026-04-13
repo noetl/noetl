@@ -11,12 +11,12 @@ Usage:
 
 import argparse
 import sys
-from noetl.worker.v2_worker_nats import run_worker_v2_sync
+from noetl.worker.nats_worker import run_worker_sync
 
 
 def main():
     """Entry point for NoETL worker."""
-    parser = argparse.ArgumentParser(description="NoETL V2 Worker")
+    parser = argparse.ArgumentParser(description="NoETL Worker")
     parser.add_argument(
         "--nats-url",
         default="nats://noetl:noetl@nats.nats.svc.cluster.local:4222",
@@ -31,7 +31,7 @@ def main():
     args = parser.parse_args()
     
     try:
-        run_worker_v2_sync(nats_url=args.nats_url, server_url=args.server_url)
+        run_worker_sync(nats_url=args.nats_url, server_url=args.server_url)
     except KeyboardInterrupt:
         print("\nWorker interrupted by user")
         sys.exit(0)

@@ -13,12 +13,14 @@ def _create_client():
 def test_credential_requires_name():
     client = _create_client()
     response = client.post("/api/credentials", json={"data": {"key": "secret"}})
-    assert response.status_code == 400
-    assert "name" in response.json().get("detail", "")
+    assert response.status_code == 422
+    detail = str(response.json().get("detail", ""))
+    assert "name" in detail
 
 
 def test_credential_requires_data():
     client = _create_client()
     response = client.post("/api/credentials", json={"name": "test-cred"})
-    assert response.status_code == 400
-    assert "data" in response.json().get("detail", "")
+    assert response.status_code == 422
+    detail = str(response.json().get("detail", ""))
+    assert "data" in detail

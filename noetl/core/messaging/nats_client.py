@@ -1,5 +1,5 @@
 """
-NATS JetStream client for NoETL V2 command notifications.
+NATS JetStream client for NoETL command notifications.
 
 Architecture:
 - Server publishes lightweight command notifications to NATS subject

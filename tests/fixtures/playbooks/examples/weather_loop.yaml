@@ -1,0 +1,166 @@
+apiVersion: noetl.io/v2
+kind: Playbook
+metadata:
+  name: weather_loop
+  path: examples/weather_loop
+  version: '2.0'
+workload:
+  cities:
+  - name: San Francisco
+    lat: 37.7749
+    lon: -122.4194
+  - name: New York
+    lat: 40.7128
+    lon: -74.006
+  - name: London
+    lat: 51.5074
+    lon: -0.1278
+  weather_api_url: https://api.open-meteo.com/v1/forecast
+  alert_threshold: 30
+  weather_results: []
+  alerts: []
+workbook:
+- name: evaluate_weather_directly
+  tool:
+    kind: python
+    spec:
+      input:
+        city: null
+        threshold: null
+      code: "# Evaluate weather data\ntemp = city.get(\"temperature\", 0)\nalert =\
+        \ temp > threshold\n\nresult = {\n    \"city\": city[\"name\"],\n    \"temperature\"\
+        : temp,\n    \"alert\": alert,\n    \"message\": f\"Temperature {temp}C {'exceeds'\
+        \ if alert else 'below'} threshold {threshold}C\"\n}\n"
+workflow:
+- step: start
+  desc: Start weather monitoring workflow
+  tool:
+    kind: python
+    spec:
+      code: 'result = {"status": "initialized", "timestamp": "2025-12-10T00:00:00Z"}
+
+        '
+  set:
+    ctx.weather_results: '{{ workload.weather_results }}'
+    ctx.alerts: '{{ workload.alerts }}'
+  next:
+    spec:
+      mode: exclusive
+    arcs:
+    - step: city_loop
+- step: city_loop
+  desc: Loop over cities and fetch weather data
+  loop:
+    spec:
+      mode: sequential
+    in: '{{ cities }}'
+    iterator: city
+  tool:
+  - name: fetch_weather
+    kind: http
+    spec:
+      method: GET
+      endpoint: '{{ weather_api_url }}'
+      params:
+        latitude: '{{ iter.city.lat }}'
+        longitude: '{{ iter.city.lon }}'
+        current_weather: true
+        temperature_unit: celsius
+      policy:
+        rules:
+        - when: '{{ output.status == ''error'' and output.http.status in [500, 502,
+            503, 504] }}'
+          then:
+            do: retry
+            attempts: 3
+            backoff: exponential
+            delay: 1.0
+        - when: '{{ output.status == ''error'' }}'
+          then:
+            do: fail
+        - else:
+            do: continue
+            set:
+              iter.current_temp: '{{ output.data.current_weather.temperature }}'
+              iter.city_data:
+                name: '{{ iter.city.name }}'
+                temperature: '{{ output.data.current_weather.temperature }}'
+                windspeed: '{{ output.data.current_weather.windspeed }}'
+  - name: evaluate_and_route
+    kind: python
+    spec:
+      input:
+        city_data: '{{ iter.city_data }}'
+        threshold: '{{ alert_threshold }}'
+        weather_results: '{{ ctx.weather_results }}'
+        alerts: '{{ ctx.alerts }}'
+      code: "# Evaluate if alert is needed\ntemp = city_data.get(\"temperature\",\
+        \ 0)\nalert_triggered = temp > threshold\n\nif alert_triggered:\n    alerts.append({\n\
+        \        \"city\": city_data[\"name\"],\n        \"temperature\": temp,\n\
+        \        \"alert\": True,\n        \"message\": f\"Temperature {temp}C exceeds\
+        \ threshold {threshold}C\"\n    })\nelse:\n    weather_results.append({\n\
+        \        \"city\": city_data[\"name\"],\n        \"temperature\": temp,\n\
+        \        \"alert\": False,\n        \"message\": f\"Temperature {temp}C below\
+        \ threshold {threshold}C\"\n    })\n\nresult = {\n    \"alert_triggered\"\
+        : alert_triggered,\n    \"city_data\": city_data,\n    \"weather_results\"\
+        : weather_results,\n    \"alerts\": alerts\n}\n"
+      policy:
+        rules:
+        - else:
+            do: continue
+            set:
+              ctx.weather_results: '{{ output.data.weather_results }}'
+              ctx.alerts: '{{ output.data.alerts }}'
+  next:
+    spec:
+      mode: exclusive
+    arcs:
+    - step: generate_summary
+- step: generate_summary
+  desc: Generate summary of weather monitoring
+  tool:
+  - name: compute_summary
+    kind: python
+    spec:
+      input:
+        weather_results: '{{ ctx.weather_results }}'
+        alerts: '{{ ctx.alerts }}'
+      code: "total_cities = len(weather_results) + len(alerts)\nalert_count = len(alerts)\n\
+        \nsummary = {\n    \"total_cities_monitored\": total_cities,\n    \"alerts_triggered\"\
+        : alert_count,\n    \"alert_percentage\": (alert_count / total_cities * 100)\
+        \ if total_cities > 0 else 0,\n    \"weather_data\": weather_results,\n  \
+        \  \"alerts\": alerts\n}\n\nresult = summary\n"
+      policy:
+        rules:
+        - else:
+            do: continue
+            set:
+              ctx.summary: '{{ output.data }}'
+  - name: save_summary
+    kind: postgres
+    spec:
+      auth: pg_local
+      command: "INSERT INTO weather_monitoring_summary (\n  execution_id,\n  total_cities,\n\
+        \  alerts_triggered,\n  summary_data,\n  created_at\n) VALUES (\n  '{{ execution_id\
+        \ }}',\n  {{ ctx.summary.total_cities_monitored }},\n  {{ ctx.summary.alerts_triggered\
+        \ }},\n  $json${{ ctx.summary | tojson }}$json$::jsonb,\n  NOW()\n);\n"
+      policy:
+        rules:
+        - when: '{{ output.status == ''error'' }}'
+          then:
+            do: fail
+        - else:
+            do: continue
+  next:
+    spec:
+      mode: exclusive
+    arcs:
+    - step: end
+- step: end
+  desc: End of weather monitoring workflow
+  tool:
+    kind: python
+    spec:
+      code: 'result = {"status": "completed", "workflow": "weather_monitoring"}
+
+        '

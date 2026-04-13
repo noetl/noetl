@@ -106,7 +106,7 @@ class TestDuckDBRefactoredStructure:
         with tempfile.TemporaryDirectory() as tmpdir:
             config = ConnectionConfig(
                 database_path=f"{tmpdir}/test.duckdb",
-                execution_id="test"
+                execution_id = "99018"
             )
             
             with get_duckdb_connection(config) as conn:

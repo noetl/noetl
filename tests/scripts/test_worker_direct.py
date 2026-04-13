@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Direct test of V2 worker to see what's happening."""
+"""Direct worker smoke test."""
 
 import sys
 import asyncio
@@ -8,12 +8,12 @@ print("=== Direct Worker Test ===", flush=True)
 print(f"Python: {sys.version}", flush=True)
 
 try:
-    from noetl.worker.v2_worker_nats import V2Worker
-    print("Successfully imported V2Worker", flush=True)
+    from noetl.worker.nats_worker import Worker
+    print("Successfully imported Worker", flush=True)
     
     async def test():
         print("Creating worker...", flush=True)
-        worker = V2Worker(
+        worker = Worker(
             worker_id="test-worker",
             nats_url="nats://noetl:noetl@localhost:30422",
             server_url="http://localhost:30082"

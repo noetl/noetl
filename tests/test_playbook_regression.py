@@ -193,7 +193,7 @@ class NoETLClient:
     
     async def get_execution_events(self, execution_id: int) -> List[Dict[str, Any]]:
         """Get all events for an execution."""
-        # Prefer paginated v2 endpoint and fetch all pages.
+        # Prefer the paginated endpoint and fetch all pages.
         page = 1
         page_size = 500
         collected: List[Dict[str, Any]] = []

@@ -1,3 +1,7 @@
+
+
+
+
 import re
 import json
 import base64
@@ -93,70 +97,56 @@ def _handle_undefined_values(value: Any) -> Any:
     return value
 
 
-def add_b64encode_filter(env: Environment) -> Environment:
-    """
-    Add the b64encode filter to a Jinja2 environment.
-    
-    Args:
-        env: The Jinja2 environment
+
+
+def tojson_filter(obj):
+    """Optimized tojson filter."""
+    from jinja2 import Undefined
+    if isinstance(obj, Undefined):
+        return 'null'
+
+    def unwrap(value):
+        # Fast path for basic types
+        if isinstance(value, (str, int, float, bool, type(None))):
+            return value
         
-    Returns:
-        The Jinja2 environment with the b64encode filter added
-    """
+        # Only recurse for collections
+        if isinstance(value, dict):
+            # Shallow check for proxy-like objects
+            if hasattr(value, '_data') and not isinstance(value, dict):
+                 return unwrap(value._data)
+            return {k: unwrap(v) for k, v in value.items()}
+        
+        if isinstance(value, (list, tuple)):
+            return [unwrap(item) for item in value]
+            
+        # Check for TaskResultProxy by name (slow path for custom objects)
+        v_type = type(value).__name__
+        if v_type == 'TaskResultProxy':
+            if hasattr(value, '__dict__') and '_data' in value.__dict__:
+                return unwrap(value.__dict__['_data'])
+            elif hasattr(value, '_data'):
+                return unwrap(value._data)
+            return str(value)
+            
+        if hasattr(value, '_data'):
+            return unwrap(value._data)
+            
+        return value
+
+    return json.dumps(unwrap(obj), cls=DateTimeEncoder)
+
+
+def add_b64encode_filter(env: Environment) -> Environment:
     if 'b64encode' not in env.filters:
         env.filters['b64encode'] = lambda s: base64.b64encode(s.encode('utf-8')).decode('utf-8') if isinstance(s, str) else base64.b64encode(str(s).encode('utf-8')).decode('utf-8')
-    
-    # Provide a tojson filter for templates that need JSON stringification
-    # Always update the filter to ensure latest code is used
-    def tojson_filter(obj):
-        """Custom tojson filter that unwraps TaskResultProxy objects and handles Undefined."""
-        from jinja2 import Undefined
-
-        # Handle Jinja2 Undefined objects
-        if isinstance(obj, Undefined):
-            return 'null'
-
-        # Recursively unwrap TaskResultProxy objects
-        def unwrap_proxies(value):
-            """Recursively unwrap all TaskResultProxy objects in nested structures."""
-            value_type = type(value).__name__
-            logger.debug(f"[TOJSON] unwrap_proxies: value_type={value_type}")
-
-            # Check for TaskResultProxy by class name (handles multiple class definitions)
-            if value_type == 'TaskResultProxy':
-                logger.debug(f"[TOJSON] Found TaskResultProxy, extracting _data")
-                # Access _data directly via object's __dict__ to avoid __getattr__
-                if hasattr(value, '__dict__') and '_data' in value.__dict__:
-                    return unwrap_proxies(value.__dict__['_data'])
-                elif hasattr(value, '_data'):
-                    return unwrap_proxies(value._data)
-                else:
-                    # Fallback: try to convert to string
-                    logger.warning(f"[TOJSON] Could not extract _data from TaskResultProxy, using str()")
-                    return str(value)
-            elif hasattr(value, '_data') and not isinstance(value, (dict, list, tuple, str, int, float, bool, type(None))):
-                # Other proxy-like objects with _data attribute
-                logger.debug(f"[TOJSON] Found proxy-like object with _data, extracting")
-                return unwrap_proxies(value._data)
-            elif isinstance(value, dict):
-                # Recursively unwrap dict values
-                return {k: unwrap_proxies(v) for k, v in value.items()}
-            elif isinstance(value, (list, tuple)):
-                # Recursively unwrap list/tuple items
-                return type(value)(unwrap_proxies(item) for item in value)
-            else:
-                return value
-
-        obj = unwrap_proxies(obj)
-        logger.debug(f"[TOJSON] After unwrap, obj type={type(obj).__name__}")
-        return json.dumps(obj, cls=DateTimeEncoder)
-    env.filters['tojson'] = tojson_filter
-    
-    # Provide encrypt_secret filter for caching sensitive data
+    if 'tojson' not in env.filters:
+        env.filters['tojson'] = tojson_filter
     if 'encrypt_secret' not in env.filters:
         from noetl.core.secret import encrypt_json
         env.filters['encrypt_secret'] = lambda s: encrypt_json(json.loads(s) if isinstance(s, str) else s)
     return env
+
 
 
 def render_template(env: Environment, template: Any, context: Dict, rules: Dict = None, strict_keys: bool = False) -> Any:

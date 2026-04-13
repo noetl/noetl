@@ -1,7 +1,5 @@
 #!/usr/bin/env python3
-"""
-Test weather_loop_v2 playbook specifically to verify template rendering fix.
-"""
+"""Test the weather loop playbook specifically to verify template rendering."""
 import json
 import time
 import yaml
@@ -10,11 +8,11 @@ import httpx
 BASE_URL = "http://localhost:8082"
 
 def test_weather_loop():
-    """Test weather_loop_v2 playbook."""
-    yaml_path = "tests/fixtures/playbooks/examples/weather_loop_v2.yaml"
+    """Test the weather loop playbook."""
+    yaml_path = "tests/fixtures/playbooks/examples/weather_loop.yaml"
     
     print("\n" + "=" * 70)
-    print(f"TEST: weather_loop_v2")
+    print("TEST: weather_loop")
     print("=" * 70)
     print(f"File: {yaml_path}\n")
     
@@ -112,7 +110,7 @@ def test_weather_loop():
         print("\n❌ FAILED: Execution did not complete")
         return False
     else:
-        print("\n✅ PASSED: weather_loop_v2")
+        print("\n✅ PASSED: weather_loop")
         return True
 
 if __name__ == "__main__":
