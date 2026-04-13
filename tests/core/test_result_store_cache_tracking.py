@@ -23,7 +23,7 @@ async def test_put_registers_ref_with_scope_tracker():
         source_step="fetch_data",
     )
 
-    refs = tracker.get_refs_for_execution_cleanup("exec-tracked")
+    refs = tracker.get_refs_for_execution_cleanup("99013")
     assert ref.ref in refs
 
 
@@ -63,7 +63,7 @@ async def test_cache_eviction_keeps_refs_tracked_for_cleanup(monkeypatch):
     assert await store.get(refs[2]) == {"idx": 2}
 
     # Scope tracker should keep evicted refs so lifecycle cleanup can still run.
-    tracked = tracker.get_refs_for_execution_cleanup("exec-evict")
+    tracked = tracker.get_refs_for_execution_cleanup("99014")
     assert set(tracked) == {refs[0].ref, refs[1].ref, refs[2].ref}
 
 
@@ -168,7 +168,7 @@ async def test_cleanup_deletes_evicted_non_memory_refs():
     )
 
     # ref1 metadata may be evicted, but cleanup tracking should still preserve both refs.
-    tracked_refs = tracker.get_refs_for_execution_cleanup("exec-kv-cleanup")
+    tracked_refs = tracker.get_refs_for_execution_cleanup("99016")
     assert set(tracked_refs) == {ref1.ref, ref2.ref}
 
     deleted = 0

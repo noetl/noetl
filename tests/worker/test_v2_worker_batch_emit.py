@@ -178,3 +178,56 @@ async def test_claim_and_fetch_command_resolves_externalized_context(monkeypatch
     assert retry_after == 0.0
     assert command is not None
     assert command["context"]["render_context"]["foo"] == "bar"
+
+
+@pytest.mark.asyncio
+async def test_execute_command_resolves_nested_externalized_context_fields(monkeypatch):
+    worker = V2Worker(worker_id="worker-test")
+
+    resolved_refs = {
+        "noetl://execution/123/result/tool/abcd1234": {"kind": "python", "code": "return 1"},
+        "noetl://execution/123/result/render/abcd1234": {"foo": "bar"},
+    }
+
+    async def _fake_resolve(ref):
+        return resolved_refs[ref["ref"]]
+
+    async def _fake_emit_batch_events(*_args, **_kwargs):
+        return True
+
+    async def _fake_emit_event(*_args, **_kwargs):
+        return None
+
+    async def _fake_execute_tool(tool_kind, config, args, step, render_context):
+        assert tool_kind == "python"
+        assert config["code"] == "return 1"
+        assert render_context["foo"] == "bar"
+        return {"status": "ok", "data": {"value": 1}}
+
+    monkeypatch.setattr(worker_module.default_store, "resolve", _fake_resolve)
+    monkeypatch.setattr(V2Worker, "_emit_batch_events", _fake_emit_batch_events)
+    monkeypatch.setattr(V2Worker, "_emit_event", _fake_emit_event)
+    monkeypatch.setattr(V2Worker, "_execute_tool", _fake_execute_tool)
+
+    await worker._execute_command(
+        {
+            "execution_id": 123,
+            "node_name": "step1",
+            "action": "python",
+            "context": {
+                "tool_config": {
+                    "kind": "temp_ref",
+                    "ref": "noetl://execution/123/result/tool/abcd1234",
+                },
+                "render_context": {
+                    "kind": "temp_ref",
+                    "ref": "noetl://execution/123/result/render/abcd1234",
+                },
+                "input": {},
+                "spec": {},
+            },
+            "meta": {},
+        },
+        server_url="http://server",
+        command_id="123:step1:1",
+    )

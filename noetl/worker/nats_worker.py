@@ -338,16 +338,12 @@ class V2Worker:
                 self._last_db_throttle_log_at = now
             await asyncio.sleep(self._throttle_poll_interval)
 
-    async def _resolve_command_context_if_needed(self, context: Any) -> dict[str, Any]:
-        """Resolve a top-level ref-wrapped command context when the server externalized it."""
+    async def _resolve_command_context_if_needed(self, context: Any) -> Any:
+        """Resolve ref-wrapped command context payloads when the server externalized them."""
         if isinstance(context, dict) and context.get("kind") in {"temp_ref", "result_ref"} and context.get("ref"):
             resolved = await default_store.resolve(context)
-            if isinstance(resolved, dict):
-                return resolved
-            raise RuntimeError(
-                f"Resolved command context must be an object, got {type(resolved).__name__}"
-            )
-        return context if isinstance(context, dict) else {}
+            return resolved
+        return context
 
     def _normalize_command_context_mapping(
         self,
@@ -1716,32 +1712,47 @@ class V2Worker:
         # Store execution_id for sub-playbook calls
         self._current_execution_id = execution_id
 
+        tool_config_raw = await self._resolve_command_context_if_needed(
+            context.get("tool_config")
+        )
         tool_config = self._normalize_command_context_mapping(
-            context.get("tool_config"),
+            tool_config_raw,
             field_name="tool_config",
             step=step,
             execution_id=execution_id,
         )
+        command_input_raw = await self._resolve_command_context_if_needed(
+            context.get("input")
+        )
         command_input = self._normalize_command_context_mapping(
-            context.get("input"),
+            command_input_raw,
             field_name="input",
             step=step,
             execution_id=execution_id,
         )
+        render_context_raw = await self._resolve_command_context_if_needed(
+            context.get("render_context")
+        )
         render_context = self._normalize_command_context_mapping(
-            context.get("render_context"),
+            render_context_raw,
             field_name="render_context",
             step=step,
             execution_id=execution_id,
         )  # Full render context from engine
+        case_blocks_raw = await self._resolve_command_context_if_needed(
+            context.get("case")
+        )
         case_blocks = self._normalize_command_context_list(
-            context.get("case"),
+            case_blocks_raw,
             field_name="case",
             step=step,
             execution_id=execution_id,
         )  # Case blocks from server for immediate execution
+        spec_raw = await self._resolve_command_context_if_needed(
+            context.get("spec")
+        )
         spec = self._normalize_command_context_mapping(
-            context.get("spec"),
+            spec_raw,
             field_name="spec",
             step=step,
             execution_id=execution_id,

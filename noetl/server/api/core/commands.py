@@ -41,6 +41,9 @@ from .cache import (
 )
 
 router = APIRouter()
+_COMMAND_CONTEXT_FIELD_INLINE_MAX_BYTES = int(
+    os.getenv("NOETL_COMMAND_CONTEXT_FIELD_INLINE_MAX_BYTES", "8192")
+)
 
 def _command_input_from_model(cmd: Any) -> dict[str, Any]:
     cmd_input = getattr(cmd, "input", None)
@@ -51,9 +54,58 @@ def _build_command_context(cmd: Any) -> dict[str, Any]:
         "tool_config": cmd.tool.config,
         "input": _command_input_from_model(cmd),
         "render_context": cmd.render_context,
-        "next_targets": cmd.next_targets,
-        "pipeline": cmd.pipeline,
         "spec": cmd.spec.model_dump() if cmd.spec else None,
+    }
+
+
+async def _externalize_command_context_field_if_needed(
+    *,
+    execution_id: int,
+    step: str,
+    command_id: str,
+    field_name: str,
+    value: Any,
+) -> Any:
+    if value in (None, "", {}, []):
+        return value
+
+    try:
+        size_bytes = estimate_size(value)
+    except Exception:
+        size_bytes = _estimate_json_size(value)
+
+    if size_bytes <= _COMMAND_CONTEXT_FIELD_INLINE_MAX_BYTES:
+        return value
+
+    ref = await default_store.put(
+        execution_id=str(execution_id),
+        name=f"{step}_{field_name}",
+        data=value,
+        scope=Scope.EXECUTION,
+        source_step=step,
+        correlation={
+            "command_id": command_id,
+            "kind": "command_context_field",
+            "field": field_name,
+            "step": step,
+        },
+    )
+    logger.debug(
+        "[COMMAND-CONTEXT] Externalized field execution_id=%s step=%s command_id=%s field=%s bytes=%s store=%s",
+        execution_id,
+        step,
+        command_id,
+        field_name,
+        size_bytes,
+        ref.store.value,
+    )
+    return {
+        "kind": ref.kind,
+        "ref": ref.ref,
+        "store": ref.store.value,
+        "scope": ref.scope.value,
+        "meta": ref.meta.model_dump(mode="json"),
+        "correlation": ref.correlation,
     }
 
 def _validate_postgres_command_context(*, step: str, tool_kind: str, context: dict[str, Any]) -> None:
@@ -77,17 +129,34 @@ def _validate_postgres_command_context_or_422(*, step: str, tool_kind: str, cont
         raise HTTPException(status_code=422, detail=f"Invalid command context for step '{step}' and tool '{tool_kind}': {exc}")
 
 async def _store_command_context_if_needed(*, execution_id: int, step: str, command_id: str, context: dict[str, Any]) -> dict[str, Any]:
+    compact_context = dict(context)
+    for field_name in ("tool_config", "render_context", "spec", "input"):
+        if field_name not in compact_context:
+            continue
+        compact_context[field_name] = await _externalize_command_context_field_if_needed(
+            execution_id=execution_id,
+            step=step,
+            command_id=command_id,
+            field_name=field_name,
+            value=compact_context[field_name],
+        )
+
     try: size_bytes = estimate_size(context)
     except Exception: size_bytes = _estimate_json_size(context)
-    if size_bytes <= _COMMAND_CONTEXT_INLINE_MAX_BYTES: return context
+    try:
+        compact_size_bytes = estimate_size(compact_context)
+    except Exception:
+        compact_size_bytes = _estimate_json_size(compact_context)
+    if compact_size_bytes <= _COMMAND_CONTEXT_INLINE_MAX_BYTES:
+        return compact_context
     try:
         ref = await default_store.put(
-            execution_id=str(execution_id), name=f"{step}_command_context", data=context,
+            execution_id=str(execution_id), name=f"{step}_command_context", data=compact_context,
             scope=Scope.EXECUTION, source_step=step,
             correlation={"command_id": command_id, "kind": "command_context", "step": step},
         )
-        logger.info("[COMMAND-CONTEXT] Externalized command context execution_id=%s step=%s command_id=%s bytes=%s store=%s",
-                    execution_id, step, command_id, size_bytes, ref.store.value)
+        logger.debug("[COMMAND-CONTEXT] Externalized command context execution_id=%s step=%s command_id=%s bytes=%s compact_bytes=%s store=%s",
+                    execution_id, step, command_id, size_bytes, compact_size_bytes, ref.store.value)
         return {
             "kind": ref.kind, "ref": ref.ref, "store": ref.store.value, "scope": ref.scope.value,
             "meta": ref.meta.model_dump(mode="json"), "correlation": ref.correlation,
@@ -95,7 +164,7 @@ async def _store_command_context_if_needed(*, execution_id: int, step: str, comm
     except Exception as exc:
         logger.warning("[COMMAND-CONTEXT] Failed to externalize context execution_id=%s step=%s command_id=%s error=%s",
                        execution_id, step, command_id, exc)
-        return context
+        return compact_context
 
 def _build_reference_only_result(*, payload: dict[str, Any], status: str) -> dict[str, Any]:
     from .utils import _normalize_result_status, _estimate_json_size

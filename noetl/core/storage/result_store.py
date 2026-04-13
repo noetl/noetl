@@ -223,6 +223,30 @@ class TempStore:
                 return None
         return self._nats_client
 
+    def _prepare_data_for_storage(
+        self,
+        data: Any,
+        *,
+        compress: bool,
+    ) -> tuple[bytes, TempRefMeta, Optional[Dict[str, Any]], int]:
+        """Serialize and optionally compress payload bytes off the event loop."""
+        serialized = json.dumps(data, default=str)
+        data_bytes = serialized.encode("utf-8")
+        original_size = len(data_bytes)
+
+        compression = "none"
+        if compress or original_size > 10240:
+            data_bytes = gzip.compress(data_bytes)
+            compression = "gzip"
+
+        meta = TempRefMeta(
+            bytes=len(data_bytes),
+            sha256=hashlib.sha256(data_bytes).hexdigest(),
+            compression=compression,
+        )
+        preview = self._create_preview(data)
+        return data_bytes, meta, preview, original_size
+
     async def put(
         self,
         execution_id: str,
@@ -254,17 +278,18 @@ class TempStore:
         Returns:
             TempRef pointer to the stored data
         """
-        # Serialize data
-        serialized = json.dumps(data, default=str)
-        data_bytes = serialized.encode('utf-8')
-        original_size = len(data_bytes)
-
-        # Compress if requested or data is large
-        compression = "none"
-        if compress or original_size > 10240:  # Auto-compress > 10KB
-            data_bytes = gzip.compress(data_bytes)
-            compression = "gzip"
-            logger.debug(f"TEMP: Compressed {original_size}b -> {len(data_bytes)}b")
+        data_bytes, meta, preview, original_size = await asyncio.to_thread(
+            self._prepare_data_for_storage,
+            data,
+            compress=compress,
+        )
+        if meta.compression != "none":
+            logger.debug(
+                "TEMP: Compressed %sb -> %sb for %s",
+                original_size,
+                len(data_bytes),
+                name,
+            )
 
         # Determine storage tier
         if store is None:
@@ -276,12 +301,6 @@ class TempStore:
 
         # Create TempRef
         ttl = ttl_seconds or self.default_ttl_seconds
-        meta = TempRefMeta(
-            bytes=len(data_bytes),
-            sha256=hashlib.sha256(data_bytes).hexdigest(),
-            compression=compression
-        )
-
         temp_ref = TempRef.create(
             execution_id=execution_id,
             name=name,
@@ -292,8 +311,6 @@ class TempStore:
             correlation=correlation
         )
 
-        # Create preview
-        preview = self._create_preview(data)
         temp_ref.preview = preview
 
         # Store data in appropriate backend
@@ -307,7 +324,7 @@ class TempStore:
             parent_execution_id=parent_execution_id,
         )
 
-        logger.info(
+        logger.debug(
             f"TEMP: Stored {name} -> {temp_ref.ref} "
             f"(store={store.value}, bytes={meta.bytes}, scope={scope.value})"
         )
