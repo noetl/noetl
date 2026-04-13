@@ -3,12 +3,15 @@ import time
 import pytest
 from fastapi import HTTPException
 
-import noetl.server.api.core as v2_api
+from noetl.server.api.core import db as api_db
+from noetl.server.api.core import commands as api_commands
+from noetl.server.api.core import events as api_events
+from noetl.server.api.core.models import ClaimRequest, EventRequest
 
 
 def _reset_outage_state() -> None:
-    v2_api._db_unavailable_failure_streak = 0
-    v2_api._db_unavailable_backoff_until_monotonic = 0.0
+    api_db._db_unavailable_failure_streak = 0
+    api_db._db_unavailable_backoff_until_monotonic = 0.0
 
 
 class _FailConnCtx:
@@ -22,16 +25,16 @@ class _FailConnCtx:
 @pytest.mark.asyncio
 async def test_claim_command_short_circuits_when_db_backoff_active(monkeypatch):
     _reset_outage_state()
-    v2_api._db_unavailable_failure_streak = 2
-    v2_api._db_unavailable_backoff_until_monotonic = time.monotonic() + 5.0
+    api_db._db_unavailable_failure_streak = 2
+    api_db._db_unavailable_backoff_until_monotonic = time.monotonic() + 5.0
 
     def _unexpected_get_pool_connection(*_args, **_kwargs):
         raise AssertionError("DB access should be short-circuited during outage backoff")
 
-    monkeypatch.setattr(v2_api, "get_pool_connection", _unexpected_get_pool_connection)
+    monkeypatch.setattr(api_commands, "get_pool_connection", _unexpected_get_pool_connection)
 
     with pytest.raises(HTTPException) as exc:
-        await v2_api.claim_command(101, v2_api.ClaimRequest(worker_id="worker-a"))
+        await api_commands.claim_command(101, ClaimRequest(worker_id="worker-a"))
 
     assert exc.value.status_code == 503
     assert exc.value.detail["code"] == "db_unavailable"
@@ -46,15 +49,15 @@ async def test_claim_command_maps_db_outage_errors_to_503(monkeypatch):
     def _fail_get_pool_connection(*_args, **_kwargs):
         return _FailConnCtx()
 
-    monkeypatch.setattr(v2_api, "get_pool_connection", _fail_get_pool_connection)
+    monkeypatch.setattr(api_commands, "get_pool_connection", _fail_get_pool_connection)
 
     with pytest.raises(HTTPException) as exc:
-        await v2_api.claim_command(102, v2_api.ClaimRequest(worker_id="worker-a"))
+        await api_commands.claim_command(102, ClaimRequest(worker_id="worker-a"))
 
     assert exc.value.status_code == 503
     assert exc.value.detail["code"] == "db_unavailable"
     assert int(exc.value.headers["Retry-After"]) >= 1
-    assert v2_api._db_unavailable_failure_streak >= 1
+    assert api_db._db_unavailable_failure_streak >= 1
     _reset_outage_state()
 
 
@@ -65,9 +68,9 @@ async def test_handle_event_maps_db_outage_errors_to_503(monkeypatch):
     def _fail_get_pool_connection(*_args, **_kwargs):
         return _FailConnCtx()
 
-    monkeypatch.setattr(v2_api, "get_pool_connection", _fail_get_pool_connection)
+    monkeypatch.setattr(api_events, "get_pool_connection", _fail_get_pool_connection)
 
-    req = v2_api.EventRequest(
+    req = EventRequest(
         execution_id = "42",
         step="step-a",
         name="call.done",
@@ -75,7 +78,7 @@ async def test_handle_event_maps_db_outage_errors_to_503(monkeypatch):
     )
 
     with pytest.raises(HTTPException) as exc:
-        await v2_api.handle_event(req)
+        await api_events.handle_event(req)
 
     assert exc.value.status_code == 503
     assert exc.value.detail["code"] == "db_unavailable"
