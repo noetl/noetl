@@ -134,13 +134,13 @@ def render_and_split_commands(commands: str, jinja_env: Environment, context: Di
     # Fast regex-based SQL statement splitting
     import re
     pattern = re.compile(
-        r"('(?:''|\\.|[^'])*')|"            # Single quote strings
-        r'("(?:""|\\.|[^"])*")|'            # Double quote strings
-        r'(\$[a-zA-Z0-9_]*\$.*?\3)|'        # Dollar quoted strings
-        r'(--[^\n]*)|'                      # Single-line comments
-        r'(/\*.*?\*/)|'                     # Multi-line comments
-        r'(;)|'                             # Semicolons
-        r'([^;\'"$-/]+|.)',                 # Anything else
+        r"('(?:''|\\.|[^'])*')|"            # 1: Single quote strings
+        r'("(?:""|\\.|[^"])*")|'            # 2: Double quote strings
+        r'((\$[a-zA-Z0-9_]*\$).*?\4)|'      # 3,4: Dollar quoted strings
+        r'(--[^\n]*)|'                      # 5: Single-line comments
+        r'(/\*.*?\*/)|'                     # 6: Multi-line comments
+        r'(;)|'                             # 7: Semicolons
+        r'([^;\'"$-/]+|.)',                 # 8: Anything else
         re.DOTALL
     )
     
@@ -148,12 +148,12 @@ def render_and_split_commands(commands: str, jinja_env: Environment, context: Di
     current = []
     
     for match in pattern.finditer(commands_rendered):
-        if match.group(6):  # Semicolon
+        if match.group(7):  # Semicolon
             stmt = "".join(current).strip()
             if stmt:
                 statements.append(stmt)
             current.clear()
-        elif match.group(4) or match.group(5):
+        elif match.group(5) or match.group(6):
             pass  # Ignore comments
         else:
             current.append(match.group(0))
