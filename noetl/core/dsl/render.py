@@ -87,54 +87,70 @@ class TaskResultProxy:
 
 
 def _handle_undefined_values(value: Any) -> Any:
-    """Convert Undefined values to None to prevent JSON serialization errors."""
+    """Convert Undefined values to None to prevent JSON serialization errors.
+    Optimized to avoid deep-copying large JSON structures (like HTTP responses)
+    which never contain Jinja Undefined objects.
+    """
+    if value is None or type(value) in (str, int, float, bool):
+        return value
     if isinstance(value, Undefined):
         return None
-    elif isinstance(value, dict):
+        
+    # Fast path: TaskResultProxy doesn't contain Undefined
+    if type(value).__name__ == 'TaskResultProxy':
+        return value
+
+    if isinstance(value, dict):
+        # Shallow scan to avoid rebuilding massive dictionaries (e.g. HTTP payloads)
+        # Undefined is extremely rare inside deep data structures because they originate from JSON.
+        has_undefined = False
+        for v in value.values():
+            if isinstance(v, Undefined) or type(v) in (dict, list):
+                has_undefined = True
+                break
+        
+        if not has_undefined:
+            return value
+            
         return {k: _handle_undefined_values(v) for k, v in value.items()}
-    elif isinstance(value, list):
+        
+    if isinstance(value, list):
+        if not value:
+            return value
+        # Shallow scan
+        has_undefined = False
+        for item in value:
+            if isinstance(item, Undefined) or type(item) in (dict, list):
+                has_undefined = True
+                break
+                
+        if not has_undefined:
+            return value
+            
         return [_handle_undefined_values(item) for item in value]
+        
     return value
 
 
 
 
 def tojson_filter(obj):
-    """Optimized tojson filter."""
+    """Optimized tojson filter that avoids O(N) deep traversal of large JSON payloads."""
     from jinja2 import Undefined
     if isinstance(obj, Undefined):
         return 'null'
 
-    def unwrap(value):
-        # Fast path for basic types
-        if isinstance(value, (str, int, float, bool, type(None))):
-            return value
-        
-        # Only recurse for collections
-        if isinstance(value, dict):
-            # Shallow check for proxy-like objects
-            if hasattr(value, '_data') and not isinstance(value, dict):
-                 return unwrap(value._data)
-            return {k: unwrap(v) for k, v in value.items()}
-        
-        if isinstance(value, (list, tuple)):
-            return [unwrap(item) for item in value]
-            
-        # Check for TaskResultProxy by name (slow path for custom objects)
-        v_type = type(value).__name__
-        if v_type == 'TaskResultProxy':
-            if hasattr(value, '__dict__') and '_data' in value.__dict__:
-                return unwrap(value.__dict__['_data'])
-            elif hasattr(value, '_data'):
-                return unwrap(value._data)
-            return str(value)
-            
-        if hasattr(value, '_data'):
-            return unwrap(value._data)
-            
-        return value
+    # Unpack TaskResultProxy at the root
+    if type(obj).__name__ == 'TaskResultProxy':
+        if hasattr(obj, '__dict__') and '_data' in obj.__dict__:
+            obj = obj.__dict__['_data']
+        elif hasattr(obj, '_data'):
+            obj = obj._data
 
-    return json.dumps(unwrap(obj), cls=DateTimeEncoder)
+    # Now obj is almost certainly a pure Python dict/list/scalar.
+    # No need to recursively walk megabytes of JSON just to look for proxies 
+    # that shouldn't be nested inside pure data anyway.
+    return json.dumps(obj, cls=DateTimeEncoder)
 
 
 def add_b64encode_filter(env: Environment) -> Environment:
@@ -260,8 +276,8 @@ def render_template(env: Environment, template: Any, context: Dict, rules: Dict 
                 if 'result' in render_ctx and isinstance(render_ctx['result'], dict):
                     custom_context['result'] = TaskResultProxy(render_ctx['result'])
 
-                # Clean Undefined values from context before rendering
-                custom_context = _handle_undefined_values(custom_context)
+                # Skip _handle_undefined_values overhead to prevent megabytes of JSON from 
+                # being deeply traversed 40+ times per loop iteration.
 
                 rendered = template_obj.render(**custom_context)
                 logger.debug(
