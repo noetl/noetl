@@ -4,6 +4,8 @@ import noetl.server.api.supervision as supervision_module
 
 
 class _SupervisorCache:
+    async def get_loop_collection(self, *args, **kwargs): return None
+    async def save_loop_collection(self, *args, **kwargs): pass
     def __init__(self):
         self.command_issued_calls = []
         self.command_terminal_calls = []

@@ -71,7 +71,7 @@ async def test_playbook_tool_passes_merged_args_to_plugin_executor(monkeypatch):
 @pytest.mark.asyncio
 async def test_execute_playbook_return_step_detects_terminal_status_field(monkeypatch):
     worker = V2Worker(worker_id="test-worker")
-    worker._current_execution_id = "parent-exec-1"
+    worker._current_execution_id = "99502"
 
     class FakeResponse:
         def __init__(self, payload, status_code=200):
@@ -130,7 +130,7 @@ async def test_execute_playbook_return_step_detects_terminal_status_field(monkey
 @pytest.mark.asyncio
 async def test_execute_playbook_waits_for_status_endpoint_not_transient_execution_status(monkeypatch):
     worker = V2Worker(worker_id="test-worker")
-    worker._current_execution_id = "parent-exec-2"
+    worker._current_execution_id = "99503"
 
     class FakeResponse:
         def __init__(self, payload, status_code=200):
@@ -350,7 +350,7 @@ async def test_execute_command_error_events_use_externalized_response(monkeypatc
         "tool_kind": "task_sequence",
         "context": {
             "tool_config": {},
-            "args": {},
+            "input": {},
             "render_context": {},
         },
     }
@@ -415,7 +415,7 @@ async def test_execute_command_forces_reference_persistence_for_event_payloads(m
         "tool_kind": "python",
         "context": {
             "tool_config": {},
-            "args": {},
+            "input": {},
             "render_context": {},
         },
     }
@@ -483,7 +483,7 @@ async def test_execute_command_normalizes_stringified_context_sections(monkeypat
         "step": "start",
         "tool_kind": "python",
         "context": {
-            "tool_config": '{"args": {"from_tool": 1}}',
+            "tool_config": '{"input": {"from_tool": 1}}',
             "args": '{"from_context": 2}',
             "render_context": '{"foo": "bar"}',
             "case": '[{"when": "{{ true }}", "then": {"next": "end"}}]',
@@ -527,7 +527,7 @@ async def test_execute_command_postgres_requires_auth_in_context(monkeypatch):
         "tool_kind": "postgres",
         "context": {
             "tool_config": {},
-            "args": {},
+            "input": {},
             "render_context": {},
         },
     }
@@ -564,7 +564,7 @@ async def test_execute_command_postgres_rejects_direct_connection_fields(monkeyp
         "tool_kind": "postgres",
         "context": {
             "tool_config": {"auth": "pg_main", "db_host": "localhost"},
-            "args": {},
+            "input": {},
             "render_context": {},
         },
     }

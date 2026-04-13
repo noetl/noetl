@@ -169,49 +169,22 @@ class CommandCreationMixin:
                 and len(existing_loop_state.get("collection") or []) > 0
             )
 
-            if reuse_cached_collection:
-                context = state.get_render_context(Event(
-                    execution_id=state.execution_id,
-                    step=step.step,
-                    name="loop_continue",
-                    payload={}
-                ))
-                collection = list(existing_loop_state.get("collection", []))
-                logger.debug(
-                    "[LOOP] Reusing cached collection for %s continuation/retry (size=%s)",
-                    step.step,
-                    len(collection),
-                )
-            else:
-                if (
-                    existing_loop_state is not None
-                    and (loop_continue_requested or loop_retry_requested)
-                ):
-                    cached_collection = existing_loop_state.get("collection")
-                    if isinstance(cached_collection, list) and len(cached_collection) == 0:
-                        logger.info(
-                            "[LOOP] Replayed cached collection is empty for %s continuation/retry; "
-                            "re-rendering loop expression",
-                            step.step,
-                        )
-                    else:
-                        logger.warning(
-                            "[LOOP] Missing/invalid cached collection for %s continuation/retry; "
-                            "re-rendering loop expression",
-                            step.step,
-                        )
+            # Use passed collection if available (Optimization)
+            collection = control_args.get("__loop_collection")
+            
+            if collection is None:
+                # Distributed Loop Collection logic (Fallback)
+                nats_cache = await get_nats_cache()
+                loop_event_id = str(existing_loop_state.get("event_id") or "") if existing_loop_state else ""
+                if loop_event_id:
+                    collection = await nats_cache.get_loop_collection(str(state.execution_id), step.step, loop_event_id)
 
-                # Get collection to iterate
+            if collection is None:
+                # Final fallback: re-render
                 context = state.get_render_context(Event(
-                    execution_id=state.execution_id,
-                    step=step.step,
-                    name="loop_init",
-                    payload={}
+                    execution_id=state.execution_id, step=step.step, name="loop_init", payload={}
                 ))
-
-                # Render collection expression
-                collection_expr = step.loop.in_
-                collection = self._render_template(collection_expr, context)
+                collection = self._render_template(step.loop.in_, context)
                 collection = self._normalize_loop_collection(collection, step.step)
 
                 # Guard: if the collection is empty after re-rendering on a loop continuation
@@ -248,6 +221,8 @@ class CommandCreationMixin:
                     step.loop.mode,
                     event_id=loop_event_id,
                 )
+                # Save collection to NATS KV immediately after initialization
+                await (await get_nats_cache()).save_loop_collection(str(state.execution_id), step.step, loop_event_id, collection)
 
                 if state.step_stall_counts.get(step.step, 0) >= _MAX_LOOP_STALL_RESTARTS:
                     state.failed = True

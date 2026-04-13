@@ -10,6 +10,8 @@ Pure event-sourced worker that:
 Single source of truth: event table. No queue table.
 """
 
+from jinja2 import Environment, BaseLoader
+from noetl.core.dsl.render import add_b64encode_filter
 import asyncio
 import json
 import logging
@@ -164,7 +166,7 @@ class V2Worker:
         self._heartbeat_task: Optional[asyncio.Task] = None
         self._registered = False
         self._max_inflight_commands = max(1, int(worker_settings.max_inflight_commands))
-        self._max_inflight_db_commands = max(1, int(worker_settings.max_inflight_db_commands))
+        self._max_inflight_db_commands = max(1, int(os.getenv("NOETL_WORKER_DB_SEMAPHORE", "32")))
         self._throttle_poll_interval = float(worker_settings.throttle_poll_interval)
         self._postgres_pool_waiting_threshold = max(0, int(worker_settings.postgres_pool_waiting_threshold))
         self._db_command_semaphore = asyncio.Semaphore(self._max_inflight_db_commands)
@@ -195,11 +197,13 @@ class V2Worker:
         # requests from this worker process, backing off when the server pool
         # is saturated (503) and recovering as it clears.
         self._concurrency = AdaptiveConcurrencyController(
-            initial_limit=max(1.0, self._max_inflight_commands / 2.0),
+            initial_limit=max(1.0, float(self._max_inflight_commands) / 2.0),
             min_limit=1.0,
             max_limit=float(self._max_inflight_commands),
             probe_interval=worker_settings.concurrency_probe_interval,
         )
+        self._jinja_env = Environment(loader=BaseLoader())
+        self._jinja_env = add_b64encode_filter(self._jinja_env)
 
     @staticmethod
     def _is_db_heavy_tool(tool_kind: Optional[str]) -> bool:
@@ -1014,7 +1018,7 @@ class V2Worker:
         t_total_start = time.perf_counter()
         db_slot_acquired = False
 
-        with LoggingContext(logger, notification=notification, execution_id=notification.get("execution_id")):
+        with LoggingContext(logger, execution_id=notification.get("execution_id"), command_id=notification.get("command_id")):
             try:
                 execution_id = notification["execution_id"]
                 event_id = notification["event_id"]
@@ -2597,11 +2601,10 @@ class V2Worker:
             def render_template_str(template: str, ctx: dict) -> Any:
                 """Render a single Jinja2 template string, parsing JSON results back to objects."""
                 import json
-                import ast
+                
                 try:
-                    rendered = jinja_env.from_string(template).render(**ctx)
+                    rendered = self._jinja_env.from_string(template).render(**ctx)
                     # If result looks like JSON (dict or list), parse it back to object
-                    # This allows {{ output.data }} to return the actual dict, not a string
                     if isinstance(rendered, str):
                         stripped = rendered.strip()
                         if (stripped.startswith('{') and stripped.endswith('}')) or \
@@ -2609,21 +2612,17 @@ class V2Worker:
                             try:
                                 return json.loads(stripped)
                             except json.JSONDecodeError:
-                                # Fallback to ast.literal_eval for Python repr format (single quotes)
-                                # This handles {{ output.data }} when rendered as "{'key': 'value'}"
-                                try:
-                                    return ast.literal_eval(stripped)
-                                except (ValueError, SyntaxError):
-                                    pass
+                                import ast
+                                return ast.literal_eval(stripped)
                     return rendered
                 except Exception as e:
-                    logger.warning(f"[TASK_SEQ] Template render error: {e}")
+                    logger.error(f"Template rendering error: {e} | template={template[:100]}...")
                     return template
 
             def render_dict_templates(data: dict, ctx: dict) -> dict:
                 """Recursively render templates in a dict."""
                 from noetl.core.dsl.render import render_template as recursive_render
-                return recursive_render(jinja_env, data, ctx)
+                return recursive_render(self._jinja_env, data, ctx)
 
             executor = TaskSequenceExecutor(
                 tool_executor=execute_task_tool,

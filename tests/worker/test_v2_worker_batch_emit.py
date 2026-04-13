@@ -163,7 +163,7 @@ async def test_claim_and_fetch_command_resolves_externalized_context(monkeypatch
     async def _fake_resolve(_ref):
         return {
             "tool_config": {"kind": "python"},
-            "args": {"value": 1},
+            "input": {"value": 1},
             "render_context": {"foo": "bar"},
         }
 

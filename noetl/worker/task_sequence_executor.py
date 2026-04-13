@@ -435,13 +435,13 @@ class TaskSequenceExecutor:
             merged_ctx = {**base_context.get("ctx", {}), **task_seq_dict.get("ctx", {})}
             merged_iter = {**base_context.get("iter", {}), **task_seq_dict.get("iter", {})}
 
-            render_ctx = {
-                **base_context,
-                **ctx.results,  # Task results at root level: {{ amadeus_search }}
-                **task_seq_dict,  # Pipeline-local vars: _prev, _task, _attempt, output, results
-                "ctx": merged_ctx,  # Merged execution ctx + task sequence ctx
-                "iter": merged_iter,  # Merged iteration vars
-            }
+            # Optimization: Use a lazy-merging view instead of dict spread for large contexts.
+            # For now, we use a simple dict update which is still faster than multiple spreads.
+            render_ctx = base_context.copy()
+            render_ctx.update(ctx.results)
+            render_ctx.update(task_seq_dict)
+            render_ctx["ctx"] = merged_ctx
+            render_ctx["iter"] = merged_iter
 
             # Keep context logging metadata-only to avoid leaking runtime values.
             logger.debug(
@@ -460,7 +460,10 @@ class TaskSequenceExecutor:
             try:
                 tool_kind = tool_config.get("kind")
                 config_to_render = {k: v for k, v in tool_config.items() if k not in ("kind", "spec", "output")}
-                rendered_config = self.render_dict(config_to_render, render_ctx)
+                if tool_kind == "noop" or not config_to_render:
+                    rendered_config = config_to_render
+                else:
+                    rendered_config = self.render_dict(config_to_render, render_ctx)
 
                 logger.debug(
                     "[TASK_SEQ] Executing task '%s' (kind=%s, attempt=%s)",

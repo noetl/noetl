@@ -3,8 +3,8 @@ from pathlib import Path
 import pytest
 import yaml
 
-import noetl.core.dsl.engine.engine as engine_module
-from noetl.core.dsl.engine.engine import ExecutionState, Playbook, PlaybookRepo, StateStore
+import noetl.core.dsl.engine.executor as engine_module
+from noetl.core.dsl.engine.executor import ExecutionState, Playbook, PlaybookRepo, StateStore
 
 
 def _load_heavy_payload_playbook() -> Playbook:
@@ -44,7 +44,7 @@ async def test_state_replay_caps_loop_results_and_preserves_total_count(monkeypa
     playbook_repo = PlaybookRepo()
     state_store = StateStore(playbook_repo)
 
-    async def fake_load_playbook_by_id(_catalog_id):
+    async def fake_load_playbook_by_id(_catalog_id, *args, **kwargs):
         return playbook
 
     monkeypatch.setattr(playbook_repo, "load_playbook_by_id", fake_load_playbook_by_id)

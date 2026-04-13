@@ -142,7 +142,7 @@ def _create_app(settings: Settings) -> FastAPI:
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
-        await init_pool(get_pgdb_connection())
+        await init_pool(get_pgdb_connection(), max_size=64)
         try:
             instance_name = _server_instance_name()
             logical_name = _logical_server_name()

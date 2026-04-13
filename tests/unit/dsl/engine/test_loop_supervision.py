@@ -1,11 +1,13 @@
 import pytest
 
-import noetl.core.dsl.engine.engine as engine_module
-from noetl.core.dsl.engine.engine import ControlFlowEngine, ExecutionState, PlaybookRepo, StateStore
+import noetl.core.dsl.engine.executor as engine_module
+from noetl.core.dsl.engine.executor import ControlFlowEngine, ExecutionState, PlaybookRepo, StateStore
 from noetl.core.dsl.engine.models import Command, Event, Playbook, ToolCall
 
 
 class DuplicateLoopItemCache:
+    async def get_loop_collection(self, *args, **kwargs): return None
+    async def save_loop_collection(self, *args, **kwargs): pass
     def __init__(self):
         self.try_calls = []
 
@@ -53,6 +55,8 @@ class DuplicateLoopItemCache:
 
 
 class SupervisorCompletionCache:
+    async def get_loop_collection(self, *args, **kwargs): return None
+    async def save_loop_collection(self, *args, **kwargs): pass
     def __init__(self):
         self.set_loop_state_calls = []
         self.loop_done_claims = []
@@ -144,7 +148,7 @@ async def test_duplicate_loop_item_terminal_is_ignored_before_count_increment(mo
     async def fake_issue_loop_commands(*_args, **_kwargs):
         return [
             Command(
-                execution_id="9601",
+                execution_id = "9601",
                 step="loop_step",
                 tool=ToolCall(kind="python", config={}),
                 input={},
@@ -152,11 +156,11 @@ async def test_duplicate_loop_item_terminal_is_ignored_before_count_increment(mo
             )
         ]
 
-    monkeypatch.setattr(engine_module, "get_nats_cache", fake_get_nats_cache)
+    monkeypatch.setattr("noetl.core.cache.nats_kv.get_nats_cache", fake_get_nats_cache)
     monkeypatch.setattr(engine, "_issue_loop_commands", fake_issue_loop_commands)
 
     event = Event(
-        execution_id="9601",
+        execution_id = "9601",
         step="loop_step",
         name="call.done",
         payload={
@@ -233,13 +237,13 @@ async def test_step_exit_completes_loop_from_supervisor_terminal_count(monkeypat
     async def fake_eval_next(*_args, **_kwargs):
         return []
 
-    monkeypatch.setattr(engine_module, "get_nats_cache", fake_get_nats_cache)
+    monkeypatch.setattr("noetl.core.cache.nats_kv.get_nats_cache", fake_get_nats_cache)
     monkeypatch.setattr(engine, "_persist_event", fake_persist_event)
     monkeypatch.setattr(engine, "_issue_loop_commands", fake_issue_loop_commands)
     monkeypatch.setattr(engine, "_evaluate_next_transitions", fake_eval_next)
 
     event = Event(
-        execution_id="9602",
+        execution_id = "9602",
         step="loop_step",
         name="step.exit",
         payload={"status": "COMPLETED", "result": {"status": "completed"}},

@@ -118,19 +118,31 @@ async def _persist_batch_acceptance(req: BatchEventRequest, idempotency_key: Opt
 
             request_id, accepted_evt_id = str(await _next_snowflake_id(cur)), await _next_snowflake_id(cur)
             event_ids, last_act_evt, last_act_evt_id, term_cmd_ids = [], None, None, set()
+            now = datetime.now(timezone.utc)
+            insert_params = []
             for item in req.events:
                 _validate_reference_only_payload(item.payload)
                 evt_id = await _next_snowflake_id(cur); event_ids.append(evt_id)
                 meta = {"actionable": item.actionable, "informative": item.informative, "batch_request_id": request_id, "persisted_event_id": str(evt_id), "worker_id": req.worker_id, "idempotency_key": idempotency_key}
                 if cmd_id := _extract_command_id_from_payload(item.payload): meta["command_id"] = cmd_id
-                await cur.execute("""
-                    INSERT INTO noetl.event (event_id, execution_id, catalog_id, event_type, node_id, node_name, status, result, meta, worker_id, error, created_at)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                """, (evt_id, exec_id, catalog_id, item.name, item.step, item.step, _status_from_event_name(item.name), Json(_build_reference_only_result(payload=item.payload, status=_status_from_event_name(item.name))), Json(meta), req.worker_id, _extract_event_error(item.payload), datetime.now(timezone.utc)))
+                
+                insert_params.append((
+                    evt_id, exec_id, catalog_id, item.name, item.step, item.step, 
+                    _status_from_event_name(item.name), 
+                    Json(_build_reference_only_result(payload=item.payload, status=_status_from_event_name(item.name))), 
+                    Json(meta), req.worker_id, _extract_event_error(item.payload), now
+                ))
+
                 if cmd_id and item.name in _COMMAND_TERMINAL_EVENT_TYPES: term_cmd_ids.add(cmd_id)
                 if item.actionable and item.name not in skip_engine:
-                    last_act_evt = Event(execution_id=req.execution_id, step=item.step, name=item.name, payload=item.payload, meta=meta, timestamp=datetime.now(timezone.utc), worker_id=req.worker_id)
+                    last_act_evt = Event(execution_id=req.execution_id, step=item.step, name=item.name, payload=item.payload, meta=meta, timestamp=now, worker_id=req.worker_id)
                     last_act_evt_id = evt_id
+            
+            if insert_params:
+                await cur.executemany("""
+                    INSERT INTO noetl.event (event_id, execution_id, catalog_id, event_type, node_id, node_name, status, result, meta, worker_id, error, created_at)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                """, insert_params)
             
             acc_meta = {"batch_request_id": request_id, "actionable": False, "informative": True, "event_count": len(req.events), "worker_id": req.worker_id, "idempotency_key": idempotency_key}
             if last_act_evt_id: acc_meta["last_actionable_event_id"] = str(last_act_evt_id)
@@ -146,25 +158,60 @@ async def _issue_commands_for_batch(job: _BatchAcceptJob, commands: list) -> Non
     from .commands import _build_command_context, _validate_postgres_command_context_or_422, _store_command_context_if_needed
     if not commands: return
     server_url = os.getenv("NOETL_SERVER_URL", "http://noetl.noetl.svc.cluster.local:8082")
-    publish_items = []
+    
+    # 1. Fetch catalog_id and parent_exec once
+    cat_id, p_exec = job.catalog_id, None
     async with get_pool_connection() as conn:
         async with conn.cursor(row_factory=dict_row) as cur:
+            await cur.execute("SELECT catalog_id, parent_execution_id FROM noetl.event WHERE execution_id = %s LIMIT 1", (int(job.execution_id),))
+            if row := await cur.fetchone():
+                cat_id, p_exec = row.get("catalog_id") or cat_id, row.get("parent_execution_id")
+
+            # 2. Prepare command contexts and metadata
+            prepared_commands = []
             for cmd in commands:
-                await cur.execute("SELECT catalog_id, parent_execution_id FROM noetl.event WHERE execution_id = %s LIMIT 1", (int(cmd.execution_id),))
-                row = await cur.fetchone() or {}
-                cat_id, p_exec = row.get("catalog_id", job.catalog_id), row.get("parent_execution_id")
-                cmd_id, new_evt_id = f"{cmd.execution_id}:{cmd.step}:{await _next_snowflake_id(cur)}", await _next_snowflake_id(cur)
+                cmd_suffix = await _next_snowflake_id(cur)
+                cmd_id = f"{cmd.execution_id}:{cmd.step}:{cmd_suffix}"
+                new_evt_id = await _next_snowflake_id(cur)
                 ctx = _build_command_context(cmd)
                 _validate_postgres_command_context_or_422(step=cmd.step, tool_kind=cmd.tool.kind, context=ctx)
-                meta = {"command_id": cmd_id, "step": cmd.step, "tool_kind": cmd.tool.kind, "triggered_by": job.last_actionable_event.name if job.last_actionable_event else "batch", "actionable": True, "batch_request_id": job.request_id, **(cmd.metadata or {})}
-                ctx = await _store_command_context_if_needed(execution_id=int(cmd.execution_id), step=cmd.step, command_id=cmd_id, context=ctx)
-                await cur.execute("""
-                    INSERT INTO noetl.event (event_id, execution_id, catalog_id, event_type, node_id, node_name, node_type, status, context, meta, parent_event_id, parent_execution_id, created_at)
-                    VALUES (%(event_id)s, %(execution_id)s, %(catalog_id)s, 'command.issued', %(node_id)s, %(node_name)s, %(node_type)s, 'PENDING', %(context)s, %(meta)s, %(parent_event_id)s, %(parent_execution_id)s, %(created_at)s)
-                """, {"event_id": new_evt_id, "execution_id": int(cmd.execution_id), "catalog_id": cat_id, "node_id": cmd.step, "node_name": cmd.step, "node_type": cmd.tool.kind, "context": Json(ctx), "meta": Json(meta), "parent_event_id": job.last_actionable_evt_id, "parent_execution_id": p_exec, "created_at": datetime.now(timezone.utc)})
-                publish_items.append((int(cmd.execution_id), cmd.step, cmd_id, new_evt_id))
+                meta = {
+                    "command_id": cmd_id, 
+                    "step": cmd.step, 
+                    "tool_kind": cmd.tool.kind, 
+                    "triggered_by": job.last_actionable_event.name if job.last_actionable_event else "batch", 
+                    "actionable": True, 
+                    "batch_request_id": job.request_id, 
+                    **(cmd.metadata or {})
+                }
+                prepared_commands.append({
+                    "cmd_id": cmd_id, "evt_id": new_evt_id, "ctx": ctx, "meta": meta, "step": cmd.step, "execution_id": int(cmd.execution_id), "tool_kind": cmd.tool.kind
+                })
+
+            # 3. Parallel context storage (NATS KV calls)
+            storage_tasks = [
+                _store_command_context_if_needed(execution_id=p["execution_id"], step=p["step"], command_id=p["cmd_id"], context=p["ctx"])
+                for p in prepared_commands
+            ]
+            stored_contexts = await asyncio.gather(*storage_tasks)
+            for p, ctx in zip(prepared_commands, stored_contexts):
+                p["ctx"] = ctx
+
+            # 4. Batch insert commands
+            now = datetime.now(timezone.utc)
+            insert_params = [
+                (p["evt_id"], p["execution_id"], cat_id, "command.issued", p["step"], p["step"], p["tool_kind"], "PENDING", Json(p["ctx"]), Json(p["meta"]), job.last_actionable_evt_id, p_exec, now)
+                for p in prepared_commands
+            ]
+            await cur.executemany("""
+                INSERT INTO noetl.event (event_id, execution_id, catalog_id, event_type, node_id, node_name, node_type, status, context, meta, parent_event_id, parent_execution_id, created_at)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            """, insert_params)
             await conn.commit()
-    await _publish_commands_with_recovery([(exec_id, evt_id, cid, step) for exec_id, step, cid, evt_id in publish_items], server_url=server_url)
+
+    # 5. Parallel NATS publish
+    publish_items = [(p["execution_id"], p["evt_id"], p["cmd_id"], p["step"]) for p in prepared_commands]
+    await _publish_commands_with_recovery(publish_items, server_url=server_url)
 
 async def _process_accepted_batch(job: _BatchAcceptJob) -> int:
     from .events import _invalidate_execution_state_cache

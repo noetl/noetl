@@ -171,6 +171,11 @@ CREATE INDEX IF NOT EXISTS idx_event_exec_id_event_id_desc ON noetl.event (execu
 -- Composite index for filtering by event_type within execution
 CREATE INDEX IF NOT EXISTS idx_event_exec_type ON noetl.event (execution_id, event_type, event_id DESC);
 
+-- Fast idempotency lookup for batch acceptance
+CREATE INDEX IF NOT EXISTS idx_event_idempotency_key
+    ON noetl.event (execution_id, ((meta->>'idempotency_key')))
+    WHERE meta ? 'idempotency_key';
+
 -- Command lifecycle lookups (claim/start/completed/failed) by command_id stored in meta
 CREATE INDEX IF NOT EXISTS idx_event_exec_type_meta_command_id_event_id_desc
     ON noetl.event (execution_id, event_type, ((meta->>'command_id')), event_id DESC)

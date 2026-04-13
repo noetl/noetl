@@ -17,7 +17,7 @@ completion.
 import pytest
 import yaml
 
-from noetl.core.dsl.engine.engine import ControlFlowEngine, ExecutionState, PlaybookRepo, StateStore
+from noetl.core.dsl.engine.executor import ControlFlowEngine, ExecutionState, PlaybookRepo, StateStore
 from noetl.core.dsl.engine.models import Event, NextRouter, Playbook
 
 
@@ -90,12 +90,12 @@ async def test_matched_unconditional_arc_deduplicated_returns_any_matched_true(e
     so dead-end detection does not prematurely complete the workflow.
     """
     playbook = Playbook(**yaml.safe_load(PLAYBOOK_WITH_UNCONDITIONAL_FALLBACK))
-    state = ExecutionState("dedup-test-001", playbook, payload={})
+    state = ExecutionState("99007", playbook, payload={})
     # Simulate the first pod already issued step_b
     state.issued_steps.add("step_b")
 
     event = Event(
-        execution_id="dedup-test-001",
+        execution_id = "99007",
         step="step_a",
         name="call.done",
         payload={},
@@ -122,13 +122,13 @@ async def test_matched_conditional_fallback_deduplicated_returns_any_matched_tru
     be any_matched=True.
     """
     playbook = Playbook(**yaml.safe_load(PLAYBOOK_WITH_CONDITIONAL_AND_FALLBACK))
-    state = ExecutionState("dedup-test-002", playbook, payload={})
+    state = ExecutionState("99008", playbook, payload={})
     # row_count not set → conditional arc (step_b) will not match
     # step_c (unconditional fallback) matches but is already issued
     state.issued_steps.add("step_c")
 
     event = Event(
-        execution_id="dedup-test-002",
+        execution_id = "99008",
         step="step_a",
         name="call.done",
         payload={},
@@ -152,7 +152,7 @@ async def test_missing_target_step_does_not_set_any_matched(engine):
     detection can fire correctly.
     """
     playbook = Playbook(**yaml.safe_load(PLAYBOOK_WITH_UNCONDITIONAL_FALLBACK))
-    state = ExecutionState("dedup-test-003", playbook, payload={})
+    state = ExecutionState("99009", playbook, payload={})
 
     # Override next to point at a step that doesn't exist in the playbook
     step_def = state.get_step("step_a")
@@ -162,7 +162,7 @@ async def test_missing_target_step_does_not_set_any_matched(engine):
     )
 
     event = Event(
-        execution_id="dedup-test-003",
+        execution_id = "99009",
         step="step_a",
         name="call.done",
         payload={},

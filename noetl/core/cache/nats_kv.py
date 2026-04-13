@@ -125,8 +125,34 @@ class NATSKVCache:
         safe_exec_id = safe_exec_id.strip(".")
         safe_key_type = safe_key_type.strip(".")
         return f"exec.{safe_exec_id}.{safe_key_type}"
-    
-    
+
+    async def get_loop_collection(self, execution_id: str, step_name: str, loop_event_id: str) -> Optional[list]:
+        """Retrieve rendered loop collection from NATS KV."""
+        if not self._kv:
+            await self.connect()
+        key = self._make_key(execution_id, f"loop_coll:{step_name}:{loop_event_id}")
+        try:
+            entry = await self._kv.get(key)
+            if entry and entry.value:
+                return json.loads(entry.value.decode("utf-8"))
+        except KeyNotFoundError:
+            return None
+        except Exception as e:
+            logger.warning(f"[NATS-KV] Failed to get loop collection: {e}")
+        return None
+
+    async def save_loop_collection(self, execution_id: str, step_name: str, loop_event_id: str, collection: list):
+        """Save rendered loop collection to NATS KV."""
+        if not self._kv:
+            await self.connect()
+        key = self._make_key(execution_id, f"loop_coll:{step_name}:{loop_event_id}")
+        try:
+            data = json.dumps(collection).encode("utf-8")
+            await self._kv.put(key, data)
+            logger.debug(f"[NATS-KV] Saved loop collection for {step_name} (size={len(data)} bytes)")
+        except Exception as e:
+            logger.warning(f"[NATS-KV] Failed to save loop collection: {e}")
+
     async def add_loop_result(
         self, execution_id: str, step_name: str, event_id: str, result: dict, failed: bool = False
     ):

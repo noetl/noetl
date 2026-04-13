@@ -94,7 +94,7 @@ async def test_handle_event_invalidates_claim_cache_on_terminal_event(monkeypatc
     monkeypatch.setattr(v2_api, "get_nats_publisher", _get_nats_publisher)
 
     req = v2_api.EventRequest(
-        execution_id="42",
+        execution_id = "42",
         step="end",
         name="command.completed",
         payload={"command_id": "cmd-91"},

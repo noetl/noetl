@@ -68,7 +68,7 @@ async def test_handle_event_maps_db_outage_errors_to_503(monkeypatch):
     monkeypatch.setattr(v2_api, "get_pool_connection", _fail_get_pool_connection)
 
     req = v2_api.EventRequest(
-        execution_id="42",
+        execution_id = "42",
         step="step-a",
         name="call.done",
         payload={"status": "ok"},

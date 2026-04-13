@@ -3,9 +3,9 @@ from pathlib import Path
 import pytest
 import yaml
 
-import noetl.core.dsl.engine.engine as engine_module
+import noetl.core.dsl.engine.executor as engine_module
 from noetl.core.dsl.render import TaskResultProxy
-from noetl.core.dsl.engine.engine import ControlFlowEngine, ExecutionState, PlaybookRepo, StateStore
+from noetl.core.dsl.engine.executor import ControlFlowEngine, ExecutionState, PlaybookRepo, StateStore
 from noetl.core.dsl.engine.models import Command, Event, Playbook, ToolCall
 
 
@@ -14,6 +14,13 @@ class FakeNATSCache:
         self.increment_calls = []
         self.get_state_calls = []
         self.set_state_calls = []
+        self._collections = {}
+
+    async def get_loop_collection(self, execution_id, step_name, loop_event_id):
+        return self._collections.get(f"{execution_id}:{step_name}:{loop_event_id}")
+
+    async def save_loop_collection(self, execution_id, step_name, loop_event_id, collection):
+        self._collections[f"{execution_id}:{step_name}:{loop_event_id}"] = list(collection)
 
     async def increment_loop_completed(self, execution_id, step_name, event_id=None):
         self.increment_calls.append((execution_id, step_name, event_id))
@@ -110,7 +117,7 @@ async def test_task_sequence_loop_uses_nats_collection_size_when_local_collectio
     async def fake_get_nats_cache():
         return fake_cache
 
-    monkeypatch.setattr(engine_module, "get_nats_cache", fake_get_nats_cache)
+    monkeypatch.setattr("noetl.core.cache.nats_kv.get_nats_cache", fake_get_nats_cache)
 
     async def fake_create_command_for_step(_state, step_def, _args):
         return Command(
@@ -198,7 +205,7 @@ async def test_task_sequence_loop_prefers_execution_loop_key_when_step_event_id_
     async def fake_get_nats_cache():
         return fake_cache
 
-    monkeypatch.setattr(engine_module, "get_nats_cache", fake_get_nats_cache)
+    monkeypatch.setattr("noetl.core.cache.nats_kv.get_nats_cache", fake_get_nats_cache)
 
     async def fake_create_command_for_step(_state, step_def, _args):
         return Command(
@@ -298,7 +305,7 @@ async def test_task_sequence_loop_persists_issued_steps_before_return(monkeypatc
     async def fake_evaluate_next_transitions(*_args, **_kwargs):
         return []
 
-    monkeypatch.setattr(engine_module, "get_nats_cache", fake_get_nats_cache)
+    monkeypatch.setattr("noetl.core.cache.nats_kv.get_nats_cache", fake_get_nats_cache)
     monkeypatch.setattr(engine, "_create_command_for_step", fake_create_command_for_step)
     monkeypatch.setattr(engine, "_evaluate_next_transitions", fake_evaluate_next_transitions)
     monkeypatch.setattr(state_store, "save_state", tracking_save_state)
@@ -340,7 +347,7 @@ async def test_task_sequence_loop_persists_event_before_early_return_when_needed
     state_store = StateStore(playbook_repo)
     engine = ControlFlowEngine(playbook_repo, state_store)
 
-    execution_id = "9011b"
+    execution_id = "99501"
     parent_step = "run_batch_workers"
     state = ExecutionState(execution_id, playbook, payload={})
     state.loop_state[parent_step] = {
@@ -370,7 +377,7 @@ async def test_task_sequence_loop_persists_event_before_early_return_when_needed
 
     async def fake_persist_event(event_obj, state_obj):  # noqa: ARG001
         call_order.append(f"persist:{event_obj.name}")
-        state_obj.last_event_id = "persisted-call-done"
+        state_obj.last_event_id = 123
 
     async def fake_create_command_for_step(_state, step_def, _args):
         return Command(
@@ -384,7 +391,7 @@ async def test_task_sequence_loop_persists_event_before_early_return_when_needed
     async def fake_evaluate_next_transitions(*_args, **_kwargs):
         return []
 
-    monkeypatch.setattr(engine_module, "get_nats_cache", fake_get_nats_cache)
+    monkeypatch.setattr("noetl.core.cache.nats_kv.get_nats_cache", fake_get_nats_cache)
     monkeypatch.setattr(engine, "_persist_event", fake_persist_event)
     monkeypatch.setattr(engine, "_create_command_for_step", fake_create_command_for_step)
     monkeypatch.setattr(engine, "_evaluate_next_transitions", fake_evaluate_next_transitions)
@@ -462,7 +469,7 @@ async def test_state_replay_unwraps_step_exit_result_and_skips_task_sequence_com
     playbook_repo = PlaybookRepo()
     state_store = StateStore(playbook_repo)
 
-    async def fake_load_playbook_by_id(_catalog_id):
+    async def fake_load_playbook_by_id(_catalog_id, *args, **kwargs):
         return playbook
 
     monkeypatch.setattr(playbook_repo, "load_playbook_by_id", fake_load_playbook_by_id)
@@ -594,7 +601,7 @@ workflow:
     playbook_repo = PlaybookRepo()
     state_store = StateStore(playbook_repo)
 
-    async def fake_load_playbook_by_id(_catalog_id):
+    async def fake_load_playbook_by_id(_catalog_id, *args, **kwargs):
         return playbook
 
     monkeypatch.setattr(playbook_repo, "load_playbook_by_id", fake_load_playbook_by_id)
@@ -678,7 +685,7 @@ workflow:
     assert state.variables["facility_id"] == 777
     assert state.variables["patient_count"] == 3
 
-    context = state.get_render_context(Event(execution_id="9021", step="load_patients_for_assessments", name="call.done", payload={}))
+    context = state.get_render_context(Event(execution_id = "9021", step="load_patients_for_assessments", name="call.done", payload={}))
     assert context["facility_mapping_id"] == 53
     assert context["ctx"]["facility_mapping_id"] == 53
     assert context["patient_count"] == 3
@@ -726,7 +733,7 @@ workflow:
     playbook_repo = PlaybookRepo()
     state_store = StateStore(playbook_repo)
 
-    async def fake_load_playbook_by_id(_catalog_id):
+    async def fake_load_playbook_by_id(_catalog_id, *args, **kwargs):
         return playbook
 
     monkeypatch.setattr(playbook_repo, "load_playbook_by_id", fake_load_playbook_by_id)
@@ -805,7 +812,7 @@ workflow:
     assert state.variables["facility_id"] == 7001
     assert state.variables["patient_count"] == 17
 
-    context = state.get_render_context(Event(execution_id="9022", step="load_patients_for_assessments", name="call.done", payload={}))
+    context = state.get_render_context(Event(execution_id = "9022", step="load_patients_for_assessments", name="call.done", payload={}))
     assert context["facility_mapping_id"] == 91
     assert context["ctx"]["facility_mapping_id"] == 91
     assert context["patient_count"] == 17
@@ -844,7 +851,7 @@ workflow:
     playbook_repo = PlaybookRepo()
     state_store = StateStore(playbook_repo)
 
-    async def fake_load_playbook_by_id(_catalog_id):
+    async def fake_load_playbook_by_id(_catalog_id, *args, **kwargs):
         return playbook
 
     async def fake_resolve(ref):
@@ -1315,7 +1322,7 @@ workflow:
     playbook_repo = PlaybookRepo()
     state_store = StateStore(playbook_repo)
 
-    async def fake_load_playbook_by_id(_catalog_id):
+    async def fake_load_playbook_by_id(_catalog_id, *args, **kwargs):
         return playbook
 
     monkeypatch.setattr(playbook_repo, "load_playbook_by_id", fake_load_playbook_by_id)
@@ -1505,14 +1512,14 @@ workflow:
         invalidate_calls.append((execution_id_arg, reason))
         return True
 
-    async def fake_load_state(_execution_id):
+    async def fake_load_state(_execution_id, *args, **kwargs):
         assert _execution_id == execution_id
         return refreshed_state
 
     async def fake_persist_event(_event, state_obj):
         state_obj.last_event_id = (state_obj.last_event_id or 0) + 1
 
-    async def fake_save_state(_state):
+    async def fake_save_state(_state, *args, **kwargs):
         return None
 
     class FakeCursor:
@@ -1619,7 +1626,7 @@ async def test_task_sequence_loop_concurrent_call_done_dispatches_loop_done_only
             render_context={},
         )
 
-    monkeypatch.setattr(engine_module, "get_nats_cache", fake_get_nats_cache)
+    monkeypatch.setattr("noetl.core.cache.nats_kv.get_nats_cache", fake_get_nats_cache)
     monkeypatch.setattr(engine, "_create_command_for_step", fake_create_command_for_step)
     monkeypatch.setattr(engine, "_evaluate_next_transitions", counting_evaluate_next_transitions)
 

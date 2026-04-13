@@ -45,7 +45,7 @@ async def test_claim_next_loop_index_preserves_existing_nonzero_collection_size(
     cache._kv = fake_kv
 
     claimed = await cache.claim_next_loop_index(
-        execution_id="e1",
+        execution_id = "99001",
         step_name="loop_step",
         collection_size=0,
         max_in_flight=4,
@@ -70,7 +70,7 @@ async def test_claim_next_loop_index_keeps_zero_when_no_existing_size():
     cache._kv = fake_kv
 
     claimed = await cache.claim_next_loop_index(
-        execution_id="e2",
+        execution_id = "99002",
         step_name="loop_step",
         collection_size=0,
         max_in_flight=2,
@@ -97,7 +97,7 @@ async def test_set_loop_state_skips_existing_lookup_for_positive_collection_size
     monkeypatch.setattr(cache, "get_loop_state", fake_get_loop_state)
 
     ok = await cache.set_loop_state(
-        execution_id="e3",
+        execution_id = "99003",
         step_name="loop_step",
         state={"collection_size": 4, "completed_count": 0, "scheduled_count": 0},
         event_id="loop_3",
@@ -123,7 +123,7 @@ async def test_set_loop_state_preserves_existing_collection_size_when_incoming_z
     monkeypatch.setattr(cache, "get_loop_state", fake_get_loop_state)
 
     ok = await cache.set_loop_state(
-        execution_id="e4",
+        execution_id = "99004",
         step_name="loop_step",
         state={"collection_size": 0, "completed_count": 1, "scheduled_count": 1},
         event_id="loop_4",
@@ -141,7 +141,7 @@ async def test_set_loop_state_clamps_cross_epoch_counts_to_collection_size():
     cache._kv = fake_kv
 
     ok = await cache.set_loop_state(
-        execution_id="e5",
+        execution_id = "99005",
         step_name="loop_step",
         state={"collection_size": 4, "completed_count": 9, "scheduled_count": 12},
         event_id="loop_5",
@@ -168,7 +168,7 @@ async def test_set_loop_state_is_monotonic_for_existing_epoch():
     cache._kv = fake_kv
 
     ok = await cache.set_loop_state(
-        execution_id="e6",
+        execution_id = "99006",
         step_name="loop_step",
         state={"collection_size": 100, "completed_count": 17, "scheduled_count": 21},
         event_id="loop_6",

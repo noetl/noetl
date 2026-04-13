@@ -15,7 +15,7 @@ async def test_put_registers_ref_with_scope_tracker():
     )
 
     ref = await store.put(
-        execution_id="exec-tracked",
+        execution_id = "99013",
         name="fetch_data",
         data={"status": "ok"},
         scope=Scope.EXECUTION,
@@ -45,7 +45,7 @@ async def test_cache_eviction_keeps_refs_tracked_for_cleanup(monkeypatch):
     refs = []
     for idx in range(3):
         ref = await store.put(
-            execution_id="exec-evict",
+            execution_id = "99014",
             name=f"step_{idx}",
             data={"idx": idx},
             scope=Scope.EXECUTION,
@@ -82,7 +82,7 @@ async def test_lru_hit_updates_recency_before_eviction(monkeypatch):
     monkeypatch.setattr(store, "_fetch_direct", _skip_direct_fetch)
 
     first_ref = await store.put(
-        execution_id="exec-lru",
+        execution_id = "99015",
         name="step_1",
         data={"idx": 1},
         scope=Scope.EXECUTION,
@@ -90,7 +90,7 @@ async def test_lru_hit_updates_recency_before_eviction(monkeypatch):
         source_step="step_1",
     )
     second_ref = await store.put(
-        execution_id="exec-lru",
+        execution_id = "99015",
         name="step_2",
         data={"idx": 2},
         scope=Scope.EXECUTION,
@@ -102,7 +102,7 @@ async def test_lru_hit_updates_recency_before_eviction(monkeypatch):
     assert await store.get(first_ref) == {"idx": 1}
 
     third_ref = await store.put(
-        execution_id="exec-lru",
+        execution_id = "99015",
         name="step_3",
         data={"idx": 3},
         scope=Scope.EXECUTION,
@@ -151,7 +151,7 @@ async def test_cleanup_deletes_evicted_non_memory_refs():
     store._gcs_backend = _FakeNoopBackend()
 
     ref1 = await store.put(
-        execution_id="exec-kv-cleanup",
+        execution_id = "99016",
         name="step_1",
         data={"idx": 1},
         scope=Scope.EXECUTION,
@@ -159,7 +159,7 @@ async def test_cleanup_deletes_evicted_non_memory_refs():
         source_step="step_1",
     )
     ref2 = await store.put(
-        execution_id="exec-kv-cleanup",
+        execution_id = "99016",
         name="step_2",
         data={"idx": 2},
         scope=Scope.EXECUTION,
@@ -195,7 +195,7 @@ async def test_resolve_result_ref_returns_full_payload_not_preview():
     }
 
     ref = await store.put(
-        execution_id="exec-result-ref",
+        execution_id = "99017",
         name="command_context",
         data=payload,
         scope=Scope.EXECUTION,

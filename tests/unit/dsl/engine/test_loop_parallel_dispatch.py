@@ -4,17 +4,24 @@ from datetime import datetime, timedelta, timezone
 import pytest
 import yaml
 
-import noetl.core.dsl.engine.engine as engine_module
-from noetl.core.dsl.engine.engine import ControlFlowEngine, ExecutionState, PlaybookRepo, StateStore
+import noetl.core.dsl.engine.executor as engine_module
+from noetl.core.dsl.engine.executor import ControlFlowEngine, ExecutionState, PlaybookRepo, StateStore
 from noetl.core.dsl.engine.models import Event
 
 
 class ClaimingNATSCache:
     def __init__(self):
         self._state = {}
+        self._collections = {}
 
     def _key(self, execution_id, step_name, event_id):
         return (str(execution_id), str(step_name), str(event_id) if event_id is not None else None)
+
+    async def get_loop_collection(self, execution_id, step_name, loop_event_id):
+        return self._collections.get(self._key(execution_id, step_name, loop_event_id))
+
+    async def save_loop_collection(self, execution_id, step_name, loop_event_id, collection):
+        self._collections[self._key(execution_id, step_name, loop_event_id)] = list(collection)
 
     async def get_loop_state(self, execution_id, step_name, event_id=None):
         return self._state.get(self._key(execution_id, step_name, event_id))
@@ -60,6 +67,13 @@ class RepairingNATSCache:
     def __init__(self, initial_state):
         self.state = dict(initial_state)
         self.set_calls = []
+        self._collections = {}
+
+    async def get_loop_collection(self, execution_id, step_name, loop_event_id):
+        return self._collections.get(f"{execution_id}:{step_name}:{loop_event_id}")
+
+    async def save_loop_collection(self, execution_id, step_name, loop_event_id, collection):
+        self._collections[f"{execution_id}:{step_name}:{loop_event_id}"] = list(collection)
 
     async def get_loop_state(self, _execution_id, _step_name, event_id=None):
         payload = dict(self.state)
@@ -224,7 +238,7 @@ async def test_parallel_loop_issues_up_to_max_in_flight(monkeypatch):
     async def fake_get_nats_cache():
         return fake_cache
 
-    monkeypatch.setattr(engine_module, "get_nats_cache", fake_get_nats_cache)
+    monkeypatch.setattr("noetl.core.cache.nats_kv.get_nats_cache", fake_get_nats_cache)
 
     step_def = state.get_step("run_batch_workers")
     commands = await engine._issue_loop_commands(state, step_def, {})
@@ -248,7 +262,7 @@ async def test_transition_into_loop_step_issues_commands_without_name_error(monk
             {
                 "step": "start",
                 "tool": {"kind": "python", "code": "def main(**kwargs): return {'ok': True}"},
-                "next": [{"step": "loop_step"}],
+                "next": {"arcs": [{"step": "loop_step"}]},
             },
             {
                 "step": "loop_step",
@@ -258,7 +272,7 @@ async def test_transition_into_loop_step_issues_commands_without_name_error(monk
                     "iterator": "item",
                     "spec": {"max_in_flight": 2},
                 },
-                "args": {
+                "input": {
                     "value": "{{ item.value }}",
                     "index": "{{ loop_index }}",
                 },
@@ -283,10 +297,10 @@ async def test_transition_into_loop_step_issues_commands_without_name_error(monk
     async def fake_get_nats_cache():
         return fake_cache
 
-    monkeypatch.setattr(engine_module, "get_nats_cache", fake_get_nats_cache)
+    monkeypatch.setattr("noetl.core.cache.nats_kv.get_nats_cache", fake_get_nats_cache)
 
     event = Event(
-        execution_id="9303",
+        execution_id = "9303",
         step="start",
         name="call.done",
         payload={"response": {"ok": True}},
@@ -343,7 +357,7 @@ async def test_loop_continue_reuses_cached_collection_when_ctx_key_missing(monke
     async def fake_get_nats_cache():
         return fake_cache
 
-    monkeypatch.setattr(engine_module, "get_nats_cache", fake_get_nats_cache)
+    monkeypatch.setattr("noetl.core.cache.nats_kv.get_nats_cache", fake_get_nats_cache)
 
     step_def = state.get_step("run_batch_workers")
 
@@ -413,7 +427,7 @@ async def test_loop_claim_repairs_zero_collection_size_metadata(monkeypatch):
     async def fake_get_nats_cache():
         return fake_cache
 
-    monkeypatch.setattr(engine_module, "get_nats_cache", fake_get_nats_cache)
+    monkeypatch.setattr("noetl.core.cache.nats_kv.get_nats_cache", fake_get_nats_cache)
 
     step_def = state.get_step("run_batch_workers")
     command = await engine._create_command_for_step(state, step_def, {})
@@ -488,7 +502,7 @@ async def test_loop_continue_rerenders_when_replayed_cached_collection_is_empty(
         render_calls["count"] += 1
         return original_render(template, context)
 
-    monkeypatch.setattr(engine_module, "get_nats_cache", fake_get_nats_cache)
+    monkeypatch.setattr("noetl.core.cache.nats_kv.get_nats_cache", fake_get_nats_cache)
     monkeypatch.setattr(engine, "_render_template", tracked_render)
 
     step_def = state.get_step("run_batch_workers")
@@ -555,7 +569,7 @@ async def test_loop_watchdog_recovers_stalled_scheduled_counts(monkeypatch):
     async def fake_find_orphaned(*_args, **_kwargs):
         return [1]
 
-    monkeypatch.setattr(engine_module, "get_nats_cache", fake_get_nats_cache)
+    monkeypatch.setattr("noetl.core.cache.nats_kv.get_nats_cache", fake_get_nats_cache)
     monkeypatch.setattr(engine, "_find_orphaned_loop_iteration_indices", fake_find_orphaned)
     monkeypatch.setattr(engine_module, "_LOOP_STALL_WATCHDOG_SECONDS", 1.0)
     monkeypatch.setattr(engine_module, "_LOOP_STALL_RECOVERY_COOLDOWN_SECONDS", 0.0)
@@ -622,7 +636,7 @@ async def test_loop_watchdog_recovers_stale_inflight_saturation(monkeypatch):
     async def fake_find_orphaned(*_args, **_kwargs):
         return [3]
 
-    monkeypatch.setattr(engine_module, "get_nats_cache", fake_get_nats_cache)
+    monkeypatch.setattr("noetl.core.cache.nats_kv.get_nats_cache", fake_get_nats_cache)
     monkeypatch.setattr(engine, "_find_orphaned_loop_iteration_indices", fake_find_orphaned)
     monkeypatch.setattr(engine_module, "_LOOP_STALL_WATCHDOG_SECONDS", 1.0)
     monkeypatch.setattr(engine_module, "_LOOP_STALL_RECOVERY_COOLDOWN_SECONDS", 0.0)
@@ -693,7 +707,7 @@ async def test_loop_counter_reconcile_recovers_no_slot_without_watchdog(monkeypa
     async def fake_count_epoch_terminals(*_args, **_kwargs):
         return 4
 
-    monkeypatch.setattr(engine_module, "get_nats_cache", fake_get_nats_cache)
+    monkeypatch.setattr("noetl.core.cache.nats_kv.get_nats_cache", fake_get_nats_cache)
     monkeypatch.setattr(engine, "_find_missing_loop_iteration_indices", fake_find_missing)
     monkeypatch.setattr(engine, "_count_loop_terminal_iterations", fake_count_epoch_terminals)
     monkeypatch.setattr(engine_module, "_LOOP_COUNTER_RECONCILE_COOLDOWN_SECONDS", 0.0)
@@ -758,7 +772,7 @@ async def test_loop_counter_reconcile_uses_epoch_terminal_count_for_ghost_inflig
     async def fake_count_epoch_terminals(*_args, **_kwargs):
         return 7
 
-    monkeypatch.setattr(engine_module, "get_nats_cache", fake_get_nats_cache)
+    monkeypatch.setattr("noetl.core.cache.nats_kv.get_nats_cache", fake_get_nats_cache)
     monkeypatch.setattr(engine, "_find_missing_loop_iteration_indices", fake_find_missing)
     monkeypatch.setattr(engine, "_count_loop_terminal_iterations", fake_count_epoch_terminals)
     monkeypatch.setattr(engine_module, "_LOOP_COUNTER_RECONCILE_COOLDOWN_SECONDS", 0.0)
@@ -824,7 +838,7 @@ async def test_loop_counter_reconcile_prefers_supervisor_terminal_count(monkeypa
     async def fake_count_epoch_terminals(*_args, **_kwargs):
         return -1
 
-    monkeypatch.setattr(engine_module, "get_nats_cache", fake_get_nats_cache)
+    monkeypatch.setattr("noetl.core.cache.nats_kv.get_nats_cache", fake_get_nats_cache)
     monkeypatch.setattr(engine, "_find_missing_loop_iteration_indices", fake_find_missing)
     monkeypatch.setattr(engine, "_count_loop_terminal_iterations", fake_count_epoch_terminals)
     monkeypatch.setattr(engine_module, "_LOOP_COUNTER_RECONCILE_COOLDOWN_SECONDS", 30.0)
@@ -888,7 +902,7 @@ async def test_loop_watchdog_prefers_supervisor_orphaned_indexes(monkeypatch):
     async def unexpected_orphaned_scan(*_args, **_kwargs):
         raise AssertionError("event-table orphaned scan should not run when supervisor state is available")
 
-    monkeypatch.setattr(engine_module, "get_nats_cache", fake_get_nats_cache)
+    monkeypatch.setattr("noetl.core.cache.nats_kv.get_nats_cache", fake_get_nats_cache)
     monkeypatch.setattr(engine, "_find_orphaned_loop_iteration_indices", unexpected_orphaned_scan)
     monkeypatch.setattr(engine_module, "_LOOP_STALL_WATCHDOG_SECONDS", 1.0)
     monkeypatch.setattr(engine_module, "_LOOP_STALL_RECOVERY_COOLDOWN_SECONDS", 0.0)
@@ -919,7 +933,7 @@ async def test_find_missing_loop_iteration_indices_applies_age_gating(monkeypatc
     monkeypatch.setattr(engine_module, "get_pool_connection", lambda: RecordingPoolContext(conn))
 
     missing = await engine._find_missing_loop_iteration_indices(
-        execution_id="9701",
+        execution_id = "9701",
         node_name="run_batch_workers",
         loop_event_id="loop_9701",
         limit=3,
@@ -959,7 +973,7 @@ async def test_find_missing_loop_iteration_indices_clamps_negative_age(monkeypat
     monkeypatch.setattr(engine_module, "get_pool_connection", lambda: RecordingPoolContext(conn))
 
     missing = await engine._find_missing_loop_iteration_indices(
-        execution_id="9702",
+        execution_id = "9702",
         node_name="run_batch_workers",
         loop_event_id=None,
         limit=5,
@@ -1010,7 +1024,7 @@ async def test_handle_event_skips_duplicate_persisted_call_done(monkeypatch):
             {
                 "step": "reset_http_probe_stats",
                 "tool": {"kind": "python", "code": "def main(**kwargs): return {'ok': True}"},
-                "next": [{"step": "end"}],
+                "next": {"arcs": [{"step": "end"}]},
             },
             {
                 "step": "end",
@@ -1027,7 +1041,7 @@ async def test_handle_event_skips_duplicate_persisted_call_done(monkeypatch):
     state = ExecutionState("9703", parsed_playbook, payload={})
     state.last_event_id = 1
 
-    async def fake_load_state(_execution_id):
+    async def fake_load_state(_execution_id, *args, **kwargs):
         return state
 
     async def fake_should_refresh(*_args, **_kwargs):
@@ -1046,7 +1060,7 @@ async def test_handle_event_skips_duplicate_persisted_call_done(monkeypatch):
     monkeypatch.setattr(engine, "_evaluate_next_transitions", should_not_route)
 
     event = Event(
-        execution_id="9703",
+        execution_id = "9703",
         step="reset_http_probe_stats:task_sequence",
         name="call.done",
         payload={

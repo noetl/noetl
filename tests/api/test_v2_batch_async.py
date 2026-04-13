@@ -77,7 +77,7 @@ async def test_batch_enqueue_ack_timeout_under_queue_pressure(monkeypatch):
     monkeypatch.setattr(v2_api, "_persist_batch_acceptance", _acceptance)
     monkeypatch.setattr(v2_api, "_persist_batch_failed_event", _capture_failed)
 
-    req = v2_api.BatchEventRequest(execution_id="1", worker_id="worker-1", events=[])
+    req = v2_api.BatchEventRequest(execution_id = "1", worker_id="worker-1", events=[])
     with pytest.raises(HTTPException) as exc:
         await v2_api.handle_batch_events(req, _make_request({"Idempotency-Key": "idem-key-1"}))
 
@@ -101,7 +101,7 @@ async def test_batch_duplicate_idempotency_returns_accepted_without_enqueue(monk
     monkeypatch.setattr(v2_api, "ensure_batch_acceptor_started", _ready_workers)
     monkeypatch.setattr(v2_api, "_persist_batch_acceptance", _acceptance)
 
-    req = v2_api.BatchEventRequest(execution_id="1", worker_id="worker-1", events=[])
+    req = v2_api.BatchEventRequest(execution_id = "1", worker_id="worker-1", events=[])
     res = await v2_api.handle_batch_events(req, _make_request({"Idempotency-Key": "idem-key-1"}))
 
     assert res.status == "accepted"
@@ -119,7 +119,7 @@ async def test_batch_worker_unavailable_error_code(monkeypatch):
     monkeypatch.setattr(v2_api, "ensure_batch_acceptor_started", _no_workers)
     monkeypatch.setattr(v2_api, "_batch_accept_queue", asyncio.Queue(maxsize=1))
 
-    req = v2_api.BatchEventRequest(execution_id="1", worker_id="worker-1", events=[])
+    req = v2_api.BatchEventRequest(execution_id = "1", worker_id="worker-1", events=[])
     with pytest.raises(HTTPException) as exc:
         await v2_api.handle_batch_events(req, _make_request())
 
@@ -189,7 +189,7 @@ async def test_persist_batch_acceptance_stores_command_id_in_meta(monkeypatch):
     monkeypatch.setattr(v2_api, "_next_snowflake_id", _fake_next_snowflake_id)
 
     req = v2_api.BatchEventRequest(
-        execution_id="42",
+        execution_id = "42",
         worker_id="worker-1",
         events=[
             v2_api.BatchEventItem(
@@ -331,7 +331,7 @@ async def test_handle_event_invalidates_state_cache_when_command_persist_fails(m
     monkeypatch.setattr(v2_api, "get_nats_publisher", _fake_get_nats_publisher)
 
     req = v2_api.EventRequest(
-        execution_id="42",
+        execution_id = "42",
         step="step1",
         name="call.done",
         payload={"status": "completed"},

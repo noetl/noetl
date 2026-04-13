@@ -1,7 +1,7 @@
 import pytest
 
-import noetl.core.dsl.engine.engine as engine_module
-from noetl.core.dsl.engine.engine import ControlFlowEngine, ExecutionState, PlaybookRepo, StateStore
+import noetl.core.dsl.engine.executor as engine_module
+from noetl.core.dsl.engine.executor import ControlFlowEngine, ExecutionState, PlaybookRepo, StateStore
 from noetl.core.dsl.engine.models import Event
 from noetl.core.dsl.engine.parser import DSLParser
 
@@ -17,7 +17,7 @@ def _build_engine(playbook_yaml: str, execution_id: str):
 
 
 @pytest.mark.asyncio
-async def test_wrapped_call_done_renders_follow_up_step_from_unwrapped_result():
+async def test_wrapped_call_done_renders_follow_up_step_from_unwrapped_result(monkeypatch):
     engine, state_store, state = _build_engine(
         """
 apiVersion: noetl.io/v2
@@ -45,14 +45,18 @@ workflow:
         performance_rating: "{{ extract.performance_rating }}"
       code: |
         result = {"seen": performance_rating}
-""",
-        "exec-wrapped-score",
+        """,
+        "99101",
     )
     await state_store.save_state(state)
 
+    async def fake_load_state(_id, *args, **kwargs):
+        return state
+    monkeypatch.setattr(state_store, "load_state", fake_load_state)
+
     commands = await engine.handle_event(
         Event(
-            execution_id="exec-wrapped-score",
+            execution_id="99101",
             step="extract",
             name="call.done",
             payload={
@@ -73,7 +77,7 @@ workflow:
 
 
 @pytest.mark.asyncio
-async def test_wrapped_task_sequence_call_done_syncs_ctx_for_follow_up_step():
+async def test_wrapped_task_sequence_call_done_syncs_ctx_for_follow_up_step(monkeypatch):
     engine, state_store, state = _build_engine(
         """
 apiVersion: noetl.io/v2
@@ -110,13 +114,17 @@ workflow:
       code: |
         result = {"user_id": user_id}
 """,
-        "exec-wrapped-task-seq",
+        "99102",
     )
     await state_store.save_state(state)
 
+    async def fake_load_state(_id, *args, **kwargs):
+        return state
+    monkeypatch.setattr(state_store, "load_state", fake_load_state)
+
     commands = await engine.handle_event(
         Event(
-            execution_id="exec-wrapped-task-seq",
+            execution_id="99102",
             step="create:task_sequence",
             name="call.done",
             payload={
@@ -175,9 +183,13 @@ workflow:
       code: |
         result = {"stats": stats}
 """,
-        "exec-wrapped-ref",
+        "99103",
     )
     await state_store.save_state(state)
+
+    async def fake_load_state(_id, *args, **kwargs):
+        return state
+    monkeypatch.setattr(state_store, "load_state", fake_load_state)
 
     async def fake_resolve(ref):
         assert ref["ref"] == "noetl://execution/123/result/validate_results/abcd1234"
@@ -191,7 +203,7 @@ workflow:
 
     commands = await engine.handle_event(
         Event(
-            execution_id="exec-wrapped-ref",
+            execution_id = "99103",
             step="validate_results",
             name="call.done",
             payload={

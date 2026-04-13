@@ -6,7 +6,7 @@ import pytest
 import json
 from contextlib import asynccontextmanager
 from unittest.mock import AsyncMock, MagicMock, patch
-from noetl.core.dsl.engine.engine import ControlFlowEngine, PlaybookRepo, StateStore, ExecutionState
+from noetl.core.dsl.engine.executor import ControlFlowEngine, PlaybookRepo, StateStore, ExecutionState
 from noetl.core.dsl.engine.models import Event, Command, Playbook
 from noetl.core.dsl.engine.parser import DSLParser
 
@@ -25,26 +25,9 @@ async def _mock_pool_connection(pending_count: int = 0):
     yield conn
 
 
-@pytest.fixture(autouse=True)
-def mock_nats(monkeypatch):
-    """Globally mock NATS for all engine tests."""
-    class _NoopNatsCache:
-        async def get_loop_state(self, *args, **kwargs): return None
-        async def save_loop_state(self, *args, **kwargs): return None
-        async def connect(self): pass
-    
-    async def _get_nats_cache(): return _NoopNatsCache()
-    monkeypatch.setattr("noetl.core.dsl.engine.engine.store.get_nats_cache", _get_nats_cache)
-    monkeypatch.setattr("noetl.core.dsl.engine.engine.events.get_nats_cache", _get_nats_cache)
-
-
 @pytest.fixture
 def engine_setup(monkeypatch):
-    """Set up engine components with mocked DB pool."""
-    monkeypatch.setattr("noetl.core.dsl.engine.engine.store.get_pool_connection", lambda: _mock_pool_connection(0))
-    monkeypatch.setattr("noetl.core.dsl.engine.engine.control_flow.get_pool_connection", lambda: _mock_pool_connection(0))
-    monkeypatch.setattr("noetl.core.dsl.engine.engine.events.get_pool_connection", lambda: _mock_pool_connection(0))
-    
+    """Set up engine components."""
     playbook_repo = PlaybookRepo()
     state_store = StateStore(playbook_repo)
     engine = ControlFlowEngine(playbook_repo, state_store)
@@ -127,7 +110,7 @@ workflow:
     parser = DSLParser()
     playbook = parser.parse(yaml_content)
     state = ExecutionState(
-        execution_id="1000",
+        execution_id = "1000",
         playbook=playbook,
         payload={},
     )
@@ -138,7 +121,7 @@ workflow:
 
     # call.done event
     event = Event(
-        execution_id="1000",
+        execution_id = "1000",
         step="start",
         name="call.done",
         payload={
@@ -187,7 +170,7 @@ workflow:
 
     playbook = DSLParser().parse(yaml_content)
     state = ExecutionState(
-        execution_id="200000000000009991",
+        execution_id = "200000000000009991",
         playbook=playbook,
         payload={},
     )
@@ -199,7 +182,7 @@ workflow:
     monkeypatch.setattr(engine, "_is_first_persisted_command_event", AsyncMock(return_value=True))
 
     event = Event(
-        execution_id="200000000000009991",
+        execution_id = "200000000000009991",
         step="start",
         name="call.done",
         payload={"result": {"data": {"ok": True}}},
@@ -225,7 +208,7 @@ async def test_command_failed_with_pending_recovery_does_not_terminate(engine_se
     playbook = _make_minimal_playbook("recovery_test")
 
     state = ExecutionState(
-        execution_id="1001",
+        execution_id = "1001",
         playbook=playbook,
         payload={},
     )
@@ -238,7 +221,7 @@ async def test_command_failed_with_pending_recovery_does_not_terminate(engine_se
     engine._persist_event = AsyncMock(return_value=None)
 
     event = Event(
-        execution_id="1001",
+        execution_id = "1001",
         step="fetch_data",
         name="command.failed",
         payload={"error": {"message": "infra retry exhausted"}},
@@ -259,7 +242,7 @@ async def test_command_failed_without_pending_commands_terminates(engine_setup, 
     playbook = _make_minimal_playbook("no_recovery_test")
 
     state = ExecutionState(
-        execution_id="200000000000000001",
+        execution_id = "200000000000000001",
         playbook=playbook,
         payload={},
     )
@@ -271,7 +254,7 @@ async def test_command_failed_without_pending_commands_terminates(engine_setup, 
     engine._persist_event = AsyncMock(return_value=None)
 
     event = Event(
-        execution_id="200000000000000001",
+        execution_id = "200000000000000001",
         step="fetch_data",
         name="command.failed",
         payload={"error": {"message": "infra retry exhausted"}},
@@ -286,7 +269,7 @@ async def test_command_failed_without_pending_commands_terminates(engine_setup, 
         conn.cursor = MagicMock(return_value=cur)
         yield conn
 
-    monkeypatch.setattr("noetl.core.dsl.engine.engine.events.get_pool_connection", _mock_zero_pending)
+    monkeypatch.setattr("noetl.core.dsl.engine.executor.events.get_pool_connection", _mock_zero_pending)
 
     commands = await engine.handle_event(event, already_persisted=True)
     emitted = {call.args[0].name for call in engine._persist_event.call_args_list if call.args}
@@ -324,7 +307,7 @@ workflow:
 
     playbook = DSLParser().parse(yaml_content)
     state = ExecutionState(
-        execution_id="1002",
+        execution_id = "1002",
         playbook=playbook,
         payload={},
     )
@@ -334,7 +317,7 @@ workflow:
     engine._persist_event = AsyncMock(return_value=None)
 
     call_done = Event(
-        execution_id="1002",
+        execution_id = "1002",
         step="start",
         name="call.done",
         payload={"result": {"ok": True}},
@@ -343,7 +326,7 @@ workflow:
     assert [cmd.step for cmd in first_commands] == ["next_step"]
 
     step_exit = Event(
-        execution_id="1002",
+        execution_id = "1002",
         step="start",
         name="step.exit",
         payload={"status": "COMPLETED", "result": {"ok": True}},
@@ -371,12 +354,12 @@ workflow:
 """
 
     playbook = DSLParser().parse(yaml_content)
-    async def _load_playbook_by_id(_catalog_id, _conn=None): return playbook
+    async def _load_playbook_by_id(_catalog_id, *args, **kwargs): return playbook
     playbook_repo.load_playbook_by_id = _load_playbook_by_id
 
     # Create a state and serialize it
     original_state = ExecutionState(
-        execution_id="200000000000000777",
+        execution_id = "200000000000000777",
         playbook=playbook,
         payload={},
         catalog_id=101
@@ -402,7 +385,7 @@ workflow:
     @asynccontextmanager
     async def _mock_replay_connection(): yield _ReplayConn()
 
-    monkeypatch.setattr("noetl.core.dsl.engine.engine.store.get_pool_connection", _mock_replay_connection)
+    monkeypatch.setattr("noetl.core.dsl.engine.executor.store.get_pool_connection", _mock_replay_connection)
 
     execution_id = "200000000000000777"
     state = await state_store.load_state(execution_id)

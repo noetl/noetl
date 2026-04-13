@@ -26,14 +26,39 @@ class TransitionMixin:
             command = await self._create_command_for_step(state, step_def, step_input)
             return [command] if command else []
 
+        # Optimization: Fetch loop collection once for the entire batch
+        nats_cache = await get_nats_cache()
+        
+        existing_loop_state = state.loop_state.get(step_def.step)
+        loop_event_id = str(existing_loop_state.get("event_id") or "") if existing_loop_state else ""
+        
+        collection = None
+        if loop_event_id:
+            collection = await nats_cache.get_loop_collection(str(state.execution_id), step_def.step, loop_event_id)
+        
+        if collection is None:
+            # Render and save
+            context = state.get_render_context(Event(
+                execution_id=state.execution_id, step=step_def.step, name="loop_init", payload={}
+            ))
+            collection_expr = step_def.loop.in_
+            collection = self._render_template(collection_expr, context)
+            collection = self._normalize_loop_collection(collection, step_def.step)
+            
+            # Note: loop_event_id might be empty here if it's the very first entry.
+            # It will be saved inside _create_command_for_step in that case.
+
         issue_budget = self._get_loop_max_in_flight(step_def)
         commands: list[Command] = []
+        shared_control_args = dict(step_input)
+        shared_control_args["__loop_collection"] = collection
 
         for _ in range(issue_budget):
-            command = await self._create_command_for_step(state, step_def, step_input)
+            command = await self._create_command_for_step(state, step_def, shared_control_args)
             if not command:
                 break
             commands.append(command)
+            shared_control_args["__loop_continue"] = True
 
         return commands
     

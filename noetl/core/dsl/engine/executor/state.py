@@ -344,7 +344,9 @@ class ExecutionState:
                 iter_vars[iterator_name] = self.variables[iterator_name]
             iter_vars["_index"] = loop_state["index"] - 1 if loop_state["index"] > 0 else 0
             iter_vars["_first"] = loop_state["index"] == 1
-            iter_vars["_last"] = loop_state["index"] >= len(loop_state["collection"])
+            # Use collection_size if collection is missing (due to persistence optimization)
+            collection_size = len(loop_state["collection"]) if "collection" in loop_state else int(loop_state.get("collection_size", 0))
+            iter_vars["_last"] = loop_state["index"] >= (collection_size - 1)
 
         context = {
             "event": {
