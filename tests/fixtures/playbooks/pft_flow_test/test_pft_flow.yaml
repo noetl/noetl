@@ -1310,7 +1310,7 @@ workflow:
       Count ACTUAL fetched patient data per data type (not queued claims).
       This is the true correctness check: a patient is "done" only when data
       was saved to the result tables, not just when a patient was claimed.
-      With the v2.14.7 loop.done race bug, queue entries can be marked done for all
+      With the 2.14.7 loop.done race bug, queue entries can be marked done for all
       patients but data is only saved for ~1 batch worth (100 patients) before
       the race fires loop.done prematurely and cuts off subsequent batches.
     tool:
@@ -1439,7 +1439,7 @@ workflow:
   - step: check_results
     desc: |
       Assert all 10 facilities have 1000/1000 patients with ACTUAL data in result tables.
-      If the v2.14.7 loop.done race bug is present, assessments_queue_done may be 1000
+      If the 2.14.7 loop.done race bug is present, assessments_queue_done may be 1000
       but assessments_done will be << 1000 (only ~1 batch worth, due to premature cutoff).
     tool:
       kind: python

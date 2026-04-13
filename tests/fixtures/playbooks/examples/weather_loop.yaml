@@ -1,8 +1,8 @@
 apiVersion: noetl.io/v2
 kind: Playbook
 metadata:
-  name: weather_loop_v2
-  path: examples/weather_loop_v2
+  name: weather_loop
+  path: examples/weather_loop
   version: '2.0'
 workload:
   cities:

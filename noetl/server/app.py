@@ -17,7 +17,7 @@ from noetl.core.urls import normalize_server_base_url
 from noetl.server.api import router as api_router
 from noetl.server.middleware import catch_exceptions_middleware
 
-# Import V2 API
+# Import core execution API
 from noetl.server.api.core import (
     router as core_router,
     ensure_batch_acceptor_started,

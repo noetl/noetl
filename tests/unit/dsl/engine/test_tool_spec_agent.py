@@ -1,4 +1,4 @@
-"""DSL v2 ToolSpec agent kind coverage."""
+"""ToolSpec agent kind coverage."""
 
 from noetl.core.dsl.engine.models import ToolSpec
 

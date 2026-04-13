@@ -1,10 +1,10 @@
 apiVersion: noetl.io/v2
 kind: Playbook
 metadata:
-  name: v2_postgres_test
-  path: test/v2/postgres
+  name: postgres_test
+  path: test/postgres
 workload:
-  test_message: Testing V2 Postgres tool
+  test_message: Testing Postgres tool
 workflow:
 - step: start
   desc: Query catalog to get playbook count

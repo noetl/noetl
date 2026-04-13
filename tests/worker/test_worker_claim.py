@@ -1,6 +1,6 @@
 import pytest
 
-from noetl.worker.nats_worker import V2Worker
+from noetl.worker.nats_worker import Worker
 
 
 class _FakeResponse:
@@ -32,7 +32,7 @@ async def _noop_execute(*_args, **_kwargs):
 
 @pytest.mark.asyncio
 async def test_claim_conflict_active_claim_returns_skip_ack():
-    worker = V2Worker(worker_id="test-worker")
+    worker = Worker(worker_id="test-worker")
     worker._http_client = _FakeHttpClient(
         _FakeResponse(
             409,
@@ -50,7 +50,7 @@ async def test_claim_conflict_active_claim_returns_skip_ack():
 
 @pytest.mark.asyncio
 async def test_claim_conflict_plain_message_returns_skip_ack():
-    worker = V2Worker(worker_id="test-worker")
+    worker = Worker(worker_id="test-worker")
     worker._http_client = _FakeHttpClient(
         _FakeResponse(
             409,
@@ -67,7 +67,7 @@ async def test_claim_conflict_plain_message_returns_skip_ack():
 
 @pytest.mark.asyncio
 async def test_claim_conflict_terminal_code_returns_skip_ack():
-    worker = V2Worker(worker_id="test-worker")
+    worker = Worker(worker_id="test-worker")
     worker._http_client = _FakeHttpClient(
         _FakeResponse(
             409,
@@ -84,7 +84,7 @@ async def test_claim_conflict_terminal_code_returns_skip_ack():
 
 @pytest.mark.asyncio
 async def test_claim_conflict_unknown_code_defaults_retry_later():
-    worker = V2Worker(worker_id="test-worker")
+    worker = Worker(worker_id="test-worker")
     worker._http_client = _FakeHttpClient(
         _FakeResponse(
             409,
@@ -101,7 +101,7 @@ async def test_claim_conflict_unknown_code_defaults_retry_later():
 
 @pytest.mark.asyncio
 async def test_claim_url_normalizes_server_url_with_api_suffix():
-    worker = V2Worker(worker_id="test-worker")
+    worker = Worker(worker_id="test-worker")
     fake_client = _FakeHttpClient(
         _FakeResponse(
             409,
@@ -121,7 +121,7 @@ async def test_claim_url_normalizes_server_url_with_api_suffix():
 
 @pytest.mark.asyncio
 async def test_emit_command_failed_normalizes_server_url_with_api_suffix():
-    worker = V2Worker(worker_id="test-worker")
+    worker = Worker(worker_id="test-worker")
     fake_client = _FakeHttpClient(_FakeResponse(200, payload={"status": "ok"}))
     worker._http_client = fake_client
 
@@ -135,7 +135,7 @@ async def test_emit_command_failed_normalizes_server_url_with_api_suffix():
 
 @pytest.mark.asyncio
 async def test_claim_url_normalizes_server_url_with_duplicate_api_suffix():
-    worker = V2Worker(worker_id="test-worker")
+    worker = Worker(worker_id="test-worker")
     fake_client = _FakeHttpClient(
         _FakeResponse(
             409,
@@ -155,7 +155,7 @@ async def test_claim_url_normalizes_server_url_with_duplicate_api_suffix():
 
 @pytest.mark.asyncio
 async def test_duplicate_active_claim_notification_is_short_circuited_locally():
-    worker = V2Worker(worker_id="test-worker")
+    worker = Worker(worker_id="test-worker")
     fake_client = _FakeHttpClient(
         _FakeResponse(
             409,
@@ -184,7 +184,7 @@ async def test_duplicate_active_claim_notification_is_short_circuited_locally():
 
 @pytest.mark.asyncio
 async def test_duplicate_claimed_notification_is_short_circuited_locally():
-    worker = V2Worker(worker_id="test-worker")
+    worker = Worker(worker_id="test-worker")
     fake_client = _FakeHttpClient(
         _FakeResponse(
             200,

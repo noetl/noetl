@@ -1,10 +1,10 @@
 #!/bin/bash
-# Test script for V2 comprehensive workflow
+# Test script for the comprehensive workflow
 # Demonstrates: conditional routing, multi-step execution, data flow between steps
 
 set -e
 
-echo "=== NoETL V2 Comprehensive Test ==="
+echo "=== NoETL Comprehensive Test ==="
 echo ""
 echo "This test demonstrates:"
 echo "  - Conditional routing (case/when/then)"
@@ -17,9 +17,9 @@ echo ""
 echo "Running 5 executions..."
 for i in {1..5}; do
   EXEC_RESULT=$(kubectl exec -n noetl deploy/noetl-server -- curl -s -X POST \
-    http://localhost:8082/api/v2/execute \
+    http://localhost:8082/api/execute \
     -H "Content-Type: application/json" \
-    -d '{"path": "test/v2/comprehensive", "payload": {}}')
+    -d '{"path": "test/comprehensive", "payload": {}}')
   
   EXEC_ID=$(echo "$EXEC_RESULT" | jq -r '.execution_id')
   echo "  [$i] Execution started: $EXEC_ID"
@@ -38,8 +38,8 @@ kubectl logs -n noetl -l app=noetl-worker --tail=1000 | \
 
 echo ""
 echo "=== Test Summary ==="
-echo "✅ V2 worker: NATS subscription and command execution"
-echo "✅ V2 engine: Event processing and command generation"
+echo "✅ Worker: NATS subscription and command execution"
+echo "✅ Engine: Event processing and command generation"
 echo "✅ Python tool: Code execution with proper serialization"
 echo "✅ Conditional routing: case/when/then with value comparison"
 echo "✅ Data flow: Step results passed via Jinja2 templates"

@@ -834,6 +834,11 @@ class CommandCreationMixin:
                 return None
 
             item = collection[claimed_index]
+            loop_state["scheduled_count"] = max(
+                int(loop_state.get("scheduled_count", 0) or 0),
+                claimed_index + 1,
+            )
+            loop_state["collection_size"] = len(collection)
             loop_state["index"] = max(int(loop_state.get("index", 0) or 0), claimed_index + 1)
             loop_event_id_for_metadata = (
                 str(resolved_loop_event_id)

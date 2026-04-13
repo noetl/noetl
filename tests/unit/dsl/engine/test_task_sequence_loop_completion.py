@@ -246,9 +246,11 @@ async def test_task_sequence_loop_prefers_execution_loop_key_when_step_event_id_
     assert len(commands) == 1
     assert commands[0].step == parent_step
     assert loop_done_eval["called"] is False
-    assert state.loop_state[parent_step]["completed"] is False
-    assert state.loop_state[parent_step]["aggregation_finalized"] is False
-    assert state.loop_state[parent_step]["event_id"] == f"exec_{execution_id}"
+    refreshed_state = await state_store.load_state(execution_id)
+    assert refreshed_state is not None
+    assert refreshed_state.loop_state[parent_step]["completed"] is False
+    assert refreshed_state.loop_state[parent_step]["aggregation_finalized"] is False
+    assert refreshed_state.loop_state[parent_step]["event_id"] == f"exec_{execution_id}"
     assert fake_cache.increment_calls[0] == (execution_id, parent_step, f"exec_{execution_id}")
     assert fake_cache.get_state_calls[0] == (execution_id, parent_step, f"exec_{execution_id}")
 
@@ -289,9 +291,9 @@ async def test_task_sequence_loop_persists_issued_steps_before_return(monkeypatc
     saved_issued_steps: list[set[str]] = []
     real_save_state = state_store.save_state
 
-    async def tracking_save_state(state_obj):
+    async def tracking_save_state(state_obj, conn=None):
         saved_issued_steps.append(set(state_obj.issued_steps))
-        await real_save_state(state_obj)
+        await real_save_state(state_obj, conn)
 
     async def fake_create_command_for_step(_state, step_def, _args):
         return Command(
@@ -330,7 +332,9 @@ async def test_task_sequence_loop_persists_issued_steps_before_return(monkeypatc
 
     assert len(commands) == 1
     assert commands[0].step == parent_step
-    assert parent_step in state.issued_steps
+    refreshed_state = await state_store.load_state(execution_id)
+    assert refreshed_state is not None
+    assert parent_step in refreshed_state.issued_steps
     assert saved_issued_steps
     assert parent_step in saved_issued_steps[-1]
 
@@ -371,9 +375,9 @@ async def test_task_sequence_loop_persists_event_before_early_return_when_needed
     call_order: list[str] = []
     real_save_state = state_store.save_state
 
-    async def tracking_save_state(state_obj):
+    async def tracking_save_state(state_obj, conn=None):
         call_order.append("save_state")
-        await real_save_state(state_obj)
+        await real_save_state(state_obj, conn)
 
     async def fake_persist_event(event_obj, state_obj):  # noqa: ARG001
         call_order.append(f"persist:{event_obj.name}")
@@ -1044,7 +1048,9 @@ async def test_terminal_events_emit_when_pending_key_is_task_sequence_suffix(mon
     commands = await engine.handle_event(event, already_persisted=True)
 
     assert commands == []
-    assert state.completed is True
+    refreshed_state = await state_store.load_state(execution_id)
+    assert refreshed_state is not None
+    assert refreshed_state.completed is True
     assert persisted_events == ["workflow.completed", "playbook.completed"]
 
 
@@ -1084,8 +1090,10 @@ async def test_command_failed_emits_terminal_failure_events(monkeypatch):
     commands = await engine.handle_event(event, already_persisted=True)
 
     assert commands == []
-    assert state.failed is True
-    assert state.completed is True
+    refreshed_state = await state_store.load_state(execution_id)
+    assert refreshed_state is not None
+    assert refreshed_state.failed is True
+    assert refreshed_state.completed is True
     assert persisted_events == ["workflow.failed", "playbook.failed"]
 
 
@@ -1123,8 +1131,10 @@ async def test_finalize_abandoned_execution_emits_terminal_failure_events(monkey
 
     await engine.finalize_abandoned_execution(execution_id, reason="stuck in production")
 
-    assert state.completed is True
-    assert state.failed is True
+    refreshed_state = await state_store.load_state(execution_id)
+    assert refreshed_state is not None
+    assert refreshed_state.completed is True
+    assert refreshed_state.failed is True
     assert persisted_events == ["workflow.failed", "playbook.failed"]
 
 
@@ -1183,7 +1193,9 @@ async def test_call_done_with_unmatched_next_arcs_emits_terminal_completion(monk
     commands = await engine.handle_event(event, already_persisted=True)
 
     assert commands == []
-    assert state.completed is True
+    refreshed_state = await state_store.load_state(execution_id)
+    assert refreshed_state is not None
+    assert refreshed_state.completed is True
     assert persisted_events == ["workflow.completed", "playbook.completed"]
 
 
@@ -1241,8 +1253,10 @@ async def test_call_error_with_explicit_end_step_without_tool_completes_failure(
     commands = await engine.handle_event(event, already_persisted=True)
 
     assert commands == []
-    assert state.completed is True
-    assert state.failed is True
+    refreshed_state = await state_store.load_state(execution_id)
+    assert refreshed_state is not None
+    assert refreshed_state.completed is True
+    assert refreshed_state.failed is True
     assert persisted_events == ["workflow.failed", "playbook.failed"]
 
 
@@ -1512,9 +1526,11 @@ workflow:
         invalidate_calls.append((execution_id_arg, reason))
         return True
 
+    load_states = [stale_state, refreshed_state]
+
     async def fake_load_state(_execution_id, *args, **kwargs):
         assert _execution_id == execution_id
-        return refreshed_state
+        return load_states.pop(0)
 
     async def fake_persist_event(_event, state_obj):
         state_obj.last_event_id = (state_obj.last_event_id or 0) + 1

@@ -1,10 +1,10 @@
 apiVersion: noetl.io/v2
 kind: Playbook
 metadata:
-  name: v2_actions_test
-  path: test/v2/actions
+  name: actions_test
+  path: test/actions
 workload:
-  test_message: 'Testing V2 actions: call, retry, sink'
+  test_message: 'Testing actions: call, retry, sink'
   max_retries: 2
   numbers:
   - 10

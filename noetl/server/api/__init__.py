@@ -1,5 +1,5 @@
 """
-NoETL API package - V2 Event-Driven API only.
+NoETL API package.
 
 Pure event sourcing architecture:
 - Event table is the single source of truth
@@ -10,7 +10,7 @@ Pure event sourcing architecture:
 from fastapi import APIRouter
 from fastapi.responses import JSONResponse
 
-# V2 unified API (execute, events, commands)
+# Unified execution API (execute, events, commands)
 from . import core
 
 # Essential management APIs (catalog, credentials, database utilities)
@@ -34,7 +34,7 @@ router = APIRouter()
 async def api_health():
     return {"status": "ok"}
 
-# V2 unified endpoints (execute, events, commands)
+# Unified execution endpoints (execute, events, commands)
 router.include_router(core.router)
 
 # Essential APIs

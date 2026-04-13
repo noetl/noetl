@@ -1,11 +1,11 @@
 apiVersion: noetl.io/v2
 kind: Playbook
 metadata:
-  name: v2_loop_test
-  path: test/v2/loop
+  name: loop_test
+  path: test/loop
 
 workload:
-  test_message: "Testing V2 loop/iterator support"
+  test_message: "Testing loop/iterator support"
   numbers: [1, 2, 3, 4, 5]
   users:
     - name: "Alice"

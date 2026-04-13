@@ -58,11 +58,27 @@ class _BatchAcceptanceResult:
 _batch_accept_queue: Optional[asyncio.Queue[_BatchAcceptJob]] = None
 _batch_accept_workers_tasks: list[asyncio.Task] = []
 _batch_acceptor_lock: Optional[asyncio.Lock] = None
+_batch_execution_locks: dict[int, asyncio.Lock] = {}
+_batch_execution_locks_guard: Optional[asyncio.Lock] = None
 
 def _get_batch_acceptor_lock() -> asyncio.Lock:
     global _batch_acceptor_lock
     if _batch_acceptor_lock is None: _batch_acceptor_lock = asyncio.Lock()
     return _batch_acceptor_lock
+
+def _get_batch_execution_locks_guard() -> asyncio.Lock:
+    global _batch_execution_locks_guard
+    if _batch_execution_locks_guard is None:
+        _batch_execution_locks_guard = asyncio.Lock()
+    return _batch_execution_locks_guard
+
+async def _get_batch_execution_lock(execution_id: int) -> asyncio.Lock:
+    async with _get_batch_execution_locks_guard():
+        lock = _batch_execution_locks.get(execution_id)
+        if lock is None:
+            lock = asyncio.Lock()
+            _batch_execution_locks[execution_id] = lock
+        return lock
 
 async def ensure_batch_acceptor_started() -> bool:
     global _batch_accept_queue
@@ -231,6 +247,81 @@ async def _process_accepted_batch(job: _BatchAcceptJob) -> int:
         raise
     return len(commands)
 
+def _drain_contiguous_jobs_for_execution(execution_id: int) -> list[_BatchAcceptJob]:
+    if _batch_accept_queue is None:
+        return []
+    queue_impl = getattr(_batch_accept_queue, "_queue", None)
+    if queue_impl is None:
+        return []
+
+    drained: list[_BatchAcceptJob] = []
+    while queue_impl:
+        next_job = queue_impl[0]
+        if next_job.execution_id != execution_id:
+            break
+        drained.append(queue_impl.popleft())
+    return drained
+
+async def _process_batch_job(job: _BatchAcceptJob) -> None:
+    q_wait = max(0.0, time.perf_counter() - job.accepted_at_monotonic)
+    _observe_batch_metric("first_worker_claim_latency_seconds", q_wait)
+    await _persist_batch_status_event(
+        job.execution_id,
+        job.catalog_id,
+        job.request_id,
+        job.worker_id,
+        job.idempotency_key,
+        "batch.processing",
+        "RUNNING",
+        {
+            "request_id": job.request_id,
+            "queue_wait_ms": round(q_wait * 1000, 3),
+            "event_count": len(job.events),
+        },
+    )
+    p_start = time.perf_counter()
+    try:
+        if _BATCH_PROCESSING_TIMEOUT_SECONDS > 0:
+            cmd_gen = await asyncio.wait_for(
+                _process_accepted_batch(job),
+                timeout=_BATCH_PROCESSING_TIMEOUT_SECONDS,
+            )
+        else:
+            cmd_gen = await _process_accepted_batch(job)
+    except asyncio.TimeoutError:
+        _inc_batch_metric("processing_timeout_total")
+        await _persist_batch_failed_event(
+            job,
+            _BATCH_FAILURE_PROCESSING_TIMEOUT,
+            f"Batch processing timed out (>{_BATCH_PROCESSING_TIMEOUT_SECONDS}s)",
+        )
+        return
+
+    p_sec = time.perf_counter() - p_start
+    if p_sec > _BATCH_PROCESSING_WARN_SECONDS:
+        logger.warning(
+            "[BATCH-EVENTS] Slow async batch processing request_id=%s exec_id=%s event_count=%s p_sec=%.3f cmd_gen=%s",
+            job.request_id,
+            job.execution_id,
+            len(job.events),
+            p_sec,
+            cmd_gen,
+        )
+    await _persist_batch_status_event(
+        job.execution_id,
+        job.catalog_id,
+        job.request_id,
+        job.worker_id,
+        job.idempotency_key,
+        "batch.completed",
+        "COMPLETED",
+        {
+            "request_id": job.request_id,
+            "commands_generated": cmd_gen,
+            "processing_ms": round(p_sec * 1000, 3),
+        },
+    )
+
 async def _batch_accept_worker_loop(worker_idx: int) -> None:
     logger.info("[BATCH-EVENTS] Batch acceptor worker-%s started", worker_idx)
     while True:
@@ -238,19 +329,29 @@ async def _batch_accept_worker_loop(worker_idx: int) -> None:
             if _batch_accept_queue is None: await asyncio.sleep(0.05); continue
             job = await _batch_accept_queue.get()
         except asyncio.CancelledError: logger.info("[BATCH-EVENTS] Batch acceptor worker-%s stopped", worker_idx); raise
-        q_wait = max(0.0, time.perf_counter() - job.accepted_at_monotonic); _observe_batch_metric("first_worker_claim_latency_seconds", q_wait)
         try:
-            await _persist_batch_status_event(job.execution_id, job.catalog_id, job.request_id, job.worker_id, job.idempotency_key, "batch.processing", "RUNNING", {"request_id": job.request_id, "queue_wait_ms": round(q_wait * 1000, 3), "event_count": len(job.events)})
-            p_start = time.perf_counter()
-            try:
-                if _BATCH_PROCESSING_TIMEOUT_SECONDS > 0: cmd_gen = await asyncio.wait_for(_process_accepted_batch(job), timeout=_BATCH_PROCESSING_TIMEOUT_SECONDS)
-                else: cmd_gen = await _process_accepted_batch(job)
-            except asyncio.TimeoutError:
-                _inc_batch_metric("processing_timeout_total"); await _persist_batch_failed_event(job, _BATCH_FAILURE_PROCESSING_TIMEOUT, f"Batch processing timed out (>{_BATCH_PROCESSING_TIMEOUT_SECONDS}s)"); continue
-            p_sec = time.perf_counter() - p_start
-            if p_sec > _BATCH_PROCESSING_WARN_SECONDS: logger.warning("[BATCH-EVENTS] Slow async batch processing request_id=%s exec_id=%s event_count=%s p_sec=%.3f cmd_gen=%s", job.request_id, job.execution_id, len(job.events), p_sec, cmd_gen)
-            await _persist_batch_status_event(job.execution_id, job.catalog_id, job.request_id, job.worker_id, job.idempotency_key, "batch.completed", "COMPLETED", {"request_id": job.request_id, "commands_generated": cmd_gen, "processing_ms": round(p_sec * 1000, 3)})
-        except Exception as e: _inc_batch_metric("processing_error_total"); await _persist_batch_failed_event(job, _BATCH_FAILURE_PROCESSING_ERROR, str(e))
+            execution_lock = await _get_batch_execution_lock(job.execution_id)
+            async with execution_lock:
+                jobs = [job]
+                drained_jobs = _drain_contiguous_jobs_for_execution(job.execution_id)
+                if drained_jobs:
+                    logger.debug(
+                        "[BATCH-EVENTS] worker-%s coalesced %s additional queued batch jobs for execution %s",
+                        worker_idx,
+                        len(drained_jobs),
+                        job.execution_id,
+                    )
+                    jobs.extend(drained_jobs)
+
+                for idx, grouped_job in enumerate(jobs):
+                    try:
+                        await _process_batch_job(grouped_job)
+                    except Exception as e:
+                        _inc_batch_metric("processing_error_total")
+                        await _persist_batch_failed_event(grouped_job, _BATCH_FAILURE_PROCESSING_ERROR, str(e))
+                    finally:
+                        if idx > 0 and _batch_accept_queue is not None:
+                            _batch_accept_queue.task_done()
         finally:
             if _batch_accept_queue is not None: _batch_accept_queue.task_done()
 

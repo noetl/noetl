@@ -1,1 +1,1 @@
-"""Unit tests for NoETL DSL v2."""
+"""Unit tests for the NoETL DSL engine."""

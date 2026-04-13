@@ -65,9 +65,11 @@ class ExecutionState:
     
 
     def to_dict(self) -> dict[str, Any]:
+        playbook_metadata = self.playbook.metadata if isinstance(getattr(self.playbook, "metadata", None), dict) else {}
         return {
             "execution_id": self.execution_id,
             "catalog_id": self.catalog_id,
+            "playbook_path": playbook_metadata.get("path") or playbook_metadata.get("name"),
             "parent_execution_id": self.parent_execution_id,
             "payload": self.payload,
             "current_step": self.current_step,
@@ -134,6 +136,11 @@ class ExecutionState:
         """
         self.completed_steps.add(step_name)
         if result is not None:
+            if isinstance(result, dict) and "context" not in result:
+                result = {
+                    **result,
+                    "context": dict(result),
+                }
             self.step_results[step_name] = result
             self.variables[step_name] = result
 
@@ -405,5 +412,3 @@ class ExecutionState:
                 context["error"] = output_view.get("error")
 
         return context
-
-

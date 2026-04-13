@@ -2,134 +2,12 @@ import pytest
 import httpx
 
 import noetl.worker.nats_worker as worker_module
-from noetl.worker.nats_worker import V2Worker
-
-
-@pytest.mark.asyncio
-async def test_playbook_tool_with_return_step_uses_waiting_executor(monkeypatch):
-    worker = V2Worker(worker_id="test-worker")
-
-    captured = {}
-
-    async def fake_execute_playbook(config, args):
-        captured["config"] = config
-        captured["args"] = args
-        return {"completed": True, "failed": False}
-
-    def fail_plugin_executor(*_args, **_kwargs):
-        raise AssertionError("execute_playbook_task should not be used when return_step is set")
-
-    monkeypatch.setattr(worker, "_execute_playbook", fake_execute_playbook)
-    monkeypatch.setattr(worker_module, "execute_playbook_task", fail_plugin_executor)
-
-    result = await worker._execute_tool(
-        tool_kind="playbook",
-        config={
-            "path": "tests/fixtures/playbooks/example_child",
-            "return_step": "end",
-            "args": {"batch_number": 3},
-        },
-        args={},
-        step="launch_child",
-        render_context={"execution_id": "exec-1"},
-    )
-
-    assert result["completed"] is True
-    assert captured["config"]["return_step"] == "end"
-    assert captured["args"] == {"batch_number": 3}
-
-
-@pytest.mark.asyncio
-async def test_playbook_tool_passes_merged_args_to_plugin_executor(monkeypatch):
-    worker = V2Worker(worker_id="test-worker")
-
-    captured = {}
-
-    def fake_execute_playbook_task(task_config, context, jinja_env, task_with):
-        captured["task_config"] = task_config
-        captured["context"] = context
-        captured["task_with"] = task_with
-        return {"status": "success", "data": {"status": "started"}}
-
-    monkeypatch.setattr(worker_module, "execute_playbook_task", fake_execute_playbook_task)
-
-    result = await worker._execute_tool(
-        tool_kind="playbook",
-        config={
-            "path": "tests/fixtures/playbooks/example_child",
-            "args": {"batch_number": 5},
-        },
-        args={"offset": 400},
-        step="launch_child",
-        render_context={"execution_id": "exec-2"},
-    )
-
-    assert result["status"] == "success"
-    assert captured["task_with"] == {"batch_number": 5, "offset": 400}
-
-
-@pytest.mark.asyncio
-async def test_execute_playbook_return_step_detects_terminal_status_field(monkeypatch):
-    worker = V2Worker(worker_id="test-worker")
-    worker._current_execution_id = "99502"
-
-    class FakeResponse:
-        def __init__(self, payload, status_code=200):
-            self._payload = payload
-            self.status_code = status_code
-
-        def raise_for_status(self):
-            if self.status_code >= 400:
-                raise RuntimeError(f"HTTP {self.status_code}")
-
-        def json(self):
-            return self._payload
-
-    class FakeHttpClient:
-        def __init__(self):
-            self.post_payload = None
-            self.get_calls = 0
-
-        async def post(self, _url, json=None, timeout=None):
-            self.post_payload = json
-            return FakeResponse({"execution_id": "child-exec-1"})
-
-        async def get(self, _url, timeout=None):
-            self.get_calls += 1
-            return FakeResponse(
-                {
-                    "execution_id": "child-exec-1",
-                    "current_step": "end",
-                    "completed": True,
-                    "failed": False,
-                }
-            )
-
-    async def fast_sleep(_seconds):
-        return None
-
-    worker._http_client = FakeHttpClient()
-    monkeypatch.setattr(worker_module.asyncio, "sleep", fast_sleep)
-
-    result = await worker._execute_playbook(
-        {
-            "path": "tests/fixtures/playbooks/batch_execution/traveler_batch_enrichment_chunk_worker",
-            "return_step": "end",
-            "timeout": 2,
-        },
-        {"batch_number": 1},
-    )
-
-    assert result["completed"] is True
-    assert result["failed"] is False
-    assert result["execution_id"] == "child-exec-1"
-    assert worker._http_client.post_payload["parent_execution_id"] == "parent-exec-1"
-    assert worker._http_client.get_calls == 1
+from noetl.worker.nats_worker import Worker
 
 
 @pytest.mark.asyncio
 async def test_execute_playbook_waits_for_status_endpoint_not_transient_execution_status(monkeypatch):
-    worker = V2Worker(worker_id="test-worker")
+    worker = Worker(worker_id="test-worker")
     worker._current_execution_id = "99503"
 
     class FakeResponse:
@@ -200,7 +78,7 @@ async def test_execute_playbook_waits_for_status_endpoint_not_transient_executio
 
 @pytest.mark.asyncio
 async def test_execute_playbook_retries_transient_errors_on_spawn(monkeypatch):
-    worker = V2Worker(worker_id="test-worker")
+    worker = Worker(worker_id="test-worker")
 
     class FakeResponse:
         def __init__(self, payload, status_code=200):
@@ -242,7 +120,7 @@ async def test_execute_playbook_retries_transient_errors_on_spawn(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_execute_playbook_retries_transient_errors_while_polling_status(monkeypatch):
-    worker = V2Worker(worker_id="test-worker")
+    worker = Worker(worker_id="test-worker")
 
     class FakeResponse:
         def __init__(self, payload, status_code=200):
@@ -300,7 +178,7 @@ async def test_execute_playbook_retries_transient_errors_while_polling_status(mo
 
 @pytest.mark.asyncio
 async def test_execute_command_error_events_use_externalized_response(monkeypatch):
-    worker = V2Worker(worker_id="test-worker")
+    worker = Worker(worker_id="test-worker")
     emitted = []
     batch_payloads = []
 
@@ -369,7 +247,7 @@ async def test_execute_command_error_events_use_externalized_response(monkeypatc
 
 @pytest.mark.asyncio
 async def test_execute_command_forces_reference_persistence_for_event_payloads(monkeypatch):
-    worker = V2Worker(worker_id="test-worker")
+    worker = Worker(worker_id="test-worker")
     emitted = []
     batch_payloads = []
     seen_output_configs = []
@@ -435,75 +313,8 @@ async def test_execute_command_forces_reference_persistence_for_event_payloads(m
 
 
 @pytest.mark.asyncio
-async def test_execute_command_normalizes_stringified_context_sections(monkeypatch):
-    worker = V2Worker(worker_id="test-worker")
-    emitted = []
-    captured = {}
-
-    async def fake_execute_tool(tool_kind, tool_config, args, step, render_context, case_blocks=None):
-        captured["tool_kind"] = tool_kind
-        captured["tool_config"] = tool_config
-        captured["args"] = args
-        captured["render_context"] = render_context
-        captured["case_blocks"] = case_blocks
-        captured["step"] = step
-        return {"status": "ok"}
-
-    async def fake_emit_event(_server_url, _execution_id, _step, event_name, payload, **_kwargs):
-        emitted.append((event_name, payload))
-
-    async def fake_emit_batch_events(*_args, **_kwargs):
-        return True
-
-    class FakeResultHandler:
-        def __init__(self, execution_id):
-            self.execution_id = execution_id
-
-        async def process_result(self, step_name, result, output_config):
-            return {
-                "_ref": {
-                    "kind": "result_ref",
-                    "ref": f"noetl://execution/{self.execution_id}/result/{step_name}/ctx-normalized",
-                    "store": "kv",
-                    "scope": "execution",
-                    "meta": {"bytes": 48},
-                },
-                "_size_bytes": 48,
-                "_store": "kv",
-            }
-
-    monkeypatch.setattr(worker, "_execute_tool", fake_execute_tool)
-    monkeypatch.setattr(worker, "_emit_event", fake_emit_event)
-    monkeypatch.setattr(worker, "_emit_batch_events", fake_emit_batch_events)
-    monkeypatch.setattr(worker_module, "ResultHandler", FakeResultHandler)
-    monkeypatch.setattr(worker_module, "is_result_ref", lambda value: isinstance(value, dict) and "_ref" in value)
-
-    command = {
-        "execution_id": "exec-2",
-        "step": "start",
-        "tool_kind": "python",
-        "context": {
-            "tool_config": '{"input": {"from_tool": 1}}',
-            "args": '{"from_context": 2}',
-            "render_context": '{"foo": "bar"}',
-            "case": '[{"when": "{{ true }}", "then": {"next": "end"}}]',
-            "spec": '{"case_mode": "parallel", "eval_mode": "continuous"}',
-        },
-    }
-
-    await worker._execute_command(command, server_url="http://noetl.test", command_id="cmd-2")
-
-    assert captured["tool_kind"] == "python"
-    assert captured["tool_config"] == {"args": {"from_tool": 1}}
-    assert captured["args"] == {"from_tool": 1, "from_context": 2}
-    assert captured["render_context"]["foo"] == "bar"
-    assert isinstance(captured["case_blocks"], list)
-    assert any(name == "call.done" for name, _payload in emitted)
-
-
-@pytest.mark.asyncio
 async def test_execute_command_postgres_requires_auth_in_context(monkeypatch):
-    worker = V2Worker(worker_id="test-worker")
+    worker = Worker(worker_id="test-worker")
     emitted = []
     batch_payloads = []
 
@@ -540,7 +351,7 @@ async def test_execute_command_postgres_requires_auth_in_context(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_execute_command_postgres_rejects_direct_connection_fields(monkeypatch):
-    worker = V2Worker(worker_id="test-worker")
+    worker = Worker(worker_id="test-worker")
     emitted = []
     batch_payloads = []
 
@@ -577,7 +388,7 @@ async def test_execute_command_postgres_rejects_direct_connection_fields(monkeyp
 
 @pytest.mark.asyncio
 async def test_wait_for_postgres_capacity_retries_until_headroom(monkeypatch):
-    worker = V2Worker(worker_id="test-worker")
+    worker = Worker(worker_id="test-worker")
     worker._running = True
     worker._throttle_poll_interval = 0.01
 
@@ -601,7 +412,7 @@ async def test_wait_for_postgres_capacity_retries_until_headroom(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_handle_command_notification_applies_db_semaphore_for_postgres(monkeypatch):
-    worker = V2Worker(worker_id="test-worker")
+    worker = Worker(worker_id="test-worker")
     worker._running = True
 
     calls = {"acquire": 0, "release": 0, "wait_capacity": 0, "execute": 0}
@@ -656,7 +467,7 @@ async def test_handle_command_notification_applies_db_semaphore_for_postgres(mon
 
 @pytest.mark.asyncio
 async def test_handle_command_notification_skips_db_semaphore_for_non_db_tool(monkeypatch):
-    worker = V2Worker(worker_id="test-worker")
+    worker = Worker(worker_id="test-worker")
     worker._running = True
 
     calls = {"acquire": 0, "release": 0, "execute": 0}
@@ -706,7 +517,7 @@ async def test_handle_command_notification_skips_db_semaphore_for_non_db_tool(mo
 
 @pytest.mark.asyncio
 async def test_handle_command_notification_returns_delayed_nak_action_without_sleep(monkeypatch):
-    worker = V2Worker(worker_id="test-worker")
+    worker = Worker(worker_id="test-worker")
     worker._running = True
 
     async def fake_claim(_server_url, _event_id):

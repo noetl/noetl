@@ -36,7 +36,15 @@ class TransitionMixin:
         if loop_event_id:
             collection = await nats_cache.get_loop_collection(str(state.execution_id), step_def.step, loop_event_id)
         
-        if collection is None:
+        should_pre_render_collection = not (
+            existing_loop_state is not None
+            and (
+                step_input.get("__loop_continue")
+                or step_input.get("__loop_retry")
+            )
+        )
+
+        if collection is None and should_pre_render_collection:
             # Render and save
             context = state.get_render_context(Event(
                 execution_id=state.execution_id, step=step_def.step, name="loop_init", payload={}
@@ -51,7 +59,8 @@ class TransitionMixin:
         issue_budget = self._get_loop_max_in_flight(step_def)
         commands: list[Command] = []
         shared_control_args = dict(step_input)
-        shared_control_args["__loop_collection"] = collection
+        if collection is not None:
+            shared_control_args["__loop_collection"] = collection
 
         for _ in range(issue_budget):
             command = await self._create_command_for_step(state, step_def, shared_control_args)
@@ -183,7 +192,7 @@ class TransitionMixin:
                     continue
 
             # Apply arc-level set mutations to state before issuing the command.
-            # Canonical DSL v2: arc.set writes to ctx/iter/step scopes.
+            # Arc-level set writes to ctx/iter/step scopes.
             if arc_set:
                 from noetl.core.dsl.render import render_template as recursive_render
                 rendered_arc_set = recursive_render(self.jinja_env, arc_set, context)

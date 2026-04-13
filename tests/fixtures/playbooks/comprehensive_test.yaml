@@ -1,12 +1,12 @@
 apiVersion: noetl.io/v2
 kind: Playbook
 metadata:
-  name: v2_comprehensive_test
-  path: test/v2/comprehensive
-  description: Comprehensive V2 test with multiple steps, conditionals, and data flow
+  name: comprehensive_test
+  path: test/comprehensive
+  description: Comprehensive test with multiple steps, conditionals, and data flow
 
 workload:
-  initial_message: "Starting V2 comprehensive test"
+  initial_message: "Starting comprehensive test"
   threshold: 10
 
 workflow:
@@ -94,7 +94,7 @@ workflow:
         print(f"[SUMMARIZE] Generating final summary")
 
         summary = {
-            "workflow": "v2_comprehensive_test",
+            "workflow": "comprehensive_test",
             "original_value": start_value,
             "processing_path": category,
             "final_result": final_value,

@@ -111,7 +111,7 @@ async def extract_playbook_location(context: Dict[str, Any]) -> tuple[Optional[s
     """
     Extract playbook path and version from execution context.
 
-    For V2 worker architecture, uses catalog_id to fetch path from catalog API.
+    Uses catalog_id to fetch path from catalog API.
     Falls back to context-based extraction for legacy compatibility.
 
     Args:
@@ -123,7 +123,7 @@ async def extract_playbook_location(context: Dict[str, Any]) -> tuple[Optional[s
     Raises:
         ValueError: If path not found in context or catalog API
     """
-    # V2 Architecture: Use catalog_id to fetch path from catalog API
+    # Use catalog_id to fetch path from catalog API.
     # Worker never accesses noetl database directly - uses server API instead
     catalog_id = context.get("catalog_id")
     if catalog_id:

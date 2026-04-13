@@ -1,13 +1,11 @@
-"""
-Tests for NoETL DSL v2 Parser
-"""
+"""Tests for the NoETL DSL parser."""
 
 import pytest
 from noetl.core.dsl.engine.parser import DSLParser
 
 
 def test_parse_simple_playbook():
-    """Test parsing a simple v2 playbook."""
+    """Test parsing a simple playbook."""
     yaml_content = """
 apiVersion: noetl.io/v2
 kind: Playbook

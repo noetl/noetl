@@ -15,6 +15,7 @@ import os
 import time
 import asyncio
 import json
+import sys
 from collections import OrderedDict
 from typing import Any, Optional, TypeVar, Generic
 from datetime import datetime, timezone
@@ -23,12 +24,57 @@ from psycopg.types.json import Json
 from psycopg.rows import dict_row
 
 from noetl.core.dsl.engine.models import Event, Command, Playbook, Step, ToolCall, CommandSpec, NextRouter, Arc
-from noetl.core.db.pool import get_pool_connection, get_snowflake_id
-from noetl.core.cache import get_nats_cache
+from noetl.core.db import pool as db_pool
+from noetl.core.cache import nats_kv
 from noetl.core.storage import default_store
 
 from noetl.core.logger import setup_logger
 logger = setup_logger(__name__, include_location=True)
+
+
+def _engine_module():
+    return sys.modules.get("noetl.core.dsl.engine.executor")
+
+
+def _engine_setting(name: str, default: Any) -> Any:
+    engine_module = _engine_module()
+    if engine_module is None:
+        return default
+    value = getattr(engine_module, name, default)
+    return default if value is None else value
+
+
+def get_pool_connection():
+    """Resolve the shared DB pool lazily so package-level monkeypatches still work."""
+    override = _engine_setting("get_pool_connection", None)
+    if override and override is not get_pool_connection:
+        return override()
+    return db_pool.get_pool_connection()
+
+
+def get_snowflake_id():
+    override = _engine_setting("get_snowflake_id", None)
+    if override and override is not get_snowflake_id:
+        return override()
+    return db_pool.get_snowflake_id()
+
+
+def get_nats_cache():
+    """Resolve the shared NATS cache lazily.
+
+    Keep this as an indirection instead of binding the cache factory directly so tests
+    and runtime monkeypatches against ``noetl.core.cache.nats_kv.get_nats_cache`` keep
+    working after the engine package refactor.
+    """
+    return nats_kv.get_nats_cache()
+
+
+def _loop_result_max_bytes() -> int:
+    return int(_engine_setting("_LOOP_RESULT_MAX_BYTES", _LOOP_RESULT_MAX_BYTES))
+
+
+def _loop_result_max_items() -> int:
+    return int(_engine_setting("_LOOP_RESULT_MAX_ITEMS", _LOOP_RESULT_MAX_ITEMS))
 
 _LOOP_RESULT_MAX_BYTES = max(
     0,
@@ -215,14 +261,15 @@ def _compact_loop_result(result: Any) -> Any:
     This protects server memory/render context from large per-item payloads while
     preserving basic diagnostics for loop aggregation.
     """
-    if _LOOP_RESULT_MAX_BYTES <= 0:
+    max_bytes = _loop_result_max_bytes()
+    if max_bytes <= 0:
         return result
 
     if not isinstance(result, (dict, list, tuple)):
         return result
 
     size_bytes = _estimate_json_size(result)
-    if size_bytes <= _LOOP_RESULT_MAX_BYTES:
+    if size_bytes <= max_bytes:
         return result
 
     return {
@@ -240,7 +287,7 @@ def _retain_recent_loop_results(
 ) -> tuple[list[Any], int]:
     """Keep only a bounded tail of loop results to cap in-memory state growth."""
     if max_items is None:
-        max_items = _LOOP_RESULT_MAX_ITEMS
+        max_items = _loop_result_max_items()
     if max_items <= 0 or len(results) <= max_items:
         return results, omitted_count
     overflow = len(results) - max_items

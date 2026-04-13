@@ -5,12 +5,12 @@ apiVersion: noetl.io/v2
 kind: Playbook
 
 metadata:
-  name: v2_simple_python_test
-  path: test/v2/simple_python
-  description: Simple Python test for V2 worker
+  name: simple_python_test
+  path: test/simple_python
+  description: Simple Python test for the worker
 
 workload:
-  message: "Hello from V2"
+  message: "Hello from NoETL"
 
 workflow:
   - step: start

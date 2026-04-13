@@ -10,5 +10,4 @@ def test_postgres_execute_requires_query_or_procedure():
 
     r = client.post("/api/postgres/execute", json={})
     assert r.status_code == 400
-    assert "query or procedure is required" in r.json().get("error", "")
-
+    assert "query or procedure is required" in r.json().get("detail", "")

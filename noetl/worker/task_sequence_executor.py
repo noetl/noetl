@@ -569,7 +569,7 @@ class TaskSequenceExecutor:
             }
             action = self._evaluate_policy_rules(policy_rules, eval_ctx, ctx.output)
 
-            # Apply unified 'set' mutations (canonical DSL v2: ctx.*, iter.*, step.*)
+            # Apply unified 'set' mutations across ctx.*, iter.*, and step.* scopes.
             if action.set:
                 for key, value in action.set.items():
                     if isinstance(value, str) and "{{" in value:
@@ -952,7 +952,7 @@ class TaskSequenceExecutor:
             except ValueError:
                 delay = 1.0
 
-        # Canonical DSL v2: unified 'set' with scoped keys (ctx.*, iter.*, step.*).
+        # Canonical DSL uses scoped 'set' keys (ctx.*, iter.*, step.*).
         merged_set: Optional[dict[str, Any]] = then_data.get("set")
 
         return ControlAction(

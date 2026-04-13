@@ -1,11 +1,11 @@
 apiVersion: noetl.io/v2
 kind: Playbook
 metadata:
-  name: v2_http_test
-  path: test/v2/http
+  name: http_test
+  path: test/http
 
 workload:
-  test_message: "Testing V2 HTTP tool"
+  test_message: "Testing HTTP tool"
   # Use the NoETL server ClusterIP directly (from kubectl get svc)
   api_url: "http://10.96.86.212:8082"
 

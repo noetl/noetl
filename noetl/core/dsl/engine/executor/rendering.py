@@ -303,22 +303,26 @@ class RenderingMixin:
             # min_required_size.  Accumulated completion counts span multiple batches and
             # would falsely inflate the threshold beyond the per-epoch batch size, causing
             # valid same-epoch snapshots to be rejected after the first batch.
-            snapshot_epoch_size = int(snapshot.get("epoch_size", cached_size) or cached_size)
+            snapshot_epoch_size_raw = snapshot.get("epoch_size")
+            snapshot_epoch_size = int(snapshot_epoch_size_raw or 0)
             completed_count = max(
                 state.get_loop_completed_count(step_name),
                 snapshot_completed_count,
             )
-            completed_count = min(completed_count, snapshot_epoch_size)
             scheduled_count = max(
                 snapshot_scheduled_count,
                 completed_count,
             )
-            scheduled_count = min(scheduled_count, snapshot_epoch_size)
-            min_required_size = max(
-                1,
-                min(completed_count, snapshot_epoch_size),
-                min(scheduled_count, snapshot_epoch_size),
-            )
+            if snapshot_epoch_size > 0:
+                completed_count = min(completed_count, snapshot_epoch_size)
+                scheduled_count = min(scheduled_count, snapshot_epoch_size)
+                min_required_size = max(
+                    1,
+                    min(completed_count, snapshot_epoch_size),
+                    min(scheduled_count, snapshot_epoch_size),
+                )
+            else:
+                min_required_size = max(1, completed_count, scheduled_count)
 
             loop_mode = str(loop_state.get("mode") or snapshot.get("mode") or "").lower()
             if (
@@ -392,7 +396,7 @@ class RenderingMixin:
             # Fix: when the cross-epoch total exceeds one epoch's size, reset results/counts
             # and index to the snapshot's epoch-relative values so downstream exhaustion
             # checks operate on the current epoch only.
-            if completed_count > snapshot_epoch_size:
+            if snapshot_epoch_size > 0 and completed_count > snapshot_epoch_size:
                 # Use modulus to get the actual completed/scheduled count within the CURRENT epoch,
                 # ensuring that exactly completing a multiple of epoch_size returns the full size,
                 # rather than 0, unless no work has been done in the current epoch.
@@ -432,4 +436,3 @@ class RenderingMixin:
                 )
 
         return restored_count
-

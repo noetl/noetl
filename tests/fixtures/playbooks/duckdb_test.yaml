@@ -1,10 +1,10 @@
 apiVersion: noetl.io/v2
 kind: Playbook
 metadata:
-  name: v2_duckdb_test
-  path: test/v2/duckdb
+  name: duckdb_test
+  path: test/duckdb
 workload:
-  test_message: Testing V2 DuckDB tool
+  test_message: Testing DuckDB tool
 workflow:
 - step: start
   desc: Create table, insert data, and query in one step

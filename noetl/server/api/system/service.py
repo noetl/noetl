@@ -60,7 +60,11 @@ class SystemService:
         with SystemService._process.oneshot():
             cpu_times = SystemService._process.cpu_times()
             mem_info = SystemService._process.memory_info()
-            io_counters = SystemService._process.io_counters()
+            io_counters_fn = getattr(SystemService._process, "io_counters", None)
+            io_counters = io_counters_fn() if callable(io_counters_fn) else None
+            read_bytes = getattr(io_counters, "read_bytes", 0) if io_counters is not None else 0
+            write_bytes = getattr(io_counters, "write_bytes", 0) if io_counters is not None else 0
+            shared_bytes = getattr(mem_info, "shared", 0)
             
             process_status = ProcessStatus(
                 pid=SystemService._process.pid,
@@ -69,10 +73,10 @@ class SystemService:
                 system_cpu_time=cpu_times.system,
                 memory_rss_mb=mem_info.rss / (1024 * 1024),
                 memory_vms_mb=mem_info.vms / (1024 * 1024),
-                memory_shared_mb=mem_info.shared / (1024 * 1024),
+                memory_shared_mb=shared_bytes / (1024 * 1024),
                 num_threads=SystemService._process.num_threads(),
-                io_read_mb=io_counters.read_bytes / (1024 * 1024),
-                io_write_mb=io_counters.write_bytes / (1024 * 1024),
+                io_read_mb=read_bytes / (1024 * 1024),
+                io_write_mb=write_bytes / (1024 * 1024),
             )
         
         # Get system metrics

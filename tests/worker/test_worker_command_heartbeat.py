@@ -2,12 +2,12 @@ import asyncio
 
 import pytest
 
-from noetl.worker.nats_worker import V2Worker
+from noetl.worker.nats_worker import Worker
 
 
 @pytest.mark.asyncio
 async def test_command_heartbeat_loop_emits_periodic_events(monkeypatch):
-    worker = V2Worker(worker_id="test-worker")
+    worker = Worker(worker_id="test-worker")
     worker._running = True
     worker._command_heartbeat_interval_seconds = 0.01
     worker._command_heartbeat_timeout_seconds = 0.01
@@ -43,7 +43,7 @@ async def test_command_heartbeat_loop_emits_periodic_events(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_command_heartbeat_loop_stops_without_emitting_when_already_stopped(monkeypatch):
-    worker = V2Worker(worker_id="test-worker")
+    worker = Worker(worker_id="test-worker")
     worker._running = True
     worker._command_heartbeat_interval_seconds = 0.01
 

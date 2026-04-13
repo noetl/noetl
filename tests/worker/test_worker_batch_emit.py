@@ -2,7 +2,7 @@ import httpx
 import pytest
 
 import noetl.worker.nats_worker as worker_module
-from noetl.worker.nats_worker import V2Worker
+from noetl.worker.nats_worker import Worker
 
 
 class _FakeResponse:
@@ -36,7 +36,7 @@ class _SequenceHttpClient:
 
 
 def test_normalize_output_config_supports_canonical_tool_output():
-    worker = V2Worker(worker_id="worker-test")
+    worker = Worker(worker_id="worker-test")
 
     normalized = worker._normalize_output_config(
         {
@@ -61,7 +61,7 @@ def test_normalize_output_config_supports_canonical_tool_output():
 
 @pytest.mark.asyncio
 async def test_emit_batch_events_reuses_idempotency_key_across_retries():
-    worker = V2Worker(worker_id="worker-test")
+    worker = Worker(worker_id="worker-test")
     worker._http_client = _SequenceHttpClient(
         [
             _FakeResponse(
@@ -95,7 +95,7 @@ async def test_emit_batch_events_reuses_idempotency_key_across_retries():
 
 @pytest.mark.asyncio
 async def test_emit_batch_events_externalizes_large_response_payload(monkeypatch):
-    worker = V2Worker(worker_id="worker-test")
+    worker = Worker(worker_id="worker-test")
     worker._http_client = _SequenceHttpClient(
         [_FakeResponse(202, payload={"status": "accepted", "request_id": "req-2"})]
     )
@@ -140,7 +140,7 @@ async def test_emit_batch_events_externalizes_large_response_payload(monkeypatch
 
 @pytest.mark.asyncio
 async def test_claim_and_fetch_command_resolves_externalized_context(monkeypatch):
-    worker = V2Worker(worker_id="worker-test")
+    worker = Worker(worker_id="worker-test")
     worker._http_client = _SequenceHttpClient(
         [
             _FakeResponse(
@@ -182,7 +182,7 @@ async def test_claim_and_fetch_command_resolves_externalized_context(monkeypatch
 
 @pytest.mark.asyncio
 async def test_execute_command_resolves_nested_externalized_context_fields(monkeypatch):
-    worker = V2Worker(worker_id="worker-test")
+    worker = Worker(worker_id="worker-test")
 
     resolved_refs = {
         "noetl://execution/123/result/tool/abcd1234": {"kind": "python", "code": "return 1"},
@@ -205,9 +205,9 @@ async def test_execute_command_resolves_nested_externalized_context_fields(monke
         return {"status": "ok", "data": {"value": 1}}
 
     monkeypatch.setattr(worker_module.default_store, "resolve", _fake_resolve)
-    monkeypatch.setattr(V2Worker, "_emit_batch_events", _fake_emit_batch_events)
-    monkeypatch.setattr(V2Worker, "_emit_event", _fake_emit_event)
-    monkeypatch.setattr(V2Worker, "_execute_tool", _fake_execute_tool)
+    monkeypatch.setattr(Worker, "_emit_batch_events", _fake_emit_batch_events)
+    monkeypatch.setattr(Worker, "_emit_event", _fake_emit_event)
+    monkeypatch.setattr(Worker, "_execute_tool", _fake_execute_tool)
 
     await worker._execute_command(
         {

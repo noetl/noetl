@@ -1,8 +1,8 @@
 apiVersion: noetl.io/v2
 kind: Playbook
 metadata:
-  name: simple_http_example_v2
-  path: examples/simple_http_v2
+  name: simple_http_example
+  path: examples/simple_http
   labels:
     category: example
     version: v10

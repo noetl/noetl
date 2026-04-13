@@ -28,11 +28,11 @@ from .schema import (
     AnalyzeExecutionWithAIResponse,
 )
 
-# V2 engine fallback
+# Core engine fallback
 try:
-    from noetl.server.api.core import get_engine as get_v2_engine
+    from noetl.server.api.core import get_engine as get_core_engine
 except Exception:  # pragma: no cover
-    get_v2_engine = None
+    get_core_engine = None
 
 logger = setup_logger(__name__, include_location=True)
 router = APIRouter(tags=["executions"])
@@ -489,6 +489,14 @@ def _infer_execution_completion_from_events(
     ):
         return "COMPLETED", latest_event.get("created_at")
 
+    if (
+        latest_event
+        and latest_event.get("event_type") == "batch.completed"
+        and latest_event.get("status") == "COMPLETED"
+        and pending_count <= 0
+    ):
+        return "COMPLETED", latest_event.get("created_at")
+
     return "RUNNING", None
 
 
@@ -738,9 +746,9 @@ async def finalize_execution(execution_id: str, request: FinalizeExecutionReques
     Forcibly finalize an execution by emitting terminal events if not already completed.
     This is for admin/automation use to close out stuck or abandoned executions.
     """
-    if get_v2_engine is None:
-        raise HTTPException(status_code=500, detail="V2 engine not available")
-    engine = get_v2_engine()
+    if get_core_engine is None:
+        raise HTTPException(status_code=500, detail="Execution engine not available")
+    engine = get_core_engine()
     # Try to load state
     state = await engine.state_store.load_state(execution_id)
     if not state:
@@ -1175,10 +1183,10 @@ async def get_execution(
                 pending_row = await cursor.fetchone()
 
     if first_event is None:
-        # No events found - check v2 engine fallback
-        if get_v2_engine:
+        # No events found - check engine fallback
+        if get_core_engine:
             try:
-                engine = get_v2_engine()
+                engine = get_core_engine()
                 state = engine.state_store.get_state(execution_id)
                 if state:
                     path = None
@@ -1200,7 +1208,7 @@ async def get_execution(
                         "pagination": pagination if include_events else None,
                     }
             except Exception as e:
-                logger.warning(f"V2 engine fallback failed for execution {execution_id}: {e}")
+                logger.warning(f"Execution engine fallback failed for execution {execution_id}: {e}")
         raise HTTPException(status_code=404, detail=f"Execution {execution_id} not found")
 
     # Get playbook path and version from catalog
@@ -1685,14 +1693,14 @@ async def analyze_execution_with_ai(
         ai_payload["openai_secret_path"] = openai_secret_path
 
     try:
-        from noetl.server.api.core import ExecuteRequest as V2ExecuteRequest
-        from noetl.server.api.core import execute as execute_v2
+        from noetl.server.api.core import ExecuteRequest as ExecuteRequest
+        from noetl.server.api.core import execute as execute_playbook
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"V2 execute endpoint is unavailable: {exc}") from exc
+        raise HTTPException(status_code=500, detail=f"Execute endpoint is unavailable: {exc}") from exc
 
     try:
-        ai_exec = await execute_v2(
-            V2ExecuteRequest(
+        ai_exec = await execute_playbook(
+            ExecuteRequest(
                 path=request.analysis_playbook_path,
                 payload=ai_payload,
             )

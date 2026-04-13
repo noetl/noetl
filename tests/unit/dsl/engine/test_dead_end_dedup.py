@@ -6,7 +6,7 @@ Regression coverage for:
   any_actionable_issued — a matched-but-deduplicated arc must NOT be treated
   as a dead-end transition.
 
-Production evidence: execution 590113029212078805 on v2.10.39 hit a false
+Production evidence: execution 590113029212078805 on release 2.10.39 hit a false
 dead-end at load_patients_for_conditions despite an unconditional fallback arc
 to load_patients_for_medications.  The target step was already in issued_steps
 from a concurrent call.done processor on a second pod, so command creation was

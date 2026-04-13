@@ -136,7 +136,7 @@ class ClaimTerminalError(RuntimeError):
         self.retryable = retryable
 
 
-class V2Worker:
+class Worker:
     """
     Core Worker that receives command notifications from NATS and executes them.
     
@@ -2554,7 +2554,7 @@ class V2Worker:
             return result.get('data', result) if isinstance(result, dict) else result
             
         elif tool_kind == "container":
-            # Container execution - keep inline for now as it's V2-specific
+            # Container execution still runs inline for now.
             return await self._execute_container(config, args)
             
         elif tool_kind == "script":
@@ -2849,7 +2849,7 @@ class V2Worker:
             raise ValueError("Workbook execution requires 'name' in config")
         
         # Get workbook task definition from catalog
-        # In V2, workbook tasks are stored in playbook.workbook section
+        # Workbook tasks are stored in playbook.workbook.
         # For now, return error - requires catalog access
         raise NotImplementedError("Workbook tool execution requires catalog integration")
     
@@ -3415,7 +3415,7 @@ class V2Worker:
                     await asyncio.sleep(delay)
 
 
-async def run_v2_worker(
+async def run_worker(
     worker_id: str,
     nats_url: str = "nats://noetl:noetl@nats.nats.svc.cluster.local:4222",
     server_url: Optional[str] = None
@@ -3426,9 +3426,9 @@ async def run_v2_worker(
     
     # No database pool initialization - worker uses server API for all noetl schema access
     # Only tool steps (postgres, duckdb) access external databases with their own credentials
-    logger.info("V2 Worker uses server API for variables, events, and context (no direct DB access)")
+    logger.info("Worker uses server API for variables, events, and context (no direct DB access)")
     
-    worker = V2Worker(
+    worker = Worker(
         worker_id=worker_id,
         nats_url=nats_url,
         server_url=server_url
@@ -3446,7 +3446,7 @@ async def run_v2_worker(
         logger.info("Worker cleanup complete")
 
 
-def run_worker_v2_sync(
+def run_worker_sync(
     nats_url: str = "nats://noetl:noetl@nats.nats.svc.cluster.local:4222",
     server_url: Optional[str] = None
 ):
@@ -3478,7 +3478,7 @@ def run_worker_v2_sync(
             f.write(f"About to call asyncio.run at {datetime.now()}\n")
             f.flush()
         
-        asyncio.run(run_v2_worker(worker_id, nats_url, server_url))
+        asyncio.run(run_worker(worker_id, nats_url, server_url))
         
         with open("/tmp/worker_after_run.txt", "w") as f:
             f.write(f"asyncio.run returned at {datetime.now()}\n")
