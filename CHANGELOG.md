@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.17.20](https://github.com/noetl/noetl/compare/v2.17.19...v2.17.20) (2026-04-13)
+
+### Bug Fixes
+
+* correct dollar-quote regex group references in postgres SQL parser ([6a26d58](https://github.com/noetl/noetl/commit/6a26d587ea237ba1f64c5b750e163d00bf772819))
+
 ## [2.17.19](https://github.com/noetl/noetl/compare/v2.17.18...v2.17.19) (2026-04-13)
 
 ### Bug Fixes
