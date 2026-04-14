@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.17.21](https://github.com/noetl/noetl/compare/v2.17.20...v2.17.21) (2026-04-14)
+
+### Bug Fixes
+
+* remove memory-bloating loop arrays from server execution state ([39b21c0](https://github.com/noetl/noetl/commit/39b21c0e417ff92cef54fb67acf3716262d58146))
+
 ## [2.17.20](https://github.com/noetl/noetl/compare/v2.17.19...v2.17.20) (2026-04-13)
 
 ### Bug Fixes
