@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.17.22](https://github.com/noetl/noetl/compare/v2.17.21...v2.17.22) (2026-04-14)
+
+### Bug Fixes
+
+* remove O(N) context traversal overhead in Jinja template engine ([4eed660](https://github.com/noetl/noetl/commit/4eed6609c2ae8756a3263276c270e4033b04d9a4))
+
 ## [2.17.21](https://github.com/noetl/noetl/compare/v2.17.20...v2.17.21) (2026-04-14)
 
 ### Bug Fixes
