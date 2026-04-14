@@ -231,3 +231,100 @@ async def test_execute_command_resolves_nested_externalized_context_fields(monke
         server_url="http://server",
         command_id="123:step1:1",
     )
+
+
+@pytest.mark.asyncio
+async def test_execute_command_task_sequence_bounds_initial_event_emit(monkeypatch):
+    worker = Worker(worker_id="worker-test")
+    batch_calls = []
+
+    async def _fake_emit_batch_events(_self, _server_url, _execution_id, events, **kwargs):
+        batch_calls.append({"events": events, **kwargs})
+        return True
+
+    async def _fake_execute_tool(_self, tool_kind, config, args, step, render_context, case_blocks=None):
+        assert tool_kind == "task_sequence"
+        return {"status": "ok", "data": {"value": 1}}
+
+    async def _fake_process_result(_self, step_name, result, output_config=None):
+        return {"_value": result.get("data")}
+
+    from noetl.worker.result_handler import ResultHandler
+    monkeypatch.setattr(ResultHandler, "process_result", _fake_process_result)
+
+
+    monkeypatch.setattr(Worker, "_emit_batch_events", _fake_emit_batch_events)
+    monkeypatch.setattr(Worker, "_execute_tool", _fake_execute_tool)
+
+    await worker._execute_command(
+        {
+            "execution_id": 123,
+            "node_name": "hot_loop",
+            "action": "task_sequence",
+            "context": {
+                "tool_config": {"tasks": []},
+                "input": {},
+                "render_context": {},
+                "spec": {},
+            },
+            "meta": {},
+        },
+        server_url="http://server",
+        command_id="123:hot_loop:1",
+    )
+
+    assert len(batch_calls) == 2
+    assert batch_calls[0]["events"][0]["name"] == "command.started"
+    assert batch_calls[0]["timeout_seconds"] == pytest.approx(
+        worker_module._HOT_PATH_INITIAL_EVENT_TIMEOUT_SECONDS
+    )
+    assert batch_calls[0]["max_retries"] == worker_module._HOT_PATH_INITIAL_EVENT_MAX_RETRIES
+    assert batch_calls[0]["raise_on_failure"] is False
+
+
+@pytest.mark.asyncio
+async def test_execute_command_continues_when_hot_path_initial_events_timeout(monkeypatch):
+    worker = Worker(worker_id="worker-test")
+    seen_terminal_batch = []
+
+    async def _fake_emit_batch_events(_self, _server_url, _execution_id, events, **kwargs):
+        if events and events[0]["name"] == "command.started":
+            return False
+        seen_terminal_batch.extend(events)
+        return True
+
+    async def _fake_execute_tool(_self, tool_kind, config, args, step, render_context, case_blocks=None):
+        return {"status": "ok", "data": {"value": 1}}
+
+    async def _fake_process_result(_self, step_name, result, output_config=None):
+        return {"_value": result.get("data")}
+
+    from noetl.worker.result_handler import ResultHandler
+    monkeypatch.setattr(ResultHandler, "process_result", _fake_process_result)
+
+
+    monkeypatch.setattr(Worker, "_emit_batch_events", _fake_emit_batch_events)
+    monkeypatch.setattr(Worker, "_execute_tool", _fake_execute_tool)
+
+    await worker._execute_command(
+        {
+            "execution_id": 123,
+            "node_name": "hot_loop",
+            "action": "task_sequence",
+            "context": {
+                "tool_config": {"tasks": []},
+                "input": {},
+                "render_context": {},
+                "spec": {},
+            },
+            "meta": {},
+        },
+        server_url="http://server",
+        command_id="123:hot_loop:1",
+    )
+
+    assert [evt["name"] for evt in seen_terminal_batch] == [
+        "call.done",
+        "step.exit",
+        "command.completed",
+    ]

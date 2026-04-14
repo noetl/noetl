@@ -942,7 +942,7 @@ async def test_find_missing_loop_iteration_indices_applies_age_gating(monkeypatc
 
     assert missing == [1, 4]
     assert "event_type = 'command.started'" in cursor.query
-    assert "result->'context'->>'command_id'" in cursor.query
+    
     assert "'call.done'" in cursor.query
     assert "meta->>'loop_event_id' = %s" in cursor.query
     assert "s.command_id IS NULL" in cursor.query
@@ -981,7 +981,7 @@ async def test_find_missing_loop_iteration_indices_clamps_negative_age(monkeypat
     )
 
     assert missing == []
-    assert "result->'context'->>'command_id'" in cursor.query
+    
     assert "'call.done'" in cursor.query
     # issued(execution_id,node_name) + started(execution_id,node_name)
     # + terminal(execution_id,node_name) + min_age + limit

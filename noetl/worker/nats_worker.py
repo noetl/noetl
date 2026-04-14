@@ -35,6 +35,13 @@ from noetl.core.urls import (
 )
 logger = setup_logger(__name__, include_location=True)
 
+_HOT_PATH_INITIAL_EVENT_TIMEOUT_SECONDS = float(
+    os.getenv("NOETL_HOT_PATH_INITIAL_EVENT_TIMEOUT_SECONDS", "0.25")
+)
+_HOT_PATH_INITIAL_EVENT_MAX_RETRIES = max(
+    1, int(os.getenv("NOETL_HOT_PATH_INITIAL_EVENT_MAX_RETRIES", "1"))
+)
+
 
 def _safe_keys(value: Any, max_items: int = 10) -> list[str]:
     if isinstance(value, dict):
@@ -42,6 +49,11 @@ def _safe_keys(value: Any, max_items: int = 10) -> list[str]:
     if isinstance(value, (list, tuple)):
         return [str(v) for v in list(value)[:max_items]]
     return []
+
+
+def _is_hot_path_initial_event_step(tool_kind: Optional[str]) -> bool:
+    """Return True for command types where informative start events must not block execution."""
+    return str(tool_kind or "").strip().lower() == "task_sequence"
 
 
 # Pre-import tool executors at module level to avoid 5s cold-start delay
@@ -1803,7 +1815,12 @@ class Worker:
 
             # Batch-emit command.started + step.enter in a single HTTP call.
             t_events_start = time.perf_counter()
-            initial_event_timeout = 5.0
+            if _is_hot_path_initial_event_step(tool_kind):
+                initial_event_timeout = _HOT_PATH_INITIAL_EVENT_TIMEOUT_SECONDS
+                initial_event_retries = _HOT_PATH_INITIAL_EVENT_MAX_RETRIES
+            else:
+                initial_event_timeout = 5.0
+                initial_event_retries = 2
             initial_events = []
             if command_id:
                 initial_events.append({
@@ -1820,16 +1837,23 @@ class Worker:
                 "actionable": False,
                 "informative": True,
             })
-            await self._emit_batch_events(
+            initial_events_ok = await self._emit_batch_events(
                 server_url,
                 execution_id,
                 initial_events,
                 timeout_seconds=initial_event_timeout,
-                max_retries=2,
+                max_retries=initial_event_retries,
                 raise_on_failure=False,
             )
             t_events_end = time.perf_counter()
             logger.info(f"[PERF] emit_initial_events (batch) took {(t_events_end - t_events_start)*1000:.1f}ms")
+            if not initial_events_ok:
+                logger.debug(
+                    "[EVENT] Initial informational events not accepted in time for step=%s tool=%s execution=%s; continuing",
+                    step,
+                    tool_kind,
+                    execution_id,
+                )
 
             if str(tool_kind).lower() == "postgres":
                 postgres_auth = tool_config.get("auth")
