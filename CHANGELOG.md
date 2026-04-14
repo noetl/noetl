@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.17.23](https://github.com/noetl/noetl/compare/v2.17.22...v2.17.23) (2026-04-14)
+
+### Bug Fixes
+
+* optimize O(N^2) loop reconciliation queries with proper indexes and non-fallback clauses ([6f1b20e](https://github.com/noetl/noetl/commit/6f1b20e440de50d8fdbeb2f76ab8dd20ebc2fd41))
+
 ## [2.17.22](https://github.com/noetl/noetl/compare/v2.17.21...v2.17.22) (2026-04-14)
 
 ### Bug Fixes
