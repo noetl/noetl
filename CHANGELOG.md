@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.17.24](https://github.com/noetl/noetl/compare/v2.17.23...v2.17.24) (2026-04-14)
+
+### Bug Fixes
+
+* make informative start events non-blocking in worker hot path ([fbf45e2](https://github.com/noetl/noetl/commit/fbf45e235f15f959c44eefc433434a804814f5fa))
+
 ## [2.17.23](https://github.com/noetl/noetl/compare/v2.17.22...v2.17.23) (2026-04-14)
 
 ### Bug Fixes
