@@ -125,22 +125,12 @@ class QueryMixin:
                         """
                         SELECT COUNT(DISTINCT idx.loop_iteration_index) AS cnt
                         FROM (
-                            SELECT COALESCE(
-                                NULLIF(meta->>'loop_iteration_index', '')::int,
-                                NULLIF(result->'context'->>'loop_iteration_index', '')::int,
-                                NULLIF(context->>'loop_iteration_index', '')::int
-                            ) AS loop_iteration_index
+                            SELECT NULLIF(meta->>'loop_iteration_index', '')::int AS loop_iteration_index
                             FROM noetl.event
                             WHERE execution_id = %s
                               AND node_name = ANY(%s)
                               AND event_type = 'call.done'
-                              AND COALESCE(
-                                    meta->>'loop_event_id',
-                                    meta->>'__loop_epoch_id',
-                                    result->'context'->>'loop_event_id',
-                                    result->>'loop_event_id',
-                                    context->>'loop_event_id'
-                                  ) = %s
+                              AND COALESCE(meta->>'loop_event_id', meta->>'__loop_epoch_id') = %s
                         ) idx
                         WHERE idx.loop_iteration_index IS NOT NULL
                         """,
@@ -304,55 +294,27 @@ class QueryMixin:
                         ),
                         started AS (
                             SELECT
-                                COALESCE(
-                                    meta->>'command_id',
-                                    result->'context'->>'command_id',
-                                    context->>'command_id'
-                                ) AS command_id,
+                                meta->>'command_id' AS command_id,
                                 MAX(created_at) AS started_at
                             FROM noetl.event
                             WHERE execution_id = %s
                               AND node_name = ANY(%s)
                               AND event_type = 'command.started'
-                              AND COALESCE(
-                                    meta->>'command_id',
-                                    result->'context'->>'command_id',
-                                    context->>'command_id'
-                                  ) IS NOT NULL
-                              AND COALESCE(
-                                    meta->>'command_id',
-                                    result->'context'->>'command_id',
-                                    context->>'command_id'
-                                  ) IN (
+                              AND meta->>'command_id' IS NOT NULL
+                              AND meta->>'command_id' IN (
                                     SELECT command_id FROM issued WHERE command_id IS NOT NULL
                                   )
-                            GROUP BY COALESCE(
-                                meta->>'command_id',
-                                result->'context'->>'command_id',
-                                context->>'command_id'
-                            )
+                            GROUP BY meta->>'command_id'
                         ),
                         terminal AS (
                             SELECT DISTINCT
-                                COALESCE(
-                                    meta->>'command_id',
-                                    result->'context'->>'command_id',
-                                    context->>'command_id'
-                                ) AS command_id
+                                meta->>'command_id' AS command_id
                             FROM noetl.event
                             WHERE execution_id = %s
                               AND node_name = ANY(%s)
                               AND event_type IN ('command.completed', 'command.failed', 'command.cancelled', 'call.done')
-                              AND COALESCE(
-                                    meta->>'command_id',
-                                    result->'context'->>'command_id',
-                                    context->>'command_id'
-                                  ) IS NOT NULL
-                              AND COALESCE(
-                                    meta->>'command_id',
-                                    result->'context'->>'command_id',
-                                    context->>'command_id'
-                                  ) IN (
+                              AND meta->>'command_id' IS NOT NULL
+                              AND meta->>'command_id' IN (
                                     SELECT command_id FROM issued WHERE command_id IS NOT NULL
                                   )
                         )
@@ -429,49 +391,25 @@ class QueryMixin:
                         ),
                         started AS (
                             SELECT DISTINCT
-                                COALESCE(
-                                    meta->>'command_id',
-                                    result->'context'->>'command_id',
-                                    context->>'command_id'
-                                ) AS command_id
+                                meta->>'command_id' AS command_id
                             FROM noetl.event
                             WHERE execution_id = %s
                               AND node_name = ANY(%s)
                               AND event_type = 'command.started'
-                              AND COALESCE(
-                                    meta->>'command_id',
-                                    result->'context'->>'command_id',
-                                    context->>'command_id'
-                                  ) IS NOT NULL
-                              AND COALESCE(
-                                    meta->>'command_id',
-                                    result->'context'->>'command_id',
-                                    context->>'command_id'
-                                  ) IN (
+                              AND meta->>'command_id' IS NOT NULL
+                              AND meta->>'command_id' IN (
                                     SELECT command_id FROM issued WHERE command_id IS NOT NULL
                                   )
                         ),
                         terminal AS (
                             SELECT DISTINCT
-                                COALESCE(
-                                    meta->>'command_id',
-                                    result->'context'->>'command_id',
-                                    context->>'command_id'
-                                ) AS command_id
+                                meta->>'command_id' AS command_id
                             FROM noetl.event
                             WHERE execution_id = %s
                               AND node_name = ANY(%s)
                               AND event_type IN ('command.completed', 'command.failed', 'command.cancelled', 'call.done')
-                              AND COALESCE(
-                                    meta->>'command_id',
-                                    result->'context'->>'command_id',
-                                    context->>'command_id'
-                                  ) IS NOT NULL
-                              AND COALESCE(
-                                    meta->>'command_id',
-                                    result->'context'->>'command_id',
-                                    context->>'command_id'
-                                  ) IN (
+                              AND meta->>'command_id' IS NOT NULL
+                              AND meta->>'command_id' IN (
                                     SELECT command_id FROM issued WHERE command_id IS NOT NULL
                                   )
                         )

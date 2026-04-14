@@ -633,3 +633,16 @@ AFTER INSERT ON noetl.event
 FOR EACH ROW
 EXECUTE FUNCTION noetl.trg_execution_state_upsert();
 ALTER TABLE noetl.execution ADD COLUMN IF NOT EXISTS state JSONB;
+
+CREATE INDEX IF NOT EXISTS idx_event_loop_event_id
+    ON noetl.event (execution_id, node_name, ((meta->>'loop_event_id')))
+    WHERE meta ? 'loop_event_id';
+CREATE INDEX IF NOT EXISTS idx_event_loop_epoch_id
+    ON noetl.event (execution_id, node_name, ((meta->>'__loop_epoch_id')))
+    WHERE meta ? '__loop_epoch_id';
+
+
+CREATE INDEX IF NOT EXISTS idx_event_loop_epoch_coalesce 
+    ON noetl.event (execution_id, node_name, (COALESCE(meta->>'loop_event_id', meta->>'__loop_epoch_id'))) 
+    WHERE COALESCE(meta->>'loop_event_id', meta->>'__loop_epoch_id') IS NOT NULL;
+
