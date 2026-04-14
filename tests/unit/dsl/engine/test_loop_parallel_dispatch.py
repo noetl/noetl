@@ -476,7 +476,7 @@ async def test_loop_continue_rerenders_when_replayed_cached_collection_is_empty(
         "index": 1,
         "mode": "parallel",
         "completed": False,
-        "results": [],
+        "completed_count": 0,
         "failed_count": 0,
         "scheduled_count": 1,
         "aggregation_finalized": False,
@@ -516,7 +516,7 @@ async def test_loop_continue_rerenders_when_replayed_cached_collection_is_empty(
     assert render_calls["count"] >= 1
     assert command.input.get("claimed_batch") == 2
     assert command.input.get("claimed_index") == 1
-    assert len(state.loop_state["run_batch_workers"]["collection"]) == 3
+    assert state.loop_state["run_batch_workers"]["collection_size"] == 3
 
 
 @pytest.mark.asyncio
@@ -1100,7 +1100,7 @@ def test_restore_loop_collection_snapshot_when_replay_shrinks_collection():
         "index": 5,
         "mode": "parallel",
         "completed": False,
-        "results": [{}, {}, {}],
+        "completed_count": 3,
         "failed_count": 0,
         "scheduled_count": 5,
         "aggregation_finalized": False,
@@ -1229,7 +1229,7 @@ def test_restore_loop_collection_snapshot_skips_when_cached_smaller_than_require
         "index": 6,
         "mode": "parallel",
         "completed": False,
-        "results": [{}, {}, {}],
+        "completed_count": 3,
         "failed_count": 0,
         "scheduled_count": 6,
         "aggregation_finalized": False,
@@ -1278,7 +1278,7 @@ def test_snapshot_loop_collections_captures_progress_counts():
         "index": 7,
         "mode": "parallel",
         "completed": False,
-        "results": [{}, {}, {}, {}],
+        "completed_count": 4,
         "failed_count": 0,
         "scheduled_count": 9,
         "aggregation_finalized": False,
@@ -1320,7 +1320,7 @@ def test_restore_loop_collection_snapshot_honors_snapshot_progress_counts():
         "index": 0,
         "mode": "parallel",
         "completed": False,
-        "results": [],
+        "completed_count": 0,
         "failed_count": 0,
         "scheduled_count": 0,
         "aggregation_finalized": False,
@@ -1424,7 +1424,7 @@ def test_restore_loop_collection_snapshot_clamps_cross_epoch_scheduled_count():
         "index": 0,
         "mode": "parallel",
         "completed": False,
-        "results": [],
+        "completed_count": 0,
         "failed_count": 0,
         "scheduled_count": 381,
         "aggregation_finalized": False,

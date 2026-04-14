@@ -207,12 +207,12 @@ class ExecutionState:
         self.loop_state[step_name] = {
             # Keep a local snapshot so downstream in-place list mutations outside loop_state
             # do not alter continuation/retry scheduling.
-            "collection": list(collection),
+            "collection_size": len(collection) if hasattr(collection, "__len__") else 0,
             "iterator": iterator,
             "index": 0,
             "mode": mode,
             "completed": False,
-            "results": [],  # Track iteration results for aggregation
+            # "results" array removed for memory efficiency - use event graph tracking
             "failed_count": 0,  # Track failed iterations
             "break_count": 0,  # Track skipped/break iterations
             "scheduled_count": 0,  # Track issued iterations for max_in_flight gating
@@ -221,7 +221,7 @@ class ExecutionState:
         }
         logger.debug(f"Initialized loop for step {step_name}: {len(collection)} items, mode={mode}, event_id={event_id}")
     
-    def get_next_loop_item(self, step_name: str) -> tuple[Any, int] | None:
+    def get_next_loop_item(self, step_name: str, collection: list = None) -> tuple[Any, int] | None:
         """Get next item from loop. Returns (item, index) or None if done."""
         if step_name not in self.loop_state:
             return None
@@ -230,17 +230,20 @@ class ExecutionState:
         if state["completed"]:
             return None
         
-        collection = state["collection"]
         index = state["index"]
+        collection_size = state.get("collection_size", 0)
         
-        if index >= len(collection):
+        if index >= collection_size or (collection is not None and index >= len(collection)):
             state["completed"] = True
             return None
         
-        item = collection[index]
+        item = collection[index] if collection else None
+        state["current_item"] = item
+        
         state["index"] = index + 1
-        return (item, index)
-    
+        state["scheduled_count"] += 1
+        return item, index
+
     def is_loop_done(self, step_name: str) -> bool:
         """Check if loop is completed."""
         if step_name not in self.loop_state:
@@ -248,22 +251,17 @@ class ExecutionState:
         return self.loop_state[step_name]["completed"]
     
     def add_loop_result(self, step_name: str, result: Any, failed: bool = False):
-        """Add iteration result to loop aggregation (local cache only)."""
+        """Update loop metadata without storing unbounded result arrays."""
         if step_name not in self.loop_state:
             return
 
-        stored_result = _compact_loop_result(result)
         loop_state = self.loop_state[step_name]
-        results_buffer = loop_state.get("results", [])
-        if not isinstance(results_buffer, list):
-            results_buffer = []
-        results_buffer.append(stored_result)
-        retained_results, omitted_count = _retain_recent_loop_results(
-            results_buffer,
-            int(loop_state.get("omitted_results_count", 0) or 0),
-        )
-        loop_state["results"] = retained_results
-        loop_state["omitted_results_count"] = omitted_count
+        
+        # We no longer store an array of results. We only keep a reference to the latest item
+        # and standard counters. The full lineage is available via the event table (event_id/parent_event_id).
+        loop_state["last_result"] = _compact_loop_result(result)
+        loop_state["completed_count"] = loop_state.get("completed_count", 0) + 1
+        
         if failed:
             loop_state["failed_count"] += 1
         elif isinstance(result, dict):
@@ -272,44 +270,23 @@ class ExecutionState:
             if status == "break" or is_policy_break:
                 loop_state["break_count"] = loop_state.get("break_count", 0) + 1
 
-        if stored_result is not result:
-            logger.info(
-                "[LOOP] Compacted large iteration result for %s (max=%s bytes)",
-                step_name,
-                _LOOP_RESULT_MAX_BYTES,
-            )
-        logger.debug(
-            "Added iteration result to loop %s: total=%s buffered=%s omitted=%s",
-            step_name,
-            _loop_results_total(loop_state),
-            len(loop_state.get("results", [])),
-            loop_state.get("omitted_results_count", 0),
-        )
-        
-        # Note: Distributed sync to NATS K/V happens in engine.handle_event()
-    
     def get_loop_aggregation(self, step_name: str) -> dict[str, Any]:
-        """Get aggregated loop results in standard format."""
+        """Get aggregated loop results in standard format (counters only, arrays removed)."""
         if step_name not in self.loop_state:
             return {"results": [], "stats": {"total": 0, "success": 0, "failed": 0}}
         
         loop_state = self.loop_state[step_name]
-        omitted_results = int(loop_state.get("omitted_results_count", 0) or 0)
-        buffered_results = loop_state.get("results", [])
-        if not isinstance(buffered_results, list):
-            buffered_results = []
         total = _loop_results_total(loop_state)
         failed = loop_state["failed_count"]
         success = total - failed
         
         return {
-            "results": buffered_results,
+            "results": [loop_state.get("last_result")] if loop_state.get("last_result") else [],
             "stats": {
                 "total": total,
                 "success": success,
-                "failed": failed
-            },
-            "omitted_results_count": omitted_results,
+                "failed": failed,
+            }
         }
 
     def get_loop_completed_count(self, step_name: str) -> int:
@@ -392,7 +369,7 @@ class ExecutionState:
             context["loop"] = {
                 "index": loop_state["index"] - 1 if loop_state["index"] > 0 else 0,  # Current item index
                 "first": loop_state["index"] == 1,
-                "length": len(loop_state["collection"]),
+                "length": loop_state.get("collection_size", 0),
                 "done": loop_state["completed"]
             }
             # Note: Iterator variable itself (e.g., {{ num }}) comes from state.variables

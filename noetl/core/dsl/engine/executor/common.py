@@ -296,11 +296,7 @@ def _retain_recent_loop_results(
 
 def _loop_results_total(loop_state: dict[str, Any]) -> int:
     """Return authoritative local loop completion count."""
-    buffered_results = loop_state.get("results", [])
-    if not isinstance(buffered_results, list):
-        buffered_results = []
-    omitted = int(loop_state.get("omitted_results_count", 0) or 0)
-    return len(buffered_results) + max(0, omitted)
+    return loop_state.get("completed_count", 0) + loop_state.get("omitted_results_count", 0)
 
 
 def _unwrap_event_payload(payload: Any) -> Any:

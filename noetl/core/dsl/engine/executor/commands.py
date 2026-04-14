@@ -165,8 +165,7 @@ class CommandCreationMixin:
             reuse_cached_collection = (
                 existing_loop_state is not None
                 and (loop_continue_requested or loop_retry_requested)
-                and isinstance(existing_loop_state.get("collection"), list)
-                and len(existing_loop_state.get("collection") or []) > 0
+                and existing_loop_state.get("collection_size", 0) > 0
             )
 
             # Use passed collection if available (Optimization)
@@ -240,8 +239,8 @@ class CommandCreationMixin:
 
                 existing_loop_state = state.loop_state[step.step]
             else:
-                previous_collection = existing_loop_state.get("collection")
-                previous_size = len(previous_collection) if isinstance(previous_collection, list) else 0
+                previous_size = existing_loop_state.get("collection_size", 0)
+                
                 previous_completed = state.get_loop_completed_count(step.step)
                 previous_scheduled = int(
                     existing_loop_state.get("scheduled_count", previous_completed) or previous_completed
@@ -305,22 +304,7 @@ class CommandCreationMixin:
                         loop_event_id,
                     )
                 else:
-                    rendered_collection_size = len(collection)
-                    if (
-                        (loop_continue_requested or loop_retry_requested)
-                        and isinstance(previous_collection, list)
-                        and previous_size > 0
-                        and rendered_collection_size < previous_size
-                    ):
-                        logger.warning(
-                            "[LOOP] Preserving prior collection snapshot for %s continuation/retry "
-                            "(rendered_size=%s previous_size=%s)",
-                            step.step,
-                            rendered_collection_size,
-                            previous_size,
-                        )
-                        collection = list(previous_collection)
-                    existing_loop_state["collection"] = list(collection)
+                    existing_loop_state["collection_size"] = len(collection) if hasattr(collection, "__len__") else 0
             loop_state = existing_loop_state
             loop_event_id_for_metadata = (
                 str(loop_state.get("event_id"))
