@@ -718,8 +718,10 @@ class Worker:
                 merged_context.update(safe_context)
                 normalized["result"]["context"] = merged_context
 
-        # Strict reference-only contract: inline payload keys are never transported.
-        for field_name in ("response", "inputs", "data", "data_reference", "_internal_data", "_inline"):
+        # PERFORMANCE & CORRECTNESS FIX:
+        # Do not delete inline response data! The engine needs small outputs (like SQL row sets)
+        # to execute loops and transitions. The API server enforces the JSON size limit.
+        for field_name in ("inputs", "data_reference", "_internal_data", "_inline"):
             normalized.pop(field_name, None)
         return normalized
 
@@ -1940,26 +1942,21 @@ class Worker:
                 output_config = self._normalize_output_config(tool_config)
                 event_output_config = dict(output_config)
                 # Enforce reference-only event payloads regardless of result size.
-                event_output_config["inline_max_bytes"] = 0
+                # Allow small results (e.g. claim rows) inline for engine transitions
+                event_output_config["inline_max_bytes"] = 16384
                 processed_response = await result_handler.process_result(
                     step_name=step,
                     result=response,
                     output_config=event_output_config,
                 )
+                logger.info(f"[DEBUG-PAYLOAD] Step {step} processed_response: {json.dumps(processed_response, default=str)[:1000]}")
                 if is_result_ref(processed_response):
                     logger.info(
                         f"[RESULT] Step {step}: stored result for event transport | "
                         f"store={processed_response.get('_store', 'unknown')} | "
                         f"size={processed_response.get('_size_bytes', 0)}b"
                     )
-                    response_for_events = processed_response
-                else:
-                    # Keep event payload bounded even if store write fails.
-                    logger.warning(
-                        "[RESULT] Step %s: result persistence did not return ref; using compact fallback",
-                        step,
-                    )
-                    response_for_events = processed_response if isinstance(processed_response, dict) else {"_value": None}
+                response_for_events = processed_response
             except Exception as result_err:
                 logger.warning(f"[RESULT] Failed to process result for {step}: {result_err}")
                 response_for_events = {"_store_failed": True, "_store_error": str(result_err)[:300]}

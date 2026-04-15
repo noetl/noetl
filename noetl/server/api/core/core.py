@@ -66,11 +66,11 @@ _COMMAND_CONTEXT_INLINE_MAX_BYTES = max(
 )
 _EVENT_RESULT_CONTEXT_MAX_BYTES = max(
     1024,
-    int(os.getenv("NOETL_EVENT_RESULT_CONTEXT_MAX_BYTES", "16384")),
+    int(os.getenv("NOETL_EVENT_RESULT_CONTEXT_MAX_BYTES", "102400")),
 )
 _EVENT_RESULT_CONTEXT_MAX_ROWS_PER_COMMAND = max(
     1,
-    int(os.getenv("NOETL_EVENT_RESULT_CONTEXT_MAX_ROWS_PER_COMMAND", "1")),
+    int(os.getenv("NOETL_EVENT_RESULT_CONTEXT_MAX_ROWS_PER_COMMAND", "5000")),
 )
 _COMMAND_PUBLISH_RECOVERY_DELAY_SECONDS = max(
     5.0,
@@ -194,8 +194,8 @@ async def get_nats_publisher():
 
 
 _STRICT_RESULT_ALLOWED_KEYS = {"status", "reference", "context", "command_id"}
-_STRICT_PAYLOAD_FORBIDDEN_KEYS = {"response", "inputs", "data", "data_reference", "_internal_data", "_inline"}
-_STRICT_CONTEXT_FORBIDDEN_KEYS = {"response", "result", "payload", "data", "_ref", "_inline", "_internal_data"}
+_STRICT_PAYLOAD_FORBIDDEN_KEYS = {"_internal_data"}
+_STRICT_CONTEXT_FORBIDDEN_KEYS = {"_internal_data"}
 
 
 

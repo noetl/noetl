@@ -507,7 +507,7 @@ class EventHandlingMixin:
                         # Resolve collection size with distributed-safe fallback order:
                         # local cache -> NATS K/V metadata -> re-render loop expression.
                         collection = loop_state.get("collection")
-                        collection_size = len(collection) if isinstance(collection, list) else 0
+                        collection_size = len(collection or []) if isinstance(collection, list) else 0
 
                         nats_loop_state = None
                         if collection_size == 0:
@@ -542,7 +542,7 @@ class EventHandlingMixin:
                             rendered_collection = self._render_template(parent_step_def.loop.in_, context)
                             rendered_collection = self._normalize_loop_collection(rendered_collection, parent_step)
                             loop_state["collection"] = list(rendered_collection)
-                            collection_size = len(rendered_collection)
+                            collection_size = len(rendered_collection or [])
                             logger.info(f"[TASK_SEQ-LOOP] Re-rendered collection for {parent_step}: {collection_size} items")
 
                             # Backfill NATS metadata if it was missing.
@@ -1091,7 +1091,7 @@ class EventHandlingMixin:
                         rendered_collection = self._render_template(step_def.loop.in_, loop_context)
                         rendered_collection = self._normalize_loop_collection(rendered_collection, event.step)
                         loop_state["collection"] = list(rendered_collection)
-                        collection_size = len(rendered_collection)
+                        collection_size = len(rendered_collection or [])
                         logger.info(f"[LOOP-CALL.DONE] Re-rendered collection for {event.step}: {collection_size} items")
 
                     # Check if loop is done
@@ -1424,9 +1424,9 @@ class EventHandlingMixin:
                         completed_count = 0
 
                     supervisor_completed_count = await self._count_supervised_loop_terminal_iterations(
-                        state.execution_id,
+                        str(state.execution_id),
                         event.step,
-                        resolved_loop_event_id,
+                        event_id=str(resolved_loop_event_id)
                     )
                     if supervisor_completed_count > completed_count:
                         completed_count = supervisor_completed_count
@@ -1462,7 +1462,7 @@ class EventHandlingMixin:
                         collection = self._render_template(step_def.loop.in_, context)
                         collection = self._normalize_loop_collection(collection, event.step)
                         loop_state["collection"] = list(collection)
-                        logger.info(f"[LOOP-SETUP] Rendered collection for {event.step}: {len(collection)} items")
+                        logger.info(f"[LOOP-SETUP] Rendered collection for {event.step}: {len(collection or [])} items")
                         
                         # Store initial loop state in NATS K/V with event_id
                         # NOTE: We store only metadata and completed_count, NOT results array
@@ -1471,7 +1471,7 @@ class EventHandlingMixin:
                             str(state.execution_id),
                             event.step,
                             {
-                                "collection_size": len(collection),
+                                "collection_size": len(collection or []),
                                 "completed_count": completed_count,
                                 "scheduled_count": max(
                                     int(loop_state.get("scheduled_count", completed_count) or completed_count),

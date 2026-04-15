@@ -171,19 +171,19 @@ def _build_reference_only_result(*, payload: dict[str, Any], status: str) -> dic
     from .core import _EVENT_RESULT_CONTEXT_MAX_BYTES
     from .events import _collect_compact_context, _bounded_context
     result_obj: dict[str, Any] = {"status": _normalize_result_status(status)}
-    payload_result = payload.get("result")
+    payload_result = payload.get("result") or payload.get("response")
     if isinstance(payload_result, dict):
         payload_status = payload_result.get("status")
         if isinstance(payload_status, str) and payload_status.strip():
             result_obj["status"] = _normalize_result_status(payload_status)
         if isinstance(payload_result.get("reference"), dict):
             result_obj["reference"] = payload_result.get("reference")
-        context = _bounded_context(payload_result.get("context"))
+        context = _bounded_context(payload_result.get('context') or payload_result)
         if isinstance(context, dict): result_obj["context"] = context
     else:
         if isinstance(payload.get("reference"), dict):
             result_obj["reference"] = payload.get("reference")
-        direct_context = _bounded_context(payload.get("context"))
+        direct_context = _bounded_context(payload.get('context') or payload.get('response') or payload)
         if isinstance(direct_context, dict): result_obj["context"] = direct_context
     compact = _collect_compact_context(payload)
     if compact:

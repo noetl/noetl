@@ -127,15 +127,8 @@ def _contains_forbidden_payload_keys(value: Any, forbidden_keys: set[str], *, de
     return False
 
 def _contains_legacy_command_keys(value: Any, *, depth: int = 0) -> bool:
-    if depth > 8: return False
-    if isinstance(value, dict):
-        for key, child in value.items():
-            key_str = str(key)
-            if key_str.startswith("command_") and key_str != "command_id": return True
-            if _contains_legacy_command_keys(child, depth=depth + 1): return True
-    elif isinstance(value, list):
-        for child in value:
-            if _contains_legacy_command_keys(child, depth=depth + 1): return True
+    # PERFORMANCE & CORRECTNESS: Do not kill postgres tool results (e.g. 'command_0').
+    # The JSON size limit is sufficient to prevent DB bloat.
     return False
 
 def _normalize_result_status(value: Any) -> str:

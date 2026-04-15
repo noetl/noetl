@@ -90,8 +90,9 @@ def _collect_compact_context(payload: dict[str, Any]) -> Optional[dict[str, Any]
 
 def _bounded_context(context_obj: Optional[dict[str, Any]]) -> Optional[dict[str, Any]]:
     if not isinstance(context_obj, dict): return None
-    if _contains_forbidden_payload_keys(context_obj, _STRICT_CONTEXT_FORBIDDEN_KEYS): return None
-    if _contains_legacy_command_keys(context_obj): return None
+    # PERFORMANCE & CORRECTNESS FIX:
+    # Do not silently delete entire contexts just because they contain "data" or "command_0" keys.
+    # The JSON size threshold is sufficient to prevent event table bloat.
     if _estimate_json_size(context_obj) > _EVENT_RESULT_CONTEXT_MAX_BYTES: return None
     return context_obj
 

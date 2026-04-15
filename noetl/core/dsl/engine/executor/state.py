@@ -207,7 +207,7 @@ class ExecutionState:
         self.loop_state[step_name] = {
             # Keep a local snapshot so downstream in-place list mutations outside loop_state
             # do not alter continuation/retry scheduling.
-            "collection_size": len(collection) if hasattr(collection, "__len__") else 0,
+            "collection_size": len(collection or []) if hasattr(collection, "__len__") else 0,
             "iterator": iterator,
             "index": 0,
             "mode": mode,
@@ -219,7 +219,7 @@ class ExecutionState:
             "event_id": event_id,  # Track which event initiated this loop instance
             "omitted_results_count": 0,  # Number of older results evicted from memory buffer
         }
-        logger.debug(f"Initialized loop for step {step_name}: {len(collection)} items, mode={mode}, event_id={event_id}")
+        logger.debug(f"Initialized loop for step {step_name}: {len(collection or [])} items, mode={mode}, event_id={event_id}")
     
     def get_next_loop_item(self, step_name: str, collection: list = None) -> tuple[Any, int] | None:
         """Get next item from loop. Returns (item, index) or None if done."""
@@ -233,7 +233,7 @@ class ExecutionState:
         index = state["index"]
         collection_size = state.get("collection_size", 0)
         
-        if index >= collection_size or (collection is not None and index >= len(collection)):
+        if index >= collection_size or (collection is not None and index >= len(collection or [])):
             state["completed"] = True
             return None
         

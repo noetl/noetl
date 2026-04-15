@@ -123,8 +123,14 @@ class StateStore:
         self.playbook_repo = playbook_repo
 
     async def save_state(self, state: ExecutionState, conn=None):
-        """Save execution state to Postgres execution table."""
+        import time
+        import logging
+        log = logging.getLogger(__name__)
+        t0 = time.perf_counter()
+        
         state_dict = state.to_dict()
+        t1 = time.perf_counter()
+        
         last_event_id = state.last_event_id
 
         # Keep the active playbook reachable from the local repo cache so state reloads
@@ -155,7 +161,12 @@ class StateStore:
                 last_event_id = GREATEST(COALESCE(last_event_id, 0), %s)
             WHERE execution_id = %s
         """
-        params = (json.dumps(state_dict), status, status, last_event_id, int(state.execution_id))
+        import json
+        t2 = time.perf_counter()
+        json_str = json.dumps(state_dict)
+        t3 = time.perf_counter()
+        params = (json_str, status, status, last_event_id, int(state.execution_id))
+
         
         if conn is None:
             async with get_pool_connection() as c:
@@ -164,6 +175,10 @@ class StateStore:
         else:
             async with conn.cursor() as cur:
                 await cur.execute(sql, params)
+                
+        t4 = time.perf_counter()
+        log.info(f"[PERF] save_state total={t4-t0:.3f}s to_dict={t1-t0:.3f}s dumps={t3-t2:.3f}s db={t4-t3:.3f}s")
+
 
         logger.debug(f"[STATE-SAVE] State saved to Postgres for execution {state.execution_id}")
 

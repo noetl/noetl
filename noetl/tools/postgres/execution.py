@@ -594,11 +594,7 @@ async def _fetch_result_rows_async(cursor) -> tuple[List[Dict], Dict]:
         for row in rows:
             row_dict = {}
             for col_name, value in row.items():
-                if isinstance(value, dict) or (
-                    isinstance(value, str) and (value.startswith("{") or value.startswith("["))
-                ):
-                    row_dict[col_name] = value
-                elif isinstance(value, Decimal):
+                if isinstance(value, Decimal):
                     row_dict[col_name] = float(value)
                 elif isinstance(value, (datetime, date, time)):
                     row_dict[col_name] = value.isoformat()

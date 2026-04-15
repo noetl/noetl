@@ -144,9 +144,9 @@ class CommandCreationMixin:
         loop_retry_index_raw = control_args.get("__loop_retry_index")
         loop_continue_requested = bool(control_args.get("__loop_continue"))
         loop_retry_index: Optional[int] = None
-        loop_event_id_for_metadata: Optional[str] = None
-        claimed_index: Optional[int] = None
-        _nats_slot_incremented = False  # tracks whether a NATS scheduled_count was incremented
+        loop_event_id_for_metadata: Optional[str] = control_args.get("__loop_epoch_id")
+        claimed_index: Optional[int] = control_args.get("__loop_claimed_index")
+        _nats_slot_incremented = claimed_index is not None  # tracks whether a NATS scheduled_count was incremented
         if loop_retry_requested and loop_retry_index_raw is not None:
             try:
                 loop_retry_index = int(loop_retry_index_raw)
@@ -162,7 +162,8 @@ class CommandCreationMixin:
                 step.loop.mode,
             )
             existing_loop_state = state.loop_state.get(step.step)
-            reuse_cached_collection = (
+            reuse_cached_collection = False # FORCE NEW EPOCHS FOR EVERY BATCH
+            _unused = (
                 existing_loop_state is not None
                 and (loop_continue_requested or loop_retry_requested)
                 and existing_loop_state.get("collection_size", 0) > 0
@@ -190,7 +191,7 @@ class CommandCreationMixin:
                 # or retry, the state reconstruction is incomplete (e.g., a reference-only
                 # step result could not be hydrated from NATS after a cache miss).  Skip
                 # dispatch entirely so we never call claim_next_loop_index and leak a slot.
-                if len(collection) == 0 and (loop_continue_requested or loop_retry_requested):
+                if len(collection or []) == 0 and (loop_continue_requested or loop_retry_requested):
                     logger.warning(
                         "[LOOP] Empty collection after re-render for %s on continuation/retry; "
                         "skipping dispatch (step result may be unavailable after state rebuild)",
@@ -212,7 +213,8 @@ class CommandCreationMixin:
             force_new_loop_instance = False
             _is_fresh_dispatch = not loop_continue_requested and not loop_retry_requested
             if existing_loop_state is None:
-                loop_event_id = f"loop_{state.last_event_id or time.time_ns()}_{time.time_ns()}"
+                import time
+                loop_event_id = loop_event_id_for_metadata or f"loop_{state.execution_id}_{int(time.time() * 1000000)}"
                 state.init_loop(
                     step.step,
                     collection,
@@ -300,13 +302,14 @@ class CommandCreationMixin:
                         previous_completed,
                         previous_scheduled,
                         previous_size,
-                        len(collection),
+                        len(collection or []),
                         loop_event_id,
                     )
                 else:
-                    existing_loop_state["collection_size"] = len(collection) if hasattr(collection, "__len__") else 0
+                    existing_loop_state["collection_size"] = len(collection or []) if hasattr(collection, "__len__") else 0
             loop_state = existing_loop_state
-            loop_event_id_for_metadata = (
+            # Preserving the passed epoch ID from transitions.py!
+            loop_event_id_for_metadata = loop_event_id_for_metadata or (
                 str(loop_state.get("event_id"))
                 if loop_state.get("event_id") is not None
                 else None
@@ -314,7 +317,7 @@ class CommandCreationMixin:
 
             # Resolve distributed loop key candidates.
             if force_new_loop_instance:
-                loop_event_id_for_metadata = loop_state.get("event_id")
+                loop_event_id_for_metadata = loop_event_id_for_metadata or loop_state.get("event_id")
                 loop_event_id_candidates = [str(loop_state.get("event_id"))]
             else:
                 loop_event_id_candidates = self._build_loop_event_id_candidates(state, step.step, loop_state)
@@ -352,10 +355,11 @@ class CommandCreationMixin:
                 nats_scheduled = int(
                     nats_loop_state.get("scheduled_count", nats_completed) or nats_completed
                 )
-                nats_size = int(nats_loop_state.get("collection_size", len(collection)) or len(collection))
+                nats_size = int(nats_loop_state.get("collection_size", len(collection or [])) or len(collection or []))
                 nats_loop_done_claimed = bool(nats_loop_state.get("loop_done_claimed", False))
                 if (nats_size > 0 and nats_completed >= nats_size and nats_scheduled >= nats_size) or nats_loop_done_claimed:
-                    loop_event_id = f"loop_{state.last_event_id or time.time_ns()}"
+                    # Let transitions.py handle the epoch ID!
+                    loop_event_id = loop_event_id_for_metadata or f"loop_{state.last_event_id or time.time_ns()}"
                     state.init_loop(
                         step.step,
                         collection,
@@ -408,7 +412,7 @@ class CommandCreationMixin:
 
             # Repair invalid distributed metadata from older writes/restarts where
             # collection_size regressed to 0 while local loop collection is valid.
-            if nats_loop_state and len(collection) > 0:
+            if nats_loop_state and len(collection or []) > 0:
                 nats_collection_size = int(nats_loop_state.get("collection_size", 0) or 0)
                 if nats_collection_size <= 0:
                     repaired_scheduled = int(
@@ -416,7 +420,7 @@ class CommandCreationMixin:
                     )
                     if repaired_scheduled < completed_count:
                         repaired_scheduled = completed_count
-                    nats_loop_state["collection_size"] = len(collection)
+                    nats_loop_state["collection_size"] = len(collection or [])
                     nats_loop_state["completed_count"] = completed_count
                     nats_loop_state["scheduled_count"] = repaired_scheduled
                     nats_loop_state["failed_count"] = existing_loop_state.get("failed_count", 0) if existing_loop_state else 0
@@ -438,7 +442,7 @@ class CommandCreationMixin:
                         resolved_loop_event_id,
                         completed_count,
                         repaired_scheduled,
-                        len(collection),
+                        len(collection or []),
                     )
 
             # Ensure distributed loop metadata exists before claiming next slot.
@@ -462,7 +466,7 @@ class CommandCreationMixin:
                     str(state.execution_id),
                     step.step,
                     {
-                        "collection_size": len(collection),
+                        "collection_size": len(collection or []),
                         "completed_count": completed_count,
                         "scheduled_count": scheduled_seed,
                         "iterator": step.loop.iterator,
@@ -486,10 +490,10 @@ class CommandCreationMixin:
                 )
             else:
                 if nats_loop_state:
-                    claimed_index = await nats_cache.claim_next_loop_index(
+                    if claimed_index is None: claimed_index = await nats_cache.claim_next_loop_index(
                         str(state.execution_id),
                         step.step,
-                        collection_size=len(collection),
+                        collection_size=len(collection or []),
                         max_in_flight=max_in_flight,
                         event_id=resolved_loop_event_id,
                     )
@@ -502,9 +506,9 @@ class CommandCreationMixin:
                         int(loop_state.get("scheduled_count", completed_count) or completed_count),
                         completed_count,
                     )
-                    if scheduled_count < len(collection) and (scheduled_count - completed_count) < max_in_flight:
-                        claimed_index = scheduled_count
-                        loop_state["scheduled_count"] = scheduled_count + 1
+                    if scheduled_count < len(collection or []) and (scheduled_count - completed_count) < max_in_flight:
+                        # Disable local fallback for batch loops to prevent index 0 skipping!
+                        pass
 
             if claimed_index is None:
                 scheduled_hint = int(
@@ -515,7 +519,7 @@ class CommandCreationMixin:
                     or completed_count
                 )
                 collection_size_hint = int(
-                    (nats_loop_state or {}).get("collection_size", len(collection)) or len(collection)
+                    (nats_loop_state or {}).get("collection_size", len(collection or [])) or len(collection or [])
                 )
                 in_flight = max(0, scheduled_hint - completed_count)
 
@@ -584,10 +588,10 @@ class CommandCreationMixin:
                             completed_count = repaired_completed
                             scheduled_hint = repaired_scheduled
                             in_flight = max(0, scheduled_hint - completed_count)
-                            claimed_index = await nats_cache.claim_next_loop_index(
+                            if claimed_index is None: claimed_index = await nats_cache.claim_next_loop_index(
                                 str(state.execution_id),
                                 step.step,
-                                collection_size=len(collection),
+                                collection_size=len(collection or []),
                                 max_in_flight=max_in_flight,
                                 event_id=resolved_loop_event_id,
                             )
@@ -669,10 +673,10 @@ class CommandCreationMixin:
                                     completed_count = repaired_completed
                                     scheduled_hint = repaired_scheduled
                                     in_flight = max(0, scheduled_hint - completed_count)
-                                    claimed_index = await nats_cache.claim_next_loop_index(
+                                    if claimed_index is None: claimed_index = await nats_cache.claim_next_loop_index(
                                         str(state.execution_id),
                                         step.step,
-                                        collection_size=len(collection),
+                                        collection_size=len(collection or []),
                                         max_in_flight=max_in_flight,
                                         event_id=resolved_loop_event_id,
                                     )
@@ -786,18 +790,18 @@ class CommandCreationMixin:
                         step.step,
                         completed_count,
                         scheduled_hint,
-                        len(collection),
+                        len(collection or []),
                         in_flight,
                         max_in_flight,
                     )
                     return None
 
-            if claimed_index >= len(collection):
+            if claimed_index is None or claimed_index >= len(collection or []):
                 logger.warning(
-                    "[LOOP] Claimed index %s is out of range for %s (col_size=%s); %s",
+                    "[LOOP] Claimed index %s is out of range or None for %s (col_size=%s); %s",
                     claimed_index,
                     step.step,
-                    len(collection),
+                    len(collection or []),
                     "releasing NATS slot to prevent in-flight saturation"
                     if _nats_slot_incremented
                     else "slot was not NATS-claimed (retry/watchdog path)",
@@ -822,13 +826,8 @@ class CommandCreationMixin:
                 int(loop_state.get("scheduled_count", 0) or 0),
                 claimed_index + 1,
             )
-            loop_state["collection_size"] = len(collection)
+            loop_state["collection_size"] = len(collection or [])
             loop_state["index"] = max(int(loop_state.get("index", 0) or 0), claimed_index + 1)
-            loop_event_id_for_metadata = (
-                str(resolved_loop_event_id)
-                if resolved_loop_event_id is not None
-                else (str(loop_state.get("event_id")) if loop_state.get("event_id") is not None else loop_event_id_for_metadata)
-            )
             logger.info(
                 "[LOOP] Claimed loop iteration %s for step %s (mode=%s max_in_flight=%s)",
                 claimed_index,
@@ -861,7 +860,7 @@ class CommandCreationMixin:
                 context["iter"] = {}
             context["iter"][step.loop.iterator] = iterator_value
             context["iter"]["_index"] = claimed_index
-            coll_len = len(collection) if 'collection' in dir() and collection else 0
+            coll_len = len(collection or []) if 'collection' in dir() and collection else 0
             context["iter"]["_first"] = claimed_index == 0
             context["iter"]["_last"] = claimed_index >= coll_len - 1 if coll_len > 0 else True
             context["iter"]["loop_event_id"] = loop_event_id_for_metadata
@@ -937,7 +936,7 @@ class CommandCreationMixin:
             # (e.g., via `set` in policy rules). The worker's task_sequence_executor
             # will render templates at execution time with the proper context.
             pipeline = step.tool  # Pass raw list, worker renders at execution time
-            logger.info(f"[PIPELINE] Step '{step.step}' has pipeline with {len(pipeline)} tasks (deferred rendering)")
+            logger.info(f"[PIPELINE] Step '{step.step}' has pipeline with {len(pipeline or [])} tasks (deferred rendering)")
 
             # For pipeline steps, use task_sequence as tool kind
             tool_kind = "task_sequence"

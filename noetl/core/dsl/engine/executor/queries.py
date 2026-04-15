@@ -130,7 +130,7 @@ class QueryMixin:
                             WHERE execution_id = %s
                               AND node_name = ANY(%s)
                               AND event_type = 'call.done'
-                              AND COALESCE(meta->>'loop_event_id', meta->>'__loop_epoch_id') = %s
+                              AND COALESCE(meta->>'loop_event_id', meta->>'__loop_epoch_id', result->'context'->>'loop_event_id') = %s
                         ) idx
                         WHERE idx.loop_iteration_index IS NOT NULL
                         """,

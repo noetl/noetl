@@ -192,8 +192,8 @@ class RenderingMixin:
             completed_count,
         )
         loop_state["event_id"] = desired_event_id
-        loop_state["index"] = min(completed_count, len(collection))
-        loop_state["scheduled_count"] = min(scheduled_count, len(collection))
+        loop_state["index"] = min(completed_count, len(collection or []))
+        loop_state["scheduled_count"] = min(scheduled_count, len(collection or []))
         if completed_count > 0 and not loop_state.get("results"):
             loop_state["omitted_results_count"] = completed_count
         if nats_loop_state.get("loop_done_claimed", False):
@@ -229,9 +229,9 @@ class RenderingMixin:
         snapshots: dict[str, dict[str, Any]] = {}
         for step_name, loop_state in state.loop_state.items():
             collection = loop_state.get("collection")
-            if not isinstance(collection, list) or len(collection) == 0:
+            if not isinstance(collection, list) or len(collection or []) == 0:
                 continue
-            epoch_size = len(collection)
+            epoch_size = len(collection or [])
             # Cap counts to epoch_size so accumulated multi-batch counts don't inflate the snapshot.
             # After a state rebuild, state.get_loop_completed_count() returns the total across all
             # epochs; capping to epoch_size keeps the snapshot epoch-relative.
@@ -270,7 +270,7 @@ class RenderingMixin:
                 continue
 
             cached_collection = snapshot.get("collection")
-            if not isinstance(cached_collection, list) or len(cached_collection) == 0:
+            if not isinstance(cached_collection, list) or len(cached_collection or []) == 0:
                 continue
 
             restored_event_id = (
@@ -284,11 +284,11 @@ class RenderingMixin:
 
             current_collection = loop_state.get("collection")
             current_size = (
-                len(current_collection)
+                len(current_collection or [])
                 if isinstance(current_collection, list)
                 else 0
             )
-            cached_size = len(cached_collection)
+            cached_size = len(cached_collection or [])
             snapshot_completed_count = int(
                 snapshot.get("completed_count", 0) or 0
             )
@@ -299,7 +299,7 @@ class RenderingMixin:
             if snapshot_scheduled_count < snapshot_completed_count:
                 snapshot_scheduled_count = snapshot_completed_count
 
-            # Use epoch_size from snapshot (= len(collection) at snapshot time) to cap
+            # Use epoch_size from snapshot (= len(collection or []) at snapshot time) to cap
             # min_required_size.  Accumulated completion counts span multiple batches and
             # would falsely inflate the threshold beyond the per-epoch batch size, causing
             # valid same-epoch snapshots to be rejected after the first batch.
