@@ -848,8 +848,11 @@ class CommandCreationMixin:
         # Get render context for Jinja2 templates.
         # Reuse the context from loop collection rendering if available, patching in
         # the newly-set loop variables to avoid a full context rebuild.
-        if step.loop and 'context' in dir() and context is not None:
+        # PERFORMANCE OPTIMIZATION: Prefer passed-in base context to avoid O(N) rebuilds.
+        optimized_context = control_args.get("__base_context")
+        if step.loop and (optimized_context is not None or (locals().get('context') is not None)):
             # Patch loop variables into existing context instead of full rebuild
+            context = optimized_context if optimized_context is not None else context
             iterator_value = state.variables.get(step.loop.iterator)
             context[step.loop.iterator] = iterator_value
             context["loop_index"] = claimed_index
@@ -860,7 +863,7 @@ class CommandCreationMixin:
                 context["iter"] = {}
             context["iter"][step.loop.iterator] = iterator_value
             context["iter"]["_index"] = claimed_index
-            coll_len = len(collection or []) if 'collection' in dir() and collection else 0
+            coll_len = len(collection or [])
             context["iter"]["_first"] = claimed_index == 0
             context["iter"]["_last"] = claimed_index >= coll_len - 1 if coll_len > 0 else True
             context["iter"]["loop_event_id"] = loop_event_id_for_metadata

@@ -183,12 +183,17 @@ async def _issue_commands_for_batch(job: _BatchAcceptJob, commands: list) -> Non
             if row := await cur.fetchone():
                 cat_id, p_exec = row.get("catalog_id") or cat_id, row.get("parent_execution_id")
 
-            # 2. Prepare command contexts and metadata
+            from .db import _next_snowflake_ids
+            # 2. Prepare command contexts and metadata (BATCHED SNOWFLAKES)
             prepared_commands = []
-            for cmd in commands:
-                cmd_suffix = await _next_snowflake_id(cur)
+            # Need 2 snowflakes per command
+            all_snowflakes = await _next_snowflake_ids(cur, len(commands) * 2)
+            
+            for i, cmd in enumerate(commands):
+                cmd_suffix = all_snowflakes[i * 2]
+                new_evt_id = all_snowflakes[i * 2 + 1]
+                
                 cmd_id = f"{cmd.execution_id}:{cmd.step}:{cmd_suffix}"
-                new_evt_id = await _next_snowflake_id(cur)
                 ctx = _build_command_context(cmd)
                 _validate_postgres_command_context_or_422(step=cmd.step, tool_kind=cmd.tool.kind, context=ctx)
                 meta = {
@@ -204,11 +209,13 @@ async def _issue_commands_for_batch(job: _BatchAcceptJob, commands: list) -> Non
                     "cmd_id": cmd_id, "evt_id": new_evt_id, "ctx": ctx, "meta": meta, "step": cmd.step, "execution_id": int(cmd.execution_id), "tool_kind": cmd.tool.kind
                 })
 
-            # 3. Parallel context storage (NATS KV calls)
-            storage_tasks = [
-                _store_command_context_if_needed(execution_id=p["execution_id"], step=p["step"], command_id=p["cmd_id"], context=p["ctx"])
-                for p in prepared_commands
-            ]
+            # 3. Parallel context storage with CONCURRENCY LIMIT (Semaphore)
+            storage_semaphore = asyncio.Semaphore(50) # Max 50 parallel NATS writes
+            async def _sem_store(p):
+                async with storage_semaphore:
+                    return await _store_command_context_if_needed(execution_id=p["execution_id"], step=p["step"], command_id=p["cmd_id"], context=p["ctx"])
+            
+            storage_tasks = [_sem_store(p) for p in prepared_commands]
             stored_contexts = await asyncio.gather(*storage_tasks)
             for p, ctx in zip(prepared_commands, stored_contexts):
                 p["ctx"] = ctx

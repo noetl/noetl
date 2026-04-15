@@ -46,6 +46,12 @@ class TransitionMixin:
         if loop_event_id:
             collection = await nats_cache.get_loop_collection(str(state.execution_id), step_def.step, loop_event_id)
         
+        # PERFORMANCE OPTIMIZATION: Always pre-build the render context once for the entire batch.
+        # This context will be reused by _create_command_for_step for all N items.
+        context = state.get_render_context(Event(
+            execution_id=state.execution_id, step=step_def.step, name="loop_init", payload={}
+        ))
+
         should_pre_render_collection = not (
             existing_loop_state is not None
             and (
@@ -56,9 +62,6 @@ class TransitionMixin:
 
         if collection is None and should_pre_render_collection:
             # Render and save
-            context = state.get_render_context(Event(
-                execution_id=state.execution_id, step=step_def.step, name="loop_init", payload={}
-            ))
             collection_expr = step_def.loop.in_
             collection = self._render_template(collection_expr, context)
             collection = self._normalize_loop_collection(collection, step_def.step)
@@ -69,6 +72,7 @@ class TransitionMixin:
         issue_budget = self._get_loop_max_in_flight(step_def)
         commands: list[Command] = []
         shared_control_args = dict(step_input)
+        shared_control_args["__base_context"] = context
         if collection is not None:
             shared_control_args["__loop_collection"] = collection
 

@@ -55,4 +55,9 @@ async def _publish_commands_with_recovery(command_events: list[tuple[int, int, s
         )
         _track_publish_recovery_task(recovery_task)
 
-    await asyncio.gather(*[_safe_publish(*args) for args in command_events])
+    publish_semaphore = asyncio.Semaphore(50) # Max 50 parallel NATS publishes
+    async def _sem_publish(args):
+        async with publish_semaphore:
+            await _safe_publish(*args)
+            
+    await asyncio.gather(*[_sem_publish(args) for args in command_events])

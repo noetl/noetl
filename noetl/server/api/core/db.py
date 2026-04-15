@@ -89,3 +89,9 @@ async def _next_snowflake_id(cur) -> int:
     if not row: raise RuntimeError("Failed to generate snowflake ID from database")
     value = row.get("snowflake_id") if isinstance(row, dict) else row[0]
     return int(value)
+
+async def _next_snowflake_ids(cur, count: int) -> list[int]:
+    if count <= 0: return []
+    await cur.execute("SELECT noetl.snowflake_id() FROM generate_series(1, %s)", (count,))
+    rows = await cur.fetchall()
+    return [int(row.get("snowflake_id") if isinstance(row, dict) else row[0]) for row in rows]
