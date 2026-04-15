@@ -851,8 +851,9 @@ class CommandCreationMixin:
         # PERFORMANCE OPTIMIZATION: Prefer passed-in base context to avoid O(N) rebuilds.
         optimized_context = control_args.get("__base_context")
         if step.loop and (optimized_context is not None or (locals().get('context') is not None)):
-            # Patch loop variables into existing context instead of full rebuild
-            context = optimized_context if optimized_context is not None else context
+            # Create a shallow copy to avoid mutating the shared base context across parallel loop items
+            base_context = optimized_context if optimized_context is not None else context
+            context = dict(base_context)
             iterator_value = state.variables.get(step.loop.iterator)
             context[step.loop.iterator] = iterator_value
             context["loop_index"] = claimed_index
