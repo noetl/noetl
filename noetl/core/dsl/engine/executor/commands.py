@@ -915,7 +915,7 @@ class CommandCreationMixin:
         # Merge transition-scoped input published by prior routing/actions.
         filtered_args = {
             k: v for k, v in control_args.items()
-            if k not in {"__loop_retry", "__loop_retry_index", "__loop_continue"}
+            if k not in {"__loop_retry", "__loop_retry_index", "__loop_continue", "__loop_collection", "__base_context"}
         }
         step_args.update(filtered_args)
 
