@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.17.26](https://github.com/noetl/noetl/compare/v2.17.25...v2.17.26) (2026-04-15)
+
+### Bug Fixes
+
+* increase event inline max bytes to 10MB to support 500-patient payload batches without external blob storage ([80f4f01](https://github.com/noetl/noetl/commit/80f4f01982402697f464c10f76c1a3b7fb9ee042))
+
 ## [2.17.25](https://github.com/noetl/noetl/compare/v2.17.24...v2.17.25) (2026-04-15)
 
 ### Bug Fixes
