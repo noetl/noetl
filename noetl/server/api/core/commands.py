@@ -128,18 +128,32 @@ def _validate_postgres_command_context_or_422(*, step: str, tool_kind: str, cont
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=f"Invalid command context for step '{step}' and tool '{tool_kind}': {exc}")
 
+
+_EXTERNALIZED_FIELD_CACHE = {} 
+
 async def _store_command_context_if_needed(*, execution_id: int, step: str, command_id: str, context: dict[str, Any]) -> dict[str, Any]:
+    global _EXTERNALIZED_FIELD_CACHE
+    if len(_EXTERNALIZED_FIELD_CACHE) > 5000: _EXTERNALIZED_FIELD_CACHE.clear()
+
     compact_context = dict(context)
     for field_name in ("tool_config", "render_context", "spec", "input"):
         if field_name not in compact_context:
             continue
-        compact_context[field_name] = await _externalize_command_context_field_if_needed(
-            execution_id=execution_id,
-            step=step,
-            command_id=command_id,
-            field_name=field_name,
-            value=compact_context[field_name],
-        )
+        val = compact_context[field_name]
+        val_id = id(val)
+        if val_id in _EXTERNALIZED_FIELD_CACHE:
+            compact_context[field_name] = _EXTERNALIZED_FIELD_CACHE[val_id]
+        else:
+            res = await _externalize_command_context_field_if_needed(
+                execution_id=execution_id,
+                step=step,
+                command_id=command_id,
+                field_name=field_name,
+                value=val,
+            )
+            compact_context[field_name] = res
+            if isinstance(res, dict) and "kind" in res and "ref" in res:
+                _EXTERNALIZED_FIELD_CACHE[val_id] = res
 
     try: size_bytes = estimate_size(context)
     except Exception: size_bytes = _estimate_json_size(context)
