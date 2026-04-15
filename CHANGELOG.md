@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.17.30](https://github.com/noetl/noetl/compare/v2.17.29...v2.17.30) (2026-04-15)
+
+### Bug Fixes
+
+* **engine:** implement async yielding in heavy loops to prevent liveness probe failure ([9c806b1](https://github.com/noetl/noetl/commit/9c806b1fa086191ee3e74707e9185954dd63dcbb))
+
 ## [2.17.29](https://github.com/noetl/noetl/compare/v2.17.28...v2.17.29) (2026-04-15)
 
 ### Bug Fixes
