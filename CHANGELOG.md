@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.17.34](https://github.com/noetl/noetl/compare/v2.17.33...v2.17.34) (2026-04-15)
+
+### Bug Fixes
+
+* **engine:** isolate nested 'iter' namespace to prevent loop data clobbering ([6ee8a24](https://github.com/noetl/noetl/commit/6ee8a2400f26eb712647c7ee70f7cbd1bbce26cd))
+
 ## [2.17.33](https://github.com/noetl/noetl/compare/v2.17.32...v2.17.33) (2026-04-15)
 
 ### Bug Fixes
