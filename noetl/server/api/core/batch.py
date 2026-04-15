@@ -245,7 +245,7 @@ async def _process_accepted_batch(job: _BatchAcceptJob) -> int:
         async with get_pool_connection() as engine_conn:
             async with engine_conn.transaction():
                 async with engine_conn.cursor() as cur:
-                    await cur.execute(f"SET LOCAL statement_timeout = {int(_BATCH_PROCESSING_STATEMENT_TIMEOUT_MS)}")
+                    await cur.execute(f"SET LOCAL statement_timeout = {int(_BATCH_PROCESSING_STATEMENT_TIMEOUT_MS)}"); await cur.execute(f"SET LOCAL idle_in_transaction_session_timeout = {int(_BATCH_PROCESSING_STATEMENT_TIMEOUT_MS)}")
                     await cur.execute("SELECT pg_advisory_xact_lock(%s)", (int(job.last_actionable_event.execution_id),))
                     commands = await engine.handle_event(job.last_actionable_event, conn=engine_conn, already_persisted=True)
     try: await _issue_commands_for_batch(job, commands)
