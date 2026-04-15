@@ -139,7 +139,7 @@ async def _persist_batch_acceptance(req: BatchEventRequest, idempotency_key: Opt
             for item in req.events:
                 _validate_reference_only_payload(item.payload)
                 evt_id = await _next_snowflake_id(cur); event_ids.append(evt_id)
-                meta = {"actionable": item.actionable, "informative": item.informative, "batch_request_id": request_id, "persisted_event_id": str(evt_id), "worker_id": req.worker_id, "idempotency_key": idempotency_key}
+                meta = {"actionable": item.actionable, "informative": item.informative, "batch_request_id": request_id, "persisted_event_id": str(evt_id), "worker_id": req.worker_id, "idempotency_key": idempotency_key, **(item.meta or {})}
                 if cmd_id := _extract_command_id_from_payload(item.payload): meta["command_id"] = cmd_id
                 
                 insert_params.append((
