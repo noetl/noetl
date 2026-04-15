@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.17.36](https://github.com/noetl/noetl/compare/v2.17.35...v2.17.36) (2026-04-15)
+
+### Bug Fixes
+
+* **api:** preserve worker metadata in batch event processing ([20330b6](https://github.com/noetl/noetl/commit/20330b6ecb85eb7638321de867456bb2f0f1335d))
+
 ## [2.17.35](https://github.com/noetl/noetl/compare/v2.17.34...v2.17.35) (2026-04-15)
 
 ### Bug Fixes
