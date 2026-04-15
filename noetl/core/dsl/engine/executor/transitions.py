@@ -90,7 +90,10 @@ class TransitionMixin:
             )
 
         if claimed_indices:
-            for idx in claimed_indices:
+            for i, idx in enumerate(claimed_indices):
+                # Yield to the event loop every 10 iterations to prevent liveness probe failure
+                if i % 10 == 0: await asyncio.sleep(0)
+                
                 args = dict(shared_control_args)
                 args["__loop_claimed_index"] = idx
                 args["__loop_epoch_id"] = loop_event_id  # Pass the newly generated epoch ID to commands.py!
@@ -99,7 +102,10 @@ class TransitionMixin:
                 commands.append(command)
                 shared_control_args["__loop_continue"] = True
         else:
-            for _ in range(issue_budget):
+            for j in range(issue_budget):
+                # Yield to the event loop every 10 iterations to prevent liveness probe failure
+                if j % 10 == 0: await asyncio.sleep(0)
+                
                 args = dict(shared_control_args)
                 args["__loop_epoch_id"] = loop_event_id  # Pass the newly generated epoch ID to commands.py!
                 command = await self._create_command_for_step(state, step_def, args)

@@ -806,7 +806,8 @@ class EventHandlingMixin:
                     commands.extend(next_commands)
                     logger.info(f"[TASK_SEQ] Generated {len(next_commands)} commands from next transitions")
 
-            for cmd in commands:
+            for idx, cmd in enumerate(commands):
+                if idx % 50 == 0: await asyncio.sleep(0)
                 pending_key = _pending_step_key(cmd.step)
                 if not pending_key:
                     continue
@@ -1997,7 +1998,8 @@ class EventHandlingMixin:
                     return []  # Return empty commands list to stop workflow
 
         # Track issued steps for pending commands detection
-        for cmd in commands:
+        for idx, cmd in enumerate(commands):
+            if idx % 50 == 0: await asyncio.sleep(0)
             pending_key = _pending_step_key(cmd.step)
             if not pending_key:
                 continue

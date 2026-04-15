@@ -190,6 +190,9 @@ async def _issue_commands_for_batch(job: _BatchAcceptJob, commands: list) -> Non
             all_snowflakes = await _next_snowflake_ids(cur, len(commands) * 2)
             
             for i, cmd in enumerate(commands):
+                # Yield to the event loop every 20 items
+                if i % 20 == 0: await asyncio.sleep(0)
+                
                 cmd_suffix = all_snowflakes[i * 2]
                 new_evt_id = all_snowflakes[i * 2 + 1]
                 
@@ -226,11 +229,15 @@ async def _issue_commands_for_batch(job: _BatchAcceptJob, commands: list) -> Non
                 (p["evt_id"], p["execution_id"], cat_id, "command.issued", p["step"], p["step"], p["tool_kind"], "PENDING", Json(p["ctx"]), Json(p["meta"]), job.last_actionable_evt_id, p_exec, now)
                 for p in prepared_commands
             ]
-            await cur.executemany("""
-                INSERT INTO noetl.event (event_id, execution_id, catalog_id, event_type, node_id, node_name, node_type, status, context, meta, parent_event_id, parent_execution_id, created_at)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-            """, insert_params)
-            await conn.commit()
+            # Chunk the inserts to prevent massive database payload crashes
+            chunk_size = 50
+            for j in range(0, len(insert_params), chunk_size):
+                chunk = insert_params[j:j + chunk_size]
+                await cur.executemany("""
+                    INSERT INTO noetl.event (event_id, execution_id, catalog_id, event_type, node_id, node_name, node_type, status, context, meta, parent_event_id, parent_execution_id, created_at)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                """, chunk)
+                await conn.commit()
 
     # 5. Parallel NATS publish
     publish_items = [(p["execution_id"], p["evt_id"], p["cmd_id"], p["step"]) for p in prepared_commands]
