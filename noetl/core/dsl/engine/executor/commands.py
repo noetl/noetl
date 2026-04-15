@@ -853,7 +853,12 @@ class CommandCreationMixin:
         if step.loop and (optimized_context is not None or (locals().get('context') is not None)):
             # Create a shallow copy to avoid mutating the shared base context across parallel loop items
             base_context = optimized_context if optimized_context is not None else context
+            # PERFORMANCE & CORRECTNESS: Shallow copy the top-level context, 
+            # but MUST clone the nested 'iter' namespace to avoid parallel clobbering.
             context = dict(base_context)
+            if "iter" in context and isinstance(context["iter"], dict):
+                context["iter"] = dict(context["iter"])
+            
             iterator_value = state.variables.get(step.loop.iterator)
             context[step.loop.iterator] = iterator_value
             context["loop_index"] = claimed_index
