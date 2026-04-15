@@ -860,8 +860,12 @@ class CommandCreationMixin:
                 context["iter"] = dict(context["iter"])
             
             iterator_value = state.variables.get(step.loop.iterator)
+            # Update both top-level and 'iter' namespace for canonical v10 compatibility
             context[step.loop.iterator] = iterator_value
             context["loop_index"] = claimed_index
+            if "iter" in context and isinstance(context["iter"], dict):
+                context["iter"][step.loop.iterator] = iterator_value
+                context["iter"]["_index"] = claimed_index
             context["ctx"] = state.variables
             context["workload"] = state.variables
             # Update iter namespace so {{ iter.<iterator>.<field> }} works
