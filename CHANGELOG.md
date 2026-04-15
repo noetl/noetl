@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.17.32](https://github.com/noetl/noetl/compare/v2.17.31...v2.17.32) (2026-04-15)
+
+### Bug Fixes
+
+* **engine:** reduce logging noise during massive loop issuance ([5da0819](https://github.com/noetl/noetl/commit/5da0819543d73de1403b04532fba85636968cdd9))
+
 ## [2.17.31](https://github.com/noetl/noetl/compare/v2.17.30...v2.17.31) (2026-04-15)
 
 ### Bug Fixes
