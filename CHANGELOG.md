@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.17.29](https://github.com/noetl/noetl/compare/v2.17.28...v2.17.29) (2026-04-15)
+
+### Bug Fixes
+
+* **api:** optimize batch command issuance and publishing concurrency ([f7a9186](https://github.com/noetl/noetl/commit/f7a9186b7aec9c36138ea239a395f89ceef1d496))
+* **engine:** prevent quadratic payload explosion by filtering loop collection from items ([efef2c7](https://github.com/noetl/noetl/commit/efef2c74f20f86b61ffbb9a27525f04991fa388c))
+
 ## [2.17.28](https://github.com/noetl/noetl/compare/v2.17.27...v2.17.28) (2026-04-15)
 
 ### Bug Fixes
