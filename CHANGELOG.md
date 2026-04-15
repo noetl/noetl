@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.17.33](https://github.com/noetl/noetl/compare/v2.17.32...v2.17.33) (2026-04-15)
+
+### Bug Fixes
+
+* **engine:** ensure unique context copies for parallel loop items ([b7007ba](https://github.com/noetl/noetl/commit/b7007bad5e48db1f177334f0e1b2d7a056b16024))
+
 ## [2.17.32](https://github.com/noetl/noetl/compare/v2.17.31...v2.17.32) (2026-04-15)
 
 ### Bug Fixes
