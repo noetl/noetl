@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.17.25](https://github.com/noetl/noetl/compare/v2.17.24...v2.17.25) (2026-04-15)
+
+### Bug Fixes
+
+* **engine:** synchronize loop epoch IDs and enable robust DB fallback reconciliation ([e98fa12](https://github.com/noetl/noetl/commit/e98fa12ba8bec2ae946a9b32aeb8fae72278f8cb))
+
 ## [2.17.24](https://github.com/noetl/noetl/compare/v2.17.23...v2.17.24) (2026-04-14)
 
 ### Bug Fixes
