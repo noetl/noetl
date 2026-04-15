@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.17.31](https://github.com/noetl/noetl/compare/v2.17.30...v2.17.31) (2026-04-15)
+
+### Bug Fixes
+
+* **engine:** implement object-identity caching and async yielding for massive loops ([e2d8163](https://github.com/noetl/noetl/commit/e2d81638811fbc68ab948bb51cab4e48d7c29a74))
+
 ## [2.17.30](https://github.com/noetl/noetl/compare/v2.17.29...v2.17.30) (2026-04-15)
 
 ### Bug Fixes
