@@ -1941,9 +1941,9 @@ class Worker:
                 result_handler = ResultHandler(execution_id=execution_id)
                 output_config = self._normalize_output_config(tool_config)
                 event_output_config = dict(output_config)
-                # Enforce reference-only event payloads regardless of result size.
-                # Allow small results (e.g. claim rows) inline for engine transitions
-                event_output_config["inline_max_bytes"] = 16384
+                # Ensure the payload respects the environment variable or defaults to 10MB
+                import os
+                event_output_config["inline_max_bytes"] = int(os.getenv("NOETL_INLINE_MAX_BYTES", "10485760"))
                 processed_response = await result_handler.process_result(
                     step_name=step,
                     result=response,
