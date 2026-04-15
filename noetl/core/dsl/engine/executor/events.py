@@ -812,7 +812,7 @@ class EventHandlingMixin:
                 if not pending_key:
                     continue
                 state.issued_steps.add(pending_key)
-                logger.info(
+                if idx % 100 == 0: logger.info(
                     "[ISSUED] Added task-sequence %s to issued_steps for execution %s, total issued=%s",
                     pending_key,
                     state.execution_id,

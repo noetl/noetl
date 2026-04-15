@@ -212,43 +212,15 @@ async def _issue_commands_for_batch(job: _BatchAcceptJob, commands: list) -> Non
                     "cmd_id": cmd_id, "evt_id": new_evt_id, "ctx": ctx, "meta": meta, "step": cmd.step, "execution_id": int(cmd.execution_id), "tool_kind": cmd.tool.kind
                 })
 
-            # 3. Parallel context storage with DE-DUPLICATION and CONCURRENCY LIMIT
-            storage_semaphore = asyncio.Semaphore(20) # Max 20 parallel NATS writes
-            # Cache for externalized context parts to avoid redundant NATS writes for clones
-            # Key: (execution_id, step, field_name, sha256_of_data)
-            # Value: ResultRef
-            
-            # Since we know loop commands share identical contexts, we can drastically optimize
-            # by identifying the common parts and storing them only once.
-            
-            stored_contexts = []
-            # Map to track which contexts we have already externalized
-            # (In a real implementation we would hash the dict, but here we can just 
-            # assume identical dicts for loop iterations from the same batch)
-            
-            # Simple optimization: if multiple commands have the EXACT SAME context object, 
-            # only call _store_command_context_if_needed for the first one.
-            
-            context_cache = {}
-            
-            for p in prepared_commands:
-                ctx_id = id(p["ctx"]) # Use object identity as a proxy for clones
-                if ctx_id in context_cache:
-                    p["ctx"] = context_cache[ctx_id]
-                    continue
-                
-                # Yield to event loop
-                await asyncio.sleep(0)
-                
+            # 3. Parallel context storage with DE-DUPLICATION and MEMORY CLEANUP
+            storage_semaphore = asyncio.Semaphore(10)
+            async def _sem_store(p, cmd):
                 async with storage_semaphore:
-                    stored_ctx = await _store_command_context_if_needed(
-                        execution_id=p["execution_id"], 
-                        step=p["step"], 
-                        command_id=p["cmd_id"], 
-                        context=p["ctx"]
-                    )
-                    p["ctx"] = stored_ctx
-                    context_cache[ctx_id] = stored_ctx
+                    p['ctx'] = await _store_command_context_if_needed(execution_id=p['execution_id'], step=p['step'], command_id=p['cmd_id'], context=p['ctx'])
+                    if hasattr(cmd, 'render_context'): cmd.render_context = None
+                    if hasattr(cmd, 'tool') and hasattr(cmd.tool, 'config'): cmd.tool.config = None
+            
+            await asyncio.gather(*[_sem_store(p, cmd) for p, cmd in zip(prepared_commands, commands)])
 
             # 4. Batch insert commands
             now = datetime.now(timezone.utc)
@@ -257,7 +229,7 @@ async def _issue_commands_for_batch(job: _BatchAcceptJob, commands: list) -> Non
                 for p in prepared_commands
             ]
             # Chunk the inserts to prevent massive database payload crashes
-            chunk_size = 50
+            chunk_size = 10
             for j in range(0, len(insert_params), chunk_size):
                 chunk = insert_params[j:j + chunk_size]
                 await cur.executemany("""
