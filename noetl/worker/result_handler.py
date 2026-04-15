@@ -40,7 +40,7 @@ logger = setup_logger(__name__, include_location=True)
 
 
 # Default thresholds (can be overridden via env vars)
-INLINE_MAX_BYTES = int(os.getenv("NOETL_INLINE_MAX_BYTES", "65536"))  # 64KB
+INLINE_MAX_BYTES = int(os.getenv("NOETL_INLINE_MAX_BYTES", "10485760"))  # 64KB
 PREVIEW_MAX_BYTES = int(os.getenv("NOETL_PREVIEW_MAX_BYTES", "1024"))  # 1KB
 
 
@@ -107,7 +107,7 @@ class ResultHandler:
                 {
                     "store": {"kind": "auto"|"s3"|"gcs"|..., ...},
                     "output_select": ["field1", "data.nested.field"],
-                    "inline_max_bytes": 65536
+                    "inline_max_bytes": 10485760
                 }
 
         Returns:

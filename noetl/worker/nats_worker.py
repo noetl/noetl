@@ -479,7 +479,7 @@ class Worker:
             int(
                 os.getenv(
                     "NOETL_EVENT_INLINE_MAX_BYTES",
-                    os.getenv("NOETL_INLINE_MAX_BYTES", "65536"),
+                    os.getenv("NOETL_INLINE_MAX_BYTES", "10485760"),
                 )
             ),
         )
@@ -631,7 +631,7 @@ class Worker:
 
         max_context_bytes = max(
             1024,
-            int(os.getenv("NOETL_EVENT_RESULT_CONTEXT_MAX_BYTES", "16384")),
+            int(os.getenv("NOETL_EVENT_RESULT_CONTEXT_MAX_BYTES", "10485760")),
         )
         try:
             if estimate_size(context) <= max_context_bytes:
