@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.17.35](https://github.com/noetl/noetl/compare/v2.17.34...v2.17.35) (2026-04-15)
+
+### Bug Fixes
+
+* **engine:** properly isolate 'iter' namespace to support task_sequence loops ([175d92e](https://github.com/noetl/noetl/commit/175d92ea8a19a935938c105cf8a18752d382c0a3))
+
 ## [2.17.34](https://github.com/noetl/noetl/compare/v2.17.33...v2.17.34) (2026-04-15)
 
 ### Bug Fixes
