@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.17.28](https://github.com/noetl/noetl/compare/v2.17.27...v2.17.28) (2026-04-15)
+
+### Bug Fixes
+
+* **engine:** optimize massive loop dispatch performance and concurrency ([8343ee8](https://github.com/noetl/noetl/commit/8343ee8f6f543d0cd719f85cb79bd41d71ecaccd))
+
 ## [2.17.27](https://github.com/noetl/noetl/compare/v2.17.26...v2.17.27) (2026-04-15)
 
 ### Bug Fixes
