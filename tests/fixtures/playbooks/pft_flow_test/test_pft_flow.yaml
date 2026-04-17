@@ -1492,16 +1492,16 @@ workflow:
       arcs:
         - step: end
     set:
-      ctx.final_check_summary: '{{ output.data }}'
+      ctx.final_check_status: '{{ output.status }}'
 
   - step: end
     desc: PFT flow test complete — all facilities and patients processed
     tool:
       kind: python
       input:
-        summary: '{{ ctx.final_check_summary }}'
+        check_status: '{{ ctx.final_check_status | default("unknown") }}'
       code: |
         result = {
-            "status": "completed",
-            "summary": summary,
+            "status": "completed" if check_status == "ok" else "failed",
+            "check_status": check_status,
         }
