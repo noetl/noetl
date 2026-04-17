@@ -53,6 +53,7 @@ class BatchEventItem(BaseModel):
     payload: dict[str, Any] = Field(default_factory=dict)
     actionable: bool = False
     informative: bool = True
+    meta: Optional[dict[str, Any]] = None
 
 class BatchEventRequest(BaseModel):
     """Batch of events for one execution - persisted in a single DB transaction."""
