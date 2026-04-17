@@ -467,7 +467,34 @@ def _merge_hydrated_step_result(
             hydrated.setdefault("context", compact_context)
         return hydrated
 
-    wrapped: dict[str, Any] = {
+    # When resolved is a list (e.g., Postgres rows from TempStore), build a proper
+    # data view dict so that templates like {{ output.data.row_count }} and
+    # {{ output.data.rows[0].field }} work without attribute errors.
+    if isinstance(resolved, list):
+        rc = (
+            compact_context.get("row_count", len(resolved))
+            if isinstance(compact_context, dict)
+            else len(resolved)
+        )
+        cols = compact_context.get("columns") if isinstance(compact_context, dict) else None
+        data_view: dict[str, Any] = {"rows": resolved, "row_count": rc}
+        if cols is not None:
+            data_view["columns"] = cols
+        wrapped: dict[str, Any] = {
+            "data": data_view,
+            "rows": resolved,
+            "row_count": rc,
+            "_ref": ref_wrapper,
+            "status": compact_status,
+        }
+        if isinstance(reference, dict):
+            wrapped["ref"] = reference
+            wrapped["reference"] = reference
+        if isinstance(compact_context, dict):
+            wrapped["context"] = compact_context
+        return wrapped
+
+    wrapped = {
         "data": resolved,
         "_ref": ref_wrapper,
         "status": compact_status,
