@@ -367,6 +367,15 @@ class CommandCreationMixin:
                         step.loop.mode,
                         event_id=loop_event_id,
                     )
+                    # Persist the REAL collection for the new epoch so cold-state
+                    # recovery can restore actual item payloads (not just synthetic
+                    # placeholders). Without this, resumed task_sequence commands
+                    # get integer placeholders instead of patient row objects,
+                    # causing raw Jinja to leak into Postgres SQL.
+                    if collection:
+                        await (await get_nats_cache()).save_loop_collection(
+                            str(state.execution_id), step.step, loop_event_id, collection
+                        )
 
                     if state.step_stall_counts.get(step.step, 0) >= _MAX_LOOP_STALL_RESTARTS:
                         state.failed = True

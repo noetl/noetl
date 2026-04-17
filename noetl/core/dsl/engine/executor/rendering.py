@@ -175,6 +175,36 @@ class RenderingMixin:
                 )
 
         if not collection:
+            # Try restoring the REAL collection from NATS KV (persisted at loop
+            # init / reset). The real collection carries actual item payloads
+            # (patient row objects) needed by task_sequence rendering.
+            try:
+                real_collection = await nats_cache.get_loop_collection(
+                    str(state.execution_id), step.step, desired_event_id
+                )
+                if real_collection and len(real_collection) > 0:
+                    collection = real_collection
+                    logger.info(
+                        "[LOOP-HYDRATE] Restored real collection for %s epoch=%s from NATS KV (%d items)",
+                        step.step, desired_event_id, len(collection),
+                    )
+            except Exception as exc:
+                logger.debug("[LOOP-HYDRATE] NATS KV collection lookup failed for %s: %s", step.step, exc)
+
+        if not collection:
+            # Last resort: synthetic placeholder from collection_size.
+            # Only sufficient for loop.done threshold math — NOT for dispatch
+            # rendering that needs real item payloads (e.g. iter.patient.*).
+            nats_coll_size = int(nats_loop_state.get("collection_size", 0) or 0)
+            if nats_coll_size > 0:
+                collection = list(range(nats_coll_size))
+                logger.warning(
+                    "[LOOP-HYDRATE] Using synthetic placeholder for %s epoch=%s (size=%d) — "
+                    "task_sequence rendering may fail if iter.* fields are needed",
+                    step.step, desired_event_id, nats_coll_size,
+                )
+
+        if not collection:
             return existing_state
 
         state.init_loop(
