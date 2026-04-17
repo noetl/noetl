@@ -43,7 +43,7 @@ test.describe('Master Regression Test (Parallel)', () => {
 
     test.beforeAll(() => {
         console.log(`Registering ${PLAYBOOK_NAME}...`);
-        execSync(`noetl register "${PLAYBOOK_PATH}" --host ${NOETL_HOST} --port ${NOETL_PORT}`, { stdio: 'inherit' });
+        execSync(`noetl --host ${NOETL_HOST} --port ${NOETL_PORT} register playbook --file "${PLAYBOOK_PATH}"`, { stdio: 'inherit' });
     });
 
     test('should complete all regression playbooks successfully', async ({ page }) => {
