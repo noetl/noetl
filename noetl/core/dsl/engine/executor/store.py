@@ -3,6 +3,7 @@ import yaml
 import json
 
 from .common import *
+from .common import _hydrate_reference_only_step_result
 from .state import ExecutionState
 
 class PlaybookRepo:
@@ -202,15 +203,27 @@ class StateStore:
         if isinstance(current, dict) and current.get("kind") in {"data", "ref", "refs"} and "data" in current:
             current = current.get("data")
 
+        # Hydrate reference-only envelopes using the same path as the live
+        # event handler (events.py:863). Without this, step results on rebuilt
+        # state contain only {status, reference, context} — no actual data
+        # like .rows — causing template rendering failures.
         if isinstance(current, dict) and isinstance(current.get("reference"), dict):
-            locator = current["reference"].get("locator") or current["reference"].get("ref")
-            if locator:
-                try:
-                    resolved = await default_store.resolve({"ref": locator})
-                    if resolved is not None:
-                        current = resolved
-                except Exception:
-                    pass
+            try:
+                hydrated = await _hydrate_reference_only_step_result(current)
+                if hydrated is not None and hydrated is not current:
+                    current = hydrated
+            except Exception:
+                pass
+            # Fallback: try direct reference resolution if hydration didn't work
+            if current is value or (isinstance(current, dict) and "reference" in current and "rows" not in current):
+                locator = current.get("reference", {}).get("locator") or current.get("reference", {}).get("ref")
+                if locator:
+                    try:
+                        resolved = await default_store.resolve({"ref": locator})
+                        if resolved is not None:
+                            current = resolved
+                    except Exception:
+                        pass
 
         if isinstance(current, dict):
             if current.get("kind") in {"data", "ref", "refs"} and "data" in current:
