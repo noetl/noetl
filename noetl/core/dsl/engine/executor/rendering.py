@@ -165,6 +165,8 @@ class RenderingMixin:
             try:
                 context = state.get_render_context(event)
                 rendered_collection = self._render_template(step.loop.in_, context)
+                # Resolve reference if template rendered to a reference envelope
+                rendered_collection = await _resolve_collection_if_reference(rendered_collection)
                 collection = self._normalize_loop_collection(rendered_collection, step.step)
             except Exception as exc:
                 logger.warning(

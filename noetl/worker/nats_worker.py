@@ -601,17 +601,9 @@ class Worker:
             "response",
             "result",
             "payload",
-            # NOTE: "rows" and "columns" are intentionally NOT blocked.
-            # Downstream loop steps depend on {{ step.rows }} to iterate
-            # over claimed patient rows. The 10MB context size limit
-            # (NOETL_EVENT_RESULT_CONTEXT_MAX_BYTES) bounds the payload.
-            # When rows exceed the limit, they'll be truncated and the
-            # step should use a reference-based pattern instead.
+            "rows",       # Data plane: persisted to TempStore, accessed via reference
+            "columns",    # Data plane: persisted to TempStore alongside rows
         }
-
-        # Keys that carry structured data needed by downstream loop steps
-        # (e.g. {{ claim_patients.rows }}). Included as-is if within size limit.
-        _structured_passthrough_keys = {"rows", "columns"}
 
         for key, child in candidate.items():
             key_str = str(key)
@@ -623,8 +615,8 @@ class Worker:
             if self._is_scalar(child):
                 context[key_str] = child
                 continue
-            # Pass through structured data (rows, columns) needed by loop consumers
-            if key_str in _structured_passthrough_keys and isinstance(child, list):
+            # Pass through reference dicts so downstream can resolve them
+            if isinstance(child, dict) and child.get("kind") in ("temp_ref", "result_ref"):
                 context[key_str] = child
                 continue
             if isinstance(child, dict):

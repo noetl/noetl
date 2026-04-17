@@ -316,6 +316,16 @@ async def _execute_postgres_task_async(
         duration = (end_time - start_time).total_seconds()
         has_error, error_message = process_results(results)
         collapsed_result = collapse_results_to_last_command(results)
+
+        # Data plane: persist rows to TempStore and replace with a reference.
+        # Downstream loop steps resolve the reference to get actual data.
+        # This keeps the event envelope compact (no inline row payloads).
+        collapsed_result = await _externalize_rows_to_store(
+            collapsed_result,
+            execution_id=context.get("execution_id"),
+            step_name=context.get("step") or task_name,
+        )
+
         task_status = 'error' if has_error else 'success'
 
         # Step 10: Log completion event
@@ -350,3 +360,65 @@ async def _execute_postgres_task_async(
             )
 
         return format_exception_response(task_id, e)
+
+
+async def _externalize_rows_to_store(
+    result: dict,
+    *,
+    execution_id: str | None,
+    step_name: str | None,
+) -> dict:
+    """Persist inline rows to TempStore and replace with a reference.
+
+    If the result dict has a ``rows`` key (from a SELECT query), store the
+    rows in TempStore and replace with ``{reference, context}`` envelope.
+    Non-SELECT results (no ``rows``) are returned unchanged.
+
+    Falls back to inline rows if TempStore is not available.
+    """
+    if not isinstance(result, dict):
+        return result
+    rows = result.get("rows")
+    if not isinstance(rows, list) or not rows:
+        return result
+    if not execution_id:
+        return result  # no execution context — keep inline (local/test mode)
+
+    try:
+        from noetl.core.storage.result_store import default_store
+        from noetl.core.storage.models import Scope
+
+        step_label = step_name or "postgres"
+        temp_ref = await default_store.put(
+            execution_id=str(execution_id),
+            name=f"{step_label}/rows",
+            data=rows,
+            scope=Scope.EXECUTION,
+            source_step=step_label,
+        )
+
+        # Build reference-only envelope: no inline rows
+        ref_result = dict(result)
+        del ref_result["rows"]
+        ref_result["reference"] = {
+            "kind": "temp_ref",
+            "ref": temp_ref.ref,
+            "store": temp_ref.store.value if hasattr(temp_ref.store, "value") else str(temp_ref.store),
+        }
+        # Promote row_count and columns into context for control-plane use
+        ref_result.setdefault("context", {})
+        ref_result["context"]["row_count"] = result.get("row_count", len(rows))
+        if "columns" in result:
+            ref_result["context"]["columns"] = result["columns"]
+            del ref_result["columns"]
+        logger.info(
+            "[PG-DATA-PLANE] Externalized %d rows for %s/%s → %s",
+            len(rows), execution_id, step_label, temp_ref.ref,
+        )
+        return ref_result
+
+    except Exception as exc:
+        logger.warning(
+            "[PG-DATA-PLANE] Failed to externalize rows; keeping inline: %s", exc
+        )
+        return result

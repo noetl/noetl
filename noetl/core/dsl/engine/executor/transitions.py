@@ -64,6 +64,9 @@ class TransitionMixin:
             # Render and save
             collection_expr = step_def.loop.in_
             collection = self._render_template(collection_expr, context)
+            # Resolve reference if the template rendered to a step result with a
+            # reference envelope (e.g. Postgres rows stored in TempStore).
+            collection = await _resolve_collection_if_reference(collection)
             collection = self._normalize_loop_collection(collection, step_def.step)
             
             # Persist the real collection to NATS KV immediately so cold-state

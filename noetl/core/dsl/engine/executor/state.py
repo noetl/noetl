@@ -126,17 +126,37 @@ class ExecutionState:
         """Set current executing step."""
         self.current_step = step_name
     
-    def mark_step_completed(self, step_name: str, result: Any = None):
+    async def mark_step_completed(self, step_name: str, result: Any = None):
         """Mark step as completed and store result in memory and transient.
 
+        If result contains a reference (externalized via TempStore), eagerly
+        resolve it so that ``{{ step_name.rows }}`` works in downstream templates
+        without requiring the template layer to do async I/O.
+
         If result contains _ref (externalized via ResultRef pattern), the extracted
-        output_select fields are stored directly for template access:
-        - {{ step_name.status }} accesses extracted field
-        - {{ step_name._ref }} accesses the ResultRef for lazy loading
+        output_select fields are stored directly for template access.
         """
         self.completed_steps.add(step_name)
         if result is not None:
             if isinstance(result, dict):
+                # Eagerly resolve reference to make {{ step.rows }} work
+                ref = result.get("reference")
+                if isinstance(ref, dict) and ref.get("kind") in ("temp_ref", "result_ref"):
+                    try:
+                        from noetl.core.storage.result_store import default_store
+                        resolved = await default_store.resolve(ref)
+                        if isinstance(resolved, list):
+                            result = dict(result)
+                            result["rows"] = resolved
+                            logger.debug(
+                                "[STATE] Resolved %d rows from reference for step %s",
+                                len(resolved), step_name,
+                            )
+                    except Exception as exc:
+                        logger.warning(
+                            "[STATE] Failed to resolve reference for step %s: %s",
+                            step_name, exc,
+                        )
                 # Ensure context exists
                 if "context" not in result:
                     result = {**result, "context": dict(result)}

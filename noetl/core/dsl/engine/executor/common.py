@@ -383,6 +383,34 @@ def _extract_loop_iteration_index_from_event_payload(
     return None
 
 
+async def _resolve_collection_if_reference(value: Any) -> Any:
+    """If value is a dict with a reference key, resolve it to get the actual data.
+
+    Used by loop collection paths: when a template like
+    {{ claim_patients.rows }} renders to a step result that carries a
+    reference instead of inline rows, resolve the reference to fetch
+    the actual row list from TempStore.
+    """
+    if not isinstance(value, dict):
+        return value
+    ref = value.get("reference")
+    if not isinstance(ref, dict):
+        # Also check if the value itself IS a reference dict (e.g. from context promotion)
+        if value.get("kind") in ("temp_ref", "result_ref") and value.get("ref"):
+            ref = value
+        else:
+            return value
+    try:
+        from noetl.core.storage.result_store import default_store
+        resolved = await default_store.resolve(ref)
+        if resolved is not None and isinstance(resolved, list):
+            return resolved
+        return value
+    except Exception as exc:
+        logger.warning("[RESOLVE-REF] Failed to resolve collection reference: %s", exc)
+        return value
+
+
 def _apply_set_mutations(variables: dict, mutations: dict) -> None:
     """Apply DSL Core `set` mutations to the execution variable store.
 

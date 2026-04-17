@@ -297,7 +297,7 @@ class EventHandlingMixin:
                 _is_loop_step = True
 
             if not _is_loop_step:
-                state.mark_step_completed(parent_step, _promoted_data)
+                await state.mark_step_completed(parent_step, _promoted_data)
                 logger.debug("[TASK_SEQ] Pre-marked parent step '%s' completed with promoted result (before set)", parent_step)
 
             # Process step-level set for task sequence steps
@@ -709,7 +709,7 @@ class EventHandlingMixin:
                                         if not is_late_arrival:
                                             loop_state["completed"] = True
                                             loop_state["aggregation_finalized"] = True
-                                            state.mark_step_completed(
+                                            await state.mark_step_completed(
                                                 parent_step,
                                                 state.get_loop_aggregation(parent_step),
                                             )
@@ -746,7 +746,7 @@ class EventHandlingMixin:
 
                                     # Get aggregated result
                                     loop_aggregation = state.get_loop_aggregation(parent_step)
-                                    state.mark_step_completed(parent_step, loop_aggregation)
+                                    await state.mark_step_completed(parent_step, loop_aggregation)
 
                                     # Evaluate next transitions with loop.done event
                                     loop_done_event = Event(
@@ -861,7 +861,7 @@ class EventHandlingMixin:
                 else normalized_payload
             )
             response_data = await _hydrate_reference_only_step_result(response_data)
-            state.mark_step_completed(event.step, response_data)
+            await state.mark_step_completed(event.step, response_data)
             logger.debug(f"[CALL.DONE] Stored result for step {event.step} in state BEFORE next evaluation")
         elif event.name == "call.error":
             # Mark step as completed even on error - it finished executing (with failure)
@@ -1132,7 +1132,7 @@ class EventHandlingMixin:
                                     if not is_late_arrival:
                                         loop_state["completed"] = True
                                         loop_state["aggregation_finalized"] = True
-                                        state.mark_step_completed(
+                                        await state.mark_step_completed(
                                             event.step,
                                             state.get_loop_aggregation(event.step),
                                         )
@@ -1163,7 +1163,7 @@ class EventHandlingMixin:
                                 logger.info(f"[LOOP-CALL.DONE] Loop completed for {event.step}: {new_count}/{collection_size}")
 
                                 loop_aggregation = state.get_loop_aggregation(event.step)
-                                state.mark_step_completed(event.step, loop_aggregation)
+                                await state.mark_step_completed(event.step, loop_aggregation)
 
                                 loop_done_event = Event(
                                     execution_id=event.execution_id,
@@ -1321,7 +1321,7 @@ class EventHandlingMixin:
                     logger.debug(f"Skipping step.exit result storage for task sequence step {event.step} (already handled on call.done)")
                 else:
                     hydrated_result = await _hydrate_reference_only_step_result(event.payload["result"])
-                    state.mark_step_completed(event.step, hydrated_result)
+                    await state.mark_step_completed(event.step, hydrated_result)
                     logger.debug(f"Stored result for step {event.step} in state")
         
         # Note: call.done response was stored earlier (before next evaluation) to ensure
@@ -1524,7 +1524,7 @@ class EventHandlingMixin:
                                 if loop_state:
                                     loop_state["completed"] = True
                                     loop_state["aggregation_finalized"] = True
-                                    state.mark_step_completed(
+                                    await state.mark_step_completed(
                                         event.step,
                                         state.get_loop_aggregation(event.step),
                                     )
@@ -1583,7 +1583,7 @@ class EventHandlingMixin:
 
                             # Store aggregated result as the step result
                             # This makes it available to next steps via {{ loop_step_name }}
-                            state.mark_step_completed(event.step, loop_aggregation)
+                            await state.mark_step_completed(event.step, loop_aggregation)
                             logger.info(f"Stored aggregated loop result for {event.step}: {loop_aggregation['stats']}")
 
                             # Process loop.done event through next transitions
@@ -1710,7 +1710,7 @@ class EventHandlingMixin:
                         }
                     
                     # Update the step result with pagination data
-                    state.mark_step_completed(event.step, current_result)
+                    await state.mark_step_completed(event.step, current_result)
                     logger.info(f"[PAGINATION] Finalized pagination for {event.step}: {len(flattened_items)} total items collected over {pagination_data['iteration_count']} pages")
         
         # Check for completion (only emit once) - prepare completion events but persist after current event

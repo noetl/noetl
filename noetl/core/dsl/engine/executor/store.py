@@ -393,7 +393,7 @@ class StateStore:
                 # task_sequence step.exit is an internal worker artifact, not a terminal step result
                 continue
 
-            state.mark_step_completed(str(node_name), normalized_result)
+            await state.mark_step_completed(str(node_name), normalized_result)
 
             step_def = state.get_step(str(node_name))
             if step_def and getattr(step_def, "loop", None):

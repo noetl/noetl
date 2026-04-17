@@ -185,6 +185,8 @@ class CommandCreationMixin:
                     execution_id=state.execution_id, step=step.step, name="loop_init", payload={}
                 ))
                 collection = self._render_template(step.loop.in_, context)
+                # Resolve reference if template rendered to a reference envelope
+                collection = await _resolve_collection_if_reference(collection)
                 collection = self._normalize_loop_collection(collection, step.step)
 
                 # Guard: if the collection is empty after re-rendering on a loop continuation
