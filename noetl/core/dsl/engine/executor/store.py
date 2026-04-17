@@ -200,31 +200,22 @@ class StateStore:
 
     async def _normalize_replay_result(self, value: Any) -> Any:
         current = value
+
+        # --- Phase 1: Unwrap kind/data wrappers ---
         if isinstance(current, dict) and current.get("kind") in {"data", "ref", "refs"} and "data" in current:
             current = current.get("data")
 
-        # Hydrate reference-only envelopes using the same path as the live
-        # event handler (events.py:863). Without this, step results on rebuilt
-        # state contain only {status, reference, context} — no actual data
-        # like .rows — causing template rendering failures.
-        if isinstance(current, dict) and isinstance(current.get("reference"), dict):
-            try:
-                hydrated = await _hydrate_reference_only_step_result(current)
-                if hydrated is not None and hydrated is not current:
-                    current = hydrated
-            except Exception:
-                pass
-            # Fallback: try direct reference resolution if hydration didn't work
-            if current is value or (isinstance(current, dict) and "reference" in current and "rows" not in current):
-                locator = current.get("reference", {}).get("locator") or current.get("reference", {}).get("ref")
-                if locator:
-                    try:
-                        resolved = await default_store.resolve({"ref": locator})
-                        if resolved is not None:
-                            current = resolved
-                    except Exception:
-                        pass
+        # --- Phase 2: Hydrate ALL reference-bearing shapes ---
+        # Three shapes carry references that must be resolved before the
+        # result is stored in step_results (and wrapped by TaskResultProxy):
+        #   Shape A: top-level    current.reference  →  {status, reference, context}
+        #   Shape B: nested       current.result.reference  →  {result: {status, reference, ...}, ...}
+        #   Shape C: data-wrapped current.data.reference
+        # Without hydration the template layer sees a compact envelope
+        # (no .rows, .data, etc.) and raises AttributeError.
+        current = await self._hydrate_all_reference_shapes(current)
 
+        # --- Phase 3: Flatten nested result/context into top-level keys ---
         if isinstance(current, dict):
             if current.get("kind") in {"data", "ref", "refs"} and "data" in current:
                 current = current.get("data")
@@ -250,6 +241,73 @@ class StateStore:
                 current = flattened
 
         return current
+
+    async def _hydrate_all_reference_shapes(self, current: Any) -> Any:
+        """Resolve references in all known replay envelope shapes.
+
+        Covers:
+          A) top-level   current["reference"]
+          B) nested      current["result"]["reference"]
+          C) data-wrap   current["data"]["reference"]
+        """
+        if not isinstance(current, dict):
+            return current
+
+        # Shape A: top-level reference
+        if isinstance(current.get("reference"), dict):
+            resolved = await self._try_hydrate(current)
+            if resolved is not current:
+                return resolved
+
+        # Shape B: nested result.reference — hydrate the inner result first,
+        # then replace current.result with the hydrated version so the
+        # downstream flattening step picks up data-bearing keys like .rows.
+        result_inner = current.get("result")
+        if isinstance(result_inner, dict) and isinstance(result_inner.get("reference"), dict):
+            hydrated_inner = await self._try_hydrate(result_inner)
+            if hydrated_inner is not result_inner:
+                current = dict(current)
+                current["result"] = hydrated_inner
+                return current
+
+        # Shape C: data-wrapped reference
+        data_inner = current.get("data")
+        if isinstance(data_inner, dict) and isinstance(data_inner.get("reference"), dict):
+            hydrated_inner = await self._try_hydrate(data_inner)
+            if hydrated_inner is not data_inner:
+                current = dict(current)
+                current["data"] = hydrated_inner
+                return current
+
+        return current
+
+    async def _try_hydrate(self, envelope: dict) -> Any:
+        """Attempt to hydrate a reference-bearing envelope.
+
+        Uses _hydrate_reference_only_step_result first (full merge logic),
+        then falls back to direct default_store.resolve on the locator.
+        Returns the original envelope unchanged if all attempts fail.
+        """
+        # Primary: full hydration (same as live path at events.py:863)
+        try:
+            hydrated = await _hydrate_reference_only_step_result(envelope)
+            if hydrated is not None and hydrated is not envelope:
+                return hydrated
+        except Exception:
+            pass
+
+        # Fallback: direct locator resolution
+        ref = envelope.get("reference", {})
+        locator = ref.get("locator") or ref.get("ref")
+        if locator:
+            try:
+                resolved = await default_store.resolve({"ref": locator})
+                if resolved is not None:
+                    return resolved
+            except Exception:
+                pass
+
+        return envelope
 
     async def _replay_execution_events(
         self,
