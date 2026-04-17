@@ -119,7 +119,7 @@ class QueryMixin:
 
         node_names = list(_node_name_candidates(node_name))
         try:
-            async with get_pool_connection() as conn:
+            async with db_pool.get_bg_pool_connection() as conn:
                 async with conn.cursor(row_factory=dict_row) as cur:
                     await cur.execute(
                         """

@@ -8,7 +8,7 @@ from psycopg.rows import dict_row
 from psycopg.types.json import Json
 
 from noetl.core.common import get_snowflake_id
-from noetl.core.db.pool import get_pool_connection
+from noetl.core.db.pool import get_bg_pool_connection
 from noetl.core.logger import setup_logger
 
 logger = setup_logger(__name__, include_location=True)
@@ -66,7 +66,7 @@ class RuntimeLease:
             "lease_seconds": self.lease_seconds,
         }
 
-        async with get_pool_connection(timeout=3.0) as conn:
+        async with get_bg_pool_connection(timeout=3.0) as conn:
             async with conn.cursor(row_factory=dict_row) as cur:
                 await cur.execute(
                     """
@@ -145,7 +145,7 @@ class RuntimeLease:
         return RuntimeLeaseState(acquired=False, owner_instance=owner)
 
     async def get_owner_instance(self) -> Optional[str]:
-        async with get_pool_connection(timeout=3.0) as conn:
+        async with get_bg_pool_connection(timeout=3.0) as conn:
             async with conn.cursor(row_factory=dict_row) as cur:
                 await cur.execute(
                     """
@@ -163,7 +163,7 @@ class RuntimeLease:
 
     async def release(self) -> None:
         try:
-            async with get_pool_connection(timeout=3.0) as conn:
+            async with get_bg_pool_connection(timeout=3.0) as conn:
                 async with conn.cursor(row_factory=dict_row) as cur:
                     await cur.execute(
                         """
