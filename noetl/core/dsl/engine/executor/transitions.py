@@ -66,8 +66,13 @@ class TransitionMixin:
             collection = self._render_template(collection_expr, context)
             collection = self._normalize_loop_collection(collection, step_def.step)
             
-            # Note: loop_event_id might be empty here if it's the very first entry.
-            # It will be saved inside _create_command_for_step in that case.
+            # Persist the real collection to NATS KV immediately so cold-state
+            # recovery in _ensure_loop_state_for_epoch can restore actual item
+            # payloads (e.g. patient row objects) instead of synthetic placeholders.
+            if collection and loop_event_id:
+                await nats_cache.save_loop_collection(
+                    str(state.execution_id), step_def.step, loop_event_id, collection
+                )
 
         issue_budget = self._get_loop_max_in_flight(step_def)
         commands: list[Command] = []
