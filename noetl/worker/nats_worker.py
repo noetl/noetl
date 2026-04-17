@@ -601,9 +601,17 @@ class Worker:
             "response",
             "result",
             "payload",
-            "rows",
-            "columns",
+            # NOTE: "rows" and "columns" are intentionally NOT blocked.
+            # Downstream loop steps depend on {{ step.rows }} to iterate
+            # over claimed patient rows. The 10MB context size limit
+            # (NOETL_EVENT_RESULT_CONTEXT_MAX_BYTES) bounds the payload.
+            # When rows exceed the limit, they'll be truncated and the
+            # step should use a reference-based pattern instead.
         }
+
+        # Keys that carry structured data needed by downstream loop steps
+        # (e.g. {{ claim_patients.rows }}). Included as-is if within size limit.
+        _structured_passthrough_keys = {"rows", "columns"}
 
         for key, child in candidate.items():
             key_str = str(key)
@@ -613,6 +621,10 @@ class Worker:
                 # Strict contract: command-indexed payloads are legacy transport shape.
                 continue
             if self._is_scalar(child):
+                context[key_str] = child
+                continue
+            # Pass through structured data (rows, columns) needed by loop consumers
+            if key_str in _structured_passthrough_keys and isinstance(child, list):
                 context[key_str] = child
                 continue
             if isinstance(child, dict):
