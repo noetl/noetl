@@ -136,11 +136,21 @@ class ExecutionState:
         """
         self.completed_steps.add(step_name)
         if result is not None:
-            if isinstance(result, dict) and "context" not in result:
-                result = {
-                    **result,
-                    "context": dict(result),
-                }
+            if isinstance(result, dict):
+                # Ensure context exists
+                if "context" not in result:
+                    result = {**result, "context": dict(result)}
+                # Promote context keys to top level so templates like
+                # {{ step_name.rows }} work regardless of whether the result
+                # is a full inline payload or a reference-only envelope with
+                # data nested under context.  Top-level keys take precedence
+                # (setdefault) so inline data is never shadowed.
+                context = result.get("context")
+                if isinstance(context, dict):
+                    promoted = dict(result)
+                    for k, v in context.items():
+                        promoted.setdefault(k, v)
+                    result = promoted
             self.step_results[step_name] = result
             self.variables[step_name] = result
 
