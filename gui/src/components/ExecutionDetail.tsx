@@ -917,6 +917,7 @@ const ExecutionDetail: React.FC = () => {
         </Space>
       </Card>
 
+      <div data-testid="events-table">
       <Table
         dataSource={filteredEvents}
         columns={columns}
@@ -1013,6 +1014,7 @@ const ExecutionDetail: React.FC = () => {
         }}
         size="small"
       />
+      </div>
 
       {filteredEvents.length === 0 && events.length > 0 && (
         <Alert

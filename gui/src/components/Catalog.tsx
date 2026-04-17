@@ -540,7 +540,7 @@ const Catalog: React.FC = () => {
                       icon={<PlayCircleOutlined />}
                       onClick={() => handleExecutePlaybook(playbook.catalog_id)}
                       disabled={playbook.status !== "active"}
-                      data-pw={`catalog.execute`}
+                      data-testid={`catalog-execute-${playbook.path.split("/").pop()}`}
                     >
                       Execute
                     </Button>

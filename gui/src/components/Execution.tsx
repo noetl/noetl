@@ -636,7 +636,7 @@ const Execution: React.FC = () => {
     return (
       <Content className="execution-loading-content">
         <Spin size="large" />
-        <div className="execution-loading-text">Loading executions...</div>
+        <div className="execution-loading-text" data-testid="execution-loading">Loading executions...</div>
       </Content>
     );
   }

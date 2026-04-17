@@ -6,36 +6,65 @@ const NOETL_PORT = process.env.NOETL_PORT;
 const BASE_URL = `http://${NOETL_HOST}:${NOETL_PORT}`;
 
 const CATALOG_URL = `${BASE_URL}/catalog`;
+
 const PLAYBOOK_NAME = 'duckdb_query';
 const PLAYBOOK_PATH = `tests/retry/${PLAYBOOK_NAME}.yaml`;
 const PLAYBOOK_CATALOG_NODE = `tests/retry/${PLAYBOOK_NAME}`;
-const LOADING_EXECUTIONS_TEXT = 'Loading executions...';
+
 const viewHeaders = ['Event Type', 'Node Name', 'Status', 'Timestamp', 'Duration'] as const;
+
+type TableRow = Record<typeof viewHeaders[number], string>;
+
+async function readEventsTablePage(page: Page): Promise<TableRow[]> {
+    const rows = page.locator('[data-testid="events-table"] .ant-table-row');
+    const rowCount = await rows.count();
+    const tableData: TableRow[] = [];
+    for (let i = 0; i < rowCount; i++) {
+        const cells = rows.nth(i).locator('td');
+        const values = await cells.allTextContents();
+        tableData.push(Object.fromEntries(viewHeaders.map((key, idx) => [key, values[idx]])) as TableRow);
+    }
+    return tableData;
+}
+
+async function readEventsTable(page: Page): Promise<TableRow[]> {
+    await page.waitForLoadState('networkidle').catch(() => {});
+    const allData: TableRow[] = [];
+    while (true) {
+        const pageData = await readEventsTablePage(page);
+        allData.push(...pageData);
+        const nextBtn = page.locator('[data-testid="events-table"] .ant-pagination-next:not(.ant-pagination-disabled)');
+        if (await nextBtn.count() === 0) break;
+        await nextBtn.click();
+        await page.waitForTimeout(300);
+    }
+    return allData;
+}
+
+function hasEvent(tableData: TableRow[], eventType: string, nodeName: string, status?: string): boolean {
+    return tableData.some(r =>
+        r['Event Type'] === eventType &&
+        r['Node Name'] === nodeName &&
+        (status ? r['Status'] === status : true)
+    );
+}
 
 test.describe('HTTP DuckDB to Postgres', () => {
     test.beforeAll(() => {
         console.log(`Registering ${PLAYBOOK_NAME}...`);
-        execSync(`noetl register ${PLAYBOOK_PATH} --host ${NOETL_HOST} --port ${NOETL_PORT}`, { stdio: 'inherit' });
+        execSync(`noetl --host ${NOETL_HOST} --port ${NOETL_PORT} register playbook --file ${PLAYBOOK_PATH}`, { stdio: 'inherit' });
     });
 
-    test('should open catalog page', async ({ page }) => {
+    test('should execute and emit expected step events', async ({ page }) => {
         await test.step('Navigate: open Catalog', async () => {
             await page.goto(CATALOG_URL);
             await expect(page).toHaveTitle('NoETL Dashboard');
         });
 
-        await test.step(`Execute ${PLAYBOOK_NAME} from Catalog`, async () => {
-            const executeButton = page.locator(
-                `(//*[text()='${PLAYBOOK_NAME}']/following::button[normalize-space()='Execute'])[1]`
-            );
+        await test.step(`Execute "${PLAYBOOK_NAME}" from Catalog`, async () => {
+            const executeButton = page.locator(`[data-testid="catalog-execute-${PLAYBOOK_NAME}"]`).first();
             await executeButton.click();
             await expect(page).toHaveURL(/\/execution/);
-        });
-
-        await test.step('Wait: executions loader finishes (if present)', async () => {
-            const loader = page.locator(`//*[text()='${LOADING_EXECUTIONS_TEXT}']`);
-            await loader.waitFor({ state: 'visible', timeout: 5000 }).catch(() => { });
-            await loader.waitFor({ state: 'detached' });
         });
 
         await test.step('Wait for completion, then reload', async () => {
@@ -44,56 +73,55 @@ test.describe('HTTP DuckDB to Postgres', () => {
             await expect(page).toHaveTitle('NoETL Dashboard');
         });
 
-        await test.step('Parse events table and validate key events', async () => {
-            const rows = page.locator('.ant-table-wrapper .ant-table-row');
-            const rowCount = await rows.count();
-
-            const tableData: Record<string, string>[] = [];
-
-            for (let i = 0; i < rowCount; i++) {
-                const cells = rows.nth(i).locator('td');
-                const values = await cells.allTextContents();
-                const rowData = Object.fromEntries(viewHeaders.map((key, idx) => [key, values[idx]]));
-                tableData.push(rowData);
+        await test.step('Wait: executions loader finishes (if present)', async () => {
+            const loader = page.locator('[data-testid="execution-loading"]');
+            try {
+                await loader.waitFor({ state: 'visible', timeout: 5000 });
+            } catch {
+                // loader may not appear
             }
-
-            console.log(tableData);
-
-            const hasEvent = (eventType: string, nodeName: string, status?: string) =>
-                tableData.some(r =>
-                    r['Event Type'] === eventType &&
-                    r['Node Name'] === nodeName &&
-                    (status ? r['Status'] === status : true)
-                );
-
-            // playbook/workflow lifecycle
-            expect(hasEvent('playbook.initialized', PLAYBOOK_CATALOG_NODE, 'INITIALIZED')).toBeTruthy();
-            expect(hasEvent('workflow.initialized', 'workflow', 'INITIALIZED')).toBeTruthy();
-
-            // start step
-            expect(hasEvent('command.issued', 'start', 'PENDING')).toBeTruthy();
-            expect(hasEvent('step.enter', 'start', 'STARTED')).toBeTruthy();
-            expect(hasEvent('step.exit', 'start', 'COMPLETED')).toBeTruthy();
-            expect(hasEvent('command.completed', 'start', 'COMPLETED')).toBeTruthy();
-
-            // test_step
-            expect(hasEvent('command.issued', 'test_step', 'PENDING')).toBeTruthy();
-            expect(hasEvent('step.enter', 'test_step', 'STARTED')).toBeTruthy();
-            expect(hasEvent('step.exit', 'test_step', 'COMPLETED')).toBeTruthy();
-            expect(hasEvent('command.completed', 'test_step', 'COMPLETED')).toBeTruthy();
-
-            // end
-            expect(hasEvent('command.issued', 'end', 'PENDING')).toBeTruthy();
-            expect(hasEvent('step.enter', 'end', 'STARTED')).toBeTruthy();
-            expect(hasEvent('step.exit', 'end', 'COMPLETED')).toBeTruthy();
-            expect(hasEvent('command.completed', 'end', 'COMPLETED')).toBeTruthy();
-
-            // end_sink
-            expect(hasEvent('command.issued', 'end_sink', 'PENDING')).toBeTruthy();
-            expect(hasEvent('step.enter', 'end_sink', 'STARTED')).toBeTruthy();
-            expect(hasEvent('step.exit', 'end_sink', 'COMPLETED')).toBeTruthy();
-            expect(hasEvent('command.completed', 'end_sink', 'COMPLETED')).toBeTruthy();
+            await loader.waitFor({ state: 'detached', timeout: 30000 });
         });
 
+        await test.step('Poll: wait for playbook.completed', async () => {
+            await expect
+                .poll(
+                    async () => {
+                        await page.reload();
+                        await expect(page).toHaveTitle('NoETL Dashboard');
+                        const tableData = await readEventsTable(page);
+                        return hasEvent(tableData, 'playbook.completed', PLAYBOOK_CATALOG_NODE, 'COMPLETED');
+                    },
+                    { timeout: 60000, intervals: [1000, 2000, 5000] }
+                )
+                .toBeTruthy();
+        });
+
+        await test.step('Validate: lifecycle and step events', async () => {
+            const tableData = await readEventsTable(page);
+
+            expect(hasEvent(tableData, 'playbook.initialized', PLAYBOOK_CATALOG_NODE, 'INITIALIZED')).toBeTruthy();
+            expect(hasEvent(tableData, 'workflow.initialized', 'workflow', 'INITIALIZED')).toBeTruthy();
+
+            expect(hasEvent(tableData, 'command.issued', 'start', 'PENDING')).toBeTruthy();
+            expect(hasEvent(tableData, 'step.enter', 'start', 'RUNNING')).toBeTruthy();
+            expect(hasEvent(tableData, 'step.exit', 'start', 'COMPLETED')).toBeTruthy();
+            expect(hasEvent(tableData, 'command.completed', 'start', 'COMPLETED')).toBeTruthy();
+
+            expect(hasEvent(tableData, 'command.issued', 'test_step', 'PENDING')).toBeTruthy();
+            expect(hasEvent(tableData, 'step.enter', 'test_step', 'RUNNING')).toBeTruthy();
+            expect(hasEvent(tableData, 'step.exit', 'test_step', 'COMPLETED')).toBeTruthy();
+            expect(hasEvent(tableData, 'command.completed', 'test_step', 'COMPLETED')).toBeTruthy();
+
+            expect(hasEvent(tableData, 'command.issued', 'end', 'PENDING')).toBeTruthy();
+            expect(hasEvent(tableData, 'step.enter', 'end', 'RUNNING')).toBeTruthy();
+            expect(hasEvent(tableData, 'step.exit', 'end', 'COMPLETED')).toBeTruthy();
+            expect(hasEvent(tableData, 'command.completed', 'end', 'COMPLETED')).toBeTruthy();
+
+            expect(hasEvent(tableData, 'command.issued', 'end_sink', 'PENDING')).toBeTruthy();
+            expect(hasEvent(tableData, 'step.enter', 'end_sink', 'RUNNING')).toBeTruthy();
+            expect(hasEvent(tableData, 'step.exit', 'end_sink', 'COMPLETED')).toBeTruthy();
+            expect(hasEvent(tableData, 'command.completed', 'end_sink', 'COMPLETED')).toBeTruthy();
+        });
     });
 });

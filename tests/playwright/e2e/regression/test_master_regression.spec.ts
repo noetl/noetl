@@ -1,9 +1,9 @@
 import { test, expect, type Page } from '@playwright/test';
 import { execSync } from 'child_process';
 
-const NOETL_HOST = process.env.NOETL_HOST;
-const NOETL_PORT = process.env.NOETL_PORT;
-const BASE_URL = process.env.NOETL_BASE_URL;
+const NOETL_HOST = process.env.NOETL_HOST ?? 'localhost';
+const NOETL_PORT = process.env.NOETL_PORT ?? '8082';
+const BASE_URL = process.env.NOETL_BASE_URL ?? `http://${NOETL_HOST}:${NOETL_PORT}`;
 
 const CATALOG_URL = `${BASE_URL}/catalog`;
 
@@ -11,13 +11,12 @@ const PLAYBOOK_NAME = 'master_regression_test';
 const PLAYBOOK_PATH = `tests/fixtures/playbooks/regression_test/${PLAYBOOK_NAME}.yaml`;
 const PLAYBOOK_CATALOG_NODE = `tests/fixtures/playbooks/regression_test/${PLAYBOOK_NAME}`;
 
-const LOADING_EXECUTIONS_TEXT = 'Loading executions...';
 const viewHeaders = ['Event Type', 'Node Name', 'Status', 'Timestamp', 'Duration'] as const;
 
 type TableRow = Record<typeof viewHeaders[number], string>;
 
-async function readEventsTable(page: Page): Promise<TableRow[]> {
-    const rows = page.locator('[data-testid="events-table-row"]');
+async function readEventsTablePage(page: Page): Promise<TableRow[]> {
+    const rows = page.locator('[data-testid="events-table"] .ant-table-row');
     const rowCount = await rows.count();
     const tableData: TableRow[] = [];
     for (let i = 0; i < rowCount; i++) {
@@ -28,49 +27,65 @@ async function readEventsTable(page: Page): Promise<TableRow[]> {
     return tableData;
 }
 
+async function readEventsTable(page: Page): Promise<TableRow[]> {
+    await page.waitForLoadState('networkidle').catch(() => {});
+    const allData: TableRow[] = [];
+    while (true) {
+        const pageData = await readEventsTablePage(page);
+        allData.push(...pageData);
+        const nextBtn = page.locator('[data-testid="events-table"] .ant-pagination-next:not(.ant-pagination-disabled)');
+        if (await nextBtn.count() === 0) break;
+        await nextBtn.click();
+        await page.waitForTimeout(300);
+    }
+    return allData;
+}
+
 function hasEvent(tableData: TableRow[], eventType: string, nodeName: string, status?: string): boolean {
-    return tableData.some(
-        r =>
-            r['Event Type'] === eventType &&
-            r['Node Name'] === nodeName &&
-            (status ? r['Status'] === status : true)
+    return tableData.some(r =>
+        r['Event Type'] === eventType &&
+        r['Node Name'] === nodeName &&
+        (status ? r['Status'] === status : true)
     );
 }
 
-test.describe('Master Regression Test (Sequential)', () => {
-    // 53 playbooks run sequentially — allow up to 15 minutes
-    test.setTimeout(900_000);
+test.describe('Master Regression Test', () => {
+    test.setTimeout(15 * 60 * 1000);
 
     test.beforeAll(() => {
         console.log(`Registering ${PLAYBOOK_NAME}...`);
         execSync(`noetl --host ${NOETL_HOST} --port ${NOETL_PORT} register playbook --file "${PLAYBOOK_PATH}"`, { stdio: 'inherit' });
     });
 
-    test('should complete all regression playbooks successfully', async ({ page }) => {
+    test('should complete and emit playbook lifecycle events', async ({ page }) => {
         await test.step('Navigate: open Catalog', async () => {
             await page.goto(CATALOG_URL);
             await expect(page).toHaveTitle('NoETL Dashboard');
         });
 
         await test.step(`Execute "${PLAYBOOK_NAME}" from Catalog`, async () => {
-            const executeButton = page.locator(
-                `(//*[text()='${PLAYBOOK_NAME}']/following::button[normalize-space()='Execute'])[1]`
-            );
+            const executeButton = page.locator(`[data-testid="catalog-execute-${PLAYBOOK_NAME}"]`).first();
             await executeButton.click();
             await expect(page).toHaveURL(/\/execution/);
         });
 
+        await test.step('Wait for completion, then reload', async () => {
+            await page.waitForTimeout(5000);
+            await page.reload();
+            await expect(page).toHaveTitle('NoETL Dashboard');
+        });
+
         await test.step('Wait: executions loader finishes (if present)', async () => {
-            const loader = page.locator(`//*[text()='${LOADING_EXECUTIONS_TEXT}']`);
+            const loader = page.locator('[data-testid="execution-loading"]');
             try {
                 await loader.waitFor({ state: 'visible', timeout: 5000 });
             } catch {
-                // loader may not appear if execution starts very quickly
+                // loader may not appear
             }
-            await loader.waitFor({ state: 'detached', timeout: 30_000 });
+            await loader.waitFor({ state: 'detached', timeout: 30000 });
         });
 
-        await test.step('Poll: wait for playbook.completed (up to 10 minutes)', async () => {
+        await test.step('Poll: wait for playbook.completed', async () => {
             await expect
                 .poll(
                     async () => {
@@ -79,12 +94,12 @@ test.describe('Master Regression Test (Sequential)', () => {
                         const tableData = await readEventsTable(page);
                         return hasEvent(tableData, 'playbook.completed', PLAYBOOK_CATALOG_NODE, 'COMPLETED');
                     },
-                    { timeout: 600_000, intervals: [10_000, 30_000] }
+                    { timeout: 10 * 60 * 1000, intervals: [5000, 10000, 15000] }
                 )
                 .toBeTruthy();
         });
 
-        await test.step('Validate: playbook lifecycle events completed', async () => {
+        await test.step('Validate: lifecycle events', async () => {
             const tableData = await readEventsTable(page);
 
             expect(hasEvent(tableData, 'playbook.initialized', PLAYBOOK_CATALOG_NODE, 'INITIALIZED')).toBeTruthy();
