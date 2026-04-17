@@ -86,6 +86,40 @@ async def test_store_command_context_if_needed_externalizes_nested_heavy_fields(
     assert calls == ["fetch_data_tool_config", "fetch_data_render_context"]
 
 
+@pytest.mark.asyncio
+async def test_store_command_context_if_needed_does_not_reuse_stale_render_context_ref(monkeypatch):
+    calls = []
+
+    async def _fake_put(**kwargs):
+        calls.append(kwargs["name"])
+        return ResultRef.create(
+            execution_id=str(kwargs["execution_id"]),
+            name=str(kwargs["name"]),
+            store=StoreTier.KV,
+            scope=Scope.EXECUTION,
+            meta=ResultRefMeta(bytes=2048),
+        )
+
+    monkeypatch.setattr(api_commands, "_COMMAND_CONTEXT_INLINE_MAX_BYTES", 4096)
+    monkeypatch.setattr(api_commands, "_COMMAND_CONTEXT_FIELD_INLINE_MAX_BYTES", 64)
+    monkeypatch.setattr(api_commands.default_store, "put", _fake_put)
+
+    result = await api_commands._store_command_context_if_needed(
+        execution_id=123,
+        step="fetch_medications",
+        command_id="123:fetch_medications:2",
+        context={
+            "tool_config": {"kind": "http", "tasks": [{"name": "task1", "url": "https://example.test", "template": "x" * 256}]},
+            "render_context": {"claim_patients_for_medications": {"rows": [{"patient_id": 29, "facility_mapping_id": 1}]}, "payload": "x" * 2048},
+            "input": {"page": 1},
+        },
+    )
+
+    assert result["render_context"]["kind"] == "result_ref"
+    assert "/fetch_medications_render_context/" in result["render_context"]["ref"]
+    assert calls == ["fetch_medications_tool_config", "fetch_medications_render_context"]
+
+
 def test_validate_postgres_command_context_requires_auth():
     with pytest.raises(ValueError, match="missing auth"):
         api_commands._validate_postgres_command_context(
