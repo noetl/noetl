@@ -17,7 +17,7 @@ const viewHeaders = ['Event Type', 'Node Name', 'Status', 'Timestamp', 'Duration
 type TableRow = Record<typeof viewHeaders[number], string>;
 
 async function readEventsTable(page: Page): Promise<TableRow[]> {
-    const rows = page.locator('.ant-table-wrapper .ant-table-row');
+    const rows = page.locator('[data-testid="events-table-row"]');
     const rowCount = await rows.count();
     const tableData: TableRow[] = [];
     for (let i = 0; i < rowCount; i++) {
