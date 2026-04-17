@@ -831,6 +831,30 @@ class CommandCreationMixin:
                 return None
 
             item = collection[claimed_index]
+
+            # If the item is a synthetic placeholder (integer from list(range(N))),
+            # try to restore the real collection from NATS KV so the actual data
+            # object (patient row dict) is available for template rendering.
+            # This handles the race where state rebuild loaded a synthetic collection
+            # before the real one was fetched from NATS KV.
+            if isinstance(item, int) and resolved_loop_event_id:
+                try:
+                    real_coll = await nats_cache.get_loop_collection(
+                        str(state.execution_id), step.step, resolved_loop_event_id
+                    )
+                    if real_coll and claimed_index < len(real_coll):
+                        item = real_coll[claimed_index]
+                        collection[claimed_index] = item  # patch in-memory too
+                        logger.info(
+                            "[LOOP] Restored real item at index %s for %s from NATS KV (was synthetic placeholder)",
+                            claimed_index, step.step,
+                        )
+                except Exception as exc:
+                    logger.warning(
+                        "[LOOP] Could not restore real item at index %s for %s: %s",
+                        claimed_index, step.step, exc,
+                    )
+
             loop_state["scheduled_count"] = max(
                 int(loop_state.get("scheduled_count", 0) or 0),
                 claimed_index + 1,
