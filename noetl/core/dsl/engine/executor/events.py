@@ -2009,5 +2009,13 @@ class EventHandlingMixin:
                 f"total issued={len(state.issued_steps)}"
             )
 
+        # Persist state after every handle_event so the next call can use the
+        # fast from_dict path (single-row read) instead of replaying all events.
+        # This is the "blockchain checkpoint" — each event updates the snapshot.
+        try:
+            await self.state_store.save_state(state, conn)
+        except Exception as exc:
+            logger.warning("[ENGINE] Failed to save state after handle_event: %s", exc)
+
         return commands
-    
+
