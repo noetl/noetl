@@ -2009,13 +2009,24 @@ class EventHandlingMixin:
                 f"total issued={len(state.issued_steps)}"
             )
 
-        # Persist state after every handle_event so the next call can use the
-        # fast from_dict path (single-row read) instead of replaying all events.
-        # This is the "blockchain checkpoint" — each event updates the snapshot.
-        try:
-            await self.state_store.save_state(state, conn)
-        except Exception as exc:
-            logger.warning("[ENGINE] Failed to save state after handle_event: %s", exc)
+        # Persist state periodically so the next handle_event can use the
+        # fast from_dict path. Writing on EVERY event causes row-level lock
+        # contention on noetl.execution under high concurrency. Instead,
+        # save only when the event count since last save exceeds a threshold
+        # or when a significant lifecycle transition occurred.
+        _save_interval = 10  # save every N events
+        events_since_save = (state.last_event_id or 0) - (getattr(state, '_last_saved_event_id', 0) or 0)
+        is_lifecycle = event.name in (
+            "loop.done", "step.exit", "command.failed",
+            "playbook.completed", "playbook.failed",
+            "workflow.completed", "workflow.failed",
+        )
+        if is_lifecycle or events_since_save >= _save_interval:
+            try:
+                await self.state_store.save_state(state, conn)
+                state._last_saved_event_id = state.last_event_id
+            except Exception as exc:
+                logger.warning("[ENGINE] Failed to save state: %s", exc)
 
         return commands
 
