@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.19.0](https://github.com/noetl/noetl/compare/v2.18.1...v2.19.0) (2026-04-18)
+
+### Features
+
+* **engine:** loose state with on-demand resolution from shared cache ([d2e2b27](https://github.com/noetl/noetl/commit/d2e2b27961c074b6014b4c12c290df7e206485e0))
+
 ## [2.18.1](https://github.com/noetl/noetl/compare/v2.18.0...v2.18.1) (2026-04-18)
 
 ### Performance Improvements
