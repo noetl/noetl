@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.20.1](https://github.com/noetl/noetl/compare/v2.20.0...v2.20.1) (2026-04-18)
+
+### Bug Fixes
+
+* **engine:** resolve references in fast-path template evaluator ([f347200](https://github.com/noetl/noetl/commit/f34720029126ac11cd0e19a3bcf4b6e07b261b47))
+
 ## [2.20.0](https://github.com/noetl/noetl/compare/v2.19.0...v2.20.0) (2026-04-18)
 
 ### Features
