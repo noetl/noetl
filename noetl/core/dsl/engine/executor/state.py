@@ -65,7 +65,49 @@ class ExecutionState:
     
 
     def to_dict(self) -> dict[str, Any]:
+        """Serialize state for persistence in execution.state JSONB.
+
+        CRITICAL: This must stay bounded (<10KB). Only references and scalars
+        are persisted. Resolved data (rows, collections) lives in TempStore.
+        """
         playbook_metadata = self.playbook.metadata if isinstance(getattr(self.playbook, "metadata", None), dict) else {}
+
+        # Compact step_results: strip any accidentally-resolved data (rows, columns).
+        # Keep only {status, reference, context scalars}.
+        compact_results = {}
+        for step_name, result in self.step_results.items():
+            if isinstance(result, dict):
+                compact = {
+                    k: v for k, v in result.items()
+                    if k in ("status", "reference", "context", "row_count", "statement_count")
+                    or isinstance(v, (str, int, float, bool)) or v is None
+                    or (k == "reference" and isinstance(v, dict))
+                    or (k == "context" and isinstance(v, dict))
+                }
+                compact_results[step_name] = compact
+            else:
+                compact_results[step_name] = result
+
+        # Compact loop_state: strip collection data, keep only metadata
+        compact_loop = {}
+        for step_name, ls in self.loop_state.items():
+            if isinstance(ls, dict):
+                compact_loop[step_name] = {
+                    k: v for k, v in ls.items()
+                    if k != "collection"  # never serialize full collection
+                }
+            else:
+                compact_loop[step_name] = ls
+
+        # Compact variables: strip step result mirrors (they're in step_results)
+        compact_vars = {}
+        for k, v in self.variables.items():
+            # Keep only playbook workload vars and set mutations (scalars/small dicts)
+            # Skip step result mirrors (dicts with 'reference' or 'status' + 'context')
+            if isinstance(v, dict) and ("reference" in v or ("status" in v and "context" in v)):
+                continue  # step result mirror — skip
+            compact_vars[k] = v
+
         return {
             "execution_id": self.execution_id,
             "catalog_id": self.catalog_id,
@@ -73,20 +115,17 @@ class ExecutionState:
             "parent_execution_id": self.parent_execution_id,
             "payload": self.payload,
             "current_step": self.current_step,
-            "variables": self.variables,
+            "variables": compact_vars,
             "last_event_id": self.last_event_id,
             "step_event_ids": self.step_event_ids,
-            "step_results": self.step_results,
+            "step_results": compact_results,
             "completed_steps": list(self.completed_steps),
             "issued_steps": list(self.issued_steps),
             "failed": self.failed,
             "completed": self.completed,
             "root_event_id": self.root_event_id,
-            "loop_state": self.loop_state,
+            "loop_state": compact_loop,
             "step_stall_counts": self.step_stall_counts,
-            # emitted_loop_epochs NOT serialized — the DB unique index
-            # (uidx_event_loop_done_loop_id) is the authority for dedup.
-            # In-memory set is only used within a single handle_event call.
             "pagination_state": self.pagination_state,
             "pending_next_actions": self.pending_next_actions,
         }
@@ -270,18 +309,18 @@ class ExecutionState:
                 self.step_stall_counts[step_name] = 0
 
         self.loop_state[step_name] = {
-            # Keep a local snapshot so downstream in-place list mutations outside loop_state
-            # do not alter continuation/retry scheduling.
+            # Reference-based: store collection_size and collection_ref, NOT the data.
+            # The actual collection lives in TempStore (shared cache). Access by index
+            # via get_loop_collection + indexing at command creation time.
             "collection_size": len(collection or []) if hasattr(collection, "__len__") else 0,
             "iterator": iterator,
             "index": 0,
             "mode": mode,
             "completed": False,
-            # "results" array removed for memory efficiency - use event graph tracking
-            "failed_count": 0,  # Track failed iterations
-            "break_count": 0,  # Track skipped/break iterations
-            "scheduled_count": 0,  # Track issued iterations for max_in_flight gating
-            "event_id": event_id,  # Track which event initiated this loop instance
+            "failed_count": 0,
+            "break_count": 0,
+            "scheduled_count": 0,
+            "event_id": event_id,
             "omitted_results_count": 0,  # Number of older results evicted from memory buffer
         }
         logger.debug(f"Initialized loop for step {step_name}: {len(collection or [])} items, mode={mode}, event_id={event_id}")

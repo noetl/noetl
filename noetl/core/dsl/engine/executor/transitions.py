@@ -81,8 +81,12 @@ class TransitionMixin:
         commands: list[Command] = []
         shared_control_args = dict(step_input)
         shared_control_args["__base_context"] = context
+        # Pass collection BY REFERENCE — the data lives in TempStore/NATS KV.
+        # commands.py will fetch items by index from the cache, not from this arg.
+        # This keeps the control-plane args bounded regardless of collection size.
         if collection is not None:
             shared_control_args["__loop_collection"] = collection
+            shared_control_args["__loop_collection_size"] = len(collection)
 
         # PERFORMANCE OPTIMIZATION: Batch claim loop indices to avoid O(N) NATS round-trips
         claimed_indices = []

@@ -364,7 +364,13 @@ workflow:
         payload={},
         catalog_id=101
     )
-    original_state.step_results["claim_rows"] = {"rows": [{"id": 7}]}
+    # Step results store compact envelopes with references, NOT inline data.
+    # The reference points to TempStore where the actual rows live.
+    original_state.step_results["claim_rows"] = {
+        "status": "success",
+        "reference": {"kind": "temp_ref", "ref": "noetl://execution/200000000000000777/result/claim_rows/rows", "store": "kv"},
+        "row_count": 1,
+    }
     state_dict = original_state.to_dict()
 
     class _ReplayCursor:
@@ -373,7 +379,7 @@ workflow:
         async def __aexit__(self, *args): return False
         async def execute(self, query, params=None): self.query = query
         async def fetchone(self):
-            if "noetl.execution" in self.query: 
+            if "noetl.execution" in self.query:
                 return {"state": state_dict, "catalog_id": 101}
             return None
 
@@ -391,7 +397,13 @@ workflow:
     state = await state_store.load_state(execution_id)
 
     assert state is not None
-    assert state.step_results["claim_rows"]["rows"] == [{"id": 7}]
-    
+    # Step result is a compact reference envelope — no inline rows
+    assert state.step_results["claim_rows"]["status"] == "success"
+    assert state.step_results["claim_rows"]["reference"]["kind"] == "temp_ref"
+    assert state.step_results["claim_rows"]["row_count"] == 1
+
+    # In render context, the step result is wrapped by TaskResultProxy
+    # which resolves .rows on demand from TempStore (not tested here since
+    # TempStore is not mocked — that's an integration test concern)
     context = state.get_render_context(Event(execution_id=execution_id, step="process_rows", name="loop_init"))
-    assert context["claim_rows"]["rows"] == [{"id": 7}]
+    assert context["claim_rows"]["status"] == "success"
