@@ -82,6 +82,22 @@ workflow:
           ON public.pft_test_patient_work_queue (execution_id, facility_mapping_id, data_type, patient_id)
           WHERE status = 'claimed';
 
+        -- Reclaim index: lets stale-claim sweep use claimed_at as an index
+        -- condition instead of a post-filter. Critical for sustained throughput
+        -- under high update churn (claim→done→reclaim cycles).
+        CREATE INDEX IF NOT EXISTS idx_pft_queue_claimed_reclaim
+          ON public.pft_test_patient_work_queue (execution_id, data_type, claimed_at, facility_mapping_id, patient_id)
+          WHERE status = 'claimed';
+
+        -- Autovacuum tuning for high-churn work queue: vacuum at 2% dead
+        -- (default 20%), faster vacuum cycle, 80% fillfactor for HOT updates.
+        ALTER TABLE public.pft_test_patient_work_queue SET (
+          autovacuum_vacuum_scale_factor = 0.02,
+          autovacuum_analyze_scale_factor = 0.01,
+          autovacuum_vacuum_cost_delay = 2,
+          fillfactor = 80
+        );
+
         -- Result tables
         CREATE TABLE IF NOT EXISTS public.pft_test_patient_assessments (
           pcc_patient_id      INTEGER     NOT NULL,
