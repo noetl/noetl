@@ -10,6 +10,7 @@ loop.done concurrent-dispatch race bug present in NoETL ≤ v2.14.7.
 |---|---|
 | `test_pft_flow.yaml` | Main playbook — facility loop, patient batching, 5 fetch steps, MDS batching, validation |
 | `test_mds_batch_worker.yaml` | Sub-playbook — fetches MDS assessment details for one OFFSET/LIMIT slice |
+| `pft_queue_db_maintenance.yaml` | Optional one-time queue maintenance for an already-used `demo_noetl` database |
 
 ## What it tests
 
@@ -121,6 +122,24 @@ SELECT facility_mapping_id, assessments_done, conditions_done, medications_done,
 FROM public.pft_test_validation_log
 WHERE execution_id = '<execution_id>'
 ORDER BY facility_mapping_id;
+```
+
+## Optional queue maintenance
+
+If the demo database has already seen a long-running or cancelled PFT workload and
+you want to clean up queue-table bloat before the next benchmark slice, run the
+companion maintenance playbook first. It uses Python + `psycopg` with autocommit,
+so it can safely execute `CREATE INDEX CONCURRENTLY` and `VACUUM`, which are not a
+good fit for the main reset-heavy fixture setup step.
+
+```bash
+curl -X POST http://localhost:8082/api/catalog \
+  -H "Content-Type: application/json" \
+  -d @tests/fixtures/playbooks/pft_flow_test/pft_queue_db_maintenance.yaml
+
+curl -X POST http://localhost:8082/api/execute \
+  -H "Content-Type: application/json" \
+  -d '{"path": "tests/fixtures/playbooks/pft_flow_test/pft_queue_db_maintenance", "version": <N>}'
 ```
 
 ## MDS sub-playbook

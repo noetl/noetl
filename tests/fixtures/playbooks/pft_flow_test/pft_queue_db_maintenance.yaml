@@ -1,0 +1,135 @@
+apiVersion: noetl.io/v2
+kind: Playbook
+metadata:
+  name: pft_queue_db_maintenance
+  path: tests/fixtures/playbooks/pft_flow_test/pft_queue_db_maintenance
+  description: |
+    One-time maintenance for the PFT queue table in demo_noetl.
+
+    Use this against an already-used database when you want to add the reclaim
+    index concurrently, re-apply table-level autovacuum settings, and vacuum the
+    queue immediately before the next benchmark slice.
+
+workload:
+  pg_host: postgres.postgres.svc.cluster.local
+  pg_port: 5432
+  pg_user: demo
+  pg_password: demo
+  pg_database: demo_noetl
+
+workflow:
+  - step: maintain_pft_queue
+    desc: Add reclaim index concurrently, tune autovacuum, and vacuum queue table
+    tool:
+      kind: python
+      libs:
+        psycopg: psycopg
+      input:
+        pg_host: "{{ pg_host }}"
+        pg_port: "{{ pg_port }}"
+        pg_user: "{{ pg_user }}"
+        pg_password: "{{ pg_password }}"
+        pg_database: "{{ pg_database }}"
+      code: |
+        import time
+
+        conninfo = (
+            f"host={pg_host} "
+            f"port={pg_port or 5432} "
+            f"user={pg_user} "
+            f"password={pg_password} "
+            f"dbname={pg_database}"
+        )
+
+        statements = [
+            {
+                "name": "create_reclaim_index",
+                "sql": """
+                    CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_pft_queue_claimed_reclaim
+                    ON public.pft_test_patient_work_queue (
+                      execution_id,
+                      data_type,
+                      claimed_at,
+                      facility_mapping_id,
+                      patient_id
+                    )
+                    WHERE status = 'claimed'
+                """,
+            },
+            {
+                "name": "set_table_storage",
+                "sql": """
+                    ALTER TABLE public.pft_test_patient_work_queue SET (
+                      autovacuum_vacuum_scale_factor = 0.02,
+                      autovacuum_analyze_scale_factor = 0.01,
+                      autovacuum_vacuum_cost_delay = 2,
+                      fillfactor = 80
+                    )
+                """,
+            },
+            {
+                "name": "vacuum_queue_table",
+                "sql": "VACUUM (VERBOSE, ANALYZE) public.pft_test_patient_work_queue",
+            },
+        ]
+
+        operations = []
+        with psycopg.connect(conninfo, autocommit=True) as conn:
+            with conn.cursor() as cursor:
+                for statement in statements:
+                    started = time.time()
+                    cursor.execute(statement["sql"])
+                    operations.append(
+                        {
+                            "name": statement["name"],
+                            "duration_ms": round((time.time() - started) * 1000, 1),
+                        }
+                    )
+
+                cursor.execute(
+                    """
+                    SELECT reloptions
+                    FROM pg_class
+                    WHERE oid = 'public.pft_test_patient_work_queue'::regclass
+                    """
+                )
+                reloptions_row = cursor.fetchone()
+                reloptions = reloptions_row[0] if reloptions_row and reloptions_row[0] else []
+
+                cursor.execute(
+                    """
+                    SELECT EXISTS (
+                      SELECT 1
+                      FROM pg_indexes
+                      WHERE schemaname = 'public'
+                        AND tablename = 'pft_test_patient_work_queue'
+                        AND indexname = 'idx_pft_queue_claimed_reclaim'
+                    )
+                    """
+                )
+                index_present = bool(cursor.fetchone()[0])
+
+        result = {
+            "status": "success",
+            "table": "public.pft_test_patient_work_queue",
+            "index_present": index_present,
+            "reloptions": reloptions,
+            "operations": operations,
+        }
+    next:
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
+
+  - step: end
+    desc: Maintenance complete
+    tool:
+      kind: python
+      input:
+        maintenance: "{{ maintain_pft_queue }}"
+      code: |
+        result = {
+            "status": "complete",
+            "maintenance": maintenance,
+        }
