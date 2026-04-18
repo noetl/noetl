@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.20.2](https://github.com/noetl/noetl/compare/v2.20.1...v2.20.2) (2026-04-18)
+
+### Bug Fixes
+
+* **engine:** restore eager resolution in mark_step_completed for live transitions ([10423f5](https://github.com/noetl/noetl/commit/10423f58483f855394ef28bbc679a1ca1f86f480))
+
 ## [2.20.1](https://github.com/noetl/noetl/compare/v2.20.0...v2.20.1) (2026-04-18)
 
 ### Bug Fixes
