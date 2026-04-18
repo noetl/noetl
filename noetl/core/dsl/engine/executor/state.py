@@ -169,37 +169,42 @@ class ExecutionState:
         self.current_step = step_name
     
     async def mark_step_completed(self, step_name: str, result: Any = None):
-        """Mark step as completed and store a compact reference envelope.
+        """Mark step as completed and store result with reference resolution.
 
-        The state stores ONLY the control-plane envelope (status, reference,
-        context scalars) — never resolved row data. Templates that need
-        actual data ({{ step.rows }}) resolve on-demand from TempStore via
-        LazyStepResult in get_render_context.
+        The step result is stored with resolved data so that transition
+        conditions ({{ output.data.rows[0].remaining_count }}) can evaluate
+        correctly when the state is reloaded from execution.state JSONB.
 
-        This keeps execution.state bounded at ~5-10KB regardless of how
-        many steps/facilities have been processed.
+        The to_dict() method compacts step_results for serialization,
+        stripping large data (rows lists) and keeping only scalars +
+        references. On reload, the fast-path template evaluator and
+        TaskResultProxy resolve references on-demand from TempStore.
         """
         self.completed_steps.add(step_name)
         if result is not None:
             if isinstance(result, dict):
-                # Store ONLY the compact envelope — no eager resolution.
-                # Promote context scalars to top level for template access
-                # ({{ step.row_count }}, {{ step.status }}) without resolution.
+                # Resolve reference to get actual data for transition evaluation
+                ref = result.get("reference")
+                if isinstance(ref, dict) and ref.get("kind") in ("temp_ref", "result_ref"):
+                    try:
+                        from noetl.core.storage.result_store import default_store
+                        resolved = await default_store.resolve(ref)
+                        if isinstance(resolved, list):
+                            result = dict(result)
+                            result["rows"] = resolved
+                    except Exception:
+                        pass
+                # Promote context keys to top level
                 if "context" not in result:
                     result = {**result, "context": dict(result)}
                 context = result.get("context")
                 if isinstance(context, dict):
                     promoted = dict(result)
                     for k, v in context.items():
-                        # Only promote scalars — NOT lists/dicts (those are data-plane)
-                        if isinstance(v, (str, int, float, bool)) or v is None:
-                            promoted.setdefault(k, v)
+                        promoted.setdefault(k, v)
                     result = promoted
-            # Store compact envelope in step_results (for TaskResultProxy in render context)
             self.step_results[step_name] = result
-            # Do NOT mirror into variables — variables are for playbook workload
-            # vars and set mutations only. Step results are accessed via
-            # {{ step_name.field }} through TaskResultProxy in get_render_context.
+            self.variables[step_name] = result
 
     def get_step_result_ref(self, step_name: str) -> Optional[dict]:
         """Get ResultRef for a step's externalized result, if any.
