@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.20.0](https://github.com/noetl/noetl/compare/v2.19.0...v2.20.0) (2026-04-18)
+
+### Features
+
+* **engine:** reference-chain state — to_dict compacts, variables don't mirror step results ([0b58a24](https://github.com/noetl/noetl/commit/0b58a247f0d61967f0aaf40ac7156611d51d8fe6))
+
+### Bug Fixes
+
+* restore terminal status parity and remove legacy execution trigger ([6ce7069](https://github.com/noetl/noetl/commit/6ce706954a10eb3d7dbe1abfbfa5fcf5551e677d))
+
 ## [2.19.0](https://github.com/noetl/noetl/compare/v2.18.1...v2.19.0) (2026-04-18)
 
 ### Features
