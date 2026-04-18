@@ -14,17 +14,57 @@ from noetl.core.logger import setup_logger
 logger = setup_logger(__name__, include_location=True)
 
 
+def _resolve_reference_sync(reference: Any) -> Any:
+    """Resolve a TempStore reference synchronously for use in Jinja2 rendering.
+
+    Uses asyncio.run_coroutine_threadsafe or a new event loop to bridge
+    the sync Jinja2 context with async TempStore.resolve().
+    Returns None on any failure (template rendering should handle gracefully).
+    """
+    if not isinstance(reference, dict):
+        return None
+    kind = reference.get("kind")
+    if kind not in ("temp_ref", "result_ref"):
+        return None
+    try:
+        import asyncio
+        from noetl.core.storage.result_store import default_store
+
+        # Try to schedule on the running event loop
+        try:
+            loop = asyncio.get_running_loop()
+            # We're inside an async context but called synchronously by Jinja2.
+            # Use a thread to run the coroutine without blocking the event loop.
+            import concurrent.futures
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+                future = pool.submit(asyncio.run, default_store.resolve(reference))
+                return future.result(timeout=5.0)
+        except RuntimeError:
+            # No running loop — safe to use asyncio.run directly
+            return asyncio.run(default_store.resolve(reference))
+    except Exception as exc:
+        logger.debug("[LAZY-RESOLVE] Failed to resolve reference: %s", exc)
+        return None
+
+
 class TaskResultProxy:
     """Lightweight proxy allowing ``{{ step.field }}`` attribute access on dict results.
+
+    When accessing a field that doesn't exist in the dict but the dict has a
+    ``reference`` key, resolves from TempStore (shared cache) on demand.
+    This supports the data plane separation: step results carry compact
+    {status, reference, context} envelopes, and .rows is fetched from
+    shared storage only when actually accessed in a template.
 
     Defined at module level to avoid class re-creation on every render call.
     """
 
-    __slots__ = ("_data", "_name")
+    __slots__ = ("_data", "_name", "_resolved_cache")
 
     def __init__(self, data: dict, name: str = ""):
         object.__setattr__(self, "_data", data)
         object.__setattr__(self, "_name", name)
+        object.__setattr__(self, "_resolved_cache", {})
 
     def __getattr__(self, name: str):
         data = object.__getattribute__(self, "_data")
@@ -39,6 +79,28 @@ class TaskResultProxy:
             return val
         if isinstance(data, dict) and name in data:
             return _wrap(data[name])
+
+        # On-demand resolution from shared cache (TempStore):
+        # When the dict has a reference but not the requested field,
+        # resolve the reference and cache the result for this proxy instance.
+        if isinstance(data, dict) and "reference" in data and name not in data:
+            resolved_cache = object.__getattribute__(self, "_resolved_cache")
+            if "_resolved_data" not in resolved_cache:
+                resolved_data = _resolve_reference_sync(data.get("reference"))
+                resolved_cache["_resolved_data"] = resolved_data
+            resolved = resolved_cache.get("_resolved_data")
+            if resolved is not None:
+                # The resolved data is typically a list (rows) or dict
+                if isinstance(resolved, list) and name == "rows":
+                    return resolved
+                if isinstance(resolved, dict) and name in resolved:
+                    return _wrap(resolved[name])
+                # Build a data-view dict for .row_count, .columns etc
+                if isinstance(resolved, list):
+                    data_view = {"rows": resolved, "row_count": len(resolved)}
+                    if name in data_view:
+                        return data_view[name]
+
         raise AttributeError(f"'{type(data).__name__}' object has no attribute '{name}'")
 
     def __getitem__(self, key):

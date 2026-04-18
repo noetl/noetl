@@ -84,7 +84,9 @@ class ExecutionState:
             "root_event_id": self.root_event_id,
             "loop_state": self.loop_state,
             "step_stall_counts": self.step_stall_counts,
-            "emitted_loop_epochs": list(self.emitted_loop_epochs),
+            # emitted_loop_epochs NOT serialized — the DB unique index
+            # (uidx_event_loop_done_loop_id) is the authority for dedup.
+            # In-memory set is only used within a single handle_event call.
             "pagination_state": self.pagination_state,
             "pending_next_actions": self.pending_next_actions,
         }
@@ -110,7 +112,8 @@ class ExecutionState:
         state.root_event_id = data.get("root_event_id")
         state.loop_state = data.get("loop_state", {})
         state.step_stall_counts = data.get("step_stall_counts", {})
-        state.emitted_loop_epochs = set(data.get("emitted_loop_epochs", []))
+        # emitted_loop_epochs starts empty on each load — DB unique index is authority
+        state.emitted_loop_epochs = set()
         state.pagination_state = data.get("pagination_state", {})
         state.pending_next_actions = data.get("pending_next_actions", {})
         return state
@@ -127,61 +130,37 @@ class ExecutionState:
         self.current_step = step_name
     
     async def mark_step_completed(self, step_name: str, result: Any = None):
-        """Mark step as completed and store result in memory and transient.
+        """Mark step as completed and store a compact reference envelope.
 
-        If result contains a reference (externalized via TempStore), eagerly
-        resolve it so that ``{{ step_name.rows }}`` works in downstream templates
-        without requiring the template layer to do async I/O.
+        The state stores ONLY the control-plane envelope (status, reference,
+        context scalars) — never resolved row data. Templates that need
+        actual data ({{ step.rows }}) resolve on-demand from TempStore via
+        LazyStepResult in get_render_context.
 
-        If result contains _ref (externalized via ResultRef pattern), the extracted
-        output_select fields are stored directly for template access.
+        This keeps execution.state bounded at ~5-10KB regardless of how
+        many steps/facilities have been processed.
         """
         self.completed_steps.add(step_name)
         if result is not None:
             if isinstance(result, dict):
-                # Eagerly resolve reference to make {{ step.rows }} work
-                ref = result.get("reference")
-                if isinstance(ref, dict) and ref.get("kind") in ("temp_ref", "result_ref"):
-                    try:
-                        from noetl.core.storage.result_store import default_store
-                        resolved = await default_store.resolve(ref)
-                        if isinstance(resolved, list):
-                            result = dict(result)
-                            result["rows"] = resolved
-                            logger.debug(
-                                "[STATE] Resolved %d rows from reference for step %s",
-                                len(resolved), step_name,
-                            )
-                    except Exception as exc:
-                        logger.warning(
-                            "[STATE] Failed to resolve reference for step %s: %s",
-                            step_name, exc,
-                        )
-                # Ensure context exists
+                # Store ONLY the compact envelope — no eager resolution.
+                # Promote context scalars to top level for template access
+                # ({{ step.row_count }}, {{ step.status }}) without resolution.
                 if "context" not in result:
                     result = {**result, "context": dict(result)}
-                # Promote context keys to top level so templates like
-                # {{ step_name.rows }} work regardless of whether the result
-                # is a full inline payload or a reference-only envelope with
-                # data nested under context.  Top-level keys take precedence
-                # (setdefault) so inline data is never shadowed.
                 context = result.get("context")
                 if isinstance(context, dict):
                     promoted = dict(result)
                     for k, v in context.items():
-                        promoted.setdefault(k, v)
+                        # Only promote scalars — NOT lists/dicts (those are data-plane)
+                        if isinstance(v, (str, int, float, bool)) or v is None:
+                            promoted.setdefault(k, v)
                     result = promoted
+            # Store compact envelope in step_results (for TaskResultProxy in render context)
             self.step_results[step_name] = result
-            self.variables[step_name] = result
-
-            # Log if result was externalized
-            if isinstance(result, dict) and "_ref" in result:
-                logger.info(
-                    f"[STATE] Step {step_name}: externalized result stored | "
-                    f"extracted_fields={[k for k in result.keys() if not k.startswith('_')]}"
-                )
-            # Also persist to transient for rendering in subsequent steps
-            # This is done async in the engine after calling mark_step_completed
+            # Do NOT mirror into variables — variables are for playbook workload
+            # vars and set mutations only. Step results are accessed via
+            # {{ step_name.field }} through TaskResultProxy in get_render_context.
 
     def get_step_result_ref(self, step_name: str) -> Optional[dict]:
         """Get ResultRef for a step's externalized result, if any.
@@ -435,11 +414,17 @@ class ExecutionState:
             "iter": iter_vars,      # Iteration-scoped variables (canonical v10)
             # Backward compatibility: workload namespace for {{ workload.xxx }}
             "workload": self.variables,  # Legacy alias for Core playbooks
-            **self.step_results,  # Make step results accessible (e.g., {{ process }})
         }
-        
+
+        # Step results are accessed via {{ step_name.field }} through TaskResultProxy.
+        # Only inject compact reference envelopes — resolution happens on-demand
+        # in TaskResultProxy.__getattr__ from shared cache (TempStore).
+        # This keeps the render context bounded regardless of step count.
+        for step_name, step_result in self.step_results.items():
+            if step_name not in context and step_name not in protected_fields:
+                context[step_name] = step_result
+
         # Add variables to context only if they don't collide with reserved keys
-        # This provides a flatter namespace while protecting system fields
         for k, v in self.variables.items():
             if k not in context and k not in protected_fields:
                 context[k] = v
