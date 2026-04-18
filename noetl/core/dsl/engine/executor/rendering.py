@@ -4,6 +4,34 @@ from .common import *
 from .state import ExecutionState
 from .store import PlaybookRepo, StateStore
 
+def _resolve_reference_sync_for_fast_path(reference: Any) -> Any:
+    """Resolve a TempStore reference for the fast-path template evaluator.
+
+    The fast-path in _render_template bypasses Jinja2 and TaskResultProxy,
+    so it needs its own reference resolution. Uses the same approach as
+    render.py's _resolve_reference_sync.
+    """
+    if not isinstance(reference, dict):
+        return None
+    kind = reference.get("kind")
+    if kind not in ("temp_ref", "result_ref"):
+        return None
+    try:
+        import asyncio
+        from noetl.core.storage.result_store import default_store
+        try:
+            loop = asyncio.get_running_loop()
+            import concurrent.futures
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+                future = pool.submit(asyncio.run, default_store.resolve(reference))
+                return future.result(timeout=5.0)
+        except RuntimeError:
+            return asyncio.run(default_store.resolve(reference))
+    except Exception as exc:
+        logger.debug("[FAST-PATH-RESOLVE] Failed: %s", exc)
+        return None
+
+
 class RenderingMixin:
     def _render_value_recursive(self, value: Any, context: dict[str, Any]) -> Any:
         """Recursively render templates in nested data structures."""
@@ -42,6 +70,20 @@ class RenderingMixin:
                 for part in parts:
                     if isinstance(value, dict) and part in value:
                         value = value[part]
+                    elif isinstance(value, dict) and "reference" in value and part not in value:
+                        # Reference-chain resolution: the dict is a compact envelope
+                        # {status, reference, context}. Resolve the reference from
+                        # TempStore to get the actual data, then access the field.
+                        resolved = _resolve_reference_sync_for_fast_path(value.get("reference"))
+                        if resolved is not None:
+                            if isinstance(resolved, list) and part == "rows":
+                                value = resolved
+                            elif isinstance(resolved, dict) and part in resolved:
+                                value = resolved[part]
+                            else:
+                                break
+                        else:
+                            break
                     elif hasattr(value, part):
                         value = getattr(value, part)
                     else:
