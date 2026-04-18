@@ -2,6 +2,33 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.18.0](https://github.com/noetl/noetl/compare/v2.17.36...v2.18.0) (2026-04-18)
+
+### Features
+
+* **engine:** data plane separation — persist Postgres rows to TempStore, pass references ([df0a9e4](https://github.com/noetl/noetl/commit/df0a9e451a21ff4bbf82a5c4ab55eecd9e5db4e8))
+
+### Bug Fixes
+
+* **api:** add missing meta field to BatchEventItem model ([99c6ee8](https://github.com/noetl/noetl/commit/99c6ee8e6477cd22aed33a86687ea5065bcd993b))
+* **api:** avoid stale command-context ref reuse across requests ([bf157c4](https://github.com/noetl/noetl/commit/bf157c428604dcc1df351616b8d3c061daa96198))
+* **db:** dedicated background pool + bump default pool to 32 ([7116fba](https://github.com/noetl/noetl/commit/7116fba02e2f6bf052ad2add506b4bec796dbbaf))
+* **db:** route sweeper leases + loop-counter-reconcile through bg pool ([f9a974c](https://github.com/noetl/noetl/commit/f9a974c40c10db7141df10876a4f566a8dbf1b1e))
+* **engine:** hydrate all replay envelope shapes (top-level, nested, data-wrapped) ([17caba0](https://github.com/noetl/noetl/commit/17caba04f4703c2980109a0352eadad313901477)), closes [#7](https://github.com/noetl/noetl/issues/7) [#8](https://github.com/noetl/noetl/issues/8) [#7](https://github.com/noetl/noetl/issues/7) [#7](https://github.com/noetl/noetl/issues/7) [#8](https://github.com/noetl/noetl/issues/8)
+* **engine:** hydrate reference-only step results during state replay ([b2b15ac](https://github.com/noetl/noetl/commit/b2b15ace12fcb74c421eaf00973eeae9ca7d23fb)), closes [#7](https://github.com/noetl/noetl/issues/7) [#1](https://github.com/noetl/noetl/issues/1) [-#6](https://github.com/noetl/-/issues/6) [#7](https://github.com/noetl/noetl/issues/7)
+* **engine:** persist real loop collection on epoch reset + restore from NATS KV before synthetic fallback ([85d9c0d](https://github.com/noetl/noetl/commit/85d9c0da281b69cabbde52ed2e126ddc493b2b28))
+* **engine:** promote context keys to top level in mark_step_completed + hydrate all replay shapes ([63f8294](https://github.com/noetl/noetl/commit/63f82946671cd4d01da25345c73d8af7422a7241)), closes [#9](https://github.com/noetl/noetl/issues/9) [#7](https://github.com/noetl/noetl/issues/7) [#8](https://github.com/noetl/noetl/issues/8) [#7](https://github.com/noetl/noetl/issues/7) [#8](https://github.com/noetl/noetl/issues/8) [#9](https://github.com/noetl/noetl/issues/9)
+* **engine:** restore real loop item from NATS KV when synthetic placeholder detected ([05d21df](https://github.com/noetl/noetl/commit/05d21df0c52948743eebb4c20eef1df4d3194f01))
+* **engine:** save loop collection to NATS KV in transitions.py at dispatch time ([7432ad1](https://github.com/noetl/noetl/commit/7432ad18da2b01f549cf44132c28ad48646ffe36))
+* **engine:** wrap resolved row list in data-view dict for output.data.row_count access ([6ad16a1](https://github.com/noetl/noetl/commit/6ad16a12b41ae16e61dfde2b483deb2eff851425))
+* **fixture:** pass scalar status via ctx instead of full output.data blob ([1521af0](https://github.com/noetl/noetl/commit/1521af08fe966cababbef204977c129ddb3f6ccf))
+* **worker:** include rows and columns in event result context for loop consumers ([34deb7f](https://github.com/noetl/noetl/commit/34deb7fef329b794ab5c26cb1f2248f04c7cf56b))
+
+### Performance Improvements
+
+* **engine:** persist state after every handle_event for fast chain-based loading ([83c63c6](https://github.com/noetl/noetl/commit/83c63c60caf5bae13a669fe3f43b06bc878cce8a))
+* **engine:** throttle save_state to every 10 events or lifecycle transitions ([e6f4b5f](https://github.com/noetl/noetl/commit/e6f4b5fbe816f886ac003806f5a1e87f41d67bdb))
+
 ## [2.17.36](https://github.com/noetl/noetl/compare/v2.17.35...v2.17.36) (2026-04-15)
 
 ### Bug Fixes
