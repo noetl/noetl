@@ -100,17 +100,17 @@ def _format_duration_human(total_seconds: Optional[float]) -> Optional[str]:
 def _duration_fields(
     start_time: Optional[datetime],
     end_time: Optional[datetime],
-    completed: bool,
+    terminal: bool,
 ) -> dict[str, Any]:
     start_dt = _normalize_utc_timestamp(start_time)
     end_dt = _normalize_utc_timestamp(end_time)
     duration_seconds: Optional[float] = None
     if start_dt:
-        effective_end = end_dt if completed and end_dt else datetime.now(timezone.utc)
+        effective_end = end_dt if terminal and end_dt else datetime.now(timezone.utc)
         duration_seconds = max(0.0, (effective_end - start_dt).total_seconds())
     return {
         "start_time": _iso_timestamp(start_dt),
-        "end_time": _iso_timestamp(end_dt if completed else None),
+        "end_time": _iso_timestamp(end_dt if terminal else None),
         "duration_seconds": round(duration_seconds, 3) if duration_seconds is not None else None,
         "duration_human": _format_duration_human(duration_seconds),
     }

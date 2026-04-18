@@ -16,6 +16,14 @@ from .db import _next_snowflake_id
 from .recovery import _publish_commands_with_recovery
 
 router = APIRouter()
+_STATUS_TERMINAL_EVENT_TYPES = (
+    "playbook.completed",
+    "workflow.completed",
+    "playbook.failed",
+    "workflow.failed",
+    "execution.cancelled",
+    "command.failed",
+)
 
 @router.post("/execute", response_model=ExecuteResponse)
 async def execute(req: ExecuteRequest) -> ExecuteResponse:
@@ -82,7 +90,17 @@ async def get_execution_status(execution_id: str, full: bool = False):
                     if not latest: raise HTTPException(404, "Execution not found")
                     await cur.execute("SELECT created_at FROM noetl.event WHERE execution_id = %s ORDER BY event_id ASC LIMIT 1", (exec_id_int,))
                     first = await cur.fetchone()
-                    await cur.execute("SELECT event_type FROM noetl.event WHERE execution_id = %s AND event_type IN ('playbook.completed', 'workflow.completed', 'playbook.failed', 'workflow.failed', 'execution.cancelled') ORDER BY event_id DESC LIMIT 1", (exec_id_int,))
+                    await cur.execute(
+                        """
+                        SELECT event_type, node_name, status, created_at
+                        FROM noetl.event
+                        WHERE execution_id = %s
+                          AND event_type = ANY(%s)
+                        ORDER BY event_id DESC
+                        LIMIT 1
+                        """,
+                        (exec_id_int, list(_STATUS_TERMINAL_EVENT_TYPES)),
+                    )
                     terminal = await cur.fetchone()
                     await cur.execute("SELECT node_name FROM noetl.event WHERE execution_id = %s AND event_type IN ('step.exit', 'loop.done') AND status = 'COMPLETED' ORDER BY event_id ASC", (exec_id_int,))
                     step_rows = await cur.fetchall()
@@ -99,7 +117,12 @@ async def get_execution_status(execution_id: str, full: bool = False):
                 completed, inferred = True, True
             if failed: completed = False
             seen = set(); completed_steps = [r["node_name"] for r in (step_rows or []) if r["node_name"] and r["node_name"] not in seen and not r["node_name"].endswith(':task_sequence') and not seen.add(r["node_name"])]
-            duration = _duration_fields(first.get("created_at") if first else None, latest.get("created_at") if latest else None, completed)
+            terminal_time = (terminal or latest).get("created_at") if (terminal or latest) else None
+            duration = _duration_fields(
+                first.get("created_at") if first else None,
+                terminal_time,
+                completed or failed,
+            )
             return {"execution_id": execution_id, "current_step": latest.get("node_name"), "completed_steps": completed_steps, "failed": failed, "completed": completed, "completion_inferred": inferred, "variables": _compact_status_variables({}), "source": "event_log_fallback", **duration}
 
         completed, failed, inferred = state.completed, state.failed, False
@@ -110,7 +133,17 @@ async def get_execution_status(execution_id: str, full: bool = False):
                 first = await cur.fetchone()
                 await cur.execute("SELECT event_type, node_name, status, created_at FROM noetl.event WHERE execution_id = %s ORDER BY event_id DESC LIMIT 1", (exec_id_int,))
                 latest = await cur.fetchone()
-                await cur.execute("SELECT event_type, node_name, status, created_at FROM noetl.event WHERE execution_id = %s AND event_type IN ('playbook.completed', 'workflow.completed', 'playbook.failed', 'workflow.failed', 'execution.cancelled') ORDER BY event_id DESC LIMIT 1", (exec_id_int,))
+                await cur.execute(
+                    """
+                    SELECT event_type, node_name, status, created_at
+                    FROM noetl.event
+                    WHERE execution_id = %s
+                      AND event_type = ANY(%s)
+                    ORDER BY event_id DESC
+                    LIMIT 1
+                    """,
+                    (exec_id_int, list(_STATUS_TERMINAL_EVENT_TYPES)),
+                )
                 terminal = await cur.fetchone()
                 pending_row = {"pending_count": 0}
                 if terminal is None and latest and latest["event_type"] == "batch.completed" and latest["status"] == "COMPLETED":
@@ -126,7 +159,11 @@ async def get_execution_status(execution_id: str, full: bool = False):
                 elif latest and latest["node_name"] == "end" and latest["status"] == "COMPLETED" and latest["event_type"] in {"command.completed", "call.done", "step.exit"}:
                     completed, inferred = True, True
         if failed: completed = False
-        duration = _duration_fields(first.get("created_at") if first else None, (terminal or latest).get("created_at") if (terminal or latest) else None, completed)
+        duration = _duration_fields(
+            first.get("created_at") if first else None,
+            (terminal or latest).get("created_at") if (terminal or latest) else None,
+            completed or failed,
+        )
         return {"execution_id": execution_id, "current_step": state.current_step, "completed_steps": list(state.completed_steps), "failed": failed, "completed": completed, "completion_inferred": inferred, "variables": state.variables if full else _compact_status_variables(state.variables), **duration}
     except HTTPException: raise
     except Exception as e: logger.error(f"get_execution_status failed: {e}", exc_info=True); raise HTTPException(500, str(e))
