@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.18.1](https://github.com/noetl/noetl/compare/v2.18.0...v2.18.1) (2026-04-18)
+
+### Performance Improvements
+
+* **engine:** prune stale state on loop.done to prevent 24x throughput degradation ([bbe3167](https://github.com/noetl/noetl/commit/bbe316709132e69c7b655efc41997e740f6e730e))
+* **fixture:** add reclaim index + autovacuum tuning for pft work queue ([e6e9b34](https://github.com/noetl/noetl/commit/e6e9b34f7bf620dbf58eeea846c02d344396135c))
+
 ## [2.18.0](https://github.com/noetl/noetl/compare/v2.17.36...v2.18.0) (2026-04-18)
 
 ### Features
