@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.22.0](https://github.com/noetl/noetl/compare/v2.21.0...v2.22.0) (2026-04-19)
+
+### Features
+
+* **engine:** command table read paths + state reconstruction optimization ([7893ba4](https://github.com/noetl/noetl/commit/7893ba4445960308c8c4de3bc573f20a53e9d0b0))
+
 ## [2.21.0](https://github.com/noetl/noetl/compare/v2.20.3...v2.21.0) (2026-04-19)
 
 ### Features
