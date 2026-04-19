@@ -212,15 +212,24 @@ async def get_command(event_id: int):
     try:
         async with get_pool_connection() as conn:
             async with conn.cursor(row_factory=dict_row) as cur:
+                # Primary: query the command projection table (O(1) by event_id)
                 await cur.execute("""
-                    SELECT execution_id, node_name as step, node_type as tool_kind, context, meta
-                    FROM noetl.event
-                    WHERE event_id = %s AND event_type = 'command.issued'
+                    SELECT execution_id, step_name, tool_kind, context, meta
+                    FROM noetl.command
+                    WHERE event_id = %s
                 """, (event_id,))
                 row = await cur.fetchone()
-                if not row: raise HTTPException(404, f"command.issued event not found: {event_id}")
+                if not row:
+                    # Fallback: query event table for backward compat (pre-command-table commands)
+                    await cur.execute("""
+                        SELECT execution_id, node_name as step_name, node_type as tool_kind, context, meta
+                        FROM noetl.event
+                        WHERE event_id = %s AND event_type = 'command.issued'
+                    """, (event_id,))
+                    row = await cur.fetchone()
+                if not row: raise HTTPException(404, f"command not found: {event_id}")
                 return {
-                    "execution_id": row['execution_id'], "node_id": row['step'], "node_name": row['step'],
+                    "execution_id": row['execution_id'], "node_id": row['step_name'], "node_name": row['step_name'],
                     "action": row['tool_kind'], "context": row['context'] or {}, "meta": row['meta']
                 }
     except HTTPException: raise
@@ -241,23 +250,42 @@ async def claim_command(event_id: int, req: ClaimRequest):
 
         async with get_pool_connection(timeout=_CLAIM_DB_ACQUIRE_TIMEOUT_SECONDS) as conn:
             async with conn.cursor(row_factory=dict_row) as cur:
+                # Primary: query the command projection table (single-row PK lookup)
                 await cur.execute("""
-                    SELECT execution_id, catalog_id, node_name as step, node_type as tool_kind, context, meta
-                    FROM noetl.event
-                    WHERE event_id = %s AND event_type = 'command.issued'
+                    SELECT command_id, execution_id, catalog_id, step_name, tool_kind, context, meta, status, worker_id, updated_at
+                    FROM noetl.command
+                    WHERE event_id = %s
                 """, (event_id,))
                 cmd_row = await cur.fetchone()
+                if not cmd_row:
+                    # Fallback: query event table for pre-command-table commands
+                    await cur.execute("""
+                        SELECT execution_id, catalog_id, node_name as step_name, node_type as tool_kind, context, meta
+                        FROM noetl.event WHERE event_id = %s AND event_type = 'command.issued'
+                    """, (event_id,))
+                    cmd_row = await cur.fetchone()
                 _record_db_operation_success()
-                if not cmd_row: raise HTTPException(404, f"command.issued event not found: {event_id}")
+                if not cmd_row: raise HTTPException(404, f"command not found: {event_id}")
 
-                execution_id, catalog_id, step, tool_kind = cmd_row['execution_id'], cmd_row['catalog_id'], cmd_row['step'], cmd_row['tool_kind']
+                execution_id = cmd_row['execution_id']
+                catalog_id = cmd_row['catalog_id']
+                step = cmd_row['step_name']
+                tool_kind = cmd_row['tool_kind']
                 context, meta = cmd_row['context'] or {}, cmd_row['meta'] or {}
-                command_id = meta.get('command_id', f"{execution_id}:{step}:{event_id}")
+                command_id = cmd_row.get('command_id') or meta.get('command_id', f"{execution_id}:{step}:{event_id}")
 
-                await cur.execute(
-                    f"SELECT event_type FROM noetl.event WHERE execution_id = %s AND event_type = ANY(%s) AND meta->>'command_id' = %s ORDER BY event_id DESC LIMIT 1",
-                    (execution_id, _COMMAND_TERMINAL_EVENT_TYPES, command_id),
-                )
+                # Check terminal status from command table (O(1) instead of event scan)
+                cmd_status = cmd_row.get('status', 'PENDING')
+                if cmd_status in ('COMPLETED', 'FAILED', 'CANCELLED'):
+                    _active_claim_cache_invalidate(command_id=command_id, event_id=event_id)
+                    raise HTTPException(409, detail={"code": "already_terminal", "message": f"Command status: {cmd_status}"})
+
+                # Fallback: check event table for terminal status (pre-command-table)
+                if not cmd_row.get('command_id'):
+                    await cur.execute(
+                        f"SELECT event_type FROM noetl.event WHERE execution_id = %s AND event_type = ANY(%s) AND meta->>'command_id' = %s ORDER BY event_id DESC LIMIT 1",
+                        (execution_id, _COMMAND_TERMINAL_EVENT_TYPES, command_id),
+                    )
                 if await cur.fetchone():
                     _active_claim_cache_invalidate(command_id=command_id, event_id=event_id)
                     raise HTTPException(409, detail={"code": "already_terminal", "message": "Command already reached terminal state"})

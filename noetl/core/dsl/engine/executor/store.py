@@ -316,6 +316,44 @@ class StateStore:
     ) -> ExecutionState:
         from noetl.core.dsl.render import render_template as recursive_render
 
+        # Phase 6: Populate issued_steps and completed_steps from command table
+        # instead of scanning command.* events. O(N_commands) not O(N_all_events).
+        try:
+            await cursor.execute("""
+                SELECT command_id, step_name, status, loop_event_id, meta
+                FROM noetl.command WHERE execution_id = %s
+            """, (int(state.execution_id),))
+            cmd_rows = await cursor.fetchall()
+            for cmd in cmd_rows:
+                pending_key = _pending_step_key(cmd.get("step_name"))
+                if pending_key:
+                    state.issued_steps.add(pending_key)
+                    if cmd.get("status") in ("COMPLETED", "FAILED", "CANCELLED"):
+                        state.completed_steps.add(pending_key)
+                # Initialize loop_state for task_sequence loop steps
+                step_name = cmd.get("step_name") or ""
+                if step_name.endswith(":task_sequence"):
+                    parent_step = step_name.rsplit(":", 1)[0]
+                    parent_def = state.get_step(parent_step)
+                    cmd_meta = cmd.get("meta") or {}
+                    if parent_def and getattr(parent_def, "loop", None) and parent_step not in state.loop_state:
+                        state.loop_state[parent_step] = {
+                            "collection_size": 0,
+                            "iterator": parent_def.loop.iterator,
+                            "index": 0,
+                            "mode": parent_def.loop.mode,
+                            "completed": False,
+                            "failed_count": 0,
+                            "break_count": 0,
+                            "scheduled_count": 0,
+                            "event_id": cmd.get("loop_event_id") or cmd_meta.get("__loop_epoch_id"),
+                            "omitted_results_count": 0,
+                            "aggregation_finalized": False,
+                        }
+        except Exception as _cmd_err:
+            logger.debug("[STATE-REPLAY] Command table query failed, falling back to event scan: %s", _cmd_err)
+
+        # Scan only non-command events (lifecycle facts, step results, loop transitions)
         await cursor.execute(
             """
             SELECT event_id, node_name, event_type, result, meta
@@ -341,33 +379,6 @@ class StateStore:
                     state.step_event_ids[str(node_name)] = int(event_id)
 
             pending_key = _pending_step_key(node_name)
-            if event_type == "command.issued":
-                if pending_key:
-                    state.issued_steps.add(pending_key)
-                if isinstance(node_name, str) and node_name.endswith(":task_sequence"):
-                    parent_step = node_name.rsplit(":", 1)[0]
-                    parent_def = state.get_step(parent_step)
-                    if parent_def and getattr(parent_def, "loop", None) and parent_step not in state.loop_state:
-                        state.loop_state[parent_step] = {
-                            "collection": [],
-                            "iterator": parent_def.loop.iterator,
-                            "index": 0,
-                            "mode": parent_def.loop.mode,
-                            "completed": False,
-                            "results": [],
-                            "failed_count": 0,
-                            "break_count": 0,
-                            "scheduled_count": 0,
-                            "event_id": meta.get("loop_event_id") or meta.get("__loop_epoch_id"),
-                            "omitted_results_count": 0,
-                            "aggregation_finalized": False,
-                        }
-                continue
-
-            if event_type in {"command.completed", "command.cancelled"}:
-                if pending_key:
-                    state.completed_steps.add(pending_key)
-                continue
 
             if event_type == "command.failed":
                 if pending_key:

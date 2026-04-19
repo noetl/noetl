@@ -142,13 +142,13 @@ _EXECUTION_FAILURE_EVENT_TYPES = {
     "playbook.failed",
     "workflow.failed",
 }
+# Command lifecycle types are NO LONGER scanned from the event table.
+# issued_steps and completed_steps are populated from noetl.command
+# (the mutable projection table) in _replay_execution_events.
 _STATE_REPLAY_EVENT_TYPES = (
-    "command.issued",
-    "command.completed",
-    "command.failed",
-    "command.cancelled",
     "step.exit",
     "call.done",
+    "call.error",
     "loop.done",
     "playbook.completed",
     "playbook.failed",

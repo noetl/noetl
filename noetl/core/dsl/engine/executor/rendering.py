@@ -3,6 +3,7 @@ from __future__ import annotations
 from .common import *
 from .state import ExecutionState
 from .store import PlaybookRepo, StateStore
+from noetl.core.dsl.render import TaskResultProxy
 
 def _resolve_reference_sync_for_fast_path(reference: Any) -> Any:
     """Resolve a TempStore reference for the fast-path template evaluator.
@@ -30,6 +31,26 @@ def _resolve_reference_sync_for_fast_path(reference: Any) -> Any:
     except Exception as exc:
         logger.debug("[FAST-PATH-RESOLVE] Failed: %s", exc)
         return None
+
+
+def _extract_reference_for_fast_path(value: Any) -> Any:
+    """Find a result-store reference across known compact envelope shapes."""
+    if not isinstance(value, dict):
+        return None
+
+    reference = value.get("reference")
+    if isinstance(reference, dict):
+        return reference
+
+    for key in ("data", "result"):
+        inner = value.get(key)
+        if isinstance(inner, dict) and isinstance(inner.get("reference"), dict):
+            return inner.get("reference")
+
+    if value.get("kind") in ("temp_ref", "result_ref") and value.get("ref"):
+        return value
+
+    return None
 
 
 class RenderingMixin:
@@ -70,14 +91,18 @@ class RenderingMixin:
                 for part in parts:
                     if isinstance(value, dict) and part in value:
                         value = value[part]
-                    elif isinstance(value, dict) and "reference" in value and part not in value:
+                    elif isinstance(value, dict) and part not in value:
                         # Reference-chain resolution: the dict is a compact envelope
                         # {status, reference, context}. Resolve the reference from
                         # TempStore to get the actual data, then access the field.
-                        resolved = _resolve_reference_sync_for_fast_path(value.get("reference"))
+                        resolved = _resolve_reference_sync_for_fast_path(
+                            _extract_reference_for_fast_path(value)
+                        )
                         if resolved is not None:
                             if isinstance(resolved, list) and part == "rows":
                                 value = resolved
+                            elif isinstance(resolved, list) and part == "row_count":
+                                value = len(resolved)
                             elif isinstance(resolved, dict) and part in resolved:
                                 value = resolved[part]
                             else:
@@ -95,7 +120,17 @@ class RenderingMixin:
             
             # Standard Jinja2 rendering - use cached template
             template = self._template_cache.get_or_compile(self.jinja_env, template_str)
-            result = template.render(**context)
+            reserved = {"ctx", "iter", "loop", "event", "workload", "output", "job"}
+            render_context = context.copy()
+            for key, value in context.items():
+                if key in reserved:
+                    continue
+                if isinstance(value, dict):
+                    render_context[key] = TaskResultProxy(value, name=key)
+                elif isinstance(value, list):
+                    render_context[key] = {"result": value}
+
+            result = template.render(**render_context)
             
             # Try to parse as boolean for conditions
             if result.lower() in ("true", "false"):

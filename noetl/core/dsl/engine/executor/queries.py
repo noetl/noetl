@@ -440,3 +440,33 @@ class QueryMixin:
                 exc,
             )
             return []
+
+    async def _count_loop_commands_terminal(
+        self,
+        execution_id: str,
+        loop_event_id: str,
+    ) -> int:
+        """Count terminal commands for a loop epoch from the command table.
+
+        Uses idx_command_loop index — O(1) indexed scan. This is the
+        authoritative count for loop completion detection, replacing
+        the event-table scan and NATS KV counter paths.
+        """
+        try:
+            async with get_pool_connection() as conn:
+                async with conn.cursor(row_factory=dict_row) as cur:
+                    await cur.execute(
+                        """
+                        SELECT COUNT(*) AS cnt
+                        FROM noetl.command
+                        WHERE execution_id = %s
+                          AND loop_event_id = %s
+                          AND status IN ('COMPLETED', 'FAILED')
+                        """,
+                        (int(execution_id), str(loop_event_id)),
+                    )
+                    row = await cur.fetchone()
+                    return int((row or {}).get("cnt", 0) or 0)
+        except Exception as exc:
+            logger.debug("[COMMAND-TABLE] loop completion count failed: %s", exc)
+            return -1

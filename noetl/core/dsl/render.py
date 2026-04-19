@@ -47,6 +47,26 @@ def _resolve_reference_sync(reference: Any) -> Any:
         return None
 
 
+def _extract_reference(value: Any) -> Any:
+    """Find a result-store reference across known compact result envelope shapes."""
+    if not isinstance(value, dict):
+        return None
+
+    reference = value.get("reference")
+    if isinstance(reference, dict):
+        return reference
+
+    for key in ("data", "result"):
+        inner = value.get(key)
+        if isinstance(inner, dict) and isinstance(inner.get("reference"), dict):
+            return inner.get("reference")
+
+    if value.get("kind") in ("temp_ref", "result_ref") and value.get("ref"):
+        return value
+
+    return None
+
+
 class TaskResultProxy:
     """Lightweight proxy allowing ``{{ step.field }}`` attribute access on dict results.
 
@@ -83,10 +103,10 @@ class TaskResultProxy:
         # On-demand resolution from shared cache (TempStore):
         # When the dict has a reference but not the requested field,
         # resolve the reference and cache the result for this proxy instance.
-        if isinstance(data, dict) and "reference" in data and name not in data:
+        if isinstance(data, dict) and name not in data:
             resolved_cache = object.__getattribute__(self, "_resolved_cache")
             if "_resolved_data" not in resolved_cache:
-                resolved_data = _resolve_reference_sync(data.get("reference"))
+                resolved_data = _resolve_reference_sync(_extract_reference(data))
                 resolved_cache["_resolved_data"] = resolved_data
             resolved = resolved_cache.get("_resolved_data")
             if resolved is not None:
