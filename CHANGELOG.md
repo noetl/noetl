@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.21.0](https://github.com/noetl/noetl/compare/v2.20.3...v2.21.0) (2026-04-19)
+
+### Features
+
+* **schema:** add noetl.command table + dual-write + status updates ([5252fc6](https://github.com/noetl/noetl/commit/5252fc6b80633193506539b93a301c6210bfb7c6))
+
+### Bug Fixes
+
+* **engine:** query context->>'loop_event_id' in DB fallback for loop epoch check ([49985e7](https://github.com/noetl/noetl/commit/49985e7795ec413f029f33277473bb75a0e3a547))
+
 ## [2.20.3](https://github.com/noetl/noetl/compare/v2.20.2...v2.20.3) (2026-04-19)
 
 ### Bug Fixes
