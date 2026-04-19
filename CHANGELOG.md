@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.22.1](https://github.com/noetl/noetl/compare/v2.22.0...v2.22.1) (2026-04-19)
+
+### Bug Fixes
+
+* **api:** complete command-table projection writes for batch + execution paths ([2abad27](https://github.com/noetl/noetl/commit/2abad27e0f7a6f7984ba03e2301a7adf556ca90b))
+
 ## [2.22.0](https://github.com/noetl/noetl/compare/v2.21.0...v2.22.0) (2026-04-19)
 
 ### Features
