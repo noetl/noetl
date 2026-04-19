@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.20.3](https://github.com/noetl/noetl/compare/v2.20.2...v2.20.3) (2026-04-19)
+
+### Bug Fixes
+
+* **engine:** check DB for loop.done events when emitted_loop_epochs is empty ([c3cf89e](https://github.com/noetl/noetl/commit/c3cf89eb784cc77cc256b47f9037c09384795905))
+
 ## [2.20.2](https://github.com/noetl/noetl/compare/v2.20.1...v2.20.2) (2026-04-18)
 
 ### Bug Fixes
