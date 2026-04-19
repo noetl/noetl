@@ -166,6 +166,37 @@ async def handle_event(req: EventRequest) -> EventResponse:
                 await conn.commit()
                 _record_db_operation_success()
 
+                # Update the mutable command projection for lifecycle events
+                if command_id and req.name in {
+                    "command.claimed", "command.started",
+                    "command.completed", "command.failed", "command.cancelled",
+                }:
+                    try:
+                        _cmd_status = {
+                            "command.claimed": "CLAIMED",
+                            "command.started": "RUNNING",
+                            "command.completed": "COMPLETED",
+                            "command.failed": "FAILED",
+                            "command.cancelled": "CANCELLED",
+                        }.get(req.name, status)
+                        _cmd_updates = ["status = %s", "latest_event_id = %s", "updated_at = now()"]
+                        _cmd_params: list = [_cmd_status, evt_id]
+                        if req.name == "command.claimed":
+                            _cmd_updates.extend(["worker_id = %s", "claimed_at = now()"])
+                            _cmd_params.append(req.worker_id)
+                        elif req.name == "command.started":
+                            _cmd_updates.append("started_at = now()")
+                        elif req.name in ("command.completed", "command.failed", "command.cancelled"):
+                            _cmd_updates.extend(["completed_at = now()", "result = %s", "error = %s"])
+                            _cmd_params.extend([Json(res_obj), error_text])
+                        _cmd_params.append(command_id)
+                        await cur.execute(
+                            f"UPDATE noetl.command SET {', '.join(_cmd_updates)} WHERE command_id = %s",
+                            _cmd_params,
+                        )
+                    except Exception as _cmd_exc:
+                        logger.debug("[COMMAND-TABLE] Status update failed for %s: %s", command_id, _cmd_exc)
+
         await supervise_persisted_event(req.execution_id, req.step, req.name, req.payload, event_meta, event_id=int(evt_id))
         if req.name in {"command.completed", "command.failed"} and command_id: _active_claim_cache_invalidate(command_id=command_id)
         
@@ -191,10 +222,34 @@ async def handle_event(req: EventRequest) -> EventResponse:
                     _validate_postgres_command_context_or_422(step=cmd.step, tool_kind=cmd.tool.kind, context=ctx)
                     meta = {"command_id": cmd_id, "step": cmd.step, "tool_kind": cmd.tool.kind, "triggered_by": req.name, "trigger_step": req.step, "actionable": True, **(cmd.metadata or {})}
                     ctx = await _store_command_context_if_needed(execution_id=int(cmd.execution_id), step=cmd.step, command_id=cmd_id, context=ctx)
+                    _now = datetime.now(timezone.utc)
                     await cur.execute("""
-                        INSERT INTO noetl.event (event_id, execution_id, catalog_id, event_type, node_id, node_name, node_type, status, context, meta, parent_event_id, parent_execution_id, created_at)
-                        VALUES (%(event_id)s, %(execution_id)s, %(catalog_id)s, 'command.issued', %(node_id)s, %(node_name)s, %(node_type)s, 'PENDING', %(context)s, %(meta)s, %(parent_event_id)s, %(parent_execution_id)s, %(created_at)s)
-                    """, {"event_id": new_evt_id, "execution_id": int(cmd.execution_id), "catalog_id": cat_id, "node_id": cmd.step, "node_name": cmd.step, "node_type": cmd.tool.kind, "context": Json(ctx), "meta": Json(meta), "parent_event_id": evt_id, "parent_execution_id": p_exec, "created_at": datetime.now(timezone.utc)})
+                        INSERT INTO noetl.event (event_id, execution_id, catalog_id, event_type, node_id, node_name, node_type, status, context, meta, parent_event_id, parent_execution_id, command_id, created_at)
+                        VALUES (%(event_id)s, %(execution_id)s, %(catalog_id)s, 'command.issued', %(node_id)s, %(node_name)s, %(node_type)s, 'PENDING', %(context)s, %(meta)s, %(parent_event_id)s, %(parent_execution_id)s, %(command_id)s, %(created_at)s)
+                    """, {"event_id": new_evt_id, "execution_id": int(cmd.execution_id), "catalog_id": cat_id, "node_id": cmd.step, "node_name": cmd.step, "node_type": cmd.tool.kind, "context": Json(ctx), "meta": Json(meta), "parent_event_id": evt_id, "parent_execution_id": p_exec, "command_id": cmd_id, "created_at": _now})
+                    # Dual-write: create the mutable command projection row
+                    await cur.execute("""
+                        INSERT INTO noetl.command (command_id, event_id, execution_id, catalog_id,
+                            parent_execution_id, step_name, tool_kind, status, context,
+                            loop_event_id, iter_index, meta, created_at)
+                        VALUES (%(command_id)s, %(event_id)s, %(execution_id)s, %(catalog_id)s,
+                            %(parent_execution_id)s, %(step_name)s, %(tool_kind)s, 'PENDING',
+                            %(context)s, %(loop_event_id)s, %(iter_index)s, %(meta)s, %(created_at)s)
+                        ON CONFLICT (command_id) DO NOTHING
+                    """, {
+                        "command_id": cmd_id,
+                        "event_id": new_evt_id,
+                        "execution_id": int(cmd.execution_id),
+                        "catalog_id": cat_id,
+                        "parent_execution_id": p_exec,
+                        "step_name": cmd.step,
+                        "tool_kind": cmd.tool.kind,
+                        "context": Json(ctx),
+                        "loop_event_id": meta.get("__loop_epoch_id") or meta.get("loop_event_id"),
+                        "iter_index": meta.get("__loop_claimed_index") or meta.get("iter_index"),
+                        "meta": Json(meta),
+                        "created_at": _now,
+                    })
                     command_events.append((int(cmd.execution_id), new_evt_id, cmd_id, cmd.step))
                     supervisor_commands.append((str(cmd.execution_id), cmd_id, cmd.step, int(new_evt_id), dict(meta)))
                 await conn.commit()

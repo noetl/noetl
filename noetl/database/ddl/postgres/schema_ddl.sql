@@ -570,6 +570,64 @@ CREATE INDEX IF NOT EXISTS idx_event_loop_epoch_id
     WHERE meta ? '__loop_epoch_id';
 
 
-CREATE INDEX IF NOT EXISTS idx_event_loop_epoch_coalesce 
-    ON noetl.event (execution_id, node_name, (COALESCE(meta->>'loop_event_id', meta->>'__loop_epoch_id'))) 
+CREATE INDEX IF NOT EXISTS idx_event_loop_epoch_coalesce
+    ON noetl.event (execution_id, node_name, (COALESCE(meta->>'loop_event_id', meta->>'__loop_epoch_id')))
     WHERE COALESCE(meta->>'loop_event_id', meta->>'__loop_epoch_id') IS NOT NULL;
+
+-- ============================================================================
+-- noetl.command — Runtime worker instruction projection
+-- ============================================================================
+-- Mutable table: one row per executable instruction. Server creates on
+-- command.issued, updates on claim/start/complete/fail. Workers fetch
+-- context from here. Event table stays append-only and fact-only.
+
+CREATE TABLE IF NOT EXISTS noetl.command (
+    command_id          TEXT PRIMARY KEY,
+    event_id            BIGINT NOT NULL,
+    execution_id        BIGINT NOT NULL,
+    catalog_id          BIGINT NOT NULL,
+    parent_execution_id BIGINT,
+    parent_command_id   TEXT,
+
+    step_name           TEXT NOT NULL,
+    tool_kind           TEXT,
+
+    status              TEXT NOT NULL DEFAULT 'PENDING',
+    worker_id           TEXT,
+    claimed_at          TIMESTAMPTZ,
+    started_at          TIMESTAMPTZ,
+    completed_at        TIMESTAMPTZ,
+    attempt             INT NOT NULL DEFAULT 1,
+
+    context             JSONB,
+    context_key         TEXT,
+
+    loop_event_id       TEXT,
+    iter_index          INT,
+    meta                JSONB,
+
+    result              JSONB,
+    error               TEXT,
+
+    latest_event_id     BIGINT,
+
+    created_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at          TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_command_execution_id
+    ON noetl.command (execution_id);
+CREATE INDEX IF NOT EXISTS idx_command_execution_step
+    ON noetl.command (execution_id, step_name);
+CREATE INDEX IF NOT EXISTS idx_command_status
+    ON noetl.command (status) WHERE status IN ('PENDING', 'CLAIMED');
+CREATE INDEX IF NOT EXISTS idx_command_worker
+    ON noetl.command (worker_id, updated_at) WHERE status = 'CLAIMED';
+CREATE INDEX IF NOT EXISTS idx_command_loop
+    ON noetl.command (execution_id, loop_event_id, status)
+    WHERE loop_event_id IS NOT NULL;
+
+-- Linkage: event → command
+ALTER TABLE noetl.event ADD COLUMN IF NOT EXISTS command_id TEXT;
+CREATE INDEX IF NOT EXISTS idx_event_command_id
+    ON noetl.event (command_id) WHERE command_id IS NOT NULL;
