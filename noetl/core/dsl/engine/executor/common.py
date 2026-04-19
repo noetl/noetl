@@ -205,9 +205,44 @@ def _estimate_json_size(value: Any) -> int:
 def _is_loop_epoch_transition_emitted(
     state: "ExecutionState", step_name: str, event_name: str, loop_event_id: str
 ) -> bool:
-    """Check if a specific transition event (e.g. loop.done) for a given epoch was already emitted."""
+    """Check if a specific transition event (e.g. loop.done) for a given epoch was already emitted.
+
+    Checks the in-memory set first (populated during the current handle_event call).
+    Since emitted_loop_epochs is NOT serialized (to keep state bounded), this set
+    is empty after state reload. Falls back to checking the DB event table which
+    is the authority via the uidx_event_loop_done_loop_id unique index.
+    """
     key = f"{step_name}:{event_name}:{loop_event_id}"
-    return key in state.emitted_loop_epochs
+    if key in state.emitted_loop_epochs:
+        return True
+
+    # DB fallback: check if the event was already persisted in a prior handle_event call.
+    # This is critical after state reload when emitted_loop_epochs is empty.
+    try:
+        import asyncio
+        loop = asyncio.get_running_loop()
+        # We're in a sync function called from async code — use a thread to query DB
+        import concurrent.futures
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+            from noetl.core.db.pool import get_pool_connection
+            async def _check_db():
+                async with get_pool_connection(timeout=3.0) as conn:
+                    async with conn.cursor() as cur:
+                        await cur.execute(
+                            "SELECT 1 FROM noetl.event WHERE execution_id = %s AND event_type = %s "
+                            "AND meta->>'loop_id' = %s LIMIT 1",
+                            (int(state.execution_id), event_name, str(loop_event_id)),
+                        )
+                        return await cur.fetchone() is not None
+            found = pool.submit(asyncio.run, _check_db()).result(timeout=5.0)
+            if found:
+                # Cache in the set so we don't query again this call
+                state.emitted_loop_epochs.add(key)
+                return True
+    except Exception:
+        pass
+
+    return False
 
 
 def _parse_iso_utc(value: Any) -> Optional[datetime]:
