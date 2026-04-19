@@ -59,10 +59,35 @@ async def execute(req: ExecuteRequest) -> ExecuteResponse:
                     _validate_postgres_command_context_or_422(step=cmd.step, tool_kind=cmd.tool.kind, context=ctx)
                     meta = {"command_id": cmd_id, "step": cmd.step, "tool_kind": cmd.tool.kind, "max_attempts": cmd.max_attempts or 3, "attempt": 1, "execution_id": str(execution_id), "catalog_id": str(catalog_id), "actionable": True, **(cmd.metadata or {})}
                     ctx = await _store_command_context_if_needed(execution_id=int(execution_id), step=cmd.step, command_id=cmd_id, context=ctx)
+                    now = datetime.now(timezone.utc)
                     await cur.execute("""
-                        INSERT INTO noetl.event (event_id, execution_id, catalog_id, event_type, node_id, node_name, node_type, status, context, meta, parent_event_id, parent_execution_id, created_at)
-                        VALUES (%(event_id)s, %(execution_id)s, %(catalog_id)s, 'command.issued', %(node_id)s, %(node_name)s, %(node_type)s, 'PENDING', %(context)s, %(meta)s, %(parent_event_id)s, %(parent_execution_id)s, %(created_at)s)
-                    """, {"event_id": evt_id, "execution_id": int(execution_id), "catalog_id": catalog_id, "node_id": cmd.step, "node_name": cmd.step, "node_type": cmd.tool.kind, "context": Json(ctx), "meta": Json(meta), "parent_event_id": root_evt_id, "parent_execution_id": req.parent_execution_id, "created_at": datetime.now(timezone.utc)})
+                        INSERT INTO noetl.event (event_id, execution_id, catalog_id, event_type, node_id, node_name, node_type, status, context, meta, parent_event_id, parent_execution_id, command_id, created_at)
+                        VALUES (%(event_id)s, %(execution_id)s, %(catalog_id)s, 'command.issued', %(node_id)s, %(node_name)s, %(node_type)s, 'PENDING', %(context)s, %(meta)s, %(parent_event_id)s, %(parent_execution_id)s, %(command_id)s, %(created_at)s)
+                    """, {"event_id": evt_id, "execution_id": int(execution_id), "catalog_id": catalog_id, "node_id": cmd.step, "node_name": cmd.step, "node_type": cmd.tool.kind, "context": Json(ctx), "meta": Json(meta), "parent_event_id": root_evt_id, "parent_execution_id": req.parent_execution_id, "command_id": cmd_id, "created_at": now})
+                    await cur.execute("""
+                        INSERT INTO noetl.command (
+                            command_id, event_id, execution_id, catalog_id, parent_execution_id,
+                            step_name, tool_kind, status, context, loop_event_id, iter_index, meta, created_at
+                        )
+                        VALUES (
+                            %(command_id)s, %(event_id)s, %(execution_id)s, %(catalog_id)s, %(parent_execution_id)s,
+                            %(step_name)s, %(tool_kind)s, 'PENDING', %(context)s, %(loop_event_id)s, %(iter_index)s, %(meta)s, %(created_at)s
+                        )
+                        ON CONFLICT (command_id) DO NOTHING
+                    """, {
+                        "command_id": cmd_id,
+                        "event_id": evt_id,
+                        "execution_id": int(execution_id),
+                        "catalog_id": catalog_id,
+                        "parent_execution_id": req.parent_execution_id,
+                        "step_name": cmd.step,
+                        "tool_kind": cmd.tool.kind,
+                        "context": Json(ctx),
+                        "loop_event_id": meta.get("__loop_epoch_id") or meta.get("loop_event_id"),
+                        "iter_index": meta.get("__loop_claimed_index") or meta.get("iter_index"),
+                        "meta": Json(meta),
+                        "created_at": now,
+                    })
                     command_events.append((int(execution_id), evt_id, cmd_id, cmd.step))
                     supervisor_commands.append((str(execution_id), cmd_id, cmd.step, int(evt_id), dict(meta)))
                 await conn.commit()
