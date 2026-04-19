@@ -1,11 +1,21 @@
 """
 Storage backends for NoETL ResultStore.
 
-Implements drivers for each storage tier:
-- NATS KV: < 1MB, execution-scoped (distributed cache)
-- NATS Object Store: < 10MB, larger objects with streaming
-- S3/MinIO: Large blobs, cloud storage
-- GCS: Google Cloud Storage for large blobs
+Implements drivers for each storage tier (aligned with RisingWave
+three-tier hot/warm/cold hierarchy):
+
+- Memory (hot, <10KB, step-scoped, in-process dict)
+- NATS KV (warm, <1MB, execution-scoped, distributed cache)
+- DiskCache (warm, >=1MB, local SSD/NVMe + async cloud spill; phase 1)
+- S3/MinIO (cold/durable, any size; MinIO via NOETL_S3_ENDPOINT)
+- GCS (cold/durable, any size)
+
+Phase 0 removes the previous `NATSObjectBackend` ("object" tier).
+Payloads carrying `store: "object"` are auto-mapped to `"disk"` by
+`noetl.core.storage.models._normalize_store_value` with a one-time
+deprecation warning.
+
+See `docs/features/noetl_storage_and_streaming_alignment.md`.
 
 Each backend implements async get/put/delete operations.
 """
@@ -198,110 +208,70 @@ class NATSKVBackend(StorageBackend):
             return False
 
 
-class NATSObjectBackend(StorageBackend):
-    """NATS JetStream Object Store for larger objects (< 10MB)."""
+class StorageNotImplementedError(NotImplementedError):
+    """Backend is declared but not yet implemented in the current phase."""
+
+
+class DiskCacheBackend(StorageBackend):
+    """
+    Local SSD/NVMe disk cache with async cloud spill.
+
+    Phase 0: placeholder — declared so the router, DSL schema, and docs
+    can reference `StoreTier.DISK` today. Phase 1 will implement the
+    two-pool cache (meta + data) with rate-limited inserts and
+    `recover_mode=Quiet` warm start, following RisingWave's disk cache
+    design.
+
+    Until phase 1 ships, callers that explicitly request the disk tier
+    are transparently served by the configured cloud tier via
+    `ResultStore._store_data_fallback`. This backend's own methods raise
+    `StorageNotImplementedError` to make accidental direct use visible.
+    """
 
     def __init__(
         self,
-        bucket_name: str = "noetl_result_objects",
-        nats_url: Optional[str] = None,
-        max_object_size: int = 10 * 1024 * 1024,  # 10MB
+        cache_dir: Optional[str] = None,
+        data_capacity_mb: Optional[int] = None,
+        meta_capacity_mb: Optional[int] = None,
+        insert_rate_limit_mb: Optional[int] = None,
+        recover_mode: str = "None",
     ):
-        self._bucket_name = bucket_name
-        self._nats_url = nats_url or os.getenv("NATS_URL", "nats://nats.nats.svc.cluster.local:4222")
-        self._max_object_size = max_object_size
-        self._nc = None
-        self._js = None
-        self._obs = None
-        self._lock = asyncio.Lock()
-
-    async def _ensure_connected(self):
-        """Ensure NATS Object Store connection."""
-        if self._obs is not None:
-            return
-
-        async with self._lock:
-            if self._obs is not None:
-                return
-
-            try:
-                import nats
-                # Use env vars directly to avoid full config validation (workers don't have DB settings)
-                nats_user = os.getenv("NATS_USER", "")
-                nats_password = os.getenv("NATS_PASSWORD", "")
-
-                connect_kwargs = {
-                    "servers": [self._nats_url],
-                    "name": "noetl_object_store"
-                }
-                if nats_user and nats_password:
-                    connect_kwargs["user"] = nats_user
-                    connect_kwargs["password"] = nats_password
-
-                self._nc = await nats.connect(**connect_kwargs)
-                self._js = self._nc.jetstream()
-
-                # Create or get Object Store bucket
-                try:
-                    self._obs = await self._js.create_object_store(
-                        bucket=self._bucket_name,
-                        description="NoETL result objects",
-                        max_bytes=1024 * 1024 * 1024,  # 1GB total bucket size
-                    )
-                    logger.info(f"[NATS-OBJ] Created bucket: {self._bucket_name}")
-                except Exception:
-                    self._obs = await self._js.object_store(self._bucket_name)
-                    logger.info(f"[NATS-OBJ] Connected to existing bucket: {self._bucket_name}")
-
-            except Exception as e:
-                logger.error(f"[NATS-OBJ] Connection failed: {e}")
-                raise
+        # Env-backed defaults match the docs (reserved, not used in phase 0).
+        self._cache_dir = cache_dir or os.getenv(
+            "NOETL_STORAGE_LOCAL_CACHE_DIR", "/opt/noetl/data/disk_cache"
+        )
+        self._data_capacity_mb = int(
+            data_capacity_mb or os.getenv("NOETL_STORAGE_LOCAL_DATA_CACHE_CAPACITY_MB", "0") or 0
+        )
+        self._meta_capacity_mb = int(
+            meta_capacity_mb or os.getenv("NOETL_STORAGE_LOCAL_META_CACHE_CAPACITY_MB", "0") or 0
+        )
+        self._insert_rate_limit_mb = int(
+            insert_rate_limit_mb or os.getenv("NOETL_STORAGE_LOCAL_CACHE_INSERT_RATE_MB", "0") or 0
+        )
+        self._recover_mode = recover_mode or os.getenv(
+            "NOETL_STORAGE_LOCAL_CACHE_RECOVER_MODE", "None"
+        )
 
     async def put(self, key: str, data: bytes, metadata: Optional[Dict[str, Any]] = None) -> str:
-        await self._ensure_connected()
-
-        if len(data) > self._max_object_size:
-            raise ValueError(f"Data too large for NATS Object Store: {len(data)} > {self._max_object_size}")
-
-        # Object store uses names directly
-        obj_name = key.replace("/", "_").replace(":", "_")
-
-        await self._obs.put(obj_name, data)
-        logger.debug(f"[NATS-OBJ] Stored {obj_name} ({len(data)} bytes)")
-        return f"nats-obj://{self._bucket_name}/{obj_name}"
+        raise StorageNotImplementedError(
+            "DiskCacheBackend.put is phase-1 work. In phase 0, disk-tier writes "
+            "fall back to the configured cloud tier via ResultStore."
+        )
 
     async def get(self, key: str) -> bytes:
-        await self._ensure_connected()
-
-        obj_name = key.replace("/", "_").replace(":", "_")
-        try:
-            result = await self._obs.get(obj_name)
-            return result.data
-        except Exception as e:
-            if "object not found" in str(e).lower():
-                raise KeyError(f"Object not found: {obj_name}")
-            raise
+        raise StorageNotImplementedError(
+            "DiskCacheBackend.get is phase-1 work. In phase 0, disk-tier reads "
+            "fall back to the configured cloud tier via ResultStore."
+        )
 
     async def delete(self, key: str) -> bool:
-        await self._ensure_connected()
-
-        obj_name = key.replace("/", "_").replace(":", "_")
-        try:
-            await self._obs.delete(obj_name)
-            return True
-        except Exception as e:
-            logger.warning(f"[NATS-OBJ] Delete failed for {obj_name}: {e}")
-            return False
+        raise StorageNotImplementedError(
+            "DiskCacheBackend.delete is phase-1 work."
+        )
 
     async def exists(self, key: str) -> bool:
-        await self._ensure_connected()
-
-        obj_name = key.replace("/", "_").replace(":", "_")
-        try:
-            info = await self._obs.info(obj_name)
-            return info is not None
-        except Exception:
-            return False
+        return False
 
 
 class S3Backend(StorageBackend):
@@ -539,15 +509,22 @@ class GCSBackend(StorageBackend):
 # Factory function
 def get_backend(tier: str, **kwargs) -> StorageBackend:
     """Get storage backend by tier name."""
+    # Back-compat: map removed "object" tier to "disk" with a warning.
+    # The warning itself is emitted by noetl.core.storage.models._normalize_store_value
+    # on first exposure; here we just rewrite silently to avoid duplicate noise.
+    tier_lc = (tier or "").lower()
+    if tier_lc == "object":
+        tier_lc = "disk"
+
     backends = {
         "memory": MemoryBackend,
         "kv": NATSKVBackend,
-        "object": NATSObjectBackend,
+        "disk": DiskCacheBackend,
         "s3": S3Backend,
         "gcs": GCSBackend,
     }
 
-    backend_class = backends.get(tier.lower())
+    backend_class = backends.get(tier_lc)
     if not backend_class:
         raise ValueError(f"Unknown storage tier: {tier}")
 
@@ -558,8 +535,9 @@ __all__ = [
     "StorageBackend",
     "MemoryBackend",
     "NATSKVBackend",
-    "NATSObjectBackend",
+    "DiskCacheBackend",
     "S3Backend",
     "GCSBackend",
+    "StorageNotImplementedError",
     "get_backend",
 ]

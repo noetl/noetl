@@ -346,7 +346,7 @@ CREATE TABLE IF NOT EXISTS noetl.result_ref (
     source_step TEXT,
 
     -- Storage tier
-    store_tier TEXT NOT NULL CHECK (store_tier IN ('memory', 'kv', 'object', 's3', 'gcs', 'db', 'duckdb', 'eventlog')),
+    store_tier TEXT NOT NULL CHECK (store_tier IN ('memory', 'kv', 'disk', 'object', 's3', 'gcs', 'db', 'duckdb', 'eventlog')),
     physical_uri TEXT,  -- Actual storage location (s3://..., gs://..., kv://bucket/key)
 
     -- Metadata
@@ -385,7 +385,7 @@ CREATE INDEX IF NOT EXISTS idx_result_ref_store_tier ON noetl.result_ref (store_
 COMMENT ON TABLE noetl.result_ref IS 'ResultRef projection table - metadata index for result storage. Actual data in NATS/cloud storage.';
 COMMENT ON COLUMN noetl.result_ref.ref IS 'Logical URI: noetl://execution/<eid>/result/<name>/<id>';
 COMMENT ON COLUMN noetl.result_ref.scope IS 'Lifecycle scope: step (cleanup on step done), execution (cleanup on playbook done), workflow (cleanup on root done), permanent (never auto-cleaned)';
-COMMENT ON COLUMN noetl.result_ref.store_tier IS 'Storage backend: memory, kv (NATS KV), object (NATS Object), s3, gcs, db (PostgreSQL), duckdb, eventlog';
+COMMENT ON COLUMN noetl.result_ref.store_tier IS 'Storage backend: memory (in-process), kv (NATS KV), disk (local SSD cache + cloud spill), s3 (S3/MinIO), gcs, db (PostgreSQL), duckdb, eventlog. "object" retained for in-flight rows; auto-remapped to "disk" on read.';
 COMMENT ON COLUMN noetl.result_ref.physical_uri IS 'Actual storage URI (s3://bucket/key, kv://bucket/key, etc.)';
 COMMENT ON COLUMN noetl.result_ref.preview IS 'Truncated sample of data for UI preview (max 1KB JSON)';
 COMMENT ON COLUMN noetl.result_ref.extracted IS 'Fields from output.select available without resolution';

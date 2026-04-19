@@ -183,15 +183,40 @@ class Settings(BaseModel):
     # Keychain configuration
     keychain_refresh_threshold: int = Field(default=900, alias="NOETL_KEYCHAIN_REFRESH_THRESHOLD")  # seconds (15min default, prevents expiration during long loops)
 
-    # Result Storage configuration (output_select pattern)
+    # Result Storage configuration (output_select pattern, RisingWave-aligned)
     # Threshold for inline vs external storage (64KB default)
     inline_max_bytes: int = Field(default=65536, alias="NOETL_INLINE_MAX_BYTES")
     # Preview size for large results (1KB default)
     preview_max_bytes: int = Field(default=1024, alias="NOETL_PREVIEW_MAX_BYTES")
-    # Default storage tier for large results: kv, object, s3, gcs
+    # Default storage tier for large results: memory, kv, disk, s3, gcs
+    # (legacy value 'object' is auto-remapped to 'disk' with a deprecation warning)
     default_storage_tier: str = Field(default="kv", alias="NOETL_DEFAULT_STORAGE_TIER")
-    # S3 configuration for result storage
+    # Cloud-tier selection for DISK async spill and >=1MB writes. One of: s3, gcs.
+    # MinIO is not a separate tier; it runs under s3 with NOETL_S3_ENDPOINT.
+    storage_cloud_tier: str = Field(default="s3", alias="NOETL_STORAGE_CLOUD_TIER")
+
+    # Local disk-cache configuration (reserved, implemented in phase 1).
+    # See docs/features/noetl_storage_and_streaming_alignment.md.
+    storage_local_cache_dir: Optional[str] = Field(
+        default=None, alias="NOETL_STORAGE_LOCAL_CACHE_DIR"
+    )
+    storage_local_data_cache_capacity_mb: int = Field(
+        default=0, alias="NOETL_STORAGE_LOCAL_DATA_CACHE_CAPACITY_MB"
+    )
+    storage_local_meta_cache_capacity_mb: int = Field(
+        default=0, alias="NOETL_STORAGE_LOCAL_META_CACHE_CAPACITY_MB"
+    )
+    storage_local_cache_insert_rate_mb: int = Field(
+        default=0, alias="NOETL_STORAGE_LOCAL_CACHE_INSERT_RATE_MB"
+    )
+    storage_local_cache_recover_mode: str = Field(
+        default="None", alias="NOETL_STORAGE_LOCAL_CACHE_RECOVER_MODE"
+    )
+
+    # S3 configuration for result storage (covers MinIO via endpoint override)
     s3_endpoint_url: Optional[str] = Field(default=None, alias="S3_ENDPOINT_URL")
+    # Alias honored by newer deployments; mirrors s3_endpoint_url when set.
+    s3_endpoint: Optional[str] = Field(default=None, alias="NOETL_S3_ENDPOINT")
     s3_bucket: str = Field(default="noetl-results", alias="NOETL_S3_BUCKET")
     s3_region: str = Field(default="us-east-1", alias="NOETL_S3_REGION")
     # GCS configuration for result storage

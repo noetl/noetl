@@ -147,8 +147,14 @@ def execute_artifact_get(
         # NATS KV store
         return _load_from_nats_kv(uri, context)
     elif scheme == 'nats-obj':
-        # NATS Object Store
-        return _load_from_nats_object(uri, context)
+        # Removed in phase 0 of RisingWave alignment. Surface a clear
+        # deprecation error with migration guidance so callers fix the
+        # reference rather than silently fall through.
+        raise ValueError(
+            "nats-obj:// URIs reference the removed NATS Object Store tier. "
+            "Migrate artifacts to s3:// (MinIO/S3), gcs://, or the new "
+            "DISK tier. See docs/features/noetl_storage_and_streaming_alignment.md"
+        )
     else:
         raise ValueError(f"Unsupported artifact scheme: {scheme}")
 
@@ -723,52 +729,7 @@ def _load_from_nats_kv(uri: str, context: Dict[str, Any]) -> Dict[str, Any]:
         raise
 
 
-def _load_from_nats_object(uri: str, context: Dict[str, Any]) -> Dict[str, Any]:
-    """
-    Load result from NATS Object Store.
-
-    URI format: nats-obj://<bucket>/<object_name>
-    """
-    import asyncio
-
-    try:
-        from noetl.core.storage.backends import NATSObjectBackend
-
-        # Parse URI
-        # nats-obj://bucket/object_name
-        if not uri.startswith('nats-obj://'):
-            raise ValueError(f"Invalid NATS Object Store URI: {uri}")
-
-        parts = uri[11:].split('/', 1)
-        bucket = parts[0]
-        obj_name = parts[1] if len(parts) > 1 else ''
-
-        if not obj_name:
-            raise ValueError(f"Invalid NATS Object Store URI (missing object name): {uri}")
-
-        logger.debug(f"Loading artifact from NATS Object Store: bucket={bucket}, object={obj_name}")
-
-        backend = NATSObjectBackend(bucket_name=bucket)
-
-        # Run async get in sync context - always use asyncio.run() for thread safety
-        data_bytes = asyncio.run(backend.get(obj_name))
-
-        # Decompress if gzipped
-        if data_bytes[:2] == b'\x1f\x8b':
-            data_bytes = gzip.decompress(data_bytes)
-
-        # Parse JSON
-        data = json.loads(data_bytes.decode('utf-8'))
-
-        return {
-            "status": "success",
-            "data": data,
-            "uri": uri,
-            "source": "nats_object"
-        }
-
-    except KeyError as e:
-        raise ValueError(f"Object not found in NATS Object Store: {uri}") from e
-    except Exception as e:
-        logger.error(f"Error loading from NATS Object Store: {e}")
-        raise
+# NOTE: _load_from_nats_object was removed in phase 0 of the RisingWave
+# alignment. The NATS Object Store tier is no longer supported. Callers
+# with `nats-obj://` URIs receive a clear ValueError from
+# execute_artifact_get above with migration guidance.

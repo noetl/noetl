@@ -9,13 +9,17 @@ class OutputStore(BaseModel):
 
     Controls where and how tool results are stored externally.
     """
-    kind: Literal["auto", "memory", "kv", "object", "s3", "gcs", "db", "duckdb", "eventlog"] = Field(
-        default="auto", description="Storage tier (auto selects based on size)"
+    kind: Literal["auto", "memory", "kv", "disk", "object", "s3", "gcs", "db", "duckdb", "eventlog"] = Field(
+        default="auto",
+        description=(
+            "Storage tier (auto selects based on size). 'object' is a "
+            "deprecated alias for 'disk'; auto-remapped at load time."
+        ),
     )
     driver: Optional[str] = Field(
         default=None, description="Specific driver (e.g., minio for s3)"
     )
-    bucket: Optional[str] = Field(default=None, description="Bucket name for object/s3/gcs")
+    bucket: Optional[str] = Field(default=None, description="Bucket name for disk/s3/gcs")
     prefix: Optional[str] = Field(default=None, description="Key prefix for storage")
     ttl: Optional[str] = Field(
         default=None, description="TTL duration (e.g., '2h', '30m', '1d', '1y', 'forever')"
