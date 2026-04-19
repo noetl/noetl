@@ -136,18 +136,26 @@ async def _persist_batch_acceptance(req: BatchEventRequest, idempotency_key: Opt
             event_ids, last_act_evt, last_act_evt_id, term_cmd_ids = [], None, None, set()
             now = datetime.now(timezone.utc)
             insert_params = []
+            command_updates = []
             for item in req.events:
                 _validate_reference_only_payload(item.payload)
                 evt_id = await _next_snowflake_id(cur); event_ids.append(evt_id)
                 meta = {"actionable": item.actionable, "informative": item.informative, "batch_request_id": request_id, "persisted_event_id": str(evt_id), "worker_id": req.worker_id, "idempotency_key": idempotency_key, **(item.meta or {})}
                 if cmd_id := _extract_command_id_from_payload(item.payload): meta["command_id"] = cmd_id
+                status = _status_from_event_name(item.name)
+                result_obj = _build_reference_only_result(payload=item.payload, status=status)
                 
                 insert_params.append((
                     evt_id, exec_id, catalog_id, item.name, item.step, item.step, 
-                    _status_from_event_name(item.name), 
-                    Json(_build_reference_only_result(payload=item.payload, status=_status_from_event_name(item.name))), 
-                    Json(meta), req.worker_id, _extract_event_error(item.payload), now
+                    status,
+                    Json(result_obj),
+                    Json(meta), req.worker_id, _extract_event_error(item.payload), cmd_id, now
                 ))
+
+                if cmd_id and item.name in {
+                    "command.started", "command.completed", "command.failed", "command.cancelled",
+                }:
+                    command_updates.append((item.name, evt_id, req.worker_id, Json(result_obj), _extract_event_error(item.payload), cmd_id))
 
                 if cmd_id and item.name in _COMMAND_TERMINAL_EVENT_TYPES: term_cmd_ids.add(cmd_id)
                 if item.actionable and item.name not in skip_engine:
@@ -156,9 +164,42 @@ async def _persist_batch_acceptance(req: BatchEventRequest, idempotency_key: Opt
             
             if insert_params:
                 await cur.executemany("""
-                    INSERT INTO noetl.event (event_id, execution_id, catalog_id, event_type, node_id, node_name, status, result, meta, worker_id, error, created_at)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    INSERT INTO noetl.event (event_id, execution_id, catalog_id, event_type, node_id, node_name, status, result, meta, worker_id, error, command_id, created_at)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 """, insert_params)
+
+            for event_name, evt_id, worker_id, result_obj, error_text, cmd_id in command_updates:
+                if event_name == "command.started":
+                    await cur.execute(
+                        """
+                        UPDATE noetl.command
+                        SET status = 'RUNNING',
+                            started_at = now(),
+                            latest_event_id = %s,
+                            updated_at = now()
+                        WHERE command_id = %s
+                        """,
+                        (evt_id, cmd_id),
+                    )
+                else:
+                    terminal_status = {
+                        "command.completed": "COMPLETED",
+                        "command.failed": "FAILED",
+                        "command.cancelled": "CANCELLED",
+                    }[event_name]
+                    await cur.execute(
+                        """
+                        UPDATE noetl.command
+                        SET status = %s,
+                            completed_at = now(),
+                            latest_event_id = %s,
+                            result = %s,
+                            error = %s,
+                            updated_at = now()
+                        WHERE command_id = %s
+                        """,
+                        (terminal_status, evt_id, result_obj, error_text, cmd_id),
+                    )
             
             acc_meta = {"batch_request_id": request_id, "actionable": False, "informative": True, "event_count": len(req.events), "worker_id": req.worker_id, "idempotency_key": idempotency_key}
             if last_act_evt_id: acc_meta["last_actionable_event_id"] = str(last_act_evt_id)
@@ -225,7 +266,11 @@ async def _issue_commands_for_batch(job: _BatchAcceptJob, commands: list) -> Non
             # 4. Batch insert commands
             now = datetime.now(timezone.utc)
             insert_params = [
-                (p["evt_id"], p["execution_id"], cat_id, "command.issued", p["step"], p["step"], p["tool_kind"], "PENDING", Json(p["ctx"]), Json(p["meta"]), job.last_actionable_evt_id, p_exec, now)
+                (p["evt_id"], p["execution_id"], cat_id, "command.issued", p["step"], p["step"], p["tool_kind"], "PENDING", Json(p["ctx"]), Json(p["meta"]), job.last_actionable_evt_id, p_exec, p["cmd_id"], now)
+                for p in prepared_commands
+            ]
+            command_table_params = [
+                (p["cmd_id"], p["evt_id"], p["execution_id"], cat_id, p_exec, p["step"], p["tool_kind"], "PENDING", Json(p["ctx"]), p["meta"].get("__loop_epoch_id") or p["meta"].get("loop_event_id"), p["meta"].get("__loop_claimed_index") or p["meta"].get("iter_index"), Json(p["meta"]), now)
                 for p in prepared_commands
             ]
             # Chunk the inserts to prevent massive database payload crashes
@@ -233,9 +278,17 @@ async def _issue_commands_for_batch(job: _BatchAcceptJob, commands: list) -> Non
             for j in range(0, len(insert_params), chunk_size):
                 chunk = insert_params[j:j + chunk_size]
                 await cur.executemany("""
-                    INSERT INTO noetl.event (event_id, execution_id, catalog_id, event_type, node_id, node_name, node_type, status, context, meta, parent_event_id, parent_execution_id, created_at)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    INSERT INTO noetl.event (event_id, execution_id, catalog_id, event_type, node_id, node_name, node_type, status, context, meta, parent_event_id, parent_execution_id, command_id, created_at)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 """, chunk)
+                await cur.executemany("""
+                    INSERT INTO noetl.command (
+                        command_id, event_id, execution_id, catalog_id, parent_execution_id,
+                        step_name, tool_kind, status, context, loop_event_id, iter_index, meta, created_at
+                    )
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    ON CONFLICT (command_id) DO NOTHING
+                """, command_table_params[j:j + chunk_size])
                 await conn.commit()
 
     # 5. Parallel NATS publish

@@ -361,6 +361,19 @@ async def claim_command(event_id: int, req: ClaimRequest):
                 if not await cur.fetchone():
                     _active_claim_cache_invalidate(command_id=command_id, event_id=event_id)
                     raise HTTPException(409, detail={"code": "already_terminal"})
+
+                await cur.execute(
+                    """
+                    UPDATE noetl.command
+                    SET status = 'CLAIMED',
+                        worker_id = %s,
+                        claimed_at = now(),
+                        latest_event_id = %s,
+                        updated_at = now()
+                    WHERE command_id = %s
+                    """,
+                    (req.worker_id, claim_evt_id, command_id),
+                )
                 
                 await conn.commit()
                 _active_claim_cache_set(event_id, command_id, req.worker_id)
