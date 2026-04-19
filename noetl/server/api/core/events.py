@@ -172,28 +172,39 @@ async def handle_event(req: EventRequest) -> EventResponse:
                     "command.completed", "command.failed", "command.cancelled",
                 }:
                     try:
-                        _cmd_status = {
-                            "command.claimed": "CLAIMED",
-                            "command.started": "RUNNING",
-                            "command.completed": "COMPLETED",
-                            "command.failed": "FAILED",
-                            "command.cancelled": "CANCELLED",
-                        }.get(req.name, status)
-                        _cmd_updates = ["status = %s", "latest_event_id = %s", "updated_at = now()"]
-                        _cmd_params: list = [_cmd_status, evt_id]
-                        if req.name == "command.claimed":
-                            _cmd_updates.extend(["worker_id = %s", "claimed_at = now()"])
-                            _cmd_params.append(req.worker_id)
-                        elif req.name == "command.started":
-                            _cmd_updates.append("started_at = now()")
-                        elif req.name in ("command.completed", "command.failed", "command.cancelled"):
-                            _cmd_updates.extend(["completed_at = now()", "result = %s", "error = %s"])
-                            _cmd_params.extend([Json(res_obj), error_text])
-                        _cmd_params.append(command_id)
-                        await cur.execute(
-                            f"UPDATE noetl.command SET {', '.join(_cmd_updates)} WHERE command_id = %s",
-                            _cmd_params,
-                        )
+                        if req.name == "command.started":
+                            # Guard against out-of-order lifecycle events: never downgrade terminal state.
+                            await cur.execute(
+                                """
+                                UPDATE noetl.command
+                                SET status = CASE WHEN completed_at IS NULL THEN 'RUNNING' ELSE status END,
+                                    started_at = COALESCE(started_at, now()),
+                                    latest_event_id = CASE WHEN completed_at IS NULL THEN %s ELSE latest_event_id END,
+                                    updated_at = CASE WHEN completed_at IS NULL THEN now() ELSE updated_at END
+                                WHERE command_id = %s
+                                """,
+                                (evt_id, command_id),
+                            )
+                        else:
+                            _cmd_status = {
+                                "command.claimed": "CLAIMED",
+                                "command.completed": "COMPLETED",
+                                "command.failed": "FAILED",
+                                "command.cancelled": "CANCELLED",
+                            }.get(req.name, status)
+                            _cmd_updates = ["status = %s", "latest_event_id = %s", "updated_at = now()"]
+                            _cmd_params: list = [_cmd_status, evt_id]
+                            if req.name == "command.claimed":
+                                _cmd_updates.extend(["worker_id = %s", "claimed_at = now()"])
+                                _cmd_params.append(req.worker_id)
+                            elif req.name in ("command.completed", "command.failed", "command.cancelled"):
+                                _cmd_updates.extend(["completed_at = now()", "result = %s", "error = %s"])
+                                _cmd_params.extend([Json(res_obj), error_text])
+                            _cmd_params.append(command_id)
+                            await cur.execute(
+                                f"UPDATE noetl.command SET {', '.join(_cmd_updates)} WHERE command_id = %s",
+                                _cmd_params,
+                            )
                     except Exception as _cmd_exc:
                         logger.debug("[COMMAND-TABLE] Status update failed for %s: %s", command_id, _cmd_exc)
 

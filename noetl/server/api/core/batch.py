@@ -173,10 +173,10 @@ async def _persist_batch_acceptance(req: BatchEventRequest, idempotency_key: Opt
                     await cur.execute(
                         """
                         UPDATE noetl.command
-                        SET status = 'RUNNING',
-                            started_at = now(),
-                            latest_event_id = %s,
-                            updated_at = now()
+                        SET status = CASE WHEN completed_at IS NULL THEN 'RUNNING' ELSE status END,
+                            started_at = COALESCE(started_at, now()),
+                            latest_event_id = CASE WHEN completed_at IS NULL THEN %s ELSE latest_event_id END,
+                            updated_at = CASE WHEN completed_at IS NULL THEN now() ELSE updated_at END
                         WHERE command_id = %s
                         """,
                         (evt_id, cmd_id),
