@@ -608,11 +608,16 @@ def _build_output_view(
             output["context"] = payload_result.get("context")
             output["data"] = payload_result.get("context")
         # When the event.result column carries small inline rows (preserved by
-        # server/_build_reference_only_result for <=16-row postgres selects),
-        # surface them as output.data.rows so replay-time re-rendering of
-        # step-level set: expressions like {{ output.data.rows[0].<col> }}
-        # can still resolve the value.
+        # server/_build_reference_only_result inside payload_result.context to
+        # satisfy the event_result_check DB constraint), surface them as
+        # output.data.rows so replay-time re-rendering of step-level set: and
+        # arc when: expressions like {{ output.data.rows[0].<col> }} can still
+        # resolve the value.
         inline_rows = payload_result.get("rows")
+        if not isinstance(inline_rows, list):
+            ctx = payload_result.get("context") if isinstance(payload_result.get("context"), dict) else None
+            if isinstance(ctx, dict) and isinstance(ctx.get("rows"), list):
+                inline_rows = ctx.get("rows")
         if isinstance(inline_rows, list):
             data_view = output.get("data") if isinstance(output.get("data"), dict) else {}
             data_view = {**data_view, "rows": inline_rows}
