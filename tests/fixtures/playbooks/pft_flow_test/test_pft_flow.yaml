@@ -1158,8 +1158,6 @@ workflow:
         kind: postgres
         auth: pg_k8s
         command: |
-          -- INJECTED BUG: Generate syntax error for patient 15 to test silent-failure fallback
-          {{ "SYNTAX_ERROR_INJECTED_FOR_TEST {" if iter.patient.patient_id | int == 15 else "" }}
           INSERT INTO public.pft_test_patient_demographics (pcc_patient_id, facility_mapping_id, payload)
           SELECT
             {{ iter.patient.patient_id }},
