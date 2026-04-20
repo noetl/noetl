@@ -52,10 +52,15 @@ data:
   NOETL_SCHEMA: "noetl"
   NOETL_DB_STARTUP_TIMEOUT: "180"
   NOETL_DB_RETRY_INTERVAL: "5"
-  # Result Storage Configuration (output_select pattern)
+  # Result Storage Configuration (RisingWave-aligned, phase 1)
   # Threshold for inline vs external storage (64KB default)
   NOETL_INLINE_MAX_BYTES: "65536"
   # Preview size for large results
   NOETL_PREVIEW_MAX_BYTES: "1024"
-  # Default storage tier: kv, object, s3, gcs
+  # Default storage tier: memory, kv, disk, s3, gcs
   NOETL_DEFAULT_STORAGE_TIER: "kv"
+  # Cloud tier for DISK async spill ('s3' covers MinIO via NOETL_S3_ENDPOINT, or 'gcs').
+  NOETL_STORAGE_CLOUD_TIER: "s3"
+  NOETL_S3_ENDPOINT: "http://minio.minio.svc.cluster.local:9000"
+  NOETL_S3_BUCKET: "noetl-results"
+  NOETL_S3_REGION: "us-east-1"
