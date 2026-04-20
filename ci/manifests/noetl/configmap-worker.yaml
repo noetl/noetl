@@ -30,6 +30,9 @@ data:
   NATS_SUBJECT: "noetl.commands"
   # Keychain cache refresh threshold (15 minutes - prevents expiration during long loops)
   NOETL_KEYCHAIN_REFRESH_THRESHOLD: "900"
+  # Worker concurrency (perf tuning for PFT load test - phase 1)
+  NOETL_WORKER_MAX_INFLIGHT_COMMANDS: "16"
+  NOETL_WORKER_MAX_INFLIGHT_DB_COMMANDS: "8"
   # Result Storage Configuration (RisingWave-aligned, phase 1)
   # Threshold for inline vs external storage (64KB default)
   NOETL_INLINE_MAX_BYTES: "65536"
