@@ -213,6 +213,25 @@ def _build_reference_only_result(*, payload: dict[str, Any], status: str) -> dic
                 result_obj["rows"] = inline_rows
                 if "row_count" not in (result_obj.get("context") or {}):
                     result_obj.setdefault("context", {})["row_count"] = len(inline_rows)
+                logger.info(
+                    "[INLINE-ROWS] Preserved %d row(s) in event.result (%d bytes) status=%s",
+                    len(inline_rows),
+                    rows_bytes,
+                    result_obj.get("status"),
+                )
+            else:
+                logger.info(
+                    "[INLINE-ROWS] Skipped rows preservation: %d bytes > %d limit",
+                    rows_bytes,
+                    _EVENT_RESULT_INLINE_ROWS_MAX_BYTES,
+                )
+        elif isinstance(inline_rows, list) and len(inline_rows) > 0:
+            logger.info(
+                "[INLINE-ROWS] Skipped rows preservation: row_count=%d max=%d reference_set=%s",
+                len(inline_rows),
+                _EVENT_RESULT_INLINE_ROWS_MAX,
+                result_obj.get("reference") is not None,
+            )
     else:
         if isinstance(payload.get("reference"), dict):
             result_obj["reference"] = payload.get("reference")
