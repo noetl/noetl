@@ -1829,6 +1829,29 @@ class EventHandlingMixin:
                             logger.debug(f"[COMPLETION] execution={event.execution_id} pending_in_db={pending_count}")
         # If in-memory state shows no pending AND issued_steps is populated, trust it
 
+        # Also probe arc rendering for step.exit and other fallback paths that did
+        # not go through _evaluate_next_transitions_with_status (which sets
+        # next_any_raised).  Without this, a step.exit arriving after a call.done
+        # whose arcs all raised would appear dead-end-eligible and prematurely fire
+        # workflow.completed.
+        if not next_any_raised and is_completion_trigger and step_def.next and not is_loop_step:
+            from .transitions import _get_next_arcs  # local import to avoid cycles
+            for probe in _get_next_arcs(step_def):
+                probe_when = getattr(probe, "when", None)
+                if not probe_when:
+                    continue
+                try:
+                    self._render_template(probe_when, context)
+                except Exception:
+                    next_any_raised = True
+                    logger.warning(
+                        "[COMPLETION] Arc probe raised on step=%s event=%s when=%r — "
+                        "treating completion check as indeterminate",
+                        event.step, event.name,
+                        (probe_when[:80] + "...") if isinstance(probe_when, str) and len(probe_when) > 80 else probe_when,
+                    )
+                    break
+
         has_matching_next_transition = (
             (
                 next_any_matched
