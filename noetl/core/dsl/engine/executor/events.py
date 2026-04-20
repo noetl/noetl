@@ -911,9 +911,10 @@ class EventHandlingMixin:
         # fan-out where each loop iteration triggers the next step independently.
         next_commands: list[Command] = []
         next_any_matched: Optional[bool] = None
+        next_any_raised: bool = False
         is_loop_step = step_def.loop is not None and event.step in state.loop_state
         if event.name in ("call.done", "call.error") and not is_loop_step:
-            next_commands, next_any_matched = await self._evaluate_next_transitions_with_match(
+            next_commands, next_any_matched, next_any_raised = await self._evaluate_next_transitions_with_status(
                 state,
                 step_def,
                 event,
@@ -1844,7 +1845,16 @@ class EventHandlingMixin:
             and not has_matching_next_transition
             and not commands
             and not has_pending_commands
+            and not next_any_raised
         )
+        if next_any_raised:
+            logger.warning(
+                "[COMPLETION] Skipping dead-end completion for execution=%s step=%s: "
+                "arc condition(s) raised during evaluation — treating as indeterminate "
+                "to avoid prematurely emitting workflow.completed on a rendering failure",
+                event.execution_id,
+                event.step,
+            )
         if is_dead_end_no_match:
             logger.info(
                 "[COMPLETION] Dead-end transition with no matching next arcs: execution=%s step=%s",

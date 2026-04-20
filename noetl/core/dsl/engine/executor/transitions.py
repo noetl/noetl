@@ -129,30 +129,41 @@ class TransitionMixin:
     
     def _evaluate_condition(self, when_expr: str, context: dict[str, Any]) -> bool:
         """Evaluate when condition."""
+        matched, _raised = self._evaluate_condition_with_status(when_expr, context)
+        return matched
+
+    def _evaluate_condition_with_status(
+        self, when_expr: str, context: dict[str, Any]
+    ) -> tuple[bool, bool]:
+        """Evaluate a `when` expression and report whether rendering raised.
+
+        Returns (matched, raised). `raised=True` means the expression itself
+        could not be rendered (e.g. StrictUndefined on a missing field) — the
+        caller should treat this arc as indeterminate, not as a definitive
+        False, so a missing result-store reference does not make a step look
+        like a dead-end and prematurely complete the execution.
+        """
         try:
-            # Render the condition
             result = self._render_template(when_expr, context)
-            
-            # Convert to boolean
+
             if isinstance(result, bool):
                 logger.debug("[COND] Evaluated condition -> %s", result)
-                return result
+                return result, False
             if isinstance(result, str):
-                # Check for explicit false values, otherwise treat non-empty strings as truthy
                 is_false = result.lower() in ("false", "0", "no", "none", "")
-                is_true = not is_false
-                logger.debug("[COND] Evaluated string condition -> %s", is_true)
-                return is_true
-            bool_result = bool(result)
-            logger.debug("[COND] Evaluated condition value_type=%s -> %s", type(result).__name__, bool_result)
-            return bool_result
+                matched = not is_false
+                logger.debug("[COND] Evaluated string condition -> %s", matched)
+                return matched, False
+            matched = bool(result)
+            logger.debug("[COND] Evaluated condition value_type=%s -> %s", type(result).__name__, matched)
+            return matched, False
         except Exception as e:
             logger.error(
                 "Condition evaluation error: %s | condition_preview=%s",
                 e,
                 (when_expr[:160] + "...") if isinstance(when_expr, str) and len(when_expr) > 160 else when_expr,
             )
-            return False
+            return False, True
     
     async def _evaluate_next_transitions(
         self,
@@ -160,7 +171,7 @@ class TransitionMixin:
         step_def: Step,
         event: Event
     ) -> list[Command]:
-        commands, _actionable_match = await self._evaluate_next_transitions_with_match(
+        commands, _actionable_match, _raised = await self._evaluate_next_transitions_with_status(
             state,
             step_def,
             event,
@@ -173,6 +184,19 @@ class TransitionMixin:
         step_def: Step,
         event: Event,
     ) -> tuple[list[Command], bool]:
+        commands, matched, _raised = await self._evaluate_next_transitions_with_status(
+            state,
+            step_def,
+            event,
+        )
+        return commands, matched
+
+    async def _evaluate_next_transitions_with_status(
+        self,
+        state: ExecutionState,
+        step_def: Step,
+        event: Event,
+    ) -> tuple[list[Command], bool, bool]:
         """
         Evaluate next.arcs[].when conditions and return commands plus matched-arc status.
 
@@ -190,13 +214,14 @@ class TransitionMixin:
         context = state.get_render_context(event)
 
         if not step_def.next:
-            return commands, False
+            return commands, False, False
         next_mode = _get_next_mode(step_def)
         next_items = _get_next_arcs(step_def)
 
         logger.info(f"[NEXT-EVAL] Step {event.step} has {len(next_items)} next targets, mode={next_mode}, evaluating for event {event.name}")
 
         any_matched = False
+        any_raised = False
 
         for idx, next_target in enumerate(next_items):
             target_step = next_target.step
@@ -210,7 +235,10 @@ class TransitionMixin:
             # Evaluate when condition (if present)
             if when_condition:
                 logger.debug(f"[NEXT-EVAL] Evaluating next[{idx}].when: {when_condition}")
-                if not self._evaluate_condition(when_condition, context):
+                matched, raised = self._evaluate_condition_with_status(when_condition, context)
+                if raised:
+                    any_raised = True
+                if not matched:
                     logger.debug(f"[NEXT-EVAL] Next[{idx}] condition not matched: {when_condition}")
                     continue
                 logger.info(f"[NEXT-MATCH] Step {event.step}: matched next[{idx}] -> {target_step} (when: {when_condition})")
@@ -276,8 +304,14 @@ class TransitionMixin:
 
         if not any_matched:
             logger.debug(f"[NEXT-EVAL] No next targets matched for step {event.step}")
+        if any_raised:
+            logger.warning(
+                "[NEXT-EVAL] Step %s had arc condition(s) that raised during rendering; "
+                "caller should treat outcome as indeterminate",
+                event.step,
+            )
 
-        return commands, any_matched
+        return commands, any_matched, any_raised
 
     def _has_matching_next_transition(
         self,
