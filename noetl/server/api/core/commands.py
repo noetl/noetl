@@ -294,7 +294,8 @@ async def claim_command(event_id: int, req: ClaimRequest):
                     _active_claim_cache_invalidate(command_id=command_id, event_id=event_id)
                     raise HTTPException(409, detail={"code": "already_terminal", "message": "Execution already reached terminal state"})
 
-                await cur.execute("SELECT pg_try_advisory_xact_lock(hashtext(%s)::bigint) as lock_acquired", (command_id,))
+                # command_id is BIGINT snowflake; pass directly as advisory lock key
+                await cur.execute("SELECT pg_try_advisory_xact_lock(%s) as lock_acquired", (command_id,))
                 if not (row := await cur.fetchone()) or not row.get('lock_acquired'):
                     raise HTTPException(409, detail={"code": "active_claim", "message": "Command is being claimed"},
                                         headers={"Retry-After": str(max(1, _CLAIM_ACTIVE_RETRY_AFTER_SECONDS))})

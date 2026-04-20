@@ -126,7 +126,8 @@ async def handle_event(req: EventRequest) -> EventResponse:
                 async with get_pool_connection() as conn:
                     async with conn.cursor(row_factory=dict_row) as cur:
                         evt_id = await _next_snowflake_id(cur)
-                        await cur.execute("SELECT pg_try_advisory_xact_lock(hashtext(%s)::bigint) as lock_acquired", (command_id,))
+                        # command_id is BIGINT snowflake; pass directly as advisory lock key
+                        await cur.execute("SELECT pg_try_advisory_xact_lock(%s) as lock_acquired", (command_id,))
                         if not (res := await cur.fetchone()) or not res.get('lock_acquired'):
                             raise HTTPException(409, "Command already being claimed")
                         await cur.execute("SELECT worker_id, meta FROM noetl.event WHERE execution_id = %s AND event_type = 'command.claimed' AND meta->>'command_id' = %s ORDER BY event_id DESC LIMIT 1", (int(req.execution_id), command_id))
