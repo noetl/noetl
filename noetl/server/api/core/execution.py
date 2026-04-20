@@ -73,7 +73,7 @@ async def execute(req: ExecuteRequest) -> ExecuteResponse:
                             %(command_id)s, %(event_id)s, %(execution_id)s, %(catalog_id)s, %(parent_execution_id)s,
                             %(step_name)s, %(tool_kind)s, 'PENDING', %(context)s, %(loop_event_id)s, %(iter_index)s, %(meta)s, %(created_at)s
                         )
-                        ON CONFLICT (command_id) DO NOTHING
+                        ON CONFLICT (execution_id, command_id) DO NOTHING
                     """, {
                         "command_id": cmd_id,
                         "event_id": evt_id,

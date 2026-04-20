@@ -55,8 +55,17 @@ BEGIN
 
     RAISE NOTICE 'Migrating noetl.command to HASH partitioning by execution_id (16 partitions)';
 
-    -- 1. Move the existing flat table out of the way.
+    -- 1. Move the existing flat table out of the way. Indexes follow the
+    --    rename, so we also drop them — they would otherwise collide with
+    --    the new index names below. The legacy table's data is preserved
+    --    until the explicit DROP TABLE at the end.
     EXECUTE 'ALTER TABLE noetl.command RENAME TO command_legacy_pre_hashpart';
+    EXECUTE 'DROP INDEX IF EXISTS noetl.idx_command_execution_id';
+    EXECUTE 'DROP INDEX IF EXISTS noetl.idx_command_execution_step';
+    EXECUTE 'DROP INDEX IF EXISTS noetl.idx_command_loop';
+    EXECUTE 'DROP INDEX IF EXISTS noetl.idx_command_status';
+    EXECUTE 'DROP INDEX IF EXISTS noetl.idx_command_worker';
+    EXECUTE 'DROP INDEX IF EXISTS noetl.idx_command_command_id';
 
     -- 2. Create the new partitioned parent. We define columns explicitly
     --    rather than using LIKE so PRIMARY KEY can be set inline (LIKE

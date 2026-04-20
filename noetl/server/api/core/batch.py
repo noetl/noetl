@@ -287,7 +287,7 @@ async def _issue_commands_for_batch(job: _BatchAcceptJob, commands: list) -> Non
                         step_name, tool_kind, status, context, loop_event_id, iter_index, meta, created_at
                     )
                     VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                    ON CONFLICT (command_id) DO NOTHING
+                    ON CONFLICT (execution_id, command_id) DO NOTHING
                 """, command_table_params[j:j + chunk_size])
                 await conn.commit()
 
