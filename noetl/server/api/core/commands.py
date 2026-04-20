@@ -168,6 +168,10 @@ async def _store_command_context_if_needed(*, execution_id: int, step: str, comm
                        execution_id, step, command_id, exc)
         return compact_context
 
+_EVENT_RESULT_INLINE_ROWS_MAX = 16
+_EVENT_RESULT_INLINE_ROWS_MAX_BYTES = 64 * 1024
+
+
 def _build_reference_only_result(*, payload: dict[str, Any], status: str) -> dict[str, Any]:
     from .utils import _normalize_result_status, _estimate_json_size
     from .core import _EVENT_RESULT_CONTEXT_MAX_BYTES
@@ -182,6 +186,25 @@ def _build_reference_only_result(*, payload: dict[str, Any], status: str) -> dic
             result_obj["reference"] = payload_result.get("reference")
         context = _bounded_context(payload_result.get('context') or payload_result)
         if isinstance(context, dict): result_obj["context"] = context
+        # Preserve small inline row sets so step-level set: and arc when: expressions
+        # that reference output.data.rows[N].<col> can be re-rendered during state
+        # replay (when the state cache is invalidated).  Without this, Jinja
+        # StrictUndefined on the missing 'rows' key causes render_template to fall
+        # back to the literal template string, which then gets coerced to 0 by
+        # downstream `| int` filters and produces wrong SQL (e.g.
+        # `WHERE facility_mapping_id = 0`).  Only embed when small — both in row
+        # count and serialized bytes — to keep the event table bounded.
+        inline_rows = payload_result.get("rows")
+        if (
+            isinstance(inline_rows, list)
+            and 0 < len(inline_rows) <= _EVENT_RESULT_INLINE_ROWS_MAX
+            and result_obj.get("reference") is None
+        ):
+            rows_bytes = _estimate_json_size(inline_rows)
+            if rows_bytes <= _EVENT_RESULT_INLINE_ROWS_MAX_BYTES:
+                result_obj["rows"] = inline_rows
+                if "row_count" not in (result_obj.get("context") or {}):
+                    result_obj.setdefault("context", {})["row_count"] = len(inline_rows)
     else:
         if isinstance(payload.get("reference"), dict):
             result_obj["reference"] = payload.get("reference")
