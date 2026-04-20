@@ -272,7 +272,17 @@ async def claim_command(event_id: int, req: ClaimRequest):
                 step = cmd_row['step_name']
                 tool_kind = cmd_row['tool_kind']
                 context, meta = cmd_row['context'] or {}, cmd_row['meta'] or {}
-                command_id = cmd_row.get('command_id') or meta.get('command_id', f"{execution_id}:{step}:{event_id}")
+                # command_id is BIGINT snowflake. Fall back to event_id when neither
+                # cmd_row nor meta has a usable id (last-resort, same numeric domain).
+                _raw_cid = cmd_row.get('command_id') or meta.get('command_id')
+                if _raw_cid is None:
+                    command_id = int(event_id)
+                elif isinstance(_raw_cid, int):
+                    command_id = _raw_cid
+                elif isinstance(_raw_cid, str) and _raw_cid.strip().isdigit():
+                    command_id = int(_raw_cid.strip())
+                else:
+                    command_id = int(event_id)
 
                 # Check terminal status from command table (O(1) instead of event scan)
                 cmd_status = cmd_row.get('status', 'PENDING')
@@ -282,8 +292,9 @@ async def claim_command(event_id: int, req: ClaimRequest):
 
                 # Fallback: check event table for terminal status (pre-command-table)
                 if not cmd_row.get('command_id'):
+                    # meta->>'command_id' returns TEXT; cast %s to text to compare safely
                     await cur.execute(
-                        f"SELECT event_type FROM noetl.event WHERE execution_id = %s AND event_type = ANY(%s) AND meta->>'command_id' = %s ORDER BY event_id DESC LIMIT 1",
+                        f"SELECT event_type FROM noetl.event WHERE execution_id = %s AND event_type = ANY(%s) AND meta->>'command_id' = %s::text ORDER BY event_id DESC LIMIT 1",
                         (execution_id, _COMMAND_TERMINAL_EVENT_TYPES, command_id),
                     )
                 if await cur.fetchone():
@@ -301,7 +312,7 @@ async def claim_command(event_id: int, req: ClaimRequest):
                                         headers={"Retry-After": str(max(1, _CLAIM_ACTIVE_RETRY_AFTER_SECONDS))})
 
                 await cur.execute(
-                    "SELECT event_id, worker_id, meta, created_at FROM noetl.event WHERE execution_id = %s AND event_type IN ('command.claimed', 'command.heartbeat') AND meta->>'command_id' = %s ORDER BY event_id DESC LIMIT 1",
+                    "SELECT event_id, worker_id, meta, created_at FROM noetl.event WHERE execution_id = %s AND event_type IN ('command.claimed', 'command.heartbeat') AND meta->>'command_id' = %s::text ORDER BY event_id DESC LIMIT 1",
                     (execution_id, command_id),
                 )
                 existing = await cur.fetchone()
