@@ -195,6 +195,14 @@ def _build_reference_only_result(*, payload: dict[str, Any], status: str) -> dic
         # `WHERE facility_mapping_id = 0`).  Only embed when small — both in row
         # count and serialized bytes — to keep the event table bounded.
         inline_rows = payload_result.get("rows")
+        if not isinstance(inline_rows, list):
+            # Worker wraps postgres tool output as {id, status, data: {rows, ...}};
+            # unwrap the inner data envelope before looking for rows.
+            nested_data = payload_result.get("data")
+            if isinstance(nested_data, dict):
+                candidate = nested_data.get("rows")
+                if isinstance(candidate, list):
+                    inline_rows = candidate
         if (
             isinstance(inline_rows, list)
             and 0 < len(inline_rows) <= _EVENT_RESULT_INLINE_ROWS_MAX
