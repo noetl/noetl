@@ -228,7 +228,7 @@ async def handle_event(req: EventRequest) -> EventResponse:
                     await cur.execute("SELECT catalog_id, parent_execution_id FROM noetl.event WHERE execution_id = %s LIMIT 1", (int(cmd.execution_id),))
                     row = await cur.fetchone() or {}
                     cat_id, p_exec = row.get('catalog_id', catalog_id), row.get('parent_execution_id')
-                    cmd_id, new_evt_id = f"{cmd.execution_id}:{cmd.step}:{await _next_snowflake_id(cur)}", await _next_snowflake_id(cur)
+                    cmd_id, new_evt_id = str(await _next_snowflake_id(cur)), await _next_snowflake_id(cur)
                     ctx = _build_command_context(cmd)
                     _validate_postgres_command_context_or_422(step=cmd.step, tool_kind=cmd.tool.kind, context=ctx)
                     meta = {"command_id": cmd_id, "step": cmd.step, "tool_kind": cmd.tool.kind, "triggered_by": req.name, "trigger_step": req.step, "actionable": True, **(cmd.metadata or {})}
