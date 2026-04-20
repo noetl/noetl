@@ -182,6 +182,18 @@ workflow:
         ALTER TABLE public.pft_test_validation_log
           ADD COLUMN IF NOT EXISTS assessments_queue_done INTEGER;
 
+        -- Per-facility data-type completion barrier table.
+        -- Each of the 5 parallel data-type pipelines INSERTs one row when its
+        -- patient queue drains; the 5th INSERT increments count to 5 and the
+        -- arc to prepare_mds_work fires. Earlier INSERTs see count<5 and end.
+        CREATE TABLE IF NOT EXISTS public.pft_test_facility_data_type_done (
+          execution_id        TEXT        NOT NULL,
+          facility_mapping_id INTEGER     NOT NULL,
+          data_type           TEXT        NOT NULL,
+          done_at             TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          PRIMARY KEY (execution_id, facility_mapping_id, data_type)
+        );
+
         -- Reset all per-run data (truncate keeps tables small and inserts fast)
         TRUNCATE public.pft_test_patient_work_queue;
         TRUNCATE public.pft_test_patient_ids_work;
@@ -193,6 +205,7 @@ workflow:
         TRUNCATE public.pft_test_mds_assessment_ids_work;
         TRUNCATE public.pft_test_mds_assessment_details;
         TRUNCATE public.pft_test_validation_log;
+        TRUNCATE public.pft_test_facility_data_type_done;
 
         -- Reset facilities for this run
         DELETE FROM public.pft_test_facilities;
@@ -286,14 +299,28 @@ workflow:
         WHERE w.facility_mapping_id = {{ ctx.facility_mapping_id | int }}
         ON CONFLICT (execution_id, facility_mapping_id, data_type, patient_id) DO NOTHING;
 
+        -- Reset per-facility barrier rows in case of replay
+        DELETE FROM public.pft_test_facility_data_type_done
+        WHERE facility_mapping_id = {{ ctx.facility_mapping_id | int }};
+
         SELECT COUNT(*) AS patient_count
         FROM public.pft_test_patient_ids_work
         WHERE facility_mapping_id = {{ ctx.facility_mapping_id | int }};
     next:
+      # Fan-out: dispatch all 5 data-type pipelines in parallel.
+      # `mode: inclusive` fires every arc whose `when` matches; with no `when`
+      # all 5 arcs fire unconditionally. Each pipeline drains its patient
+      # queue independently and ends with mark_data_type_done; the 5th
+      # INSERT into pft_test_facility_data_type_done advances to
+      # prepare_mds_work.
       spec:
-        mode: exclusive
+        mode: inclusive
       arcs:
         - step: load_patients_for_assessments
+        - step: load_patients_for_conditions
+        - step: load_patients_for_medications
+        - step: load_patients_for_vital_signs
+        - step: load_patients_for_demographics
     set:
       ctx.patient_count: '{{ output.data.rows[0].patient_count }}'
 
@@ -322,14 +349,14 @@ workflow:
         WHERE q.execution_id = '{{ execution_id }}'
           AND q.facility_mapping_id = {{ ctx.facility_mapping_id | int }}
           AND q.data_type = 'assessments'
-          AND q.status = 'pending';
+          AND q.status IN ('pending', 'claimed');
     next:
       spec:
         mode: exclusive
       arcs:
         - step: claim_patients_for_assessments
           when: '{{ (output.data.rows[0].remaining_count | default(0) | int) > 0 }}'
-        - step: load_patients_for_conditions
+        - step: mark_assessments_done
           when: '{{ (output.data.rows[0].remaining_count | default(0) | int) == 0 }}'
     set:
       ctx.patients_needing_assessments_count: '{{ output.data.rows[0].remaining_count | default(0) }}'
@@ -509,14 +536,14 @@ workflow:
         WHERE q.execution_id = '{{ execution_id }}'
           AND q.facility_mapping_id = {{ ctx.facility_mapping_id | int }}
           AND q.data_type = 'conditions'
-          AND q.status = 'pending';
+          AND q.status IN ('pending', 'claimed');
     next:
       spec:
         mode: exclusive
       arcs:
         - step: claim_patients_for_conditions
           when: '{{ (output.data.rows[0].remaining_count | default(0) | int) > 0 }}'
-        - step: load_patients_for_medications
+        - step: mark_conditions_done
           when: '{{ (output.data.rows[0].remaining_count | default(0) | int) == 0 }}'
     set:
       ctx.patients_needing_conditions_count: '{{ output.data.rows[0].remaining_count | default(0) }}'
@@ -693,14 +720,14 @@ workflow:
         WHERE q.execution_id = '{{ execution_id }}'
           AND q.facility_mapping_id = {{ ctx.facility_mapping_id | int }}
           AND q.data_type = 'medications'
-          AND q.status = 'pending';
+          AND q.status IN ('pending', 'claimed');
     next:
       spec:
         mode: exclusive
       arcs:
         - step: claim_patients_for_medications
           when: '{{ (output.data.rows[0].remaining_count | default(0) | int) > 0 }}'
-        - step: load_patients_for_vital_signs
+        - step: mark_medications_done
           when: '{{ (output.data.rows[0].remaining_count | default(0) | int) == 0 }}'
     set:
       ctx.patients_needing_medications_count: '{{ output.data.rows[0].remaining_count | default(0) }}'
@@ -877,14 +904,14 @@ workflow:
         WHERE q.execution_id = '{{ execution_id }}'
           AND q.facility_mapping_id = {{ ctx.facility_mapping_id | int }}
           AND q.data_type = 'vital_signs'
-          AND q.status = 'pending';
+          AND q.status IN ('pending', 'claimed');
     next:
       spec:
         mode: exclusive
       arcs:
         - step: claim_patients_for_vital_signs
           when: '{{ (output.data.rows[0].remaining_count | default(0) | int) > 0 }}'
-        - step: load_patients_for_demographics
+        - step: mark_vital_signs_done
           when: '{{ (output.data.rows[0].remaining_count | default(0) | int) == 0 }}'
     set:
       ctx.patients_needing_vital_signs_count: '{{ output.data.rows[0].remaining_count | default(0) }}'
@@ -1063,14 +1090,14 @@ workflow:
         WHERE q.execution_id = '{{ execution_id }}'
           AND q.facility_mapping_id = {{ ctx.facility_mapping_id | int }}
           AND q.data_type = 'demographics'
-          AND q.status = 'pending';
+          AND q.status IN ('pending', 'claimed');
     next:
       spec:
         mode: exclusive
       arcs:
         - step: claim_patients_for_demographics
           when: '{{ (output.data.rows[0].remaining_count | default(0) | int) > 0 }}'
-        - step: prepare_mds_work
+        - step: mark_demographics_done
           when: '{{ (output.data.rows[0].remaining_count | default(0) | int) == 0 }}'
     set:
       ctx.patients_needing_demographics_count: '{{ output.data.rows[0].remaining_count | default(0) }}'
@@ -1201,6 +1228,107 @@ workflow:
       arcs:
         - step: load_patients_for_demographics
           when: '{{ event.name == "loop.done" }}'
+
+  # ------------------------------------------------------------------
+  # DATA TYPE BARRIER (parallel fan-in)
+  # ------------------------------------------------------------------
+  # Each of the 5 mark_X_done steps INSERTs one row into
+  # pft_test_facility_data_type_done for the current facility. The 5th
+  # INSERT (last data-type to drain) sees done_count = 5 and the arc to
+  # prepare_mds_work fires. The first 4 see done_count < 5 and the arc
+  # doesn't match — that branch terminates.
+  #
+  # 5 separate steps (vs one parameterized step with arc-level set:) so
+  # each hardcodes its data_type and avoids relying on per-arc set support.
+  - step: mark_assessments_done
+    tool:
+      kind: postgres
+      auth: pg_k8s
+      command: |
+        INSERT INTO public.pft_test_facility_data_type_done
+          (execution_id, facility_mapping_id, data_type, done_at)
+        VALUES ('{{ execution_id }}', {{ ctx.facility_mapping_id | int }}, 'assessments', NOW())
+        ON CONFLICT (execution_id, facility_mapping_id, data_type) DO NOTHING;
+        SELECT COUNT(*) AS done_count FROM public.pft_test_facility_data_type_done
+        WHERE execution_id = '{{ execution_id }}' AND facility_mapping_id = {{ ctx.facility_mapping_id | int }};
+    next:
+      spec:
+        mode: exclusive
+      arcs:
+        - step: prepare_mds_work
+          when: '{{ (output.data.rows[0].done_count | default(0) | int) >= 5 }}'
+
+  - step: mark_conditions_done
+    tool:
+      kind: postgres
+      auth: pg_k8s
+      command: |
+        INSERT INTO public.pft_test_facility_data_type_done
+          (execution_id, facility_mapping_id, data_type, done_at)
+        VALUES ('{{ execution_id }}', {{ ctx.facility_mapping_id | int }}, 'conditions', NOW())
+        ON CONFLICT (execution_id, facility_mapping_id, data_type) DO NOTHING;
+        SELECT COUNT(*) AS done_count FROM public.pft_test_facility_data_type_done
+        WHERE execution_id = '{{ execution_id }}' AND facility_mapping_id = {{ ctx.facility_mapping_id | int }};
+    next:
+      spec:
+        mode: exclusive
+      arcs:
+        - step: prepare_mds_work
+          when: '{{ (output.data.rows[0].done_count | default(0) | int) >= 5 }}'
+
+  - step: mark_medications_done
+    tool:
+      kind: postgres
+      auth: pg_k8s
+      command: |
+        INSERT INTO public.pft_test_facility_data_type_done
+          (execution_id, facility_mapping_id, data_type, done_at)
+        VALUES ('{{ execution_id }}', {{ ctx.facility_mapping_id | int }}, 'medications', NOW())
+        ON CONFLICT (execution_id, facility_mapping_id, data_type) DO NOTHING;
+        SELECT COUNT(*) AS done_count FROM public.pft_test_facility_data_type_done
+        WHERE execution_id = '{{ execution_id }}' AND facility_mapping_id = {{ ctx.facility_mapping_id | int }};
+    next:
+      spec:
+        mode: exclusive
+      arcs:
+        - step: prepare_mds_work
+          when: '{{ (output.data.rows[0].done_count | default(0) | int) >= 5 }}'
+
+  - step: mark_vital_signs_done
+    tool:
+      kind: postgres
+      auth: pg_k8s
+      command: |
+        INSERT INTO public.pft_test_facility_data_type_done
+          (execution_id, facility_mapping_id, data_type, done_at)
+        VALUES ('{{ execution_id }}', {{ ctx.facility_mapping_id | int }}, 'vital_signs', NOW())
+        ON CONFLICT (execution_id, facility_mapping_id, data_type) DO NOTHING;
+        SELECT COUNT(*) AS done_count FROM public.pft_test_facility_data_type_done
+        WHERE execution_id = '{{ execution_id }}' AND facility_mapping_id = {{ ctx.facility_mapping_id | int }};
+    next:
+      spec:
+        mode: exclusive
+      arcs:
+        - step: prepare_mds_work
+          when: '{{ (output.data.rows[0].done_count | default(0) | int) >= 5 }}'
+
+  - step: mark_demographics_done
+    tool:
+      kind: postgres
+      auth: pg_k8s
+      command: |
+        INSERT INTO public.pft_test_facility_data_type_done
+          (execution_id, facility_mapping_id, data_type, done_at)
+        VALUES ('{{ execution_id }}', {{ ctx.facility_mapping_id | int }}, 'demographics', NOW())
+        ON CONFLICT (execution_id, facility_mapping_id, data_type) DO NOTHING;
+        SELECT COUNT(*) AS done_count FROM public.pft_test_facility_data_type_done
+        WHERE execution_id = '{{ execution_id }}' AND facility_mapping_id = {{ ctx.facility_mapping_id | int }};
+    next:
+      spec:
+        mode: exclusive
+      arcs:
+        - step: prepare_mds_work
+          when: '{{ (output.data.rows[0].done_count | default(0) | int) >= 5 }}'
 
   # ------------------------------------------------------------------
   # MDS BATCH PROCESSING (sub-playbook)
