@@ -1230,13 +1230,21 @@ workflow:
           when: '{{ event.name == "loop.done" }}'
 
   # ------------------------------------------------------------------
-  # DATA TYPE BARRIER (parallel fan-in)
+  # DATA TYPE BARRIER (parallel fan-in) — TRUE-COMPLETION VARIANT
   # ------------------------------------------------------------------
-  # Each of the 5 mark_X_done steps INSERTs one row into
-  # pft_test_facility_data_type_done for the current facility. The 5th
-  # INSERT (last data-type to drain) sees done_count = 5 and the arc to
-  # prepare_mds_work fires. The first 4 see done_count < 5 and the arc
-  # doesn't match — that branch terminates.
+  # Each mark_X_done step verifies the result table has N distinct
+  # patients (N = workload.patients_per_facility) BEFORE inserting the
+  # barrier row. This prevents a premature barrier signal when the
+  # queue's `pending` count hits zero while stragglers are still stuck
+  # in `claimed` status (possible when an inner fetch_X.task_sequence
+  # completes without firing its final mark_done UPDATE).
+  #
+  # If the result-table count is short, the step:
+  #   (a) resets stuck claimed rows back to pending so another claim
+  #       cycle can pick them up (explicit, not gated on the 5-minute
+  #       stale-claim reaper that only fires from load_patients_for_X);
+  #   (b) returns data_count < N, and the arc routes back to
+  #       load_patients_for_X for another drain pass.
   #
   # 5 separate steps (vs one parameterized step with arc-level set:) so
   # each hardcodes its data_type and avoids relying on per-arc set support.
@@ -1245,90 +1253,205 @@ workflow:
       kind: postgres
       auth: pg_k8s
       command: |
-        INSERT INTO public.pft_test_facility_data_type_done
-          (execution_id, facility_mapping_id, data_type, done_at)
-        VALUES ('{{ execution_id }}', {{ ctx.facility_mapping_id | int }}, 'assessments', NOW())
-        ON CONFLICT (execution_id, facility_mapping_id, data_type) DO NOTHING;
-        SELECT COUNT(*) AS done_count FROM public.pft_test_facility_data_type_done
-        WHERE execution_id = '{{ execution_id }}' AND facility_mapping_id = {{ ctx.facility_mapping_id | int }};
+        WITH data_check AS (
+          SELECT COUNT(DISTINCT pcc_patient_id) AS n
+          FROM public.pft_test_patient_assessments
+          WHERE facility_mapping_id = {{ ctx.facility_mapping_id | int }}
+        ),
+        reclaim_if_incomplete AS (
+          UPDATE public.pft_test_patient_work_queue
+          SET status = 'pending', claimed_at = NULL, worker_id = NULL, updated_at = NOW()
+          WHERE execution_id = '{{ execution_id }}'
+            AND facility_mapping_id = {{ ctx.facility_mapping_id | int }}
+            AND data_type = 'assessments'
+            AND status = 'claimed'
+            AND (SELECT n FROM data_check) < {{ workload.patients_per_facility | int }}
+          RETURNING patient_id
+        ),
+        barrier_insert AS (
+          INSERT INTO public.pft_test_facility_data_type_done
+            (execution_id, facility_mapping_id, data_type, done_at)
+          SELECT '{{ execution_id }}', {{ ctx.facility_mapping_id | int }}, 'assessments', NOW()
+          FROM data_check WHERE n >= {{ workload.patients_per_facility | int }}
+          ON CONFLICT (execution_id, facility_mapping_id, data_type) DO NOTHING
+          RETURNING 1
+        )
+        SELECT
+          (SELECT n FROM data_check) AS data_count,
+          (SELECT COUNT(*) FROM public.pft_test_facility_data_type_done
+           WHERE execution_id = '{{ execution_id }}' AND facility_mapping_id = {{ ctx.facility_mapping_id | int }}) AS done_count;
     next:
       spec:
         mode: exclusive
       arcs:
         - step: prepare_mds_work
           when: '{{ (output.data.rows[0].done_count | default(0) | int) >= 5 }}'
+        - step: load_patients_for_assessments
+          when: '{{ (output.data.rows[0].data_count | default(0) | int) < (workload.patients_per_facility | int) }}'
 
   - step: mark_conditions_done
     tool:
       kind: postgres
       auth: pg_k8s
       command: |
-        INSERT INTO public.pft_test_facility_data_type_done
-          (execution_id, facility_mapping_id, data_type, done_at)
-        VALUES ('{{ execution_id }}', {{ ctx.facility_mapping_id | int }}, 'conditions', NOW())
-        ON CONFLICT (execution_id, facility_mapping_id, data_type) DO NOTHING;
-        SELECT COUNT(*) AS done_count FROM public.pft_test_facility_data_type_done
-        WHERE execution_id = '{{ execution_id }}' AND facility_mapping_id = {{ ctx.facility_mapping_id | int }};
+        WITH data_check AS (
+          SELECT COUNT(DISTINCT pcc_patient_id) AS n
+          FROM public.pft_test_patient_conditions
+          WHERE facility_mapping_id = {{ ctx.facility_mapping_id | int }}
+        ),
+        reclaim_if_incomplete AS (
+          UPDATE public.pft_test_patient_work_queue
+          SET status = 'pending', claimed_at = NULL, worker_id = NULL, updated_at = NOW()
+          WHERE execution_id = '{{ execution_id }}'
+            AND facility_mapping_id = {{ ctx.facility_mapping_id | int }}
+            AND data_type = 'conditions'
+            AND status = 'claimed'
+            AND (SELECT n FROM data_check) < {{ workload.patients_per_facility | int }}
+          RETURNING patient_id
+        ),
+        barrier_insert AS (
+          INSERT INTO public.pft_test_facility_data_type_done
+            (execution_id, facility_mapping_id, data_type, done_at)
+          SELECT '{{ execution_id }}', {{ ctx.facility_mapping_id | int }}, 'conditions', NOW()
+          FROM data_check WHERE n >= {{ workload.patients_per_facility | int }}
+          ON CONFLICT (execution_id, facility_mapping_id, data_type) DO NOTHING
+          RETURNING 1
+        )
+        SELECT
+          (SELECT n FROM data_check) AS data_count,
+          (SELECT COUNT(*) FROM public.pft_test_facility_data_type_done
+           WHERE execution_id = '{{ execution_id }}' AND facility_mapping_id = {{ ctx.facility_mapping_id | int }}) AS done_count;
     next:
       spec:
         mode: exclusive
       arcs:
         - step: prepare_mds_work
           when: '{{ (output.data.rows[0].done_count | default(0) | int) >= 5 }}'
+        - step: load_patients_for_conditions
+          when: '{{ (output.data.rows[0].data_count | default(0) | int) < (workload.patients_per_facility | int) }}'
 
   - step: mark_medications_done
     tool:
       kind: postgres
       auth: pg_k8s
       command: |
-        INSERT INTO public.pft_test_facility_data_type_done
-          (execution_id, facility_mapping_id, data_type, done_at)
-        VALUES ('{{ execution_id }}', {{ ctx.facility_mapping_id | int }}, 'medications', NOW())
-        ON CONFLICT (execution_id, facility_mapping_id, data_type) DO NOTHING;
-        SELECT COUNT(*) AS done_count FROM public.pft_test_facility_data_type_done
-        WHERE execution_id = '{{ execution_id }}' AND facility_mapping_id = {{ ctx.facility_mapping_id | int }};
+        WITH data_check AS (
+          SELECT COUNT(DISTINCT pcc_patient_id) AS n
+          FROM public.pft_test_patient_medications
+          WHERE facility_mapping_id = {{ ctx.facility_mapping_id | int }}
+        ),
+        reclaim_if_incomplete AS (
+          UPDATE public.pft_test_patient_work_queue
+          SET status = 'pending', claimed_at = NULL, worker_id = NULL, updated_at = NOW()
+          WHERE execution_id = '{{ execution_id }}'
+            AND facility_mapping_id = {{ ctx.facility_mapping_id | int }}
+            AND data_type = 'medications'
+            AND status = 'claimed'
+            AND (SELECT n FROM data_check) < {{ workload.patients_per_facility | int }}
+          RETURNING patient_id
+        ),
+        barrier_insert AS (
+          INSERT INTO public.pft_test_facility_data_type_done
+            (execution_id, facility_mapping_id, data_type, done_at)
+          SELECT '{{ execution_id }}', {{ ctx.facility_mapping_id | int }}, 'medications', NOW()
+          FROM data_check WHERE n >= {{ workload.patients_per_facility | int }}
+          ON CONFLICT (execution_id, facility_mapping_id, data_type) DO NOTHING
+          RETURNING 1
+        )
+        SELECT
+          (SELECT n FROM data_check) AS data_count,
+          (SELECT COUNT(*) FROM public.pft_test_facility_data_type_done
+           WHERE execution_id = '{{ execution_id }}' AND facility_mapping_id = {{ ctx.facility_mapping_id | int }}) AS done_count;
     next:
       spec:
         mode: exclusive
       arcs:
         - step: prepare_mds_work
           when: '{{ (output.data.rows[0].done_count | default(0) | int) >= 5 }}'
+        - step: load_patients_for_medications
+          when: '{{ (output.data.rows[0].data_count | default(0) | int) < (workload.patients_per_facility | int) }}'
 
   - step: mark_vital_signs_done
     tool:
       kind: postgres
       auth: pg_k8s
       command: |
-        INSERT INTO public.pft_test_facility_data_type_done
-          (execution_id, facility_mapping_id, data_type, done_at)
-        VALUES ('{{ execution_id }}', {{ ctx.facility_mapping_id | int }}, 'vital_signs', NOW())
-        ON CONFLICT (execution_id, facility_mapping_id, data_type) DO NOTHING;
-        SELECT COUNT(*) AS done_count FROM public.pft_test_facility_data_type_done
-        WHERE execution_id = '{{ execution_id }}' AND facility_mapping_id = {{ ctx.facility_mapping_id | int }};
+        WITH data_check AS (
+          SELECT COUNT(DISTINCT pcc_patient_id) AS n
+          FROM public.pft_test_patient_vital_signs
+          WHERE facility_mapping_id = {{ ctx.facility_mapping_id | int }}
+        ),
+        reclaim_if_incomplete AS (
+          UPDATE public.pft_test_patient_work_queue
+          SET status = 'pending', claimed_at = NULL, worker_id = NULL, updated_at = NOW()
+          WHERE execution_id = '{{ execution_id }}'
+            AND facility_mapping_id = {{ ctx.facility_mapping_id | int }}
+            AND data_type = 'vital_signs'
+            AND status = 'claimed'
+            AND (SELECT n FROM data_check) < {{ workload.patients_per_facility | int }}
+          RETURNING patient_id
+        ),
+        barrier_insert AS (
+          INSERT INTO public.pft_test_facility_data_type_done
+            (execution_id, facility_mapping_id, data_type, done_at)
+          SELECT '{{ execution_id }}', {{ ctx.facility_mapping_id | int }}, 'vital_signs', NOW()
+          FROM data_check WHERE n >= {{ workload.patients_per_facility | int }}
+          ON CONFLICT (execution_id, facility_mapping_id, data_type) DO NOTHING
+          RETURNING 1
+        )
+        SELECT
+          (SELECT n FROM data_check) AS data_count,
+          (SELECT COUNT(*) FROM public.pft_test_facility_data_type_done
+           WHERE execution_id = '{{ execution_id }}' AND facility_mapping_id = {{ ctx.facility_mapping_id | int }}) AS done_count;
     next:
       spec:
         mode: exclusive
       arcs:
         - step: prepare_mds_work
           when: '{{ (output.data.rows[0].done_count | default(0) | int) >= 5 }}'
+        - step: load_patients_for_vital_signs
+          when: '{{ (output.data.rows[0].data_count | default(0) | int) < (workload.patients_per_facility | int) }}'
 
   - step: mark_demographics_done
     tool:
       kind: postgres
       auth: pg_k8s
       command: |
-        INSERT INTO public.pft_test_facility_data_type_done
-          (execution_id, facility_mapping_id, data_type, done_at)
-        VALUES ('{{ execution_id }}', {{ ctx.facility_mapping_id | int }}, 'demographics', NOW())
-        ON CONFLICT (execution_id, facility_mapping_id, data_type) DO NOTHING;
-        SELECT COUNT(*) AS done_count FROM public.pft_test_facility_data_type_done
-        WHERE execution_id = '{{ execution_id }}' AND facility_mapping_id = {{ ctx.facility_mapping_id | int }};
+        WITH data_check AS (
+          SELECT COUNT(DISTINCT pcc_patient_id) AS n
+          FROM public.pft_test_patient_demographics
+          WHERE facility_mapping_id = {{ ctx.facility_mapping_id | int }}
+        ),
+        reclaim_if_incomplete AS (
+          UPDATE public.pft_test_patient_work_queue
+          SET status = 'pending', claimed_at = NULL, worker_id = NULL, updated_at = NOW()
+          WHERE execution_id = '{{ execution_id }}'
+            AND facility_mapping_id = {{ ctx.facility_mapping_id | int }}
+            AND data_type = 'demographics'
+            AND status = 'claimed'
+            AND (SELECT n FROM data_check) < {{ workload.patients_per_facility | int }}
+          RETURNING patient_id
+        ),
+        barrier_insert AS (
+          INSERT INTO public.pft_test_facility_data_type_done
+            (execution_id, facility_mapping_id, data_type, done_at)
+          SELECT '{{ execution_id }}', {{ ctx.facility_mapping_id | int }}, 'demographics', NOW()
+          FROM data_check WHERE n >= {{ workload.patients_per_facility | int }}
+          ON CONFLICT (execution_id, facility_mapping_id, data_type) DO NOTHING
+          RETURNING 1
+        )
+        SELECT
+          (SELECT n FROM data_check) AS data_count,
+          (SELECT COUNT(*) FROM public.pft_test_facility_data_type_done
+           WHERE execution_id = '{{ execution_id }}' AND facility_mapping_id = {{ ctx.facility_mapping_id | int }}) AS done_count;
     next:
       spec:
         mode: exclusive
       arcs:
         - step: prepare_mds_work
           when: '{{ (output.data.rows[0].done_count | default(0) | int) >= 5 }}'
+        - step: load_patients_for_demographics
+          when: '{{ (output.data.rows[0].data_count | default(0) | int) < (workload.patients_per_facility | int) }}'
 
   # ------------------------------------------------------------------
   # MDS BATCH PROCESSING (sub-playbook)
