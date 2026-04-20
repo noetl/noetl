@@ -637,7 +637,12 @@ class S3Backend(StorageBackend):
     ):
         self._bucket = bucket
         self._prefix = prefix
-        self._endpoint_url = endpoint_url or os.getenv("S3_ENDPOINT_URL")
+        # Honor both S3_ENDPOINT_URL (legacy) and NOETL_S3_ENDPOINT (phase 0+ canonical)
+        self._endpoint_url = (
+            endpoint_url
+            or os.getenv("NOETL_S3_ENDPOINT")
+            or os.getenv("S3_ENDPOINT_URL")
+        )
         self._region = region
         self._client = None
         self._lock = asyncio.Lock()
