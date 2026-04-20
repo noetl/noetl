@@ -57,7 +57,7 @@ workflow:
       query: |
         SELECT assessment_id, pcc_patient_id
         FROM public.pft_test_mds_assessment_ids_work
-        WHERE facility_mapping_id = {{ start.facility_mapping_id }}
+        WHERE facility_mapping_id = {{ workload.facility_mapping_id | int }}
         ORDER BY assessment_id ASC
         OFFSET {{ start.offset }}
         LIMIT {{ start.batch_size }};
@@ -135,7 +135,7 @@ workflow:
           VALUES (
             '{{ iter.mds_row.assessment_id }}',
             {{ iter.mds_row.pcc_patient_id }},
-            {{ start.facility_mapping_id }},
+            {{ workload.facility_mapping_id | int }},
             '{{ iter.detail | tojson | replace("'", "''") }}'::jsonb
           )
           ON CONFLICT (assessment_id) DO UPDATE SET
