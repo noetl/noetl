@@ -177,14 +177,23 @@ def _build_reference_only_result(*, payload: dict[str, Any], status: str) -> dic
     from .core import _EVENT_RESULT_CONTEXT_MAX_BYTES
     from .events import _collect_compact_context, _bounded_context
     result_obj: dict[str, Any] = {"status": _normalize_result_status(status)}
-    payload_result = payload.get("result") or payload.get("response")
-    logger.info(
-        "[BRR-DEBUG] status=%s payload_keys=%s payload_result_type=%s payload_result_keys=%s",
-        status,
-        sorted(payload.keys()) if isinstance(payload, dict) else None,
-        type(payload_result).__name__,
-        (sorted(payload_result.keys()) if isinstance(payload_result, dict) else None),
-    )
+    # Prefer whichever payload envelope has actual row data, not just a compact
+    # {status, reference, context} shell.  The worker sends both `response` (raw
+    # tool output with rows) and `result` (may already be trimmed) in the same
+    # event; picking `result` blindly loses the rows and breaks replay/arc
+    # rendering for step-level set: and arc when: expressions.
+    def _has_rows(obj: Any) -> bool:
+        if not isinstance(obj, dict): return False
+        if isinstance(obj.get("rows"), list) and obj.get("rows"): return True
+        nested = obj.get("data")
+        return isinstance(nested, dict) and isinstance(nested.get("rows"), list) and bool(nested.get("rows"))
+
+    _raw_result = payload.get("result") if isinstance(payload, dict) else None
+    _raw_response = payload.get("response") if isinstance(payload, dict) else None
+    if _has_rows(_raw_response):
+        payload_result = _raw_response
+    else:
+        payload_result = _raw_result or _raw_response
     if isinstance(payload_result, dict):
         payload_status = payload_result.get("status")
         if isinstance(payload_status, str) and payload_status.strip():
