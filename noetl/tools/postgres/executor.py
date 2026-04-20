@@ -362,6 +362,9 @@ async def _execute_postgres_task_async(
         return format_exception_response(task_id, e)
 
 
+_INLINE_ROWS_THRESHOLD = 16
+
+
 async def _externalize_rows_to_store(
     result: dict,
     *,
@@ -374,6 +377,11 @@ async def _externalize_rows_to_store(
     rows in TempStore and replace with ``{reference, context}`` envelope.
     Non-SELECT results (no ``rows``) are returned unchanged.
 
+    Small result sets (fewer than ``_INLINE_ROWS_THRESHOLD`` rows) are kept
+    inline so scalar/conditional queries such as ``SELECT COUNT(*) AS remaining_count``
+    remain directly accessible via ``output.data.rows[0].<col>`` in arc conditions
+    without requiring reference resolution during transition evaluation.
+
     Falls back to inline rows if TempStore is not available.
     """
     if not isinstance(result, dict):
@@ -383,6 +391,9 @@ async def _externalize_rows_to_store(
         return result
     if not execution_id:
         return result  # no execution context — keep inline (local/test mode)
+    if len(rows) < _INLINE_ROWS_THRESHOLD:
+        # Keep small result sets inline; downstream arc conditions read them directly.
+        return result
 
     try:
         from noetl.core.storage.result_store import default_store
