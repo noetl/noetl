@@ -440,7 +440,28 @@ class StateStore:
                 )
                 context = state.get_render_context(replay_event)
                 rendered_set = recursive_render(jinja_env, step_def.set, context)
-                _apply_set_mutations(state.variables, rendered_set)
+                # During replay the event.result column carries only a compact envelope
+                # ({status, context, reference}); rows/data were stripped at server write
+                # time.  If rendering a set: expression fails, render_template returns the
+                # original template string unchanged — applying that would overwrite a
+                # previously-resolved value (e.g. ctx.facility_mapping_id=1) with a literal
+                # "{{ ... }}" string and later template renders would coerce it to 0.
+                # Filter out any mutations whose rendered form still looks like a template.
+                filtered_set = {
+                    k: v for k, v in rendered_set.items()
+                    if not (isinstance(v, str) and "{{" in v and "}}" in v)
+                }
+                if filtered_set:
+                    _apply_set_mutations(state.variables, filtered_set)
+                if len(filtered_set) != len(rendered_set):
+                    dropped_keys = [k for k in rendered_set.keys() if k not in filtered_set]
+                    logger.info(
+                        "[REPLAY-SET] Skipping %s unresolved set mutation(s) for step %s "
+                        "(rendered value still contains {{ }}): %s",
+                        len(dropped_keys),
+                        node_name,
+                        dropped_keys,
+                    )
 
         return state
 
