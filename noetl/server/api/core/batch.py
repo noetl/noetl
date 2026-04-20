@@ -237,7 +237,7 @@ async def _issue_commands_for_batch(job: _BatchAcceptJob, commands: list) -> Non
                 cmd_suffix = all_snowflakes[i * 2]
                 new_evt_id = all_snowflakes[i * 2 + 1]
                 
-                cmd_id = str(cmd_suffix)
+                cmd_id = cmd_suffix  # already a snowflake bigint
                 ctx = _build_command_context(cmd)
                 _validate_postgres_command_context_or_422(step=cmd.step, tool_kind=cmd.tool.kind, context=ctx)
                 meta = {

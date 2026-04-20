@@ -71,7 +71,8 @@ def _extract_event_error(payload: dict[str, Any]) -> Optional[str]:
             return json.dumps(res_error, default=str)[:2000]
     return None
 
-def _extract_command_id_from_payload(payload: Optional[dict[str, Any]], meta: Optional[dict[str, Any]] = None) -> Optional[str]:
+def _extract_command_id_from_payload(payload: Optional[dict[str, Any]], meta: Optional[dict[str, Any]] = None) -> Optional[int]:
+    """Extract command_id (BIGINT snowflake) from event payload/meta. Accepts int or numeric str."""
     p = payload if isinstance(payload, dict) else {}
     m = meta if isinstance(meta, dict) else {}
     candidates = [p.get("command_id"), m.get("command_id")]
@@ -80,7 +81,12 @@ def _extract_command_id_from_payload(payload: Optional[dict[str, Any]], meta: Op
         candidates.append(res.get("command_id"))
         if isinstance(rctx := res.get("context"), dict): candidates.append(rctx.get("command_id"))
     for val in candidates:
-        if isinstance(val, str) and val.strip(): return val.strip()
+        if val is None:
+            continue
+        if isinstance(val, int):
+            return val
+        if isinstance(val, str) and val.strip().isdigit():
+            return int(val.strip())
     return None
 
 def _collect_compact_context(payload: dict[str, Any]) -> Optional[dict[str, Any]]:
@@ -228,7 +234,7 @@ async def handle_event(req: EventRequest) -> EventResponse:
                     await cur.execute("SELECT catalog_id, parent_execution_id FROM noetl.event WHERE execution_id = %s LIMIT 1", (int(cmd.execution_id),))
                     row = await cur.fetchone() or {}
                     cat_id, p_exec = row.get('catalog_id', catalog_id), row.get('parent_execution_id')
-                    cmd_id, new_evt_id = str(await _next_snowflake_id(cur)), await _next_snowflake_id(cur)
+                    cmd_id, new_evt_id = await _next_snowflake_id(cur), await _next_snowflake_id(cur)
                     ctx = _build_command_context(cmd)
                     _validate_postgres_command_context_or_422(step=cmd.step, tool_kind=cmd.tool.kind, context=ctx)
                     meta = {"command_id": cmd_id, "step": cmd.step, "tool_kind": cmd.tool.kind, "triggered_by": req.name, "trigger_step": req.step, "actionable": True, **(cmd.metadata or {})}

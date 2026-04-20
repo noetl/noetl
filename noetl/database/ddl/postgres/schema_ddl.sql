@@ -598,12 +598,12 @@ CREATE INDEX IF NOT EXISTS idx_event_loop_epoch_coalesce
 -- provided in `scripts/db/migrate_command_to_hash_partitioned.sql`.
 
 CREATE TABLE IF NOT EXISTS noetl.command (
-    command_id          TEXT NOT NULL,
+    command_id          BIGINT NOT NULL,
     event_id            BIGINT NOT NULL,
     execution_id        BIGINT NOT NULL,
     catalog_id          BIGINT NOT NULL,
     parent_execution_id BIGINT,
-    parent_command_id   TEXT,
+    parent_command_id   BIGINT,
 
     step_name           TEXT NOT NULL,
     tool_kind           TEXT,
@@ -669,7 +669,7 @@ CREATE INDEX IF NOT EXISTS idx_command_loop
 CREATE INDEX IF NOT EXISTS idx_command_command_id
     ON noetl.command (command_id);
 
--- Linkage: event → command
-ALTER TABLE noetl.event ADD COLUMN IF NOT EXISTS command_id TEXT;
+-- Linkage: event → command (BIGINT to match noetl.command.command_id)
+ALTER TABLE noetl.event ADD COLUMN IF NOT EXISTS command_id BIGINT;
 CREATE INDEX IF NOT EXISTS idx_event_command_id
     ON noetl.event (command_id) WHERE command_id IS NOT NULL;

@@ -72,12 +72,12 @@ BEGIN
     --    INCLUDING CONSTRAINTS rejects PARTITION BY).
     EXECUTE $sql$
         CREATE TABLE noetl.command (
-            command_id          TEXT NOT NULL,
+            command_id          BIGINT NOT NULL,
             event_id            BIGINT NOT NULL,
             execution_id        BIGINT NOT NULL,
             catalog_id          BIGINT NOT NULL,
             parent_execution_id BIGINT,
-            parent_command_id   TEXT,
+            parent_command_id   BIGINT,
 
             step_name           TEXT NOT NULL,
             tool_kind           TEXT,
@@ -130,9 +130,13 @@ BEGIN
     --    still gives O(log n) lookups when a caller has only command_id.
     EXECUTE 'CREATE INDEX idx_command_command_id ON noetl.command (command_id)';
 
-    -- 6. Copy data. Insert order doesn't matter; hash partitioning routes
-    --    by execution_id automatically.
-    EXECUTE 'INSERT INTO noetl.command SELECT * FROM noetl.command_legacy_pre_hashpart';
+    -- 6. Copy data. The legacy table had TEXT command_id (and many rows
+    --    with the obsolete `<execution_id>:<step>:<seq>` format that can't
+    --    be cast to BIGINT). Drop legacy data — for production migrations
+    --    the operator must DELETE non-numeric rows or re-mint upstream IDs
+    --    before running this script.
+    EXECUTE 'DELETE FROM noetl.command_legacy_pre_hashpart WHERE command_id !~ ''^[0-9]+$''';
+    EXECUTE 'INSERT INTO noetl.command SELECT command_id::BIGINT, event_id, execution_id, catalog_id, parent_execution_id, parent_command_id::BIGINT, step_name, tool_kind, status, worker_id, claimed_at, started_at, completed_at, attempt, context, context_key, loop_event_id, iter_index, meta, result, error, latest_event_id, created_at, updated_at FROM noetl.command_legacy_pre_hashpart';
 
     -- 7. Drop the legacy table.
     EXECUTE 'DROP TABLE noetl.command_legacy_pre_hashpart';
