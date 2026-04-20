@@ -1279,7 +1279,8 @@ workflow:
         SELECT
           (SELECT n FROM data_check) AS data_count,
           (SELECT COUNT(*) FROM public.pft_test_facility_data_type_done
-           WHERE execution_id = '{{ execution_id }}' AND facility_mapping_id = (SELECT facility_mapping_id FROM public.pft_test_facilities WHERE active = TRUE ORDER BY facility_mapping_id LIMIT 1)) AS done_count;
+           WHERE execution_id = '{{ execution_id }}' AND facility_mapping_id = (SELECT facility_mapping_id FROM public.pft_test_facilities WHERE active = TRUE ORDER BY facility_mapping_id LIMIT 1))
+           + (SELECT COUNT(*) FROM barrier_insert) AS done_count;
     next:
       spec:
         mode: exclusive
@@ -1320,7 +1321,8 @@ workflow:
         SELECT
           (SELECT n FROM data_check) AS data_count,
           (SELECT COUNT(*) FROM public.pft_test_facility_data_type_done
-           WHERE execution_id = '{{ execution_id }}' AND facility_mapping_id = (SELECT facility_mapping_id FROM public.pft_test_facilities WHERE active = TRUE ORDER BY facility_mapping_id LIMIT 1)) AS done_count;
+           WHERE execution_id = '{{ execution_id }}' AND facility_mapping_id = (SELECT facility_mapping_id FROM public.pft_test_facilities WHERE active = TRUE ORDER BY facility_mapping_id LIMIT 1))
+           + (SELECT COUNT(*) FROM barrier_insert) AS done_count;
     next:
       spec:
         mode: exclusive
@@ -1361,7 +1363,8 @@ workflow:
         SELECT
           (SELECT n FROM data_check) AS data_count,
           (SELECT COUNT(*) FROM public.pft_test_facility_data_type_done
-           WHERE execution_id = '{{ execution_id }}' AND facility_mapping_id = (SELECT facility_mapping_id FROM public.pft_test_facilities WHERE active = TRUE ORDER BY facility_mapping_id LIMIT 1)) AS done_count;
+           WHERE execution_id = '{{ execution_id }}' AND facility_mapping_id = (SELECT facility_mapping_id FROM public.pft_test_facilities WHERE active = TRUE ORDER BY facility_mapping_id LIMIT 1))
+           + (SELECT COUNT(*) FROM barrier_insert) AS done_count;
     next:
       spec:
         mode: exclusive
@@ -1402,7 +1405,8 @@ workflow:
         SELECT
           (SELECT n FROM data_check) AS data_count,
           (SELECT COUNT(*) FROM public.pft_test_facility_data_type_done
-           WHERE execution_id = '{{ execution_id }}' AND facility_mapping_id = (SELECT facility_mapping_id FROM public.pft_test_facilities WHERE active = TRUE ORDER BY facility_mapping_id LIMIT 1)) AS done_count;
+           WHERE execution_id = '{{ execution_id }}' AND facility_mapping_id = (SELECT facility_mapping_id FROM public.pft_test_facilities WHERE active = TRUE ORDER BY facility_mapping_id LIMIT 1))
+           + (SELECT COUNT(*) FROM barrier_insert) AS done_count;
     next:
       spec:
         mode: exclusive
@@ -1443,7 +1447,8 @@ workflow:
         SELECT
           (SELECT n FROM data_check) AS data_count,
           (SELECT COUNT(*) FROM public.pft_test_facility_data_type_done
-           WHERE execution_id = '{{ execution_id }}' AND facility_mapping_id = (SELECT facility_mapping_id FROM public.pft_test_facilities WHERE active = TRUE ORDER BY facility_mapping_id LIMIT 1)) AS done_count;
+           WHERE execution_id = '{{ execution_id }}' AND facility_mapping_id = (SELECT facility_mapping_id FROM public.pft_test_facilities WHERE active = TRUE ORDER BY facility_mapping_id LIMIT 1))
+           + (SELECT COUNT(*) FROM barrier_insert) AS done_count;
     next:
       spec:
         mode: exclusive
