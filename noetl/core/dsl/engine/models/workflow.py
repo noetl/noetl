@@ -21,18 +21,69 @@ class LoopSpec(BaseModel):
     Loop runtime specification (canonical v10).
 
     Controls loop execution behavior.
+
+    Modes:
+    - sequential: one iteration at a time (collection loops only)
+    - parallel: up to max_in_flight concurrent iterations (collection loops)
+    - cursor: pull-model — engine dispatches max_in_flight worker commands
+      that each poll the cursor for the next row.  Works with cursor loops
+      only (requires loop.cursor, not loop.in).
     """
-    mode: Literal["sequential", "parallel"] = Field(
+    mode: Literal["sequential", "parallel", "cursor"] = Field(
         default="sequential",
-        description="Execution mode: sequential or parallel"
+        description="Execution mode: sequential, parallel, or cursor"
     )
     max_in_flight: Optional[int] = Field(
         None,
-        description="Maximum concurrent iterations in parallel mode"
+        description="Maximum concurrent iterations (parallel) / workers (cursor)"
     )
     policy: Optional[LoopPolicy] = Field(
         None,
         description="Loop scheduling policy"
+    )
+
+
+class CursorSpec(BaseModel):
+    """
+    Cursor loop source (canonical v10).
+
+    Describes a pull-model data source where workers atomically claim one
+    work item at a time.  Alternative to `loop.in` (collection-based).
+
+    The cursor's `kind` selects a driver (postgres / mysql / snowflake /
+    redis / nats_stream / ...); `auth` is a credential name resolved the
+    same way tool.auth is resolved today.  `claim` is a driver-specific
+    statement that returns one row (or nothing when the cursor is drained).
+
+    Canonical format:
+        loop:
+          cursor:
+            kind: postgres
+            auth: pg_k8s
+            claim: |
+              WITH c AS (...)
+              UPDATE ... FROM c
+              RETURNING patient_id, facility_mapping_id;
+          iterator: patient
+          spec:
+            mode: cursor
+            max_in_flight: 100
+    """
+    kind: str = Field(
+        ...,
+        description="Driver kind: postgres, mysql, snowflake, redis, nats_stream, ..."
+    )
+    auth: str = Field(
+        ...,
+        description="Credential name for the cursor connection (same lookup as tool.auth)"
+    )
+    claim: str = Field(
+        ...,
+        description="Driver-specific claim statement (e.g. UPDATE ... FOR UPDATE SKIP LOCKED RETURNING ...)"
+    )
+    options: Optional[dict[str, Any]] = Field(
+        None,
+        description="Driver-specific options (timeout, reclaim_after, max_attempts, ...)"
     )
 
 
@@ -42,27 +93,87 @@ class Loop(BaseModel):
 
     Loop is a step MODIFIER, not a tool kind.
 
-    Canonical format:
+    Two sources are supported, and exactly one must be set:
+
+    1. Collection source (`in`): the legacy push-model loop.  A Jinja
+       expression produces a list; the engine dispatches one iteration
+       per list element.
+
+    2. Cursor source (`cursor`): the pull-model loop.  The engine
+       dispatches `spec.max_in_flight` worker commands; each worker polls
+       the cursor for the next row until the cursor is drained.
+
+    Canonical collection format:
         loop:
           in: "{{ workload.items }}"
           iterator: item
           spec:
             mode: parallel
             max_in_flight: 10
-            policy:
-              exec: distributed
+
+    Canonical cursor format:
+        loop:
+          cursor:
+            kind: postgres
+            auth: pg_k8s
+            claim: |
+              UPDATE tasks SET status='claimed'
+              WHERE id = (
+                SELECT id FROM tasks WHERE status='pending'
+                FOR UPDATE SKIP LOCKED LIMIT 1
+              )
+              RETURNING id, payload;
+          iterator: task
+          spec:
+            mode: cursor
+            max_in_flight: 100
     """
-    in_: str = Field(..., alias="in", description="Jinja expression for collection to iterate")
+    in_: Optional[str] = Field(
+        None, alias="in",
+        description="Jinja expression for collection to iterate (collection source)"
+    )
+    cursor: Optional[CursorSpec] = Field(
+        None,
+        description="Cursor source (pull-model). Mutually exclusive with `in`."
+    )
     iterator: str = Field(..., description="Variable name for each item (binds iter.<iterator>)")
     spec: Optional[LoopSpec] = Field(None, description="Loop runtime specification")
 
     class Config:
         populate_by_name = True
 
+    @model_validator(mode="after")
+    def _validate_source_exactly_one(self):
+        """Require exactly one of `in` / `cursor`.  Require mode=cursor iff cursor set."""
+        has_in = self.in_ is not None and self.in_ != ""
+        has_cursor = self.cursor is not None
+        if has_in and has_cursor:
+            raise ValueError("loop: specify either `in` (collection) or `cursor` (pull), not both")
+        if not has_in and not has_cursor:
+            raise ValueError("loop: one of `in` (collection) or `cursor` (pull) is required")
+        # Require cursor mode only when cursor source is used, and vice versa.
+        resolved_mode = self.spec.mode if self.spec else "sequential"
+        if has_cursor and resolved_mode != "cursor":
+            raise ValueError(
+                "loop.cursor requires spec.mode='cursor' "
+                f"(got mode={resolved_mode!r})"
+            )
+        if has_in and resolved_mode == "cursor":
+            raise ValueError(
+                "loop.spec.mode='cursor' requires a loop.cursor source "
+                "(got collection source via loop.in)"
+            )
+        return self
+
     @property
     def mode(self) -> str:
         """Get loop mode from spec."""
         return self.spec.mode if self.spec else "sequential"
+
+    @property
+    def is_cursor(self) -> bool:
+        """True when this loop is driven by a cursor source."""
+        return self.cursor is not None
 
 
 # ============================================================================
