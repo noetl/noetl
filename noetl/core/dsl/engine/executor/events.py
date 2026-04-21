@@ -1403,6 +1403,22 @@ class EventHandlingMixin:
                     logger.debug(f"Skipping step.exit result storage for task sequence step {event.step} (already handled on call.done)")
                 else:
                     hydrated_result = await _hydrate_reference_only_step_result(event.payload["result"])
+                    if event.step in ("load_next_facility", "setup_facility_work") or (isinstance(event.step, str) and event.step.startswith("mark_")):
+                        try:
+                            _hr_keys = list(hydrated_result.keys()) if isinstance(hydrated_result, dict) else type(hydrated_result).__name__
+                            _ctx = hydrated_result.get("context") if isinstance(hydrated_result, dict) else None
+                            _ctx_keys = list(_ctx.keys()) if isinstance(_ctx, dict) else type(_ctx).__name__
+                            _top_rows = hydrated_result.get("rows") if isinstance(hydrated_result, dict) else None
+                            _ctx_rows = _ctx.get("rows") if isinstance(_ctx, dict) else None
+                            logger.info(
+                                "[DIAG-EXIT] step=%s hydrated_keys=%s context_keys=%s "
+                                "top_rows_len=%s ctx_rows_len=%s",
+                                event.step, _hr_keys, _ctx_keys,
+                                len(_top_rows) if isinstance(_top_rows, list) else None,
+                                len(_ctx_rows) if isinstance(_ctx_rows, list) else None,
+                            )
+                        except Exception as _e:
+                            logger.info("[DIAG-EXIT] failed: %s", _e)
                     await state.mark_step_completed(event.step, hydrated_result)
                     logger.debug(f"Stored result for step {event.step} in state")
         
