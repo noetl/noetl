@@ -105,6 +105,22 @@ class TransitionMixin:
         # Render context built once at dispatch time; the worker renders
         # `iter.<iterator>` per-claim against its own row.  ctx/workload
         # come from the engine snapshot, same as a normal step.
+        try:
+            _lnf = state.step_results.get("load_next_facility")
+            _lnf_keys = list(_lnf.keys()) if isinstance(_lnf, dict) else type(_lnf).__name__
+            _lnf_ctx = _lnf.get("context") if isinstance(_lnf, dict) else None
+            _lnf_ctx_keys = list(_lnf_ctx.keys()) if isinstance(_lnf_ctx, dict) else type(_lnf_ctx).__name__
+            _lnf_top_rows = _lnf.get("rows") if isinstance(_lnf, dict) else None
+            _lnf_ctx_rows = _lnf_ctx.get("rows") if isinstance(_lnf_ctx, dict) else None
+            logger.info(
+                "[DIAG-DISPATCH] step=%s lnf_keys=%s lnf_ctx_keys=%s "
+                "top_rows_len=%s ctx_rows_len=%s",
+                step_def.step, _lnf_keys, _lnf_ctx_keys,
+                len(_lnf_top_rows) if isinstance(_lnf_top_rows, list) else None,
+                len(_lnf_ctx_rows) if isinstance(_lnf_ctx_rows, list) else None,
+            )
+        except Exception as _e:
+            logger.info("[DIAG-DISPATCH] failed: %s", _e)
         base_context = state.get_render_context(Event(
             execution_id=state.execution_id,
             step=step_def.step,
