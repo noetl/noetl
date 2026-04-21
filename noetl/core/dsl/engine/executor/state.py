@@ -203,6 +203,27 @@ class ExecutionState:
                     for k, v in context.items():
                         promoted.setdefault(k, v)
                     result = promoted
+
+                # Preserve row-bearing data from the prior step_result when
+                # the incoming result is compact (e.g. step.exit omits
+                # context.rows/columns even though the matching call.done
+                # carried them).  Without this merge, a later replay-time
+                # mark_step_completed from step.exit overwrites the
+                # row-bearing state with a scalar-only snapshot, and
+                # downstream templates like {{ load_next_facility
+                # .context.rows[0].facility_mapping_id }} silently render
+                # to undefined.
+                prior = self.step_results.get(step_name)
+                if isinstance(prior, dict):
+                    for row_key in ("rows", "columns"):
+                        if not isinstance(result.get(row_key), list) and isinstance(prior.get(row_key), list):
+                            result[row_key] = prior[row_key]
+                    prior_ctx = prior.get("context")
+                    new_ctx = result.get("context")
+                    if isinstance(prior_ctx, dict) and isinstance(new_ctx, dict):
+                        for row_key in ("rows", "columns"):
+                            if not isinstance(new_ctx.get(row_key), list) and isinstance(prior_ctx.get(row_key), list):
+                                new_ctx[row_key] = prior_ctx[row_key]
             self.step_results[step_name] = result
             self.variables[step_name] = result
             if step_name == "load_next_facility" and isinstance(result, dict):
