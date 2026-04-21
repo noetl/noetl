@@ -71,6 +71,25 @@ class TransitionMixin:
             event_id=loop_event_id,
         )
 
+        # Also seed the distributed NATS KV loop-state entry so the
+        # call.done path's increment_loop_completed() can find the
+        # epoch on the first terminal event.  Without this, the
+        # fallback count path runs and skips the loop.done claim.
+        nats_cache = await get_nats_cache()
+        await nats_cache.set_loop_state(
+            str(state.execution_id),
+            step_def.step,
+            {
+                "collection_size": worker_count,
+                "completed_count": 0,
+                "scheduled_count": worker_count,
+                "iterator": step_def.loop.iterator,
+                "mode": "cursor",
+                "event_id": loop_event_id,
+            },
+            event_id=loop_event_id,
+        )
+
         # Render context built once at dispatch time; the worker renders
         # `iter.<iterator>` per-claim against its own row.  ctx/workload
         # come from the engine snapshot, same as a normal step.
