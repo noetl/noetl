@@ -141,7 +141,11 @@ class TransitionMixin:
                 "loop_event_id": loop_event_id,
                 "__loop_epoch_id": loop_event_id,
                 "loop_worker_count": worker_count,
-                "loop_worker_slot_index": slot,
+                # Each worker slot counts as one loop iteration for
+                # aggregation purposes: one terminal call.done per slot
+                # advances completed_count by 1; loop.done fires when
+                # completed_count == worker_count.
+                "loop_iteration_index": slot,
             }
             command = Command(
                 execution_id=state.execution_id,

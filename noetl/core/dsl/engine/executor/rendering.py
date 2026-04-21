@@ -239,19 +239,31 @@ class RenderingMixin:
             collection = list(existing_state.get("collection") or [])
 
         if not collection:
-            try:
-                context = state.get_render_context(event)
-                rendered_collection = self._render_template(step.loop.in_, context)
-                # Resolve reference if template rendered to a reference envelope
-                rendered_collection = await _resolve_collection_if_reference(rendered_collection)
-                collection = self._normalize_loop_collection(rendered_collection, step.step)
-            except Exception as exc:
-                logger.warning(
-                    "[LOOP-HYDRATE] Failed to render loop collection for %s epoch=%s: %s",
+            if step.loop and step.loop.is_cursor:
+                worker_count_fallback = 1
+                if step.loop.spec and step.loop.spec.max_in_flight:
+                    worker_count_fallback = max(1, int(step.loop.spec.max_in_flight))
+                collection = list(range(worker_count_fallback))
+                logger.info(
+                    "[CURSOR-LOOP] Hydrated synthetic collection (size=%d) for %s epoch=%s",
+                    len(collection),
                     step.step,
                     desired_event_id,
-                    exc,
                 )
+            else:
+                try:
+                    context = state.get_render_context(event)
+                    rendered_collection = self._render_template(step.loop.in_, context)
+                    # Resolve reference if template rendered to a reference envelope
+                    rendered_collection = await _resolve_collection_if_reference(rendered_collection)
+                    collection = self._normalize_loop_collection(rendered_collection, step.step)
+                except Exception as exc:
+                    logger.warning(
+                        "[LOOP-HYDRATE] Failed to render loop collection for %s epoch=%s: %s",
+                        step.step,
+                        desired_event_id,
+                        exc,
+                    )
 
         if not collection:
             # Try restoring the REAL collection from NATS KV (persisted at loop

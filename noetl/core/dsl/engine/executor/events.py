@@ -538,12 +538,28 @@ class EventHandlingMixin:
                                     break
 
                         if collection_size == 0:
-                            context = state.get_render_context(event)
-                            rendered_collection = self._render_template(parent_step_def.loop.in_, context)
-                            rendered_collection = self._normalize_loop_collection(rendered_collection, parent_step)
-                            loop_state["collection"] = list(rendered_collection)
-                            collection_size = len(rendered_collection or [])
-                            logger.info(f"[TASK_SEQ-LOOP] Re-rendered collection for {parent_step}: {collection_size} items")
+                            # Cursor loops never render a collection from a
+                            # template — the "collection" is synthetic (one
+                            # slot per worker).  Recover size from the step
+                            # spec instead of trying to re-render loop.in_.
+                            if parent_step_def.loop and parent_step_def.loop.is_cursor:
+                                worker_count_fallback = 1
+                                if parent_step_def.loop.spec and parent_step_def.loop.spec.max_in_flight:
+                                    worker_count_fallback = max(1, int(parent_step_def.loop.spec.max_in_flight))
+                                collection_size = worker_count_fallback
+                                loop_state["collection_size"] = collection_size
+                                logger.info(
+                                    "[CURSOR-LOOP] Restored collection_size=%d from worker_count for %s",
+                                    collection_size,
+                                    parent_step,
+                                )
+                            else:
+                                context = state.get_render_context(event)
+                                rendered_collection = self._render_template(parent_step_def.loop.in_, context)
+                                rendered_collection = self._normalize_loop_collection(rendered_collection, parent_step)
+                                loop_state["collection"] = list(rendered_collection)
+                                collection_size = len(rendered_collection or [])
+                                logger.info(f"[TASK_SEQ-LOOP] Re-rendered collection for {parent_step}: {collection_size} items")
 
                             # Backfill NATS metadata if it was missing.
                             if collection_size > 0 and not nats_loop_state:
@@ -612,8 +628,17 @@ class EventHandlingMixin:
                         # Both cases trigger a best-effort reissue when the remaining work
                         # is within the repair threshold.
                         _unscheduled_gap = max(0, collection_size - scheduled_count)
+                        # Cursor loops do not tolerate tail-repair: each
+                        # worker is a persistent slot, not an enumerable
+                        # row.  Reclaim of crashed mid-flight rows is the
+                        # driver's job (SQL claim prelude resets stale
+                        # claims), not the engine's.
+                        _is_cursor_loop_parent = bool(
+                            parent_step_def.loop and parent_step_def.loop.is_cursor
+                        )
                         _tail_needs_repair = (
-                            _TASKSEQ_LOOP_REPAIR_THRESHOLD > 0
+                            not _is_cursor_loop_parent
+                            and _TASKSEQ_LOOP_REPAIR_THRESHOLD > 0
                             and collection_size > 0
                             and remaining_count > 0
                             and remaining_count <= _TASKSEQ_LOOP_REPAIR_THRESHOLD
@@ -1116,12 +1141,25 @@ class EventHandlingMixin:
                     collection_size = int((nats_loop_state or {}).get("collection_size", 0) or 0)
 
                     if collection_size == 0:
-                        loop_context = state.get_render_context(event)
-                        rendered_collection = self._render_template(step_def.loop.in_, loop_context)
-                        rendered_collection = self._normalize_loop_collection(rendered_collection, event.step)
-                        loop_state["collection"] = list(rendered_collection)
-                        collection_size = len(rendered_collection or [])
-                        logger.info(f"[LOOP-CALL.DONE] Re-rendered collection for {event.step}: {collection_size} items")
+                        if step_def.loop and step_def.loop.is_cursor:
+                            # Cursor loops: collection_size == worker concurrency.
+                            worker_count_fallback = 1
+                            if step_def.loop.spec and step_def.loop.spec.max_in_flight:
+                                worker_count_fallback = max(1, int(step_def.loop.spec.max_in_flight))
+                            collection_size = worker_count_fallback
+                            loop_state["collection_size"] = collection_size
+                            logger.info(
+                                "[CURSOR-LOOP] Restored collection_size=%d from worker_count for %s (call.done handler)",
+                                collection_size,
+                                event.step,
+                            )
+                        else:
+                            loop_context = state.get_render_context(event)
+                            rendered_collection = self._render_template(step_def.loop.in_, loop_context)
+                            rendered_collection = self._normalize_loop_collection(rendered_collection, event.step)
+                            loop_state["collection"] = list(rendered_collection)
+                            collection_size = len(rendered_collection or [])
+                            logger.info(f"[LOOP-CALL.DONE] Re-rendered collection for {event.step}: {collection_size} items")
 
                     # Check if loop is done
                     if collection_size > 0 and new_count >= collection_size:
@@ -1487,11 +1525,25 @@ class EventHandlingMixin:
                     
                     # Only render collection if not already cached (expensive operation)
                     if loop_state and not loop_state.get("collection"):
-                        context = state.get_render_context(event)
-                        collection = self._render_template(step_def.loop.in_, context)
-                        collection = self._normalize_loop_collection(collection, event.step)
-                        loop_state["collection"] = list(collection)
-                        logger.info(f"[LOOP-SETUP] Rendered collection for {event.step}: {len(collection or [])} items")
+                        if step_def.loop and step_def.loop.is_cursor:
+                            # Cursor loops: collection is synthetic (one
+                            # slot per worker); there is no loop.in_ to
+                            # render.  Rebuild the synthetic collection.
+                            worker_count_fallback = 1
+                            if step_def.loop.spec and step_def.loop.spec.max_in_flight:
+                                worker_count_fallback = max(1, int(step_def.loop.spec.max_in_flight))
+                            collection = list(range(worker_count_fallback))
+                            loop_state["collection"] = collection
+                            logger.info(
+                                "[CURSOR-LOOP] Rebuilt synthetic collection (size=%d) for %s",
+                                len(collection), event.step,
+                            )
+                        else:
+                            context = state.get_render_context(event)
+                            collection = self._render_template(step_def.loop.in_, context)
+                            collection = self._normalize_loop_collection(collection, event.step)
+                            loop_state["collection"] = list(collection)
+                            logger.info(f"[LOOP-SETUP] Rendered collection for {event.step}: {len(collection or [])} items")
                         
                         # Store initial loop state in NATS K/V with event_id
                         # NOTE: We store only metadata and completed_count, NOT results array
