@@ -6,14 +6,83 @@ from .store import PlaybookRepo, StateStore
 
 class TransitionMixin:
     def _get_loop_max_in_flight(self, step: Step) -> int:
-        """Resolve max in-flight limit for loop scheduling."""
+        """Resolve max in-flight limit for loop scheduling.
+
+        For cursor loops max_in_flight is the worker concurrency — the
+        number of persistent worker commands dispatched in parallel —
+        rather than a per-tick dispatch budget.
+        """
         if not step.loop:
             return 1
-        if step.loop.mode != "parallel":
+        loop_mode = step.loop.mode
+        if loop_mode not in ("parallel", "cursor"):
             return 1
         if step.loop.spec and step.loop.spec.max_in_flight:
             return max(1, int(step.loop.spec.max_in_flight))
         return 1
+
+    async def _issue_cursor_loop_commands(
+        self,
+        state: "ExecutionState",
+        step_def: Step,
+        step_input: dict[str, Any],
+    ) -> list[Command]:
+        """Dispatch N persistent worker commands for a cursor-driven loop.
+
+        One command per worker slot; each command runs the worker-side
+        claim-process-release loop until the cursor is drained.  Control
+        args (``__cursor_worker``, ``__worker_slot_id``, ``__loop_epoch_id``)
+        mark the command so the worker routes it through the cursor
+        runtime instead of the normal iteration path.
+
+        Re-entry (``__loop_continue`` / ``__loop_retry``) is a no-op: a
+        single dispatch per epoch is enough since each worker loops
+        server-side until exhaustion.
+        """
+        import time
+
+        if not step_def.loop or not step_def.loop.is_cursor:
+            return []
+
+        existing_loop_state = state.loop_state.get(step_def.step)
+        is_continuation = bool(
+            existing_loop_state
+            and (step_input.get("__loop_continue") or step_input.get("__loop_retry"))
+        )
+        if is_continuation:
+            # Workers self-continue; nothing to re-dispatch.
+            return []
+
+        worker_count = self._get_loop_max_in_flight(step_def)
+        loop_event_id = f"loop_{state.execution_id}_{int(time.time() * 1_000_000)}"
+        if existing_loop_state:
+            del state.loop_state[step_def.step]
+
+        # Seed loop_state so downstream code sees a registered loop.
+        state.init_loop(
+            step_def.step,
+            collection=list(range(worker_count)),  # opaque; one slot per worker
+            iterator=step_def.loop.iterator,
+            mode="cursor",
+            event_id=loop_event_id,
+        )
+
+        commands: list[Command] = []
+        for slot in range(worker_count):
+            args = dict(step_input)
+            args["__cursor_worker"] = True
+            args["__worker_slot_id"] = f"{loop_event_id}:slot-{slot}"
+            args["__loop_epoch_id"] = loop_event_id
+            args["__loop_worker_count"] = worker_count
+            command = await self._create_command_for_step(state, step_def, args)
+            if not command:
+                continue
+            commands.append(command)
+        logger.info(
+            "[CURSOR-LOOP] Dispatched %d worker command(s) for step %s epoch=%s",
+            len(commands), step_def.step, loop_event_id,
+        )
+        return commands
 
     async def _issue_loop_commands(
         self,
@@ -25,6 +94,11 @@ class TransitionMixin:
         if not step_def.loop:
             command = await self._create_command_for_step(state, step_def, step_input)
             return [command] if command else []
+
+        # Cursor loops take a different dispatch shape — N worker commands
+        # up-front, each running its own claim-process-release loop.
+        if step_def.loop.is_cursor:
+            return await self._issue_cursor_loop_commands(state, step_def, step_input)
 
         # Optimization: Fetch loop collection once for the entire batch
         nats_cache = await get_nats_cache()
