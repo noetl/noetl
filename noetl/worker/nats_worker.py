@@ -2682,6 +2682,55 @@ class Worker:
 
             return seq_result
 
+        elif tool_kind == "cursor_worker":
+            # Cursor-driven loop worker: opens a driver handle, loops
+            # claim → render iter.<iterator> → run task sequence → repeat
+            # until the driver returns no row.  One command per worker slot;
+            # one call.done emitted by _execute_command when this returns.
+            from noetl.worker.cursor_worker import execute_cursor_worker
+
+            async def execute_cursor_task_tool(kind: str, cfg: dict, ctx: dict) -> Any:
+                """Execute a single tool within a cursor-worker iteration."""
+                return await self._execute_tool(kind, cfg, {}, step, ctx)
+
+            def render_template_str(template: str, ctx: dict) -> Any:
+                import json
+                try:
+                    rendered = self._jinja_env.from_string(template).render(**ctx)
+                    if isinstance(rendered, str):
+                        stripped = rendered.strip()
+                        if (stripped.startswith('{') and stripped.endswith('}')) or \
+                           (stripped.startswith('[') and stripped.endswith(']')):
+                            try:
+                                return json.loads(stripped)
+                            except json.JSONDecodeError:
+                                import ast
+                                try:
+                                    return ast.literal_eval(stripped)
+                                except Exception:
+                                    return rendered
+                    return rendered
+                except Exception as e:
+                    logger.error(f"[CURSOR-WORKER] template render error: {e} | template={template[:100]}...")
+                    return template
+
+            def render_dict_templates(data: dict, ctx: dict) -> dict:
+                from noetl.core.dsl.render import render_template as recursive_render
+                return recursive_render(self._jinja_env, data, ctx)
+
+            worker_slot_id = task_config.get("worker_slot_id") or config.get("worker_slot_id")
+
+            cursor_result = await execute_cursor_worker(
+                config=task_config,
+                context=context,
+                jinja_env=jinja_env,
+                tool_executor=execute_cursor_task_tool,
+                render_template=render_template_str,
+                render_dict=render_dict_templates,
+                worker_slot_id=worker_slot_id,
+            )
+            return cursor_result
+
         elif tool_kind == "noop":
             # No-operation tool - used for case-driven steps that don't need tool execution
             # Returns empty result, step logic is driven by case conditions

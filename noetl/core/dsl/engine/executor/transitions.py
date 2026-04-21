@@ -127,6 +127,10 @@ class TransitionMixin:
                 "cursor": cursor_spec,
                 "iterator": step_def.loop.iterator,
                 "tasks": tasks,
+                "worker_slot_id": worker_slot_id,
+                "worker_slot_index": slot,
+                "worker_count": worker_count,
+                "loop_event_id": loop_event_id,
             }
             command_metadata = {
                 "task_sequence": True,
