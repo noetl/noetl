@@ -97,13 +97,17 @@ async def execute_cursor_worker(
             "cursor_worker: claim SQL rendered to empty/non-string value"
         )
     _ctx_sample = claim_context.get("ctx") if isinstance(claim_context, dict) else None
+    _lnf = claim_context.get("load_next_facility") if isinstance(claim_context, dict) else None
     logger.info(
-        "[CURSOR-WORKER] slot=%s opening driver; ctx.facility_mapping_id=%r ctx_keys=%s "
+        "[CURSOR-WORKER] slot=%s opening driver; "
+        "ctx.facility_mapping_id=%r "
+        "load_next_facility_type=%s load_next_facility_keys=%s "
         "claim_sql_head=%s",
         worker_slot_id,
         (_ctx_sample or {}).get("facility_mapping_id") if isinstance(_ctx_sample, dict) else None,
-        list(_ctx_sample.keys()) if isinstance(_ctx_sample, dict) else None,
-        rendered_claim_sql[:200].replace("\n", " "),
+        type(_lnf).__name__,
+        list(_lnf.keys()) if isinstance(_lnf, dict) else None,
+        rendered_claim_sql[:300].replace("\n", " "),
     )
 
     # Resolve the credential via the same endpoint tools use today.
