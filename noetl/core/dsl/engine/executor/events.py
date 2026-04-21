@@ -63,6 +63,25 @@ class EventHandlingMixin:
         if cache_refreshed and preserved_loop_snapshots:
             self._restore_loop_collection_snapshots(state, preserved_loop_snapshots)
 
+        # DIAG: dump load_next_facility step_result as seen after state load
+        if event.step and (event.step.startswith("setup_") or event.step.startswith("fetch_")):
+            try:
+                _lnf = state.step_results.get("load_next_facility")
+                _lnf_keys = list(_lnf.keys()) if isinstance(_lnf, dict) else type(_lnf).__name__
+                _lnf_ctx = _lnf.get("context") if isinstance(_lnf, dict) else None
+                _lnf_ctx_keys = list(_lnf_ctx.keys()) if isinstance(_lnf_ctx, dict) else type(_lnf_ctx).__name__
+                _lnf_top_rows = _lnf.get("rows") if isinstance(_lnf, dict) else None
+                _lnf_ctx_rows = _lnf_ctx.get("rows") if isinstance(_lnf_ctx, dict) else None
+                logger.info(
+                    "[DIAG-LOADED] event.step=%s event.name=%s lnf_keys=%s lnf_ctx_keys=%s "
+                    "top_rows_len=%s ctx_rows_len=%s",
+                    event.step, event.name, _lnf_keys, _lnf_ctx_keys,
+                    len(_lnf_top_rows) if isinstance(_lnf_top_rows, list) else None,
+                    len(_lnf_ctx_rows) if isinstance(_lnf_ctx_rows, list) else None,
+                )
+            except Exception as _e:
+                logger.info("[DIAG-LOADED] failed: %s", _e)
+
         if state.completed:
             logger.info(
                 "[ENGINE] Execution %s already completed; skipping orchestration for event %s/%s",
