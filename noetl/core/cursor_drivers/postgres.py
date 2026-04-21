@@ -5,11 +5,16 @@ RETURNING`` patterns to atomically claim one work row per call.  The
 caller supplies the full claim statement (flexible enough to support
 re-queueing, retry counters, partitioning columns, etc.).
 
-Connection is pooled per-handle via psycopg_pool.AsyncConnectionPool to
-keep worker-side claim latency stable across a long-running worker slot.
+Connection pools are shared per (credential, process) via a module-level
+registry so N cursor_worker commands running in the same worker pod
+don't each open an independent pool (which blew past Postgres's
+max_connections cap when N was ~500 across 5 cursor loops × 100 slots).
+Each pool still sizes up with max_in_flight concurrency, but once only
+— not once per worker slot.
 """
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass
 from typing import Any, Optional
 
@@ -52,6 +57,44 @@ def _build_conn_string(credential: dict[str, Any]) -> str:
     )
 
 
+# Shared pool registry keyed by (dsn-string, target-loop-id).  Keying on
+# the connection DSN means all cursor workers pointing at the same auth
+# target land on one pool in this process.  Each pod has its own process
+# (= its own registry), so the pool cap is replicated per pod, not per
+# worker slot.
+_shared_pools: dict[tuple[str, int], AsyncConnectionPool] = {}
+_shared_pools_lock = asyncio.Lock()
+
+
+async def _get_shared_pool(conn_string: str, max_size: int) -> AsyncConnectionPool:
+    """Return (or lazily create) a shared pool for this DSN in this loop.
+
+    The event-loop id is part of the key so tests / ad-hoc scripts that
+    create a fresh loop get a fresh pool instead of inheriting one bound
+    to a closed loop.
+    """
+    loop = asyncio.get_running_loop()
+    key = (conn_string, id(loop))
+    async with _shared_pools_lock:
+        pool = _shared_pools.get(key)
+        if pool is None:
+            pool = AsyncConnectionPool(
+                conn_string,
+                min_size=1,
+                max_size=max(2, max_size),
+                open=False,
+                name="noetl-cursor-shared",
+            )
+            await pool.open(wait=True, timeout=30.0)
+            _shared_pools[key] = pool
+        else:
+            # Grow the pool if a later caller needs more concurrency.
+            current_max = pool.max_size
+            if max_size > current_max:
+                pool.max_size = max_size
+        return pool
+
+
 @dataclass
 class _Handle:
     pool: AsyncConnectionPool
@@ -65,27 +108,23 @@ class PostgresCursorDriver:
     kind = "postgres"
 
     async def open(self, auth: Any, spec: dict[str, Any]) -> _Handle:
-        """Open a per-worker connection pool.
+        """Attach to the shared pool for this credential in this process.
 
         ``auth`` is the credential record (dict) resolved by the caller
-        via ``fetch_credential_by_key``.  The pool is scoped to the handle
-        — one pool per cursor-worker command — and closed in ``close``.
-        The pool has ``min_size=1, max_size=2`` since each worker only
-        runs one claim at a time.
+        via ``fetch_credential_by_key``.  Multiple cursor workers against
+        the same credential share one pool; the pool's ``max_size`` is
+        bumped up to the caller's concurrency hint (``options.pool_size``,
+        defaulting to a conservative 8) rather than multiplied by the
+        number of workers.
         """
         conn_string = _build_conn_string(auth)
-        pool = AsyncConnectionPool(
-            conn_string,
-            min_size=1,
-            max_size=2,
-            open=False,
-            name=f"cursor-{spec.get('kind', 'postgres')}",
-        )
-        await pool.open(wait=True, timeout=30.0)
+        options = dict(spec.get("options") or {})
+        pool_size = int(options.get("pool_size") or 8)
+        pool = await _get_shared_pool(conn_string, pool_size)
         return _Handle(
             pool=pool,
             claim_sql=spec["claim"],
-            options=dict(spec.get("options") or {}),
+            options=options,
         )
 
     async def claim(
@@ -109,10 +148,10 @@ class PostgresCursorDriver:
                 return dict(row) if row else None
 
     async def close(self, handle: _Handle) -> None:
-        try:
-            await handle.pool.close()
-        except Exception as exc:
-            logger.warning("cursor_drivers.postgres: pool close error: %s", exc)
+        # Pool is shared across workers; do NOT close it here.  The pool
+        # lives for the lifetime of the worker process and is torn down
+        # only on process exit.
+        return
 
 
 # Register at import time; importing the package picks this up.
