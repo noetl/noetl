@@ -115,6 +115,38 @@ class TransitionMixin:
         # Cursor spec — serialize so the worker receives a plain dict.
         cursor_spec = step_def.loop.cursor.model_dump()
 
+        # Pre-render the claim SQL against the engine's full render
+        # context so any execution-scoped values (e.g. a facility id
+        # resolved from a prior step's result) are baked into the
+        # claim statement at dispatch time.  This sidesteps the
+        # worker-side rendering pitfalls where a step-result proxy
+        # has not surfaced its rows yet, and guarantees every worker
+        # slot for this epoch uses the *same* facility / partition
+        # value even if the upstream control table flips active=true
+        # to another row mid-flight.
+        claim_template = cursor_spec.get("claim")
+        if claim_template:
+            try:
+                rendered_claim = self._render_template(claim_template, base_context)
+                if isinstance(rendered_claim, str) and rendered_claim.strip():
+                    cursor_spec["claim"] = rendered_claim
+                    logger.info(
+                        "[CURSOR-LOOP] Pre-rendered claim SQL for %s (%d chars)",
+                        step_def.step, len(rendered_claim),
+                    )
+                else:
+                    logger.warning(
+                        "[CURSOR-LOOP] Pre-render of claim SQL for %s returned "
+                        "non-string/empty; falling back to worker-side render",
+                        step_def.step,
+                    )
+            except Exception as exc:
+                logger.warning(
+                    "[CURSOR-LOOP] Pre-render of claim SQL for %s failed (%s); "
+                    "falling back to worker-side render",
+                    step_def.step, exc,
+                )
+
         # Tool config: pipeline (list of labeled tasks) is the expected
         # shape for a cursor loop body; single-tool shorthand is allowed
         # and wrapped into a one-task pipeline for uniform execution.
