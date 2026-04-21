@@ -30,16 +30,17 @@ class TransitionMixin:
         """Dispatch N persistent worker commands for a cursor-driven loop.
 
         One command per worker slot; each command runs the worker-side
-        claim-process-release loop until the cursor is drained.  Control
-        args (``__cursor_worker``, ``__worker_slot_id``, ``__loop_epoch_id``)
-        mark the command so the worker routes it through the cursor
-        runtime instead of the normal iteration path.
+        claim-process-release loop until the cursor is drained.  The
+        engine does not claim loop indices, render the collection, or
+        participate in per-item iteration — that all happens server-side
+        in the worker against the cursor driver.
 
         Re-entry (``__loop_continue`` / ``__loop_retry``) is a no-op: a
         single dispatch per epoch is enough since each worker loops
         server-side until exhaustion.
         """
         import time
+        from noetl.core.dsl.render import render_template as recursive_render
 
         if not step_def.loop or not step_def.loop.is_cursor:
             return []
@@ -58,29 +59,105 @@ class TransitionMixin:
         if existing_loop_state:
             del state.loop_state[step_def.step]
 
-        # Seed loop_state so downstream code sees a registered loop.
+        # Seed loop_state so loop.done aggregation treats one worker
+        # exit (call.done) as one "slot complete".  The synthetic
+        # collection has length = worker_count; completed_count reaches
+        # that value when all workers exit.
         state.init_loop(
             step_def.step,
-            collection=list(range(worker_count)),  # opaque; one slot per worker
+            collection=list(range(worker_count)),
             iterator=step_def.loop.iterator,
             mode="cursor",
             event_id=loop_event_id,
         )
 
+        # Render context built once at dispatch time; the worker renders
+        # `iter.<iterator>` per-claim against its own row.  ctx/workload
+        # come from the engine snapshot, same as a normal step.
+        base_context = state.get_render_context(Event(
+            execution_id=state.execution_id,
+            step=step_def.step,
+            name="cursor_loop_init",
+            payload={},
+        ))
+
+        # Cursor spec — serialize so the worker receives a plain dict.
+        cursor_spec = step_def.loop.cursor.model_dump()
+
+        # Tool config: pipeline (list of labeled tasks) is the expected
+        # shape for a cursor loop body; single-tool shorthand is allowed
+        # and wrapped into a one-task pipeline for uniform execution.
+        if step_def.tool is None:
+            logger.error(
+                "[CURSOR-LOOP] Step %s has loop.cursor but no tool pipeline; refusing to dispatch",
+                step_def.step,
+            )
+            return []
+        if isinstance(step_def.tool, list):
+            tasks = step_def.tool
+        else:
+            tool_dict = step_def.tool.model_dump()
+            tasks = [{"name": f"{step_def.step}_task", **tool_dict}]
+
+        # Input bindings mirror the normal step path.
+        step_args: dict[str, Any] = {}
+        if step_def.input:
+            step_args.update(step_def.input)
+        filtered_input = {
+            k: v for k, v in (step_input or {}).items()
+            if not k.startswith("__")
+        }
+        step_args.update(filtered_input)
+        rendered_input = recursive_render(self.jinja_env, step_args, base_context)
+
+        # Next router passes through unchanged — evaluated when
+        # loop.done fires (i.e. all workers exited).
+        next_targets = None
+        if step_def.next:
+            next_targets = [arc.model_dump(exclude_none=True) for arc in _get_next_arcs(step_def)]
+            next_mode = _get_next_mode(step_def)
+        else:
+            next_mode = "exclusive"
+        command_spec = CommandSpec(next_mode=next_mode)
+
         commands: list[Command] = []
         for slot in range(worker_count):
-            args = dict(step_input)
-            args["__cursor_worker"] = True
-            args["__worker_slot_id"] = f"{loop_event_id}:slot-{slot}"
-            args["__loop_epoch_id"] = loop_event_id
-            args["__loop_worker_count"] = worker_count
-            command = await self._create_command_for_step(state, step_def, args)
-            if not command:
-                continue
+            worker_slot_id = f"{loop_event_id}:slot-{slot}"
+            tool_config = {
+                "cursor": cursor_spec,
+                "iterator": step_def.loop.iterator,
+                "tasks": tasks,
+            }
+            command_metadata = {
+                "task_sequence": True,
+                "parent_step": step_def.step,
+                "cursor_worker": True,
+                "worker_slot_id": worker_slot_id,
+                "loop_step": step_def.step,
+                "loop_event_id": loop_event_id,
+                "__loop_epoch_id": loop_event_id,
+                "loop_worker_count": worker_count,
+                "loop_worker_slot_index": slot,
+            }
+            command = Command(
+                execution_id=state.execution_id,
+                step=f"{step_def.step}:cursor_worker",
+                tool=ToolCall(kind="cursor_worker", config=tool_config),
+                input=rendered_input,
+                render_context=base_context,
+                pipeline=tasks,
+                next_targets=next_targets,
+                spec=command_spec,
+                attempt=1,
+                priority=0,
+                metadata=command_metadata,
+            )
             commands.append(command)
+
         logger.info(
-            "[CURSOR-LOOP] Dispatched %d worker command(s) for step %s epoch=%s",
-            len(commands), step_def.step, loop_event_id,
+            "[CURSOR-LOOP] Dispatched %d worker command(s) for step %s "
+            "(kind=%s, epoch=%s)",
+            len(commands), step_def.step, cursor_spec.get("kind"), loop_event_id,
         )
         return commands
 
