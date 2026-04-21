@@ -168,7 +168,14 @@ class TransitionMixin:
             }
             command = Command(
                 execution_id=state.execution_id,
-                step=f"{step_def.step}:cursor_worker",
+                # Use :task_sequence suffix so the engine's existing
+                # loop.done aggregation path (events.py ~line 216)
+                # recognizes our worker call.done events as iteration
+                # terminals and increments the loop counter.  The
+                # tool.kind remains cursor_worker so the worker routes
+                # the command to the cursor runtime, not the plain
+                # task_sequence executor.
+                step=f"{step_def.step}:task_sequence",
                 tool=ToolCall(kind="cursor_worker", config=tool_config),
                 input=rendered_input,
                 render_context=base_context,
