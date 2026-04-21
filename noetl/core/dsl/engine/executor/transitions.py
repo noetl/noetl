@@ -59,6 +59,18 @@ class TransitionMixin:
         if existing_loop_state:
             del state.loop_state[step_def.step]
 
+        # Clear prior completion snapshot so the engine's dedup guard
+        # (issued_steps / completed_steps) does not block a re-entry
+        # routing from another step (e.g. facility-N's
+        # mark_facility_processed → load_next_facility →
+        # setup_facility_work → fetch_X routing for facility N+1 needs
+        # a clean slate on fetch_X).  _create_command_for_step does this
+        # for non-cursor loops via the should_reset_existing_loop branch;
+        # cursor dispatch bypasses that path so we replicate it here.
+        state.completed_steps.discard(step_def.step)
+        state.step_results.pop(step_def.step, None)
+        state.variables.pop(step_def.step, None)
+
         # Seed loop_state so loop.done aggregation treats one worker
         # exit (call.done) as one "slot complete".  The synthetic
         # collection has length = worker_count; completed_count reaches
