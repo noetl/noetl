@@ -930,6 +930,22 @@ class EventHandlingMixin:
                 except Exception as _e:
                     logger.info("[DIAG-SET] failed to dump response_data: %s", _e)
             await state.mark_step_completed(event.step, response_data)
+            if event.step in ("load_next_facility", "setup_facility_work") or (isinstance(event.step, str) and event.step.startswith("mark_")):
+                try:
+                    _sr = state.step_results.get(event.step)
+                    _sr_keys = list(_sr.keys()) if isinstance(_sr, dict) else type(_sr).__name__
+                    _sr_ctx = _sr.get("context") if isinstance(_sr, dict) else None
+                    _sr_ctx_keys = list(_sr_ctx.keys()) if isinstance(_sr_ctx, dict) else type(_sr_ctx).__name__
+                    _sr_top_rows = _sr.get("rows") if isinstance(_sr, dict) else None
+                    _sr_ctx_rows = _sr_ctx.get("rows") if isinstance(_sr_ctx, dict) else None
+                    logger.info(
+                        "[DIAG-POST-MARK] step=%s keys=%s ctx_keys=%s top_rows_len=%s ctx_rows_len=%s",
+                        event.step, _sr_keys, _sr_ctx_keys,
+                        len(_sr_top_rows) if isinstance(_sr_top_rows, list) else None,
+                        len(_sr_ctx_rows) if isinstance(_sr_ctx_rows, list) else None,
+                    )
+                except Exception as _e:
+                    logger.info("[DIAG-POST-MARK] failed: %s", _e)
             logger.debug(f"[CALL.DONE] Stored result for step {event.step} in state BEFORE next evaluation")
         elif event.name == "call.error":
             # Mark step as completed even on error - it finished executing (with failure)
