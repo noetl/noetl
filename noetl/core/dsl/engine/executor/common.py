@@ -94,7 +94,13 @@ _LOOP_RESULT_MAX_ITEMS = max(
 )
 _TASKSEQ_LOOP_REPAIR_THRESHOLD = max(
     0,
-    int(os.getenv("NOETL_TASKSEQ_LOOP_REPAIR_THRESHOLD", "3")),
+    # Default bumped from 3 to 64 because high-concurrency fetch loops (e.g.
+    # max_in_flight=100) routinely leave >3 iterations in a "started-only or
+    # dropped" state when the engine/worker restarts or a command event is
+    # lost in flight.  Observed up to 34 stuck iterations across a facility's
+    # 1000-patient fetch loops; raising the repair window to 64 covers that
+    # in practice while still keeping the reissue scope bounded.
+    int(os.getenv("NOETL_TASKSEQ_LOOP_REPAIR_THRESHOLD", "64")),
 )
 _TASKSEQ_LOOP_MISSING_MIN_AGE_SECONDS = max(
     0.0,

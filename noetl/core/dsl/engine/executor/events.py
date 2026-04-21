@@ -596,22 +596,49 @@ class EventHandlingMixin:
                         remaining_count = max(0, collection_size - new_count)
 
                         # Tail-repair fallback:
-                        # If all loop slots were scheduled but a small number of iterations never reached
-                        # a terminal command event (started-only or dropped), reissue those exact indexes.
-                        # This keeps loop.done from hanging indefinitely on missing tail items.
-                        if (
+                        # Covers two failure modes that both leave loop.done stuck:
+                        #
+                        # (a) All slots scheduled (scheduled_count >= collection_size) but a
+                        #     handful of iterations never reached a terminal event — dispatched
+                        #     to a worker that died, or the command event was lost in flight.
+                        #
+                        # (b) The head/dispatch side got CAS-throttled in
+                        #     claim_next_loop_indices and some tail indices were never even
+                        #     scheduled (scheduled_count < collection_size).  In that case
+                        #     the gap between scheduled and collection_size is at least as
+                        #     important as the remaining_count window — we need to reissue
+                        #     the un-scheduled tail, otherwise loop.done waits forever.
+                        #
+                        # Both cases trigger a best-effort reissue when the remaining work
+                        # is within the repair threshold.
+                        _unscheduled_gap = max(0, collection_size - scheduled_count)
+                        _tail_needs_repair = (
                             _TASKSEQ_LOOP_REPAIR_THRESHOLD > 0
                             and collection_size > 0
                             and remaining_count > 0
                             and remaining_count <= _TASKSEQ_LOOP_REPAIR_THRESHOLD
-                            and scheduled_count >= collection_size
-                        ):
+                            and (
+                                scheduled_count >= collection_size
+                                or _unscheduled_gap <= _TASKSEQ_LOOP_REPAIR_THRESHOLD
+                            )
+                        )
+                        if _tail_needs_repair:
                             missing_indexes = await self._find_missing_loop_iteration_indices(
                                 state.execution_id,
                                 event.step,
                                 loop_event_id=resolved_loop_event_id,
                                 limit=_TASKSEQ_LOOP_REPAIR_THRESHOLD,
                             )
+                            # When scheduled_count fell short of collection_size (CAS-throttled
+                            # dispatch), the un-scheduled indices never got a command.issued
+                            # event and therefore won't be found by _find_missing_loop_iteration_indices.
+                            # Add them explicitly here.
+                            if _unscheduled_gap > 0:
+                                for _gap_idx in range(scheduled_count, collection_size):
+                                    if _gap_idx not in missing_indexes:
+                                        missing_indexes.append(_gap_idx)
+                                        if len(missing_indexes) >= _TASKSEQ_LOOP_REPAIR_THRESHOLD:
+                                            break
                             if missing_indexes:
                                 issued_repairs_raw = loop_state.get("repair_issued_indexes", [])
                                 issued_repairs = {
