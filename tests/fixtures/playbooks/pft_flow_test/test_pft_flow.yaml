@@ -316,75 +316,52 @@ workflow:
       spec:
         mode: inclusive
       arcs:
-        - step: load_patients_for_assessments
-        - step: load_patients_for_conditions
-        - step: load_patients_for_medications
-        - step: load_patients_for_vital_signs
-        - step: load_patients_for_demographics
+        - step: fetch_assessments
+        - step: fetch_conditions
+        - step: fetch_medications
+        - step: fetch_vital_signs
+        - step: fetch_demographics
     set:
       ctx.patient_count: '{{ output.data.rows[0].patient_count }}'
 
   # ------------------------------------------------------------------
   # FETCH ASSESSMENTS (paginated, 2-4 pages)
   # ------------------------------------------------------------------
-  - step: load_patients_for_assessments
+  - step: fetch_assessments
     desc: |
-      Count remaining patients that still need assessment data.
-      Fetch step will bulk-claim/process/save up to 100 patients in one batch pass.
-    tool:
-      kind: postgres
-      auth: pg_k8s
-      command: |
-        WITH reclaim_stale AS (
-          UPDATE public.pft_test_patient_work_queue
-          SET status = 'pending', claimed_at = NULL, worker_id = NULL, updated_at = NOW()
-          WHERE execution_id = '{{ execution_id }}'
-            AND data_type = 'assessments'
-            AND status = 'claimed'
-            AND claimed_at < NOW() - INTERVAL '5 minutes'
-          RETURNING patient_id
-        )
-        SELECT COUNT(*) AS remaining_count
-        FROM public.pft_test_patient_work_queue q
-        WHERE q.execution_id = '{{ execution_id }}'
-          AND q.facility_mapping_id = (SELECT facility_mapping_id FROM public.pft_test_facilities WHERE active = TRUE ORDER BY facility_mapping_id LIMIT 1)
-          AND q.data_type = 'assessments'
-          AND q.status IN ('pending', 'claimed');
-    next:
-      spec:
-        mode: exclusive
-      arcs:
-        - step: claim_patients_for_assessments
-          when: '{{ (output.data.rows[0].remaining_count | default(0) | int) > 0 }}'
-        - step: mark_assessments_done
-          when: '{{ (output.data.rows[0].remaining_count | default(0) | int) == 0 }}'
-    set:
-      ctx.patients_needing_assessments_count: '{{ output.data.rows[0].remaining_count | default(0) }}'
-
-  - step: claim_patients_for_assessments
-    desc: |
-      Claim the next assessment batch in one SQL round-trip and return the claimed rows.
-      This avoids 100 separate LIMIT 1 claims per loop pass.
-    tool:
-      kind: postgres
-      auth: pg_k8s
-      command: |
-        WITH candidate AS (
-          SELECT q.patient_id, q.facility_mapping_id
-          FROM public.pft_test_patient_work_queue q
-          WHERE q.execution_id = '{{ execution_id }}'
-            AND q.facility_mapping_id = (SELECT facility_mapping_id FROM public.pft_test_facilities WHERE active = TRUE ORDER BY facility_mapping_id LIMIT 1)
-            AND q.data_type = 'assessments'
-            AND q.status = 'pending'
-          ORDER BY q.patient_id
-          FOR UPDATE SKIP LOCKED
-          LIMIT {{ workload.claim_batch_size | int }}
-        ),
-        claimed AS (
+      Cursor-driven per-patient fetch/save for assessments.  Each worker
+      slot atomically claims the next pending patient row via SQL, fetches
+      the assessment pages, persists them, and marks the queue row done.
+      When the claim returns zero rows, the worker exits; loop.done fires
+      when all workers exit.
+    loop:
+      cursor:
+        kind: postgres
+        auth: pg_k8s
+        claim: |
+          WITH reclaim_stale AS (
+            UPDATE public.pft_test_patient_work_queue
+            SET status = 'pending', claimed_at = NULL, worker_id = NULL, updated_at = NOW()
+            WHERE execution_id = '{{ execution_id }}'
+              AND data_type = 'assessments'
+              AND status = 'claimed'
+              AND claimed_at < NOW() - INTERVAL '5 minutes'
+          ),
+          candidate AS (
+            SELECT patient_id, facility_mapping_id
+            FROM public.pft_test_patient_work_queue
+            WHERE execution_id = '{{ execution_id }}'
+              AND facility_mapping_id = (SELECT facility_mapping_id FROM public.pft_test_facilities WHERE active = TRUE ORDER BY facility_mapping_id LIMIT 1)
+              AND data_type = 'assessments'
+              AND status = 'pending'
+            ORDER BY patient_id
+            FOR UPDATE SKIP LOCKED
+            LIMIT 1
+          )
           UPDATE public.pft_test_patient_work_queue q
           SET status = 'claimed',
               attempt_count = q.attempt_count + 1,
-              worker_id = '{{ execution_id }}:assessments:batch',
+              worker_id = 'cursor:assessments',
               claimed_at = NOW(),
               updated_at = NOW()
           FROM candidate c
@@ -392,28 +369,10 @@ workflow:
             AND q.facility_mapping_id = c.facility_mapping_id
             AND q.data_type = 'assessments'
             AND q.patient_id = c.patient_id
-          RETURNING q.patient_id, q.facility_mapping_id
-        )
-        SELECT patient_id, facility_mapping_id
-        FROM claimed
-        ORDER BY patient_id;
-    next:
-      spec:
-        mode: exclusive
-      arcs:
-        - step: fetch_assessments
-          when: '{{ (output.data.row_count | default(0) | int) > 0 }}'
-        - step: load_patients_for_assessments
-          when: '{{ (output.data.row_count | default(0) | int) == 0 }}'
-
-  - step: fetch_assessments
-    desc: |
-      Fetch/process/save one claimed assessment batch at a time using concrete queue rows.
-    loop:
-      in: '{{ claim_patients_for_assessments.rows }}'
+          RETURNING q.patient_id, q.facility_mapping_id;
       iterator: patient
       spec:
-        mode: parallel
+        mode: cursor
         max_in_flight: 100
     tool:
       - name: init_page
@@ -510,66 +469,47 @@ workflow:
       spec:
         mode: exclusive
       arcs:
-        - step: load_patients_for_assessments
+        - step: mark_assessments_done
           when: '{{ event.name == "loop.done" }}'
 
   # ------------------------------------------------------------------
   # FETCH CONDITIONS (paginated, 1-3 pages)
   # ------------------------------------------------------------------
-  - step: load_patients_for_conditions
-    desc: Count remaining patients that still need conditions data.
-    tool:
-      kind: postgres
-      auth: pg_k8s
-      command: |
-        WITH reclaim_stale AS (
-          UPDATE public.pft_test_patient_work_queue
-          SET status = 'pending', claimed_at = NULL, worker_id = NULL, updated_at = NOW()
-          WHERE execution_id = '{{ execution_id }}'
-            AND data_type = 'conditions'
-            AND status = 'claimed'
-            AND claimed_at < NOW() - INTERVAL '5 minutes'
-          RETURNING patient_id
-        )
-        SELECT COUNT(*) AS remaining_count
-        FROM public.pft_test_patient_work_queue q
-        WHERE q.execution_id = '{{ execution_id }}'
-          AND q.facility_mapping_id = (SELECT facility_mapping_id FROM public.pft_test_facilities WHERE active = TRUE ORDER BY facility_mapping_id LIMIT 1)
-          AND q.data_type = 'conditions'
-          AND q.status IN ('pending', 'claimed');
-    next:
-      spec:
-        mode: exclusive
-      arcs:
-        - step: claim_patients_for_conditions
-          when: '{{ (output.data.rows[0].remaining_count | default(0) | int) > 0 }}'
-        - step: mark_conditions_done
-          when: '{{ (output.data.rows[0].remaining_count | default(0) | int) == 0 }}'
-    set:
-      ctx.patients_needing_conditions_count: '{{ output.data.rows[0].remaining_count | default(0) }}'
-
-  - step: claim_patients_for_conditions
-    desc: Claim the next conditions batch in one SQL round-trip and return the claimed rows.
-    tool:
-      kind: postgres
-      auth: pg_k8s
-      command: |
-        WITH candidate AS (
-          SELECT q.patient_id, q.facility_mapping_id
-          FROM public.pft_test_patient_work_queue q
-          WHERE q.execution_id = '{{ execution_id }}'
-            AND q.facility_mapping_id = (SELECT facility_mapping_id FROM public.pft_test_facilities WHERE active = TRUE ORDER BY facility_mapping_id LIMIT 1)
-            AND q.data_type = 'conditions'
-            AND q.status = 'pending'
-          ORDER BY q.patient_id
-          FOR UPDATE SKIP LOCKED
-          LIMIT {{ workload.claim_batch_size | int }}
-        ),
-        claimed AS (
+  - step: fetch_conditions
+    desc: |
+      Cursor-driven per-patient fetch/save for conditions.  Each worker
+      slot atomically claims the next pending patient row via SQL, fetches
+      the conditions pages, persists them, and marks the queue row done.
+      When the claim returns zero rows, the worker exits; loop.done fires
+      when all workers exit.
+    loop:
+      cursor:
+        kind: postgres
+        auth: pg_k8s
+        claim: |
+          WITH reclaim_stale AS (
+            UPDATE public.pft_test_patient_work_queue
+            SET status = 'pending', claimed_at = NULL, worker_id = NULL, updated_at = NOW()
+            WHERE execution_id = '{{ execution_id }}'
+              AND data_type = 'conditions'
+              AND status = 'claimed'
+              AND claimed_at < NOW() - INTERVAL '5 minutes'
+          ),
+          candidate AS (
+            SELECT patient_id, facility_mapping_id
+            FROM public.pft_test_patient_work_queue
+            WHERE execution_id = '{{ execution_id }}'
+              AND facility_mapping_id = (SELECT facility_mapping_id FROM public.pft_test_facilities WHERE active = TRUE ORDER BY facility_mapping_id LIMIT 1)
+              AND data_type = 'conditions'
+              AND status = 'pending'
+            ORDER BY patient_id
+            FOR UPDATE SKIP LOCKED
+            LIMIT 1
+          )
           UPDATE public.pft_test_patient_work_queue q
           SET status = 'claimed',
               attempt_count = q.attempt_count + 1,
-              worker_id = '{{ execution_id }}:conditions:batch',
+              worker_id = 'cursor:conditions',
               claimed_at = NOW(),
               updated_at = NOW()
           FROM candidate c
@@ -577,27 +517,10 @@ workflow:
             AND q.facility_mapping_id = c.facility_mapping_id
             AND q.data_type = 'conditions'
             AND q.patient_id = c.patient_id
-          RETURNING q.patient_id, q.facility_mapping_id
-        )
-        SELECT patient_id, facility_mapping_id
-        FROM claimed
-        ORDER BY patient_id;
-    next:
-      spec:
-        mode: exclusive
-      arcs:
-        - step: fetch_conditions
-          when: '{{ (output.data.row_count | default(0) | int) > 0 }}'
-        - step: load_patients_for_conditions
-          when: '{{ (output.data.row_count | default(0) | int) == 0 }}'
-
-  - step: fetch_conditions
-    desc: Fetch/process/save one claimed conditions batch at a time using concrete queue rows.
-    loop:
-      in: '{{ claim_patients_for_conditions.rows }}'
+          RETURNING q.patient_id, q.facility_mapping_id;
       iterator: patient
       spec:
-        mode: parallel
+        mode: cursor
         max_in_flight: 100
     tool:
       - name: init_page
@@ -694,66 +617,48 @@ workflow:
       spec:
         mode: exclusive
       arcs:
-        - step: load_patients_for_conditions
+        - step: mark_conditions_done
           when: '{{ event.name == "loop.done" }}'
 
   # ------------------------------------------------------------------
   # FETCH MEDICATIONS (paginated, 2-3 pages)
   # ------------------------------------------------------------------
-  - step: load_patients_for_medications
-    desc: Count remaining patients that still need medications data.
-    tool:
-      kind: postgres
-      auth: pg_k8s
-      command: |
-        WITH reclaim_stale AS (
-          UPDATE public.pft_test_patient_work_queue
-          SET status = 'pending', claimed_at = NULL, worker_id = NULL, updated_at = NOW()
-          WHERE execution_id = '{{ execution_id }}'
-            AND data_type = 'medications'
-            AND status = 'claimed'
-            AND claimed_at < NOW() - INTERVAL '5 minutes'
-          RETURNING patient_id
-        )
-        SELECT COUNT(*) AS remaining_count
-        FROM public.pft_test_patient_work_queue q
-        WHERE q.execution_id = '{{ execution_id }}'
-          AND q.facility_mapping_id = (SELECT facility_mapping_id FROM public.pft_test_facilities WHERE active = TRUE ORDER BY facility_mapping_id LIMIT 1)
-          AND q.data_type = 'medications'
-          AND q.status IN ('pending', 'claimed');
-    next:
-      spec:
-        mode: exclusive
-      arcs:
-        - step: claim_patients_for_medications
-          when: '{{ (output.data.rows[0].remaining_count | default(0) | int) > 0 }}'
-        - step: mark_medications_done
-          when: '{{ (output.data.rows[0].remaining_count | default(0) | int) == 0 }}'
-    set:
-      ctx.patients_needing_medications_count: '{{ output.data.rows[0].remaining_count | default(0) }}'
 
-  - step: claim_patients_for_medications
-    desc: Claim the next medications batch in one SQL round-trip and return the claimed rows.
-    tool:
-      kind: postgres
-      auth: pg_k8s
-      command: |
-        WITH candidate AS (
-          SELECT q.patient_id, q.facility_mapping_id
-          FROM public.pft_test_patient_work_queue q
-          WHERE q.execution_id = '{{ execution_id }}'
-            AND q.facility_mapping_id = (SELECT facility_mapping_id FROM public.pft_test_facilities WHERE active = TRUE ORDER BY facility_mapping_id LIMIT 1)
-            AND q.data_type = 'medications'
-            AND q.status = 'pending'
-          ORDER BY q.patient_id
-          FOR UPDATE SKIP LOCKED
-          LIMIT {{ workload.claim_batch_size | int }}
-        ),
-        claimed AS (
+  - step: fetch_medications
+    desc: |
+      Cursor-driven per-patient fetch/save for medications.  Each worker
+      slot atomically claims the next pending patient row via SQL, fetches
+      the medications pages, persists them, and marks the queue row done.
+      When the claim returns zero rows, the worker exits; loop.done fires
+      when all workers exit.
+    loop:
+      cursor:
+        kind: postgres
+        auth: pg_k8s
+        claim: |
+          WITH reclaim_stale AS (
+            UPDATE public.pft_test_patient_work_queue
+            SET status = 'pending', claimed_at = NULL, worker_id = NULL, updated_at = NOW()
+            WHERE execution_id = '{{ execution_id }}'
+              AND data_type = 'medications'
+              AND status = 'claimed'
+              AND claimed_at < NOW() - INTERVAL '5 minutes'
+          ),
+          candidate AS (
+            SELECT patient_id, facility_mapping_id
+            FROM public.pft_test_patient_work_queue
+            WHERE execution_id = '{{ execution_id }}'
+              AND facility_mapping_id = (SELECT facility_mapping_id FROM public.pft_test_facilities WHERE active = TRUE ORDER BY facility_mapping_id LIMIT 1)
+              AND data_type = 'medications'
+              AND status = 'pending'
+            ORDER BY patient_id
+            FOR UPDATE SKIP LOCKED
+            LIMIT 1
+          )
           UPDATE public.pft_test_patient_work_queue q
           SET status = 'claimed',
               attempt_count = q.attempt_count + 1,
-              worker_id = '{{ execution_id }}:medications:batch',
+              worker_id = 'cursor:medications',
               claimed_at = NOW(),
               updated_at = NOW()
           FROM candidate c
@@ -761,27 +666,10 @@ workflow:
             AND q.facility_mapping_id = c.facility_mapping_id
             AND q.data_type = 'medications'
             AND q.patient_id = c.patient_id
-          RETURNING q.patient_id, q.facility_mapping_id
-        )
-        SELECT patient_id, facility_mapping_id
-        FROM claimed
-        ORDER BY patient_id;
-    next:
-      spec:
-        mode: exclusive
-      arcs:
-        - step: fetch_medications
-          when: '{{ (output.data.row_count | default(0) | int) > 0 }}'
-        - step: load_patients_for_medications
-          when: '{{ (output.data.row_count | default(0) | int) == 0 }}'
-
-  - step: fetch_medications
-    desc: Fetch/process/save one claimed medications batch at a time using concrete queue rows.
-    loop:
-      in: '{{ claim_patients_for_medications.rows }}'
+          RETURNING q.patient_id, q.facility_mapping_id;
       iterator: patient
       spec:
-        mode: parallel
+        mode: cursor
         max_in_flight: 100
     tool:
       - name: init_page
@@ -878,66 +766,47 @@ workflow:
       spec:
         mode: exclusive
       arcs:
-        - step: load_patients_for_medications
+        - step: mark_medications_done
           when: '{{ event.name == "loop.done" }}'
 
   # ------------------------------------------------------------------
   # FETCH VITAL SIGNS (paginated but always 1 page)
   # ------------------------------------------------------------------
-  - step: load_patients_for_vital_signs
-    desc: Count remaining patients that still need vital signs data.
-    tool:
-      kind: postgres
-      auth: pg_k8s
-      command: |
-        WITH reclaim_stale AS (
-          UPDATE public.pft_test_patient_work_queue
-          SET status = 'pending', claimed_at = NULL, worker_id = NULL, updated_at = NOW()
-          WHERE execution_id = '{{ execution_id }}'
-            AND data_type = 'vital_signs'
-            AND status = 'claimed'
-            AND claimed_at < NOW() - INTERVAL '5 minutes'
-          RETURNING patient_id
-        )
-        SELECT COUNT(*) AS remaining_count
-        FROM public.pft_test_patient_work_queue q
-        WHERE q.execution_id = '{{ execution_id }}'
-          AND q.facility_mapping_id = (SELECT facility_mapping_id FROM public.pft_test_facilities WHERE active = TRUE ORDER BY facility_mapping_id LIMIT 1)
-          AND q.data_type = 'vital_signs'
-          AND q.status IN ('pending', 'claimed');
-    next:
-      spec:
-        mode: exclusive
-      arcs:
-        - step: claim_patients_for_vital_signs
-          when: '{{ (output.data.rows[0].remaining_count | default(0) | int) > 0 }}'
-        - step: mark_vital_signs_done
-          when: '{{ (output.data.rows[0].remaining_count | default(0) | int) == 0 }}'
-    set:
-      ctx.patients_needing_vital_signs_count: '{{ output.data.rows[0].remaining_count | default(0) }}'
-
-  - step: claim_patients_for_vital_signs
-    desc: Claim the next vital signs batch in one SQL round-trip and return the claimed rows.
-    tool:
-      kind: postgres
-      auth: pg_k8s
-      command: |
-        WITH candidate AS (
-          SELECT q.patient_id, q.facility_mapping_id
-          FROM public.pft_test_patient_work_queue q
-          WHERE q.execution_id = '{{ execution_id }}'
-            AND q.facility_mapping_id = (SELECT facility_mapping_id FROM public.pft_test_facilities WHERE active = TRUE ORDER BY facility_mapping_id LIMIT 1)
-            AND q.data_type = 'vital_signs'
-            AND q.status = 'pending'
-          ORDER BY q.patient_id
-          FOR UPDATE SKIP LOCKED
-          LIMIT {{ workload.claim_batch_size | int }}
-        ),
-        claimed AS (
+  - step: fetch_vital_signs
+    desc: |
+      Cursor-driven per-patient fetch/save for vital signs.  Each worker
+      slot atomically claims the next pending patient row via SQL, fetches
+      the single-page vital signs payload, persists it, and marks the
+      queue row done.  When the claim returns zero rows, the worker exits;
+      loop.done fires when all workers exit.
+    loop:
+      cursor:
+        kind: postgres
+        auth: pg_k8s
+        claim: |
+          WITH reclaim_stale AS (
+            UPDATE public.pft_test_patient_work_queue
+            SET status = 'pending', claimed_at = NULL, worker_id = NULL, updated_at = NOW()
+            WHERE execution_id = '{{ execution_id }}'
+              AND data_type = 'vital_signs'
+              AND status = 'claimed'
+              AND claimed_at < NOW() - INTERVAL '5 minutes'
+          ),
+          candidate AS (
+            SELECT patient_id, facility_mapping_id
+            FROM public.pft_test_patient_work_queue
+            WHERE execution_id = '{{ execution_id }}'
+              AND facility_mapping_id = (SELECT facility_mapping_id FROM public.pft_test_facilities WHERE active = TRUE ORDER BY facility_mapping_id LIMIT 1)
+              AND data_type = 'vital_signs'
+              AND status = 'pending'
+            ORDER BY patient_id
+            FOR UPDATE SKIP LOCKED
+            LIMIT 1
+          )
           UPDATE public.pft_test_patient_work_queue q
           SET status = 'claimed',
               attempt_count = q.attempt_count + 1,
-              worker_id = '{{ execution_id }}:vital_signs:batch',
+              worker_id = 'cursor:vital_signs',
               claimed_at = NOW(),
               updated_at = NOW()
           FROM candidate c
@@ -945,29 +814,10 @@ workflow:
             AND q.facility_mapping_id = c.facility_mapping_id
             AND q.data_type = 'vital_signs'
             AND q.patient_id = c.patient_id
-          RETURNING q.patient_id, q.facility_mapping_id
-        )
-        SELECT patient_id, facility_mapping_id
-        FROM claimed
-        ORDER BY patient_id;
-    next:
-      spec:
-        mode: exclusive
-      arcs:
-        - step: fetch_vital_signs
-          when: '{{ (output.data.row_count | default(0) | int) > 0 }}'
-        - step: load_patients_for_vital_signs
-          when: '{{ (output.data.row_count | default(0) | int) == 0 }}'
-
-  - step: fetch_vital_signs
-    desc: |
-      Fetch/process/save one claimed vital signs batch at a time using concrete queue rows.
-      All patients have exactly 1 page — tests the single-page paginated path.
-    loop:
-      in: '{{ claim_patients_for_vital_signs.rows }}'
+          RETURNING q.patient_id, q.facility_mapping_id;
       iterator: patient
       spec:
-        mode: parallel
+        mode: cursor
         max_in_flight: 100
     tool:
       - name: init_page
@@ -1064,66 +914,47 @@ workflow:
       spec:
         mode: exclusive
       arcs:
-        - step: load_patients_for_vital_signs
+        - step: mark_vital_signs_done
           when: '{{ event.name == "loop.done" }}'
 
   # ------------------------------------------------------------------
   # FETCH DEMOGRAPHICS (non-paginated)
   # ------------------------------------------------------------------
-  - step: load_patients_for_demographics
-    desc: Count remaining patients that still need demographics data.
-    tool:
-      kind: postgres
-      auth: pg_k8s
-      command: |
-        WITH reclaim_stale AS (
-          UPDATE public.pft_test_patient_work_queue
-          SET status = 'pending', claimed_at = NULL, worker_id = NULL, updated_at = NOW()
-          WHERE execution_id = '{{ execution_id }}'
-            AND data_type = 'demographics'
-            AND status = 'claimed'
-            AND claimed_at < NOW() - INTERVAL '5 minutes'
-          RETURNING patient_id
-        )
-        SELECT COUNT(*) AS remaining_count
-        FROM public.pft_test_patient_work_queue q
-        WHERE q.execution_id = '{{ execution_id }}'
-          AND q.facility_mapping_id = (SELECT facility_mapping_id FROM public.pft_test_facilities WHERE active = TRUE ORDER BY facility_mapping_id LIMIT 1)
-          AND q.data_type = 'demographics'
-          AND q.status IN ('pending', 'claimed');
-    next:
-      spec:
-        mode: exclusive
-      arcs:
-        - step: claim_patients_for_demographics
-          when: '{{ (output.data.rows[0].remaining_count | default(0) | int) > 0 }}'
-        - step: mark_demographics_done
-          when: '{{ (output.data.rows[0].remaining_count | default(0) | int) == 0 }}'
-    set:
-      ctx.patients_needing_demographics_count: '{{ output.data.rows[0].remaining_count | default(0) }}'
-
-  - step: claim_patients_for_demographics
-    desc: Claim the next demographics batch in one SQL round-trip and return the claimed rows.
-    tool:
-      kind: postgres
-      auth: pg_k8s
-      command: |
-        WITH candidate AS (
-          SELECT q.patient_id, q.facility_mapping_id
-          FROM public.pft_test_patient_work_queue q
-          WHERE q.execution_id = '{{ execution_id }}'
-            AND q.facility_mapping_id = (SELECT facility_mapping_id FROM public.pft_test_facilities WHERE active = TRUE ORDER BY facility_mapping_id LIMIT 1)
-            AND q.data_type = 'demographics'
-            AND q.status = 'pending'
-          ORDER BY q.patient_id
-          FOR UPDATE SKIP LOCKED
-          LIMIT {{ workload.claim_batch_size | int }}
-        ),
-        claimed AS (
+  - step: fetch_demographics
+    desc: |
+      Cursor-driven per-patient fetch/save for demographics.  Each worker
+      slot atomically claims the next pending patient row via SQL, fetches
+      the non-paginated demographics payload, persists it, and marks the
+      queue row done.  When the claim returns zero rows, the worker exits;
+      loop.done fires when all workers exit.
+    loop:
+      cursor:
+        kind: postgres
+        auth: pg_k8s
+        claim: |
+          WITH reclaim_stale AS (
+            UPDATE public.pft_test_patient_work_queue
+            SET status = 'pending', claimed_at = NULL, worker_id = NULL, updated_at = NOW()
+            WHERE execution_id = '{{ execution_id }}'
+              AND data_type = 'demographics'
+              AND status = 'claimed'
+              AND claimed_at < NOW() - INTERVAL '5 minutes'
+          ),
+          candidate AS (
+            SELECT patient_id, facility_mapping_id
+            FROM public.pft_test_patient_work_queue
+            WHERE execution_id = '{{ execution_id }}'
+              AND facility_mapping_id = (SELECT facility_mapping_id FROM public.pft_test_facilities WHERE active = TRUE ORDER BY facility_mapping_id LIMIT 1)
+              AND data_type = 'demographics'
+              AND status = 'pending'
+            ORDER BY patient_id
+            FOR UPDATE SKIP LOCKED
+            LIMIT 1
+          )
           UPDATE public.pft_test_patient_work_queue q
           SET status = 'claimed',
               attempt_count = q.attempt_count + 1,
-              worker_id = '{{ execution_id }}:demographics:batch',
+              worker_id = 'cursor:demographics',
               claimed_at = NOW(),
               updated_at = NOW()
           FROM candidate c
@@ -1131,29 +962,10 @@ workflow:
             AND q.facility_mapping_id = c.facility_mapping_id
             AND q.data_type = 'demographics'
             AND q.patient_id = c.patient_id
-          RETURNING q.patient_id, q.facility_mapping_id
-        )
-        SELECT patient_id, facility_mapping_id
-        FROM claimed
-        ORDER BY patient_id;
-    next:
-      spec:
-        mode: exclusive
-      arcs:
-        - step: fetch_demographics
-          when: '{{ (output.data.row_count | default(0) | int) > 0 }}'
-        - step: load_patients_for_demographics
-          when: '{{ (output.data.row_count | default(0) | int) == 0 }}'
-
-  - step: fetch_demographics
-    desc: |
-      Fetch/process/save one claimed demographics batch at a time using concrete queue rows.
-      Non-paginated: single HTTP call per patient.
-    loop:
-      in: '{{ claim_patients_for_demographics.rows }}'
+          RETURNING q.patient_id, q.facility_mapping_id;
       iterator: patient
       spec:
-        mode: parallel
+        mode: cursor
         max_in_flight: 100
     tool:
       - name: fetch
@@ -1226,7 +1038,7 @@ workflow:
       spec:
         mode: exclusive
       arcs:
-        - step: load_patients_for_demographics
+        - step: mark_demographics_done
           when: '{{ event.name == "loop.done" }}'
 
   # ------------------------------------------------------------------
@@ -1235,16 +1047,16 @@ workflow:
   # Each mark_X_done step verifies the result table has N distinct
   # patients (N = workload.patients_per_facility) BEFORE inserting the
   # barrier row. This prevents a premature barrier signal when the
-  # queue's `pending` count hits zero while stragglers are still stuck
-  # in `claimed` status (possible when an inner fetch_X.task_sequence
-  # completes without firing its final mark_done UPDATE).
+  # cursor workers exit while stragglers are still stuck in `claimed`
+  # status (possible if a worker crashes mid-save before the final
+  # mark-done UPDATE commits).
   #
   # If the result-table count is short, the step:
-  #   (a) resets stuck claimed rows back to pending so another claim
-  #       cycle can pick them up (explicit, not gated on the 5-minute
-  #       stale-claim reaper that only fires from load_patients_for_X);
-  #   (b) returns data_count < N, and the arc routes back to
-  #       load_patients_for_X for another drain pass.
+  #   (a) resets stuck claimed rows back to pending so a fresh cursor
+  #       dispatch can pick them up on the retry arc;
+  #   (b) returns data_count < N, and the next arc routes back to
+  #       fetch_X to drain the remaining rows — the cursor-loop retry
+  #       path replaces the prior load_patients_for_X retry loop.
   #
   # 5 separate steps (vs one parameterized step with arc-level set:) so
   # each hardcodes its data_type and avoids relying on per-arc set support.
@@ -1285,6 +1097,8 @@ workflow:
       spec:
         mode: exclusive
       arcs:
+        - step: fetch_assessments
+          when: '{{ (output.data.rows[0].data_count | default(0) | int) < (workload.patients_per_facility | int) }}'
         - step: wait_for_all_barriers
 
   - step: mark_conditions_done
@@ -1324,6 +1138,8 @@ workflow:
       spec:
         mode: exclusive
       arcs:
+        - step: fetch_conditions
+          when: '{{ (output.data.rows[0].data_count | default(0) | int) < (workload.patients_per_facility | int) }}'
         - step: wait_for_all_barriers
 
   - step: mark_medications_done
@@ -1363,6 +1179,8 @@ workflow:
       spec:
         mode: exclusive
       arcs:
+        - step: fetch_medications
+          when: '{{ (output.data.rows[0].data_count | default(0) | int) < (workload.patients_per_facility | int) }}'
         - step: wait_for_all_barriers
 
   - step: mark_vital_signs_done
@@ -1402,6 +1220,8 @@ workflow:
       spec:
         mode: exclusive
       arcs:
+        - step: fetch_vital_signs
+          when: '{{ (output.data.rows[0].data_count | default(0) | int) < (workload.patients_per_facility | int) }}'
         - step: wait_for_all_barriers
 
   - step: mark_demographics_done
@@ -1441,6 +1261,8 @@ workflow:
       spec:
         mode: exclusive
       arcs:
+        - step: fetch_demographics
+          when: '{{ (output.data.rows[0].data_count | default(0) | int) < (workload.patients_per_facility | int) }}'
         - step: wait_for_all_barriers
 
   # ------------------------------------------------------------------
