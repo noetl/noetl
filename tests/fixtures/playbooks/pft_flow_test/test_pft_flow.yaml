@@ -1458,19 +1458,24 @@ workflow:
     tool:
       kind: postgres
       auth: pg_k8s
-      query: |
+      command: |
+        -- Sleep 1s only when we haven't yet hit the fan-in threshold; otherwise
+        -- return immediately so prepare_mds_work fires without extra latency.
+        SELECT pg_sleep(
+          CASE
+            WHEN (SELECT COUNT(*)
+                  FROM public.pft_test_facility_data_type_done
+                  WHERE execution_id = '{{ execution_id }}'
+                    AND facility_mapping_id = (SELECT facility_mapping_id FROM public.pft_test_facilities WHERE active = TRUE ORDER BY facility_mapping_id LIMIT 1)
+                 ) >= 5 THEN 0 ELSE 1
+          END
+        );
+
         SELECT
-          (SELECT COUNT(*)
-           FROM public.pft_test_facility_data_type_done
-           WHERE execution_id = '{{ execution_id }}'
-             AND facility_mapping_id = (SELECT facility_mapping_id FROM public.pft_test_facilities WHERE active = TRUE ORDER BY facility_mapping_id LIMIT 1)
-          ) AS barrier_count,
-          CASE WHEN (SELECT COUNT(*)
-             FROM public.pft_test_facility_data_type_done
-             WHERE execution_id = '{{ execution_id }}'
-               AND facility_mapping_id = (SELECT facility_mapping_id FROM public.pft_test_facilities WHERE active = TRUE ORDER BY facility_mapping_id LIMIT 1)
-            ) >= 5
-            THEN 1 ELSE pg_sleep(1)::integer END AS ready;
+          COUNT(*) AS barrier_count
+        FROM public.pft_test_facility_data_type_done
+        WHERE execution_id = '{{ execution_id }}'
+          AND facility_mapping_id = (SELECT facility_mapping_id FROM public.pft_test_facilities WHERE active = TRUE ORDER BY facility_mapping_id LIMIT 1);
     next:
       spec:
         mode: exclusive
