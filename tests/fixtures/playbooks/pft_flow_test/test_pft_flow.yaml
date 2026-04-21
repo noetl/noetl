@@ -1285,10 +1285,7 @@ workflow:
       spec:
         mode: exclusive
       arcs:
-        - step: prepare_mds_work
-          when: '{{ (output.data.rows[0].done_count | default(0) | int) >= 5 }}'
-        - step: load_patients_for_assessments
-          when: '{{ (output.data.rows[0].data_count | default(0) | int) < (workload.patients_per_facility | int) }}'
+        - step: wait_for_all_barriers
 
   - step: mark_conditions_done
     tool:
@@ -1327,10 +1324,7 @@ workflow:
       spec:
         mode: exclusive
       arcs:
-        - step: prepare_mds_work
-          when: '{{ (output.data.rows[0].done_count | default(0) | int) >= 5 }}'
-        - step: load_patients_for_conditions
-          when: '{{ (output.data.rows[0].data_count | default(0) | int) < (workload.patients_per_facility | int) }}'
+        - step: wait_for_all_barriers
 
   - step: mark_medications_done
     tool:
@@ -1369,10 +1363,7 @@ workflow:
       spec:
         mode: exclusive
       arcs:
-        - step: prepare_mds_work
-          when: '{{ (output.data.rows[0].done_count | default(0) | int) >= 5 }}'
-        - step: load_patients_for_medications
-          when: '{{ (output.data.rows[0].data_count | default(0) | int) < (workload.patients_per_facility | int) }}'
+        - step: wait_for_all_barriers
 
   - step: mark_vital_signs_done
     tool:
@@ -1411,10 +1402,7 @@ workflow:
       spec:
         mode: exclusive
       arcs:
-        - step: prepare_mds_work
-          when: '{{ (output.data.rows[0].done_count | default(0) | int) >= 5 }}'
-        - step: load_patients_for_vital_signs
-          when: '{{ (output.data.rows[0].data_count | default(0) | int) < (workload.patients_per_facility | int) }}'
+        - step: wait_for_all_barriers
 
   - step: mark_demographics_done
     tool:
@@ -1453,10 +1441,44 @@ workflow:
       spec:
         mode: exclusive
       arcs:
+        - step: wait_for_all_barriers
+
+  # ------------------------------------------------------------------
+  # FAN-IN BARRIER — wait until all 5 mark_X_done barrier rows are in
+  # before entering MDS batch processing.  Each mark_X_done routes here
+  # unconditionally (avoids the arc dead-end that fires workflow.completed
+  # when the engine sees no matching arc on the earliest-firing marks).
+  # The polling self-loop retries every ~1s via pg_sleep until
+  # barrier_count = 5, then routes to prepare_mds_work.  Command-level
+  # dedup keeps the concurrent arrivals collapsed into a single in-flight
+  # wait.
+  # ------------------------------------------------------------------
+  - step: wait_for_all_barriers
+    desc: Poll pft_test_facility_data_type_done until all 5 barriers are present for the active facility
+    tool:
+      kind: postgres
+      auth: pg_k8s
+      query: |
+        SELECT
+          (SELECT COUNT(*)
+           FROM public.pft_test_facility_data_type_done
+           WHERE execution_id = '{{ execution_id }}'
+             AND facility_mapping_id = (SELECT facility_mapping_id FROM public.pft_test_facilities WHERE active = TRUE ORDER BY facility_mapping_id LIMIT 1)
+          ) AS barrier_count,
+          CASE WHEN (SELECT COUNT(*)
+             FROM public.pft_test_facility_data_type_done
+             WHERE execution_id = '{{ execution_id }}'
+               AND facility_mapping_id = (SELECT facility_mapping_id FROM public.pft_test_facilities WHERE active = TRUE ORDER BY facility_mapping_id LIMIT 1)
+            ) >= 5
+            THEN 1 ELSE pg_sleep(1)::integer END AS ready;
+    next:
+      spec:
+        mode: exclusive
+      arcs:
         - step: prepare_mds_work
-          when: '{{ (output.data.rows[0].done_count | default(0) | int) >= 5 }}'
-        - step: load_patients_for_demographics
-          when: '{{ (output.data.rows[0].data_count | default(0) | int) < (workload.patients_per_facility | int) }}'
+          when: '{{ (output.data.rows[0].barrier_count | default(0) | int) >= 5 }}'
+        - step: wait_for_all_barriers
+          when: '{{ (output.data.rows[0].barrier_count | default(0) | int) < 5 }}'
 
   # ------------------------------------------------------------------
   # MDS BATCH PROCESSING (sub-playbook)
