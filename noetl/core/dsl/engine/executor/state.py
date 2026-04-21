@@ -205,6 +205,19 @@ class ExecutionState:
                     result = promoted
             self.step_results[step_name] = result
             self.variables[step_name] = result
+            if step_name == "load_next_facility" and isinstance(result, dict):
+                try:
+                    _ctx = result.get("context") if isinstance(result, dict) else None
+                    logger.info(
+                        "[DIAG-MSC] step=%s keys=%s ctx_keys=%s top_rows=%s ctx_rows=%s",
+                        step_name,
+                        list(result.keys()),
+                        list(_ctx.keys()) if isinstance(_ctx, dict) else type(_ctx).__name__,
+                        len(result.get("rows")) if isinstance(result.get("rows"), list) else None,
+                        len(_ctx.get("rows")) if isinstance(_ctx, dict) and isinstance(_ctx.get("rows"), list) else None,
+                    )
+                except Exception as _e:
+                    logger.info("[DIAG-MSC] failed: %s", _e)
 
     def get_step_result_ref(self, step_name: str) -> Optional[dict]:
         """Get ResultRef for a step's externalized result, if any.
