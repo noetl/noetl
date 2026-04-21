@@ -913,6 +913,22 @@ class EventHandlingMixin:
                 else normalized_payload
             )
             response_data = await _hydrate_reference_only_step_result(response_data)
+            if event.step in ("load_next_facility", "setup_facility_work") or (isinstance(event.step, str) and event.step.startswith("mark_")):
+                try:
+                    _rd_keys = list(response_data.keys()) if isinstance(response_data, dict) else type(response_data).__name__
+                    _ctx = response_data.get("context") if isinstance(response_data, dict) else None
+                    _ctx_keys = list(_ctx.keys()) if isinstance(_ctx, dict) else type(_ctx).__name__
+                    _top_rows = response_data.get("rows") if isinstance(response_data, dict) else None
+                    _ctx_rows = _ctx.get("rows") if isinstance(_ctx, dict) else None
+                    logger.info(
+                        "[DIAG-SET] step=%s response_keys=%s context_keys=%s "
+                        "top_rows_len=%s ctx_rows_len=%s",
+                        event.step, _rd_keys, _ctx_keys,
+                        len(_top_rows) if isinstance(_top_rows, list) else None,
+                        len(_ctx_rows) if isinstance(_ctx_rows, list) else None,
+                    )
+                except Exception as _e:
+                    logger.info("[DIAG-SET] failed to dump response_data: %s", _e)
             await state.mark_step_completed(event.step, response_data)
             logger.debug(f"[CALL.DONE] Stored result for step {event.step} in state BEFORE next evaluation")
         elif event.name == "call.error":
