@@ -98,16 +98,19 @@ async def execute_cursor_worker(
         )
     _ctx_sample = claim_context.get("ctx") if isinstance(claim_context, dict) else None
     _lnf = claim_context.get("load_next_facility") if isinstance(claim_context, dict) else None
+    _lnf_ctx = _lnf.get("context") if isinstance(_lnf, dict) else None
+    _lnf_ctx_rows = _lnf_ctx.get("rows") if isinstance(_lnf_ctx, dict) else None
+    _first_row = _lnf_ctx_rows[0] if isinstance(_lnf_ctx_rows, list) and _lnf_ctx_rows else None
     logger.info(
         "[CURSOR-WORKER] slot=%s opening driver; "
-        "ctx.facility_mapping_id=%r "
-        "load_next_facility_type=%s load_next_facility_keys=%s "
+        "lnf_keys=%s lnf_ctx_keys=%s lnf_ctx_rows_len=%s first_row=%s "
         "claim_sql_head=%s",
         worker_slot_id,
-        (_ctx_sample or {}).get("facility_mapping_id") if isinstance(_ctx_sample, dict) else None,
-        type(_lnf).__name__,
         list(_lnf.keys()) if isinstance(_lnf, dict) else None,
-        rendered_claim_sql[:300].replace("\n", " "),
+        list(_lnf_ctx.keys()) if isinstance(_lnf_ctx, dict) else None,
+        len(_lnf_ctx_rows) if isinstance(_lnf_ctx_rows, list) else None,
+        _first_row,
+        rendered_claim_sql[:400].replace("\n", " "),
     )
 
     # Resolve the credential via the same endpoint tools use today.
