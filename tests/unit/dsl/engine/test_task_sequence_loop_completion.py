@@ -1200,6 +1200,66 @@ async def test_call_done_with_unmatched_next_arcs_emits_terminal_completion(monk
 
 
 @pytest.mark.asyncio
+async def test_call_done_with_quiet_unmatched_next_arcs_does_not_complete(monkeypatch):
+    playbook = Playbook(
+        **{
+            "apiVersion": "noetl.io/v2",
+            "kind": "Playbook",
+            "metadata": {"name": "quiet-branch-end", "path": "tests/quiet-branch-end"},
+            "workflow": [
+                {
+                    "step": "mark_branch_done",
+                    "tool": {"kind": "noop"},
+                    "next": {
+                        "spec": {"mode": "exclusive", "on_no_match": "quiet"},
+                        "arcs": [
+                            {"step": "join_step", "when": "{{ ctx.advance == true }}"},
+                        ],
+                    },
+                },
+                {
+                    "step": "join_step",
+                    "tool": {"kind": "noop"},
+                },
+            ],
+        }
+    )
+    playbook_repo = PlaybookRepo()
+    state_store = StateStore(playbook_repo)
+    engine = ControlFlowEngine(playbook_repo, state_store)
+
+    execution_id = "9018"
+    state = ExecutionState(execution_id, playbook, payload={})
+    state.variables["advance"] = False
+    state.issued_steps.add("mark_branch_done")
+    state.completed_steps.add("mark_branch_done")
+    await state_store.save_state(state)
+
+    persisted_events = []
+
+    async def fake_persist_event(event, state_obj):
+        persisted_events.append(event.name)
+        state_obj.last_event_id = (state_obj.last_event_id or 0) + 1
+
+    monkeypatch.setattr(engine, "_persist_event", fake_persist_event)
+
+    event = Event(
+        execution_id=execution_id,
+        step="mark_branch_done",
+        name="call.done",
+        payload={"status": "completed", "result": {"advanced_count": 0}},
+    )
+
+    commands = await engine.handle_event(event, already_persisted=True)
+
+    assert commands == []
+    refreshed_state = await state_store.load_state(execution_id)
+    assert refreshed_state is not None
+    assert refreshed_state.completed is False
+    assert persisted_events == []
+
+
+@pytest.mark.asyncio
 async def test_call_error_with_explicit_end_step_without_tool_completes_failure(monkeypatch):
     playbook = Playbook(
         **{

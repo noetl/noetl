@@ -23,7 +23,16 @@ async def _recover_unclaimed_command_after_delay(execution_id: int, event_id: in
         from noetl.core.db.pool import get_pool_connection
         async with get_pool_connection() as conn:
             async with conn.cursor() as cur:
-                await cur.execute("SELECT count(*) AS total FROM noetl.event WHERE execution_id = %s AND meta->>'command_id' = %s AND event_type IN ('command.claimed', 'command.heartbeat')", (execution_id, command_id))
+                await cur.execute(
+                    """
+                    SELECT count(*) AS total
+                    FROM noetl.command
+                    WHERE execution_id = %s
+                      AND command_id = %s
+                      AND status IN ('CLAIMED', 'RUNNING', 'COMPLETED', 'FAILED', 'CANCELLED')
+                    """,
+                    (execution_id, int(command_id)),
+                )
                 if (await cur.fetchone() or {'count': 0}).get('total', 0) > 0: return
         logger.warning("[PUBLISH-RECOVERY] Command unclaimed after %.1fs; re-publishing execution_id=%s command_id=%s", delay_seconds, execution_id, command_id)
         nats_pub = await get_nats_publisher()

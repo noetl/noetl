@@ -82,6 +82,10 @@ workflow:
           ON public.pft_test_patient_work_queue (execution_id, facility_mapping_id, data_type, patient_id)
           WHERE status = 'claimed';
 
+        CREATE INDEX IF NOT EXISTS idx_pft_queue_done
+          ON public.pft_test_patient_work_queue (execution_id, facility_mapping_id, data_type, patient_id)
+          WHERE status = 'done';
+
         -- Reclaim index: lets stale-claim sweep use claimed_at as an index
         -- condition instead of a post-filter. Critical for sustained throughput
         -- under high update churn (claim→done→reclaim cycles).
@@ -147,6 +151,17 @@ workflow:
           PRIMARY KEY (pcc_patient_id, facility_mapping_id)
         );
 
+        CREATE INDEX IF NOT EXISTS idx_pft_assessments_facility_patient
+          ON public.pft_test_patient_assessments (facility_mapping_id, pcc_patient_id);
+        CREATE INDEX IF NOT EXISTS idx_pft_conditions_facility_patient
+          ON public.pft_test_patient_conditions (facility_mapping_id, pcc_patient_id);
+        CREATE INDEX IF NOT EXISTS idx_pft_medications_facility_patient
+          ON public.pft_test_patient_medications (facility_mapping_id, pcc_patient_id);
+        CREATE INDEX IF NOT EXISTS idx_pft_vital_signs_facility_patient
+          ON public.pft_test_patient_vital_signs (facility_mapping_id, pcc_patient_id);
+        CREATE INDEX IF NOT EXISTS idx_pft_demographics_facility_patient
+          ON public.pft_test_patient_demographics (facility_mapping_id, pcc_patient_id);
+
         -- MDS tables
         CREATE TABLE IF NOT EXISTS public.pft_test_mds_assessment_ids_work (
           assessment_id       TEXT        NOT NULL,
@@ -182,16 +197,27 @@ workflow:
         ALTER TABLE public.pft_test_validation_log
           ADD COLUMN IF NOT EXISTS assessments_queue_done INTEGER;
 
-        -- Per-facility data-type completion barrier table.
+        -- Per-facility data-type completion facts.
         -- Each of the 5 parallel data-type pipelines INSERTs one row when its
-        -- patient queue drains; the 5th INSERT increments count to 5 and the
-        -- arc to prepare_mds_work fires. Earlier INSERTs see count<5 and end.
+        -- patient queue drains. A separate stage-gate table below advances the
+        -- facility exactly once after all 5 facts are present.
         CREATE TABLE IF NOT EXISTS public.pft_test_facility_data_type_done (
           execution_id        TEXT        NOT NULL,
           facility_mapping_id INTEGER     NOT NULL,
           data_type           TEXT        NOT NULL,
           done_at             TIMESTAMPTZ NOT NULL DEFAULT NOW(),
           PRIMARY KEY (execution_id, facility_mapping_id, data_type)
+        );
+
+        -- RisingWave-style durable stage gate: the input table above is the
+        -- source of truth, and this table is the materialized one-shot
+        -- checkpoint that lets exactly one branch advance to MDS.
+        CREATE TABLE IF NOT EXISTS public.pft_test_facility_stage_gate (
+          execution_id        TEXT        NOT NULL,
+          facility_mapping_id INTEGER     NOT NULL,
+          stage               TEXT        NOT NULL,
+          advanced_at         TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          PRIMARY KEY (execution_id, facility_mapping_id, stage)
         );
 
         -- Reset all per-run data (truncate keeps tables small and inserts fast)
@@ -206,6 +232,7 @@ workflow:
         TRUNCATE public.pft_test_mds_assessment_details;
         TRUNCATE public.pft_test_validation_log;
         TRUNCATE public.pft_test_facility_data_type_done;
+        TRUNCATE public.pft_test_facility_stage_gate;
 
         -- Reset facilities for this run
         DELETE FROM public.pft_test_facilities;
@@ -265,14 +292,14 @@ workflow:
       command: |
         -- Clear only THIS facility's rows — safe for parallel facility dispatch
         DELETE FROM public.pft_test_patient_ids_work
-        WHERE facility_mapping_id = ({{ load_next_facility.context.rows[0].facility_mapping_id | int }});
+        WHERE facility_mapping_id = ({{ ctx.facility_mapping_id | int }});
 
         -- Seed 1000 test patients: facility N gets IDs (N-1)*1000+1 .. N*1000
         INSERT INTO public.pft_test_patient_ids_work (patient_id, facility_mapping_id, facility_org_uuid)
         SELECT
-          (({{ load_next_facility.context.rows[0].facility_mapping_id | int }}) - 1) * 1000 + seq AS patient_id,
-          ({{ load_next_facility.context.rows[0].facility_mapping_id | int }}) AS facility_mapping_id,
-          'org-' || ({{ load_next_facility.context.rows[0].facility_mapping_id | int }}) AS facility_org_uuid
+          (({{ ctx.facility_mapping_id | int }}) - 1) * 1000 + seq AS patient_id,
+          ({{ ctx.facility_mapping_id | int }}) AS facility_mapping_id,
+          'org-' || ({{ ctx.facility_mapping_id | int }}) AS facility_org_uuid
         FROM generate_series(1, {{ workload.patients_per_facility | int }}) AS seq
         ON CONFLICT (patient_id, facility_mapping_id) DO NOTHING;
 
@@ -296,23 +323,28 @@ workflow:
             ('vital_signs'),
             ('demographics')
         ) AS t(data_type)
-        WHERE w.facility_mapping_id = ({{ load_next_facility.context.rows[0].facility_mapping_id | int }})
+        WHERE w.facility_mapping_id = ({{ ctx.facility_mapping_id | int }})
         ON CONFLICT (execution_id, facility_mapping_id, data_type, patient_id) DO NOTHING;
 
         -- Reset per-facility barrier rows in case of replay
         DELETE FROM public.pft_test_facility_data_type_done
-        WHERE facility_mapping_id = ({{ load_next_facility.context.rows[0].facility_mapping_id | int }});
+        WHERE execution_id = '{{ execution_id }}'
+          AND facility_mapping_id = ({{ ctx.facility_mapping_id | int }});
+
+        DELETE FROM public.pft_test_facility_stage_gate
+        WHERE execution_id = '{{ execution_id }}'
+          AND facility_mapping_id = ({{ ctx.facility_mapping_id | int }});
 
         SELECT COUNT(*) AS patient_count
         FROM public.pft_test_patient_ids_work
-        WHERE facility_mapping_id = ({{ load_next_facility.context.rows[0].facility_mapping_id | int }});
+        WHERE facility_mapping_id = ({{ ctx.facility_mapping_id | int }});
     next:
       # Fan-out: dispatch all 5 data-type pipelines in parallel.
       # `mode: inclusive` fires every arc whose `when` matches; with no `when`
       # all 5 arcs fire unconditionally. Each pipeline drains its patient
-      # queue independently and ends with mark_data_type_done; the 5th
-      # INSERT into pft_test_facility_data_type_done advances to
-      # prepare_mds_work.
+      # queue independently and ends with mark_data_type_done. Once all five
+      # data-type facts exist, exactly one branch claims the durable stage gate
+      # and advances to prepare_mds_work.
       spec:
         mode: inclusive
       arcs:
@@ -351,7 +383,7 @@ workflow:
             SELECT patient_id, facility_mapping_id
             FROM public.pft_test_patient_work_queue
             WHERE execution_id = '{{ execution_id }}'
-              AND facility_mapping_id = ({{ load_next_facility.context.rows[0].facility_mapping_id | int }})
+              AND facility_mapping_id = ({{ ctx.facility_mapping_id | int }})
               AND data_type = 'assessments'
               AND status = 'pending'
             ORDER BY patient_id
@@ -499,7 +531,7 @@ workflow:
             SELECT patient_id, facility_mapping_id
             FROM public.pft_test_patient_work_queue
             WHERE execution_id = '{{ execution_id }}'
-              AND facility_mapping_id = ({{ load_next_facility.context.rows[0].facility_mapping_id | int }})
+              AND facility_mapping_id = ({{ ctx.facility_mapping_id | int }})
               AND data_type = 'conditions'
               AND status = 'pending'
             ORDER BY patient_id
@@ -648,7 +680,7 @@ workflow:
             SELECT patient_id, facility_mapping_id
             FROM public.pft_test_patient_work_queue
             WHERE execution_id = '{{ execution_id }}'
-              AND facility_mapping_id = ({{ load_next_facility.context.rows[0].facility_mapping_id | int }})
+              AND facility_mapping_id = ({{ ctx.facility_mapping_id | int }})
               AND data_type = 'medications'
               AND status = 'pending'
             ORDER BY patient_id
@@ -796,7 +828,7 @@ workflow:
             SELECT patient_id, facility_mapping_id
             FROM public.pft_test_patient_work_queue
             WHERE execution_id = '{{ execution_id }}'
-              AND facility_mapping_id = ({{ load_next_facility.context.rows[0].facility_mapping_id | int }})
+              AND facility_mapping_id = ({{ ctx.facility_mapping_id | int }})
               AND data_type = 'vital_signs'
               AND status = 'pending'
             ORDER BY patient_id
@@ -944,7 +976,7 @@ workflow:
             SELECT patient_id, facility_mapping_id
             FROM public.pft_test_patient_work_queue
             WHERE execution_id = '{{ execution_id }}'
-              AND facility_mapping_id = ({{ load_next_facility.context.rows[0].facility_mapping_id | int }})
+              AND facility_mapping_id = ({{ ctx.facility_mapping_id | int }})
               AND data_type = 'demographics'
               AND status = 'pending'
             ORDER BY patient_id
@@ -1044,19 +1076,23 @@ workflow:
   # ------------------------------------------------------------------
   # DATA TYPE BARRIER (parallel fan-in) — TRUE-COMPLETION VARIANT
   # ------------------------------------------------------------------
-  # Each mark_X_done step verifies the result table has N distinct
-  # patients (N = workload.patients_per_facility) BEFORE inserting the
-  # barrier row. This prevents a premature barrier signal when the
-  # cursor workers exit while stragglers are still stuck in `claimed`
-  # status (possible if a worker crashes mid-save before the final
-  # mark-done UPDATE commits).
+  # Each mark_X_done step verifies the durable work queue has N `done`
+  # rows (N = workload.patients_per_facility) using the partial done
+  # index BEFORE inserting the barrier row. Result tables remain the
+  # final audit source in validate_all_results, but they are not in the
+  # hot control path.
   #
-  # If the result-table count is short, the step:
+  # If the queue-done count is short, the step:
   #   (a) resets stuck claimed rows back to pending so a fresh cursor
   #       dispatch can pick them up on the retry arc;
   #   (b) returns data_count < N, and the next arc routes back to
   #       fetch_X to drain the remaining rows — the cursor-loop retry
   #       path replaces the prior load_patients_for_X retry loop.
+  #
+  # The second SQL statement materializes a one-shot stage gate from the
+  # durable done table, mirroring RisingWave's "continuously maintained view"
+  # idea without adding another service to this fixture. Earlier branches end
+  # quietly while other issued commands remain in flight.
   #
   # 5 separate steps (vs one parameterized step with arc-level set:) so
   # each hardcodes its data_type and avoids relying on per-arc set support.
@@ -1066,15 +1102,18 @@ workflow:
       auth: pg_k8s
       command: |
         WITH data_check AS (
-          SELECT COUNT(DISTINCT pcc_patient_id) AS n
-          FROM public.pft_test_patient_assessments
-          WHERE facility_mapping_id = ({{ load_next_facility.context.rows[0].facility_mapping_id | int }})
+          SELECT COUNT(*) AS n
+          FROM public.pft_test_patient_work_queue
+          WHERE execution_id = '{{ execution_id }}'
+            AND facility_mapping_id = ({{ ctx.facility_mapping_id | int }})
+            AND data_type = 'assessments'
+            AND status = 'done'
         ),
         reclaim_if_incomplete AS (
           UPDATE public.pft_test_patient_work_queue
           SET status = 'pending', claimed_at = NULL, worker_id = NULL, updated_at = NOW()
           WHERE execution_id = '{{ execution_id }}'
-            AND facility_mapping_id = ({{ load_next_facility.context.rows[0].facility_mapping_id | int }})
+            AND facility_mapping_id = ({{ ctx.facility_mapping_id | int }})
             AND data_type = 'assessments'
             AND status = 'claimed'
             AND (SELECT n FROM data_check) < {{ workload.patients_per_facility | int }}
@@ -1083,23 +1122,51 @@ workflow:
         barrier_insert AS (
           INSERT INTO public.pft_test_facility_data_type_done
             (execution_id, facility_mapping_id, data_type, done_at)
-          SELECT '{{ execution_id }}', ({{ load_next_facility.context.rows[0].facility_mapping_id | int }}), 'assessments', NOW()
+          SELECT '{{ execution_id }}', ({{ ctx.facility_mapping_id | int }}), 'assessments', NOW()
           FROM data_check WHERE n >= {{ workload.patients_per_facility | int }}
           ON CONFLICT (execution_id, facility_mapping_id, data_type) DO NOTHING
           RETURNING 1
         )
         SELECT
           (SELECT n FROM data_check) AS data_count,
-          (SELECT COUNT(*) FROM public.pft_test_facility_data_type_done
-           WHERE execution_id = '{{ execution_id }}' AND facility_mapping_id = ({{ load_next_facility.context.rows[0].facility_mapping_id | int }}))
-           + (SELECT COUNT(*) FROM barrier_insert) AS done_count;
+          (SELECT COUNT(*) FROM barrier_insert) AS inserted_count;
+
+        WITH data_check AS (
+          SELECT COUNT(*) AS n
+          FROM public.pft_test_patient_work_queue
+          WHERE execution_id = '{{ execution_id }}'
+            AND facility_mapping_id = ({{ ctx.facility_mapping_id | int }})
+            AND data_type = 'assessments'
+            AND status = 'done'
+        ),
+        done_count AS (
+          SELECT COUNT(*) AS n
+          FROM public.pft_test_facility_data_type_done
+          WHERE execution_id = '{{ execution_id }}'
+            AND facility_mapping_id = ({{ ctx.facility_mapping_id | int }})
+        ),
+        stage_advance AS (
+          INSERT INTO public.pft_test_facility_stage_gate
+            (execution_id, facility_mapping_id, stage, advanced_at)
+          SELECT '{{ execution_id }}', ({{ ctx.facility_mapping_id | int }}), 'data_types_complete', NOW()
+          FROM done_count
+          WHERE n >= 5
+          ON CONFLICT (execution_id, facility_mapping_id, stage) DO NOTHING
+          RETURNING 1
+        )
+        SELECT
+          (SELECT n FROM data_check) AS data_count,
+          (SELECT n FROM done_count) AS done_count,
+          (SELECT COUNT(*) FROM stage_advance) AS advanced_count;
     next:
       spec:
         mode: exclusive
+        on_no_match: quiet
       arcs:
         - step: fetch_assessments
           when: '{{ (output.data.rows[0].data_count | default(0) | int) < (workload.patients_per_facility | int) }}'
-        - step: wait_for_all_barriers
+        - step: prepare_mds_work
+          when: '{{ (output.data.rows[0].advanced_count | default(0) | int) > 0 }}'
 
   - step: mark_conditions_done
     tool:
@@ -1107,15 +1174,18 @@ workflow:
       auth: pg_k8s
       command: |
         WITH data_check AS (
-          SELECT COUNT(DISTINCT pcc_patient_id) AS n
-          FROM public.pft_test_patient_conditions
-          WHERE facility_mapping_id = ({{ load_next_facility.context.rows[0].facility_mapping_id | int }})
+          SELECT COUNT(*) AS n
+          FROM public.pft_test_patient_work_queue
+          WHERE execution_id = '{{ execution_id }}'
+            AND facility_mapping_id = ({{ ctx.facility_mapping_id | int }})
+            AND data_type = 'conditions'
+            AND status = 'done'
         ),
         reclaim_if_incomplete AS (
           UPDATE public.pft_test_patient_work_queue
           SET status = 'pending', claimed_at = NULL, worker_id = NULL, updated_at = NOW()
           WHERE execution_id = '{{ execution_id }}'
-            AND facility_mapping_id = ({{ load_next_facility.context.rows[0].facility_mapping_id | int }})
+            AND facility_mapping_id = ({{ ctx.facility_mapping_id | int }})
             AND data_type = 'conditions'
             AND status = 'claimed'
             AND (SELECT n FROM data_check) < {{ workload.patients_per_facility | int }}
@@ -1124,23 +1194,51 @@ workflow:
         barrier_insert AS (
           INSERT INTO public.pft_test_facility_data_type_done
             (execution_id, facility_mapping_id, data_type, done_at)
-          SELECT '{{ execution_id }}', ({{ load_next_facility.context.rows[0].facility_mapping_id | int }}), 'conditions', NOW()
+          SELECT '{{ execution_id }}', ({{ ctx.facility_mapping_id | int }}), 'conditions', NOW()
           FROM data_check WHERE n >= {{ workload.patients_per_facility | int }}
           ON CONFLICT (execution_id, facility_mapping_id, data_type) DO NOTHING
           RETURNING 1
         )
         SELECT
           (SELECT n FROM data_check) AS data_count,
-          (SELECT COUNT(*) FROM public.pft_test_facility_data_type_done
-           WHERE execution_id = '{{ execution_id }}' AND facility_mapping_id = ({{ load_next_facility.context.rows[0].facility_mapping_id | int }}))
-           + (SELECT COUNT(*) FROM barrier_insert) AS done_count;
+          (SELECT COUNT(*) FROM barrier_insert) AS inserted_count;
+
+        WITH data_check AS (
+          SELECT COUNT(*) AS n
+          FROM public.pft_test_patient_work_queue
+          WHERE execution_id = '{{ execution_id }}'
+            AND facility_mapping_id = ({{ ctx.facility_mapping_id | int }})
+            AND data_type = 'conditions'
+            AND status = 'done'
+        ),
+        done_count AS (
+          SELECT COUNT(*) AS n
+          FROM public.pft_test_facility_data_type_done
+          WHERE execution_id = '{{ execution_id }}'
+            AND facility_mapping_id = ({{ ctx.facility_mapping_id | int }})
+        ),
+        stage_advance AS (
+          INSERT INTO public.pft_test_facility_stage_gate
+            (execution_id, facility_mapping_id, stage, advanced_at)
+          SELECT '{{ execution_id }}', ({{ ctx.facility_mapping_id | int }}), 'data_types_complete', NOW()
+          FROM done_count
+          WHERE n >= 5
+          ON CONFLICT (execution_id, facility_mapping_id, stage) DO NOTHING
+          RETURNING 1
+        )
+        SELECT
+          (SELECT n FROM data_check) AS data_count,
+          (SELECT n FROM done_count) AS done_count,
+          (SELECT COUNT(*) FROM stage_advance) AS advanced_count;
     next:
       spec:
         mode: exclusive
+        on_no_match: quiet
       arcs:
         - step: fetch_conditions
           when: '{{ (output.data.rows[0].data_count | default(0) | int) < (workload.patients_per_facility | int) }}'
-        - step: wait_for_all_barriers
+        - step: prepare_mds_work
+          when: '{{ (output.data.rows[0].advanced_count | default(0) | int) > 0 }}'
 
   - step: mark_medications_done
     tool:
@@ -1148,15 +1246,18 @@ workflow:
       auth: pg_k8s
       command: |
         WITH data_check AS (
-          SELECT COUNT(DISTINCT pcc_patient_id) AS n
-          FROM public.pft_test_patient_medications
-          WHERE facility_mapping_id = ({{ load_next_facility.context.rows[0].facility_mapping_id | int }})
+          SELECT COUNT(*) AS n
+          FROM public.pft_test_patient_work_queue
+          WHERE execution_id = '{{ execution_id }}'
+            AND facility_mapping_id = ({{ ctx.facility_mapping_id | int }})
+            AND data_type = 'medications'
+            AND status = 'done'
         ),
         reclaim_if_incomplete AS (
           UPDATE public.pft_test_patient_work_queue
           SET status = 'pending', claimed_at = NULL, worker_id = NULL, updated_at = NOW()
           WHERE execution_id = '{{ execution_id }}'
-            AND facility_mapping_id = ({{ load_next_facility.context.rows[0].facility_mapping_id | int }})
+            AND facility_mapping_id = ({{ ctx.facility_mapping_id | int }})
             AND data_type = 'medications'
             AND status = 'claimed'
             AND (SELECT n FROM data_check) < {{ workload.patients_per_facility | int }}
@@ -1165,23 +1266,51 @@ workflow:
         barrier_insert AS (
           INSERT INTO public.pft_test_facility_data_type_done
             (execution_id, facility_mapping_id, data_type, done_at)
-          SELECT '{{ execution_id }}', ({{ load_next_facility.context.rows[0].facility_mapping_id | int }}), 'medications', NOW()
+          SELECT '{{ execution_id }}', ({{ ctx.facility_mapping_id | int }}), 'medications', NOW()
           FROM data_check WHERE n >= {{ workload.patients_per_facility | int }}
           ON CONFLICT (execution_id, facility_mapping_id, data_type) DO NOTHING
           RETURNING 1
         )
         SELECT
           (SELECT n FROM data_check) AS data_count,
-          (SELECT COUNT(*) FROM public.pft_test_facility_data_type_done
-           WHERE execution_id = '{{ execution_id }}' AND facility_mapping_id = ({{ load_next_facility.context.rows[0].facility_mapping_id | int }}))
-           + (SELECT COUNT(*) FROM barrier_insert) AS done_count;
+          (SELECT COUNT(*) FROM barrier_insert) AS inserted_count;
+
+        WITH data_check AS (
+          SELECT COUNT(*) AS n
+          FROM public.pft_test_patient_work_queue
+          WHERE execution_id = '{{ execution_id }}'
+            AND facility_mapping_id = ({{ ctx.facility_mapping_id | int }})
+            AND data_type = 'medications'
+            AND status = 'done'
+        ),
+        done_count AS (
+          SELECT COUNT(*) AS n
+          FROM public.pft_test_facility_data_type_done
+          WHERE execution_id = '{{ execution_id }}'
+            AND facility_mapping_id = ({{ ctx.facility_mapping_id | int }})
+        ),
+        stage_advance AS (
+          INSERT INTO public.pft_test_facility_stage_gate
+            (execution_id, facility_mapping_id, stage, advanced_at)
+          SELECT '{{ execution_id }}', ({{ ctx.facility_mapping_id | int }}), 'data_types_complete', NOW()
+          FROM done_count
+          WHERE n >= 5
+          ON CONFLICT (execution_id, facility_mapping_id, stage) DO NOTHING
+          RETURNING 1
+        )
+        SELECT
+          (SELECT n FROM data_check) AS data_count,
+          (SELECT n FROM done_count) AS done_count,
+          (SELECT COUNT(*) FROM stage_advance) AS advanced_count;
     next:
       spec:
         mode: exclusive
+        on_no_match: quiet
       arcs:
         - step: fetch_medications
           when: '{{ (output.data.rows[0].data_count | default(0) | int) < (workload.patients_per_facility | int) }}'
-        - step: wait_for_all_barriers
+        - step: prepare_mds_work
+          when: '{{ (output.data.rows[0].advanced_count | default(0) | int) > 0 }}'
 
   - step: mark_vital_signs_done
     tool:
@@ -1189,15 +1318,18 @@ workflow:
       auth: pg_k8s
       command: |
         WITH data_check AS (
-          SELECT COUNT(DISTINCT pcc_patient_id) AS n
-          FROM public.pft_test_patient_vital_signs
-          WHERE facility_mapping_id = ({{ load_next_facility.context.rows[0].facility_mapping_id | int }})
+          SELECT COUNT(*) AS n
+          FROM public.pft_test_patient_work_queue
+          WHERE execution_id = '{{ execution_id }}'
+            AND facility_mapping_id = ({{ ctx.facility_mapping_id | int }})
+            AND data_type = 'vital_signs'
+            AND status = 'done'
         ),
         reclaim_if_incomplete AS (
           UPDATE public.pft_test_patient_work_queue
           SET status = 'pending', claimed_at = NULL, worker_id = NULL, updated_at = NOW()
           WHERE execution_id = '{{ execution_id }}'
-            AND facility_mapping_id = ({{ load_next_facility.context.rows[0].facility_mapping_id | int }})
+            AND facility_mapping_id = ({{ ctx.facility_mapping_id | int }})
             AND data_type = 'vital_signs'
             AND status = 'claimed'
             AND (SELECT n FROM data_check) < {{ workload.patients_per_facility | int }}
@@ -1206,23 +1338,51 @@ workflow:
         barrier_insert AS (
           INSERT INTO public.pft_test_facility_data_type_done
             (execution_id, facility_mapping_id, data_type, done_at)
-          SELECT '{{ execution_id }}', ({{ load_next_facility.context.rows[0].facility_mapping_id | int }}), 'vital_signs', NOW()
+          SELECT '{{ execution_id }}', ({{ ctx.facility_mapping_id | int }}), 'vital_signs', NOW()
           FROM data_check WHERE n >= {{ workload.patients_per_facility | int }}
           ON CONFLICT (execution_id, facility_mapping_id, data_type) DO NOTHING
           RETURNING 1
         )
         SELECT
           (SELECT n FROM data_check) AS data_count,
-          (SELECT COUNT(*) FROM public.pft_test_facility_data_type_done
-           WHERE execution_id = '{{ execution_id }}' AND facility_mapping_id = ({{ load_next_facility.context.rows[0].facility_mapping_id | int }}))
-           + (SELECT COUNT(*) FROM barrier_insert) AS done_count;
+          (SELECT COUNT(*) FROM barrier_insert) AS inserted_count;
+
+        WITH data_check AS (
+          SELECT COUNT(*) AS n
+          FROM public.pft_test_patient_work_queue
+          WHERE execution_id = '{{ execution_id }}'
+            AND facility_mapping_id = ({{ ctx.facility_mapping_id | int }})
+            AND data_type = 'vital_signs'
+            AND status = 'done'
+        ),
+        done_count AS (
+          SELECT COUNT(*) AS n
+          FROM public.pft_test_facility_data_type_done
+          WHERE execution_id = '{{ execution_id }}'
+            AND facility_mapping_id = ({{ ctx.facility_mapping_id | int }})
+        ),
+        stage_advance AS (
+          INSERT INTO public.pft_test_facility_stage_gate
+            (execution_id, facility_mapping_id, stage, advanced_at)
+          SELECT '{{ execution_id }}', ({{ ctx.facility_mapping_id | int }}), 'data_types_complete', NOW()
+          FROM done_count
+          WHERE n >= 5
+          ON CONFLICT (execution_id, facility_mapping_id, stage) DO NOTHING
+          RETURNING 1
+        )
+        SELECT
+          (SELECT n FROM data_check) AS data_count,
+          (SELECT n FROM done_count) AS done_count,
+          (SELECT COUNT(*) FROM stage_advance) AS advanced_count;
     next:
       spec:
         mode: exclusive
+        on_no_match: quiet
       arcs:
         - step: fetch_vital_signs
           when: '{{ (output.data.rows[0].data_count | default(0) | int) < (workload.patients_per_facility | int) }}'
-        - step: wait_for_all_barriers
+        - step: prepare_mds_work
+          when: '{{ (output.data.rows[0].advanced_count | default(0) | int) > 0 }}'
 
   - step: mark_demographics_done
     tool:
@@ -1230,15 +1390,18 @@ workflow:
       auth: pg_k8s
       command: |
         WITH data_check AS (
-          SELECT COUNT(DISTINCT pcc_patient_id) AS n
-          FROM public.pft_test_patient_demographics
-          WHERE facility_mapping_id = ({{ load_next_facility.context.rows[0].facility_mapping_id | int }})
+          SELECT COUNT(*) AS n
+          FROM public.pft_test_patient_work_queue
+          WHERE execution_id = '{{ execution_id }}'
+            AND facility_mapping_id = ({{ ctx.facility_mapping_id | int }})
+            AND data_type = 'demographics'
+            AND status = 'done'
         ),
         reclaim_if_incomplete AS (
           UPDATE public.pft_test_patient_work_queue
           SET status = 'pending', claimed_at = NULL, worker_id = NULL, updated_at = NOW()
           WHERE execution_id = '{{ execution_id }}'
-            AND facility_mapping_id = ({{ load_next_facility.context.rows[0].facility_mapping_id | int }})
+            AND facility_mapping_id = ({{ ctx.facility_mapping_id | int }})
             AND data_type = 'demographics'
             AND status = 'claimed'
             AND (SELECT n FROM data_check) < {{ workload.patients_per_facility | int }}
@@ -1247,65 +1410,51 @@ workflow:
         barrier_insert AS (
           INSERT INTO public.pft_test_facility_data_type_done
             (execution_id, facility_mapping_id, data_type, done_at)
-          SELECT '{{ execution_id }}', ({{ load_next_facility.context.rows[0].facility_mapping_id | int }}), 'demographics', NOW()
+          SELECT '{{ execution_id }}', ({{ ctx.facility_mapping_id | int }}), 'demographics', NOW()
           FROM data_check WHERE n >= {{ workload.patients_per_facility | int }}
           ON CONFLICT (execution_id, facility_mapping_id, data_type) DO NOTHING
           RETURNING 1
         )
         SELECT
           (SELECT n FROM data_check) AS data_count,
-          (SELECT COUNT(*) FROM public.pft_test_facility_data_type_done
-           WHERE execution_id = '{{ execution_id }}' AND facility_mapping_id = ({{ load_next_facility.context.rows[0].facility_mapping_id | int }}))
-           + (SELECT COUNT(*) FROM barrier_insert) AS done_count;
+          (SELECT COUNT(*) FROM barrier_insert) AS inserted_count;
+
+        WITH data_check AS (
+          SELECT COUNT(*) AS n
+          FROM public.pft_test_patient_work_queue
+          WHERE execution_id = '{{ execution_id }}'
+            AND facility_mapping_id = ({{ ctx.facility_mapping_id | int }})
+            AND data_type = 'demographics'
+            AND status = 'done'
+        ),
+        done_count AS (
+          SELECT COUNT(*) AS n
+          FROM public.pft_test_facility_data_type_done
+          WHERE execution_id = '{{ execution_id }}'
+            AND facility_mapping_id = ({{ ctx.facility_mapping_id | int }})
+        ),
+        stage_advance AS (
+          INSERT INTO public.pft_test_facility_stage_gate
+            (execution_id, facility_mapping_id, stage, advanced_at)
+          SELECT '{{ execution_id }}', ({{ ctx.facility_mapping_id | int }}), 'data_types_complete', NOW()
+          FROM done_count
+          WHERE n >= 5
+          ON CONFLICT (execution_id, facility_mapping_id, stage) DO NOTHING
+          RETURNING 1
+        )
+        SELECT
+          (SELECT n FROM data_check) AS data_count,
+          (SELECT n FROM done_count) AS done_count,
+          (SELECT COUNT(*) FROM stage_advance) AS advanced_count;
     next:
       spec:
         mode: exclusive
+        on_no_match: quiet
       arcs:
         - step: fetch_demographics
           when: '{{ (output.data.rows[0].data_count | default(0) | int) < (workload.patients_per_facility | int) }}'
-        - step: wait_for_all_barriers
-
-  # ------------------------------------------------------------------
-  # FAN-IN BARRIER — wait until all 5 mark_X_done barrier rows are in
-  # before entering MDS batch processing.  Each mark_X_done routes here
-  # unconditionally (avoids the arc dead-end that fires workflow.completed
-  # when the engine sees no matching arc on the earliest-firing marks).
-  # The polling self-loop retries every ~1s via pg_sleep until
-  # barrier_count = 5, then routes to prepare_mds_work.  Command-level
-  # dedup keeps the concurrent arrivals collapsed into a single in-flight
-  # wait.
-  # ------------------------------------------------------------------
-  - step: wait_for_all_barriers
-    desc: Poll pft_test_facility_data_type_done until all 5 barriers are present for the active facility
-    tool:
-      kind: postgres
-      auth: pg_k8s
-      command: |
-        -- Sleep 1s only when we haven't yet hit the fan-in threshold; otherwise
-        -- return immediately so prepare_mds_work fires without extra latency.
-        SELECT pg_sleep(
-          CASE
-            WHEN (SELECT COUNT(*)
-                  FROM public.pft_test_facility_data_type_done
-                  WHERE execution_id = '{{ execution_id }}'
-                    AND facility_mapping_id = ({{ load_next_facility.context.rows[0].facility_mapping_id | int }})
-                 ) >= 5 THEN 0 ELSE 1
-          END
-        );
-
-        SELECT
-          COUNT(*) AS barrier_count
-        FROM public.pft_test_facility_data_type_done
-        WHERE execution_id = '{{ execution_id }}'
-          AND facility_mapping_id = ({{ load_next_facility.context.rows[0].facility_mapping_id | int }});
-    next:
-      spec:
-        mode: exclusive
-      arcs:
         - step: prepare_mds_work
-          when: '{{ (output.data.rows[0].barrier_count | default(0) | int) >= 5 }}'
-        - step: wait_for_all_barriers
-          when: '{{ (output.data.rows[0].barrier_count | default(0) | int) < 5 }}'
+          when: '{{ (output.data.rows[0].advanced_count | default(0) | int) > 0 }}'
 
   # ------------------------------------------------------------------
   # MDS BATCH PROCESSING (sub-playbook)
@@ -1319,7 +1468,7 @@ workflow:
       auth: pg_k8s
       command: |
         DELETE FROM public.pft_test_mds_assessment_ids_work
-        WHERE facility_mapping_id = ({{ load_next_facility.context.rows[0].facility_mapping_id | int }});
+        WHERE facility_mapping_id = ({{ ctx.facility_mapping_id | int }});
 
         INSERT INTO public.pft_test_mds_assessment_ids_work (assessment_id, pcc_patient_id, facility_mapping_id)
         SELECT
@@ -1327,13 +1476,13 @@ workflow:
           pcc_patient_id,
           facility_mapping_id
         FROM public.pft_test_patient_assessments
-        WHERE facility_mapping_id = ({{ load_next_facility.context.rows[0].facility_mapping_id | int }})
+        WHERE facility_mapping_id = ({{ ctx.facility_mapping_id | int }})
           AND is_last_page = TRUE
         ON CONFLICT (assessment_id) DO NOTHING;
 
         SELECT COUNT(*) AS mds_assessment_count
         FROM public.pft_test_mds_assessment_ids_work
-        WHERE facility_mapping_id = ({{ load_next_facility.context.rows[0].facility_mapping_id | int }});
+        WHERE facility_mapping_id = ({{ ctx.facility_mapping_id | int }});
     next:
       spec:
         mode: exclusive
@@ -1347,10 +1496,10 @@ workflow:
       auth: pg_k8s
       query: |
         SELECT
-          ({{ load_next_facility.context.rows[0].facility_mapping_id | int }}) AS facility_mapping_id,
+          ({{ ctx.facility_mapping_id | int }}) AS facility_mapping_id,
           COUNT(*) AS mds_assessment_count
         FROM public.pft_test_mds_assessment_ids_work
-        WHERE facility_mapping_id = ({{ load_next_facility.context.rows[0].facility_mapping_id | int }});
+        WHERE facility_mapping_id = ({{ ctx.facility_mapping_id | int }});
     next:
       spec:
         mode: exclusive
@@ -1449,18 +1598,18 @@ workflow:
       query: |
         SELECT
           (SELECT COUNT(DISTINCT pcc_patient_id) FROM public.pft_test_patient_assessments
-           WHERE facility_mapping_id = ({{ load_next_facility.context.rows[0].facility_mapping_id | int }})) AS assessments_done,
+           WHERE facility_mapping_id = ({{ ctx.facility_mapping_id | int }})) AS assessments_done,
           (SELECT COUNT(DISTINCT pcc_patient_id) FROM public.pft_test_patient_conditions
-           WHERE facility_mapping_id = ({{ load_next_facility.context.rows[0].facility_mapping_id | int }})) AS conditions_done,
+           WHERE facility_mapping_id = ({{ ctx.facility_mapping_id | int }})) AS conditions_done,
           (SELECT COUNT(DISTINCT pcc_patient_id) FROM public.pft_test_patient_medications
-           WHERE facility_mapping_id = ({{ load_next_facility.context.rows[0].facility_mapping_id | int }})) AS medications_done,
+           WHERE facility_mapping_id = ({{ ctx.facility_mapping_id | int }})) AS medications_done,
           (SELECT COUNT(DISTINCT pcc_patient_id) FROM public.pft_test_patient_vital_signs
-           WHERE facility_mapping_id = ({{ load_next_facility.context.rows[0].facility_mapping_id | int }})) AS vital_signs_done,
+           WHERE facility_mapping_id = ({{ ctx.facility_mapping_id | int }})) AS vital_signs_done,
           (SELECT COUNT(DISTINCT pcc_patient_id) FROM public.pft_test_patient_demographics
-           WHERE facility_mapping_id = ({{ load_next_facility.context.rows[0].facility_mapping_id | int }})) AS demographics_done,
+           WHERE facility_mapping_id = ({{ ctx.facility_mapping_id | int }})) AS demographics_done,
           (SELECT COUNT(DISTINCT patient_id) FROM public.pft_test_patient_work_queue
            WHERE execution_id = '{{ execution_id }}'
-             AND facility_mapping_id = ({{ load_next_facility.context.rows[0].facility_mapping_id | int }})
+             AND facility_mapping_id = ({{ ctx.facility_mapping_id | int }})
              AND data_type = 'assessments'
              AND status = 'done') AS assessments_queue_done;
     next:
@@ -1485,7 +1634,7 @@ workflow:
         )
         VALUES (
           '{{ execution_id }}',
-          ({{ load_next_facility.context.rows[0].facility_mapping_id | int }}),
+          ({{ ctx.facility_mapping_id | int }}),
           {{ validate_facility_results.rows[0].assessments_done | default(0) }},
           {{ validate_facility_results.rows[0].conditions_done | default(0) }},
           {{ validate_facility_results.rows[0].medications_done | default(0) }},
@@ -1518,7 +1667,7 @@ workflow:
       command: |
         UPDATE public.pft_test_facilities
         SET active = FALSE, updated_at = NOW()
-        WHERE facility_mapping_id = ({{ load_next_facility.context.rows[0].facility_mapping_id | int }});
+        WHERE facility_mapping_id = ({{ ctx.facility_mapping_id | int }});
 
         SELECT COUNT(*) AS remaining_count FROM public.pft_test_facilities WHERE active = TRUE;
     next:

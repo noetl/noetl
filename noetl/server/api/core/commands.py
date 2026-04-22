@@ -311,7 +311,8 @@ async def claim_command(event_id: int, req: ClaimRequest):
             async with conn.cursor(row_factory=dict_row) as cur:
                 # Primary: query the command projection table (single-row PK lookup)
                 await cur.execute("""
-                    SELECT command_id, execution_id, catalog_id, step_name, tool_kind, context, meta, status, worker_id, updated_at
+                    SELECT command_id, execution_id, catalog_id, step_name, tool_kind, context, meta,
+                           status, worker_id, claimed_at, started_at, updated_at
                     FROM noetl.command
                     WHERE event_id = %s
                 """, (event_id,))
@@ -370,16 +371,20 @@ async def claim_command(event_id: int, req: ClaimRequest):
                     raise HTTPException(409, detail={"code": "active_claim", "message": "Command is being claimed"},
                                         headers={"Retry-After": str(max(1, _CLAIM_ACTIVE_RETRY_AFTER_SECONDS))})
 
-                await cur.execute(
-                    "SELECT event_id, worker_id, meta, created_at FROM noetl.event WHERE execution_id = %s AND event_type IN ('command.claimed', 'command.heartbeat') AND meta->>'command_id' = %s::text ORDER BY event_id DESC LIMIT 1",
-                    (execution_id, command_id),
-                )
-                existing = await cur.fetchone()
+                existing = None
+                if cmd_row.get("command_id") and cmd_status in ("CLAIMED", "RUNNING"):
+                    existing = {
+                        "worker_id": cmd_row.get("worker_id"),
+                        "created_at": cmd_row.get("claimed_at") or cmd_row.get("started_at") or cmd_row.get("updated_at"),
+                        "status": cmd_status,
+                    }
                 stale_reclaim = False
                 if existing:
                     existing_worker = existing.get('worker_id') or (existing.get('meta') or {}).get('worker_id')
                     if existing_worker and existing_worker != req.worker_id:
                         created_at = existing.get("created_at")
+                        if created_at is None:
+                            created_at = datetime.now(timezone.utc)
                         if created_at.tzinfo is None: created_at = created_at.replace(tzinfo=timezone.utc)
                         claim_age = (datetime.now(timezone.utc) - created_at).total_seconds()
                         
@@ -407,8 +412,7 @@ async def claim_command(event_id: int, req: ClaimRequest):
                             raise HTTPException(409, detail={"code": "active_claim", "worker_id": existing_worker},
                                                 headers={"Retry-After": str(_CLAIM_ACTIVE_RETRY_AFTER_SECONDS)})
                     elif existing_worker == req.worker_id:
-                        await cur.execute("SELECT event_type FROM noetl.event WHERE execution_id = %s AND event_type IN ('command.started', 'command.heartbeat', 'command.completed', 'command.failed') AND meta->>'command_id' = %s ORDER BY event_id DESC LIMIT 1", (execution_id, command_id))
-                        if (r := await cur.fetchone()) and r.get("event_type") == "command.started":
+                        if existing.get("status") == "RUNNING":
                             _active_claim_cache_set(event_id, command_id, existing_worker)
                             raise HTTPException(409, detail={"code": "active_claim", "worker_status": "running"},
                                                 headers={"Retry-After": str(_CLAIM_ACTIVE_RETRY_AFTER_SECONDS)})

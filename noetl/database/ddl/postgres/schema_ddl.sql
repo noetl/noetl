@@ -663,6 +663,12 @@ CREATE INDEX IF NOT EXISTS idx_command_worker
 CREATE INDEX IF NOT EXISTS idx_command_loop
     ON noetl.command (execution_id, loop_event_id, status)
     WHERE loop_event_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_command_loop_step_status
+    ON noetl.command (execution_id, step_name, loop_event_id, status, iter_index)
+    WHERE loop_event_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_command_pending_loop_step_created
+    ON noetl.command (execution_id, step_name, loop_event_id, created_at, iter_index)
+    WHERE status = 'PENDING' AND iter_index IS NOT NULL;
 -- Lookup-by-command_id (non-unique because partitioned UNIQUE requires
 -- the partition key; collisions are application-prevented via the
 -- command_id construction).
@@ -673,3 +679,6 @@ CREATE INDEX IF NOT EXISTS idx_command_command_id
 ALTER TABLE noetl.event ADD COLUMN IF NOT EXISTS command_id BIGINT;
 CREATE INDEX IF NOT EXISTS idx_event_command_id
     ON noetl.event (command_id) WHERE command_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_event_exec_type_command_id_event_id_desc
+    ON noetl.event (execution_id, event_type, command_id, event_id DESC)
+    WHERE command_id IS NOT NULL;

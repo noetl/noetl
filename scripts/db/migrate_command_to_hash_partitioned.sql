@@ -121,6 +121,8 @@ BEGIN
     EXECUTE 'CREATE INDEX idx_command_execution_id ON noetl.command (execution_id)';
     EXECUTE 'CREATE INDEX idx_command_execution_step ON noetl.command (execution_id, step_name)';
     EXECUTE 'CREATE INDEX idx_command_loop ON noetl.command (execution_id, loop_event_id, status) WHERE loop_event_id IS NOT NULL';
+    EXECUTE 'CREATE INDEX idx_command_loop_step_status ON noetl.command (execution_id, step_name, loop_event_id, status, iter_index) WHERE loop_event_id IS NOT NULL';
+    EXECUTE $sql$ CREATE INDEX idx_command_pending_loop_step_created ON noetl.command (execution_id, step_name, loop_event_id, created_at, iter_index) WHERE status = 'PENDING'::text AND iter_index IS NOT NULL $sql$;
     EXECUTE $sql$ CREATE INDEX idx_command_status ON noetl.command (status) WHERE status = ANY (ARRAY['PENDING'::text, 'CLAIMED'::text]) $sql$;
     EXECUTE $sql$ CREATE INDEX idx_command_worker ON noetl.command (worker_id, updated_at) WHERE status = 'CLAIMED'::text $sql$;
 

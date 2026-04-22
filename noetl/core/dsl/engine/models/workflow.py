@@ -190,6 +190,10 @@ class NextSpec(BaseModel):
         default="exclusive",
         description="Arc evaluation mode: exclusive (first match) or inclusive (all matches)"
     )
+    on_no_match: Literal["complete", "quiet"] = Field(
+        default="complete",
+        description="What to do when no arc matches: complete workflow, or end this branch quietly"
+    )
     policy: Optional[dict[str, Any]] = Field(
         None,
         description="Router policy (placeholder for priority/dedupe/partitioning)"

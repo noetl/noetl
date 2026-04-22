@@ -14,6 +14,33 @@ class EventHandlingMixin:
                 raise
             return await self._persist_event(event, state)
 
+    async def _count_durable_pending_commands(self, execution_id: str, conn=None) -> Optional[int]:
+        """Return pending command count from noetl.command, or None if unavailable."""
+        query = """
+            SELECT COUNT(*) AS pending_count
+            FROM noetl.command
+            WHERE execution_id = %s
+              AND status NOT IN ('COMPLETED', 'FAILED', 'CANCELLED')
+        """
+        try:
+            if conn is not None:
+                async with conn.cursor(row_factory=dict_row) as cur:
+                    await cur.execute(query, (int(execution_id),))
+                    row = await cur.fetchone()
+            else:
+                async with get_pool_connection() as pool_conn:
+                    async with pool_conn.cursor(row_factory=dict_row) as cur:
+                        await cur.execute(query, (int(execution_id),))
+                        row = await cur.fetchone()
+            return int((row or {}).get("pending_count", 0) or 0)
+        except Exception as exc:
+            logger.debug(
+                "[COMPLETION] Durable command pending-count lookup skipped for execution=%s: %s",
+                execution_id,
+                exc,
+            )
+            return None
+
     async def handle_event(self, event: Event, conn=None, already_persisted: bool = False) -> list[Command]:
         """
         Handle an event and return commands to enqueue.
@@ -387,6 +414,17 @@ class EventHandlingMixin:
                             if pinned_loop_epoch_id
                             else None
                         )
+                        if _pinned_epoch_id and not self._loop_event_id_belongs_to_execution(
+                            _pinned_epoch_id,
+                            state.execution_id,
+                        ):
+                            logger.warning(
+                                "[TASK_SEQ-LOOP] Ignoring stale pinned epoch for %s execution=%s epoch=%s",
+                                parent_step,
+                                state.execution_id,
+                                _pinned_epoch_id,
+                            )
+                            _pinned_epoch_id = None
                         event_id_candidates = []
                         if _pinned_epoch_id:
                             # Epoch is pinned from the command: skip stale candidate resolution.
@@ -1067,6 +1105,17 @@ class EventHandlingMixin:
                             else (str(payload_loop_event_id) if payload_loop_event_id else None)
                         )
                     )
+                    if _pinned_epoch_id and not self._loop_event_id_belongs_to_execution(
+                        _pinned_epoch_id,
+                        state.execution_id,
+                    ):
+                        logger.warning(
+                            "[LOOP-CALL.DONE] Ignoring stale pinned epoch for %s execution=%s epoch=%s",
+                            event.step,
+                            state.execution_id,
+                            _pinned_epoch_id,
+                        )
+                        _pinned_epoch_id = None
                     loop_event_id = _pinned_epoch_id or loop_state.get("event_id")
                     event_id_candidates = []
                     if loop_event_id:
@@ -1973,7 +2022,23 @@ class EventHandlingMixin:
                         has_pending_commands = pending_count > 0
                         if has_pending_commands:
                             logger.debug(f"[COMPLETION] execution={event.execution_id} pending_in_db={pending_count}")
-        # If in-memory state shows no pending AND issued_steps is populated, trust it
+        # Durable projection is the last word before a dead-end can complete an
+        # execution. This keeps distributed pods from trusting an incomplete
+        # in-memory issued/completed step set while command rows are still live.
+        if not has_pending_commands and is_completion_trigger:
+            durable_pending_count = await self._count_durable_pending_commands(
+                event.execution_id,
+                conn=conn,
+            )
+            if durable_pending_count is not None:
+                has_pending_commands = durable_pending_count > 0
+                if has_pending_commands:
+                    logger.debug(
+                        "[COMPLETION] execution=%s pending_in_command_table=%s",
+                        event.execution_id,
+                        durable_pending_count,
+                    )
+        # If in-memory state shows no pending AND command table agrees, trust it.
 
         # Also probe arc rendering for step.exit and other fallback paths that did
         # not go through _evaluate_next_transitions_with_status (which sets
@@ -2007,6 +2072,12 @@ class EventHandlingMixin:
             if (is_completion_trigger and step_def.next and not is_loop_step)
             else False
         )
+        next_no_match_action = "complete"
+        if step_def and step_def.next and getattr(step_def.next, "spec", None):
+            next_no_match_action = str(
+                getattr(step_def.next.spec, "on_no_match", "complete") or "complete"
+            ).lower()
+        quiet_no_match = next_no_match_action == "quiet"
         is_dead_end_no_match = (
             is_completion_trigger
             and bool(step_def.next)
@@ -2015,7 +2086,14 @@ class EventHandlingMixin:
             and not commands
             and not has_pending_commands
             and not next_any_raised
+            and not quiet_no_match
         )
+        if quiet_no_match and is_completion_trigger and bool(step_def.next) and not has_matching_next_transition and not commands:
+            logger.info(
+                "[COMPLETION] Quiet branch end: execution=%s step=%s has no matching next arcs",
+                event.execution_id,
+                event.step,
+            )
         if next_any_raised:
             logger.warning(
                 "[COMPLETION] Skipping dead-end completion for execution=%s step=%s: "
@@ -2208,4 +2286,3 @@ class EventHandlingMixin:
                 logger.warning("[ENGINE] Failed to save state: %s", exc)
 
         return commands
-

@@ -54,10 +54,9 @@ class QueryMixin:
                         FROM noetl.event
                         WHERE execution_id = %s
                           AND event_type = %s
-                          AND meta ? 'command_id'
-                          AND meta->>'command_id' = %s
+                          AND command_id = %s
                         """,
-                        (int(execution_id), event_type, str(command_id)),
+                        (int(execution_id), event_type, int(command_id)),
                     )
                     row = await cur.fetchone()
                     return int((row or {}).get("cnt", 0) or 0)
@@ -88,10 +87,9 @@ class QueryMixin:
                         FROM noetl.event
                         WHERE execution_id = %s
                           AND event_type = %s
-                          AND meta ? 'command_id'
-                          AND meta->>'command_id' = %s
+                          AND command_id = %s
                         """,
-                        (int(execution_id), event_type, str(command_id)),
+                        (int(execution_id), event_type, int(command_id)),
                     )
                     row = await cur.fetchone()
                     first_event_id = int((row or {}).get("first_event_id", 0) or 0)
@@ -113,7 +111,7 @@ class QueryMixin:
         node_name: str,
         loop_event_id: Optional[str],
     ) -> int:
-        """Count distinct terminal loop iterations for a specific epoch."""
+        """Count terminal loop commands for a specific epoch from the command projection."""
         if not loop_event_id:
             return -1
 
@@ -123,16 +121,12 @@ class QueryMixin:
                 async with conn.cursor(row_factory=dict_row) as cur:
                     await cur.execute(
                         """
-                        SELECT COUNT(DISTINCT idx.loop_iteration_index) AS cnt
-                        FROM (
-                            SELECT NULLIF(meta->>'loop_iteration_index', '')::int AS loop_iteration_index
-                            FROM noetl.event
-                            WHERE execution_id = %s
-                              AND node_name = ANY(%s)
-                              AND event_type = 'call.done'
-                              AND COALESCE(meta->>'loop_event_id', meta->>'__loop_epoch_id', result->'context'->>'loop_event_id') = %s
-                        ) idx
-                        WHERE idx.loop_iteration_index IS NOT NULL
+                        SELECT COUNT(*) AS cnt
+                        FROM noetl.command
+                        WHERE execution_id = %s
+                          AND step_name = ANY(%s)
+                          AND loop_event_id = %s
+                          AND status IN ('COMPLETED', 'FAILED', 'CANCELLED')
                         """,
                         (int(execution_id), node_names, str(loop_event_id)),
                     )
@@ -140,7 +134,7 @@ class QueryMixin:
                     return int((row or {}).get("cnt", 0) or 0)
         except Exception as exc:
             logger.warning(
-                "[LOOP-COUNTER-RECONCILE] Failed to count epoch terminals for %s/%s epoch=%s: %s",
+                "[LOOP-COUNTER-RECONCILE] Failed to count terminal commands for %s/%s epoch=%s: %s",
                 execution_id,
                 node_name,
                 loop_event_id,
@@ -261,72 +255,27 @@ class QueryMixin:
         try:
             loop_filter = ""
             node_names = list(_node_name_candidates(node_name))
-            issued_params: list[Any] = [int(execution_id), node_names]
+            params: list[Any] = [int(execution_id), node_names]
             if loop_event_id:
-                loop_filter = "AND meta->>'loop_event_id' = %s"
-                issued_params.append(str(loop_event_id))
+                loop_filter = "AND loop_event_id = %s"
+                params.append(str(loop_event_id))
 
             min_age = max(0.0, float(min_age_seconds or 0.0))
-            params: list[Any] = [
-                *issued_params,
-                int(execution_id),
-                node_names,
-                int(execution_id),
-                node_names,
-                min_age,
-                int(limit),
-            ]
+            params.extend([min_age, int(limit)])
 
             async with get_pool_connection() as conn:
                 async with conn.cursor(row_factory=dict_row) as cur:
                     await cur.execute(
                         f"""
-                        WITH issued AS (
-                            SELECT
-                                meta->>'command_id' AS command_id,
-                                NULLIF(meta->>'loop_iteration_index', '')::int AS loop_iteration_index,
-                                created_at AS issued_at
-                            FROM noetl.event
-                            WHERE execution_id = %s
-                              AND node_name = ANY(%s)
-                              AND event_type = 'command.issued'
-                              {loop_filter}
-                        ),
-                        started AS (
-                            SELECT
-                                meta->>'command_id' AS command_id,
-                                MAX(created_at) AS started_at
-                            FROM noetl.event
-                            WHERE execution_id = %s
-                              AND node_name = ANY(%s)
-                              AND event_type = 'command.started'
-                              AND meta->>'command_id' IS NOT NULL
-                              AND meta->>'command_id' IN (
-                                    SELECT command_id FROM issued WHERE command_id IS NOT NULL
-                                  )
-                            GROUP BY meta->>'command_id'
-                        ),
-                        terminal AS (
-                            SELECT DISTINCT
-                                meta->>'command_id' AS command_id
-                            FROM noetl.event
-                            WHERE execution_id = %s
-                              AND node_name = ANY(%s)
-                              AND event_type IN ('command.completed', 'command.failed', 'command.cancelled', 'call.done')
-                              AND meta->>'command_id' IS NOT NULL
-                              AND meta->>'command_id' IN (
-                                    SELECT command_id FROM issued WHERE command_id IS NOT NULL
-                                  )
-                        )
-                        SELECT i.loop_iteration_index
-                        FROM issued i
-                        LEFT JOIN started s ON s.command_id = i.command_id
-                        LEFT JOIN terminal t ON t.command_id = i.command_id
-                        WHERE i.loop_iteration_index IS NOT NULL
-                          AND t.command_id IS NULL
-                          AND i.issued_at <= (NOW() - (%s * INTERVAL '1 second'))
-                          AND s.command_id IS NULL
-                        ORDER BY i.loop_iteration_index
+                        SELECT iter_index AS loop_iteration_index
+                        FROM noetl.command
+                        WHERE execution_id = %s
+                          AND step_name = ANY(%s)
+                          {loop_filter}
+                          AND iter_index IS NOT NULL
+                          AND status = 'PENDING'
+                          AND created_at <= (NOW() - (%s * INTERVAL '1 second'))
+                        ORDER BY iter_index
                         LIMIT %s
                         """,
                         tuple(params),
@@ -361,66 +310,25 @@ class QueryMixin:
         try:
             loop_filter = ""
             node_names = list(_node_name_candidates(node_name))
-            issued_params: list[Any] = [int(execution_id), node_names]
+            params: list[Any] = [int(execution_id), node_names]
             if loop_event_id:
-                loop_filter = "AND meta->>'loop_event_id' = %s"
-                issued_params.append(str(loop_event_id))
+                loop_filter = "AND loop_event_id = %s"
+                params.append(str(loop_event_id))
 
-            params: list[Any] = [
-                *issued_params,
-                int(execution_id),
-                node_names,
-                int(execution_id),
-                node_names,
-                int(limit),
-            ]
+            params.append(int(limit))
 
             async with get_pool_connection() as conn:
                 async with conn.cursor(row_factory=dict_row) as cur:
                     await cur.execute(
                         f"""
-                        WITH issued AS (
-                            SELECT
-                                meta->>'command_id' AS command_id,
-                                NULLIF(meta->>'loop_iteration_index', '')::int AS loop_iteration_index
-                            FROM noetl.event
-                            WHERE execution_id = %s
-                              AND node_name = ANY(%s)
-                              AND event_type = 'command.issued'
-                              {loop_filter}
-                        ),
-                        started AS (
-                            SELECT DISTINCT
-                                meta->>'command_id' AS command_id
-                            FROM noetl.event
-                            WHERE execution_id = %s
-                              AND node_name = ANY(%s)
-                              AND event_type = 'command.started'
-                              AND meta->>'command_id' IS NOT NULL
-                              AND meta->>'command_id' IN (
-                                    SELECT command_id FROM issued WHERE command_id IS NOT NULL
-                                  )
-                        ),
-                        terminal AS (
-                            SELECT DISTINCT
-                                meta->>'command_id' AS command_id
-                            FROM noetl.event
-                            WHERE execution_id = %s
-                              AND node_name = ANY(%s)
-                              AND event_type IN ('command.completed', 'command.failed', 'command.cancelled', 'call.done')
-                              AND meta->>'command_id' IS NOT NULL
-                              AND meta->>'command_id' IN (
-                                    SELECT command_id FROM issued WHERE command_id IS NOT NULL
-                                  )
-                        )
-                        SELECT i.loop_iteration_index
-                        FROM issued i
-                        LEFT JOIN started s ON s.command_id = i.command_id
-                        LEFT JOIN terminal t ON t.command_id = i.command_id
-                        WHERE i.loop_iteration_index IS NOT NULL
-                          AND s.command_id IS NULL
-                          AND t.command_id IS NULL
-                        ORDER BY i.loop_iteration_index
+                        SELECT iter_index AS loop_iteration_index
+                        FROM noetl.command
+                        WHERE execution_id = %s
+                          AND step_name = ANY(%s)
+                          {loop_filter}
+                          AND iter_index IS NOT NULL
+                          AND status = 'PENDING'
+                        ORDER BY iter_index
                         LIMIT %s
                         """,
                         tuple(params),

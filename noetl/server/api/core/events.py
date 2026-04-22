@@ -130,7 +130,18 @@ async def handle_event(req: EventRequest) -> EventResponse:
                         await cur.execute("SELECT pg_try_advisory_xact_lock(%s) as lock_acquired", (command_id,))
                         if not (res := await cur.fetchone()) or not res.get('lock_acquired'):
                             raise HTTPException(409, "Command already being claimed")
-                        await cur.execute("SELECT worker_id, meta FROM noetl.event WHERE execution_id = %s AND event_type = 'command.claimed' AND meta->>'command_id' = %s ORDER BY event_id DESC LIMIT 1", (int(req.execution_id), command_id))
+                        await cur.execute(
+                            """
+                            SELECT worker_id, meta
+                            FROM noetl.event
+                            WHERE execution_id = %s
+                              AND event_type = 'command.claimed'
+                              AND command_id = %s
+                            ORDER BY event_id DESC
+                            LIMIT 1
+                            """,
+                            (int(req.execution_id), int(command_id)),
+                        )
                         if existing := await cur.fetchone():
                             existing_worker = existing.get('worker_id') or (existing.get('meta') or {}).get('worker_id')
                             if existing_worker and existing_worker != req.worker_id:
@@ -160,7 +171,19 @@ async def handle_event(req: EventRequest) -> EventResponse:
                 await cur.execute("SELECT catalog_id FROM noetl.event WHERE execution_id = %s LIMIT 1", (int(req.execution_id),))
                 catalog_id = (await cur.fetchone() or {}).get('catalog_id')
                 if command_id and req.name in _COMMAND_EVENT_DEDUPE_TYPES:
-                    await cur.execute("SELECT event_id FROM noetl.event WHERE execution_id = %s AND event_type = %s AND node_name = %s AND meta->>'command_id' = %s ORDER BY event_id DESC LIMIT 1", (int(req.execution_id), req.name, req.step, command_id))
+                    await cur.execute(
+                        """
+                        SELECT event_id
+                        FROM noetl.event
+                        WHERE execution_id = %s
+                          AND event_type = %s
+                          AND node_name = %s
+                          AND command_id = %s
+                        ORDER BY event_id DESC
+                        LIMIT 1
+                        """,
+                        (int(req.execution_id), req.name, req.step, int(command_id)),
+                    )
                     if duplicate := await cur.fetchone():
                         if req.name in {"command.completed", "command.failed"}: _active_claim_cache_invalidate(command_id=command_id)
                         return EventResponse(status="ok", event_id=int(duplicate['event_id']), commands_generated=0)
