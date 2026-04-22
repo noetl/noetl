@@ -1552,16 +1552,22 @@ workflow:
       ctx.mds_batch_count: '{{ output.data.batch_count | default(0) }}'
 
   - step: run_mds_batch_workers
-    desc: Dispatch MDS batch workers serially (max_in_flight 1) via sub-playbook
-    # Use extracted field build_mds_batch_plan.batches directly — avoids STATE-LOAD
-    # failure when output.data.batches is unavailable (externalized result → ctx.mds_batches
-    # defaults to [] and loop fires immediately without dispatching any sub-playbooks).
+    desc: |
+      Dispatch MDS batch workers via sub-playbook.
+      max_in_flight intentionally set LOW (5) because tool.kind: playbook
+      with a return_step blocks the worker slot for the entire sub-playbook
+      duration (see noetl/worker/nats_worker.py:_execute_playbook polling
+      loop).  Each sub-playbook internally runs a 5-wide parallel fetch
+      loop, so 5 parent slots × ~5 child slots ≈ 25 active commands —
+      safely under 3 workers × 16 in-flight = 48 total capacity.  Setting
+      this higher (e.g. 100) deadlocks: parent polls exhaust all worker
+      slots before any child can claim.
     loop:
       in: '{{ build_mds_batch_plan.batches }}'
       iterator: batch
       spec:
         mode: parallel
-        max_in_flight: 100
+        max_in_flight: 5
     tool:
       kind: playbook
       path: tests/fixtures/playbooks/pft_flow_test/test_mds_batch_worker
