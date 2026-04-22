@@ -14,6 +14,33 @@ class EventHandlingMixin:
                 raise
             return await self._persist_event(event, state)
 
+    async def _count_durable_pending_commands(self, execution_id: str, conn=None) -> Optional[int]:
+        """Return pending command count from noetl.command, or None if unavailable."""
+        query = """
+            SELECT COUNT(*) AS pending_count
+            FROM noetl.command
+            WHERE execution_id = %s
+              AND status NOT IN ('COMPLETED', 'FAILED', 'CANCELLED')
+        """
+        try:
+            if conn is not None:
+                async with conn.cursor(row_factory=dict_row) as cur:
+                    await cur.execute(query, (int(execution_id),))
+                    row = await cur.fetchone()
+            else:
+                async with get_pool_connection() as pool_conn:
+                    async with pool_conn.cursor(row_factory=dict_row) as cur:
+                        await cur.execute(query, (int(execution_id),))
+                        row = await cur.fetchone()
+            return int((row or {}).get("pending_count", 0) or 0)
+        except Exception as exc:
+            logger.debug(
+                "[COMPLETION] Durable command pending-count lookup skipped for execution=%s: %s",
+                execution_id,
+                exc,
+            )
+            return None
+
     async def handle_event(self, event: Event, conn=None, already_persisted: bool = False) -> list[Command]:
         """
         Handle an event and return commands to enqueue.
@@ -62,6 +89,25 @@ class EventHandlingMixin:
 
         if cache_refreshed and preserved_loop_snapshots:
             self._restore_loop_collection_snapshots(state, preserved_loop_snapshots)
+
+        # DIAG: dump load_next_facility step_result as seen after state load
+        if event.step and (event.step.startswith("setup_") or event.step.startswith("fetch_")):
+            try:
+                _lnf = state.step_results.get("load_next_facility")
+                _lnf_keys = list(_lnf.keys()) if isinstance(_lnf, dict) else type(_lnf).__name__
+                _lnf_ctx = _lnf.get("context") if isinstance(_lnf, dict) else None
+                _lnf_ctx_keys = list(_lnf_ctx.keys()) if isinstance(_lnf_ctx, dict) else type(_lnf_ctx).__name__
+                _lnf_top_rows = _lnf.get("rows") if isinstance(_lnf, dict) else None
+                _lnf_ctx_rows = _lnf_ctx.get("rows") if isinstance(_lnf_ctx, dict) else None
+                logger.info(
+                    "[DIAG-LOADED] event.step=%s event.name=%s lnf_keys=%s lnf_ctx_keys=%s "
+                    "top_rows_len=%s ctx_rows_len=%s",
+                    event.step, event.name, _lnf_keys, _lnf_ctx_keys,
+                    len(_lnf_top_rows) if isinstance(_lnf_top_rows, list) else None,
+                    len(_lnf_ctx_rows) if isinstance(_lnf_ctx_rows, list) else None,
+                )
+            except Exception as _e:
+                logger.info("[DIAG-LOADED] failed: %s", _e)
 
         if state.completed:
             logger.info(
@@ -368,6 +414,17 @@ class EventHandlingMixin:
                             if pinned_loop_epoch_id
                             else None
                         )
+                        if _pinned_epoch_id and not self._loop_event_id_belongs_to_execution(
+                            _pinned_epoch_id,
+                            state.execution_id,
+                        ):
+                            logger.warning(
+                                "[TASK_SEQ-LOOP] Ignoring stale pinned epoch for %s execution=%s epoch=%s",
+                                parent_step,
+                                state.execution_id,
+                                _pinned_epoch_id,
+                            )
+                            _pinned_epoch_id = None
                         event_id_candidates = []
                         if _pinned_epoch_id:
                             # Epoch is pinned from the command: skip stale candidate resolution.
@@ -538,12 +595,28 @@ class EventHandlingMixin:
                                     break
 
                         if collection_size == 0:
-                            context = state.get_render_context(event)
-                            rendered_collection = self._render_template(parent_step_def.loop.in_, context)
-                            rendered_collection = self._normalize_loop_collection(rendered_collection, parent_step)
-                            loop_state["collection"] = list(rendered_collection)
-                            collection_size = len(rendered_collection or [])
-                            logger.info(f"[TASK_SEQ-LOOP] Re-rendered collection for {parent_step}: {collection_size} items")
+                            # Cursor loops never render a collection from a
+                            # template — the "collection" is synthetic (one
+                            # slot per worker).  Recover size from the step
+                            # spec instead of trying to re-render loop.in_.
+                            if parent_step_def.loop and parent_step_def.loop.is_cursor:
+                                worker_count_fallback = 1
+                                if parent_step_def.loop.spec and parent_step_def.loop.spec.max_in_flight:
+                                    worker_count_fallback = max(1, int(parent_step_def.loop.spec.max_in_flight))
+                                collection_size = worker_count_fallback
+                                loop_state["collection_size"] = collection_size
+                                logger.info(
+                                    "[CURSOR-LOOP] Restored collection_size=%d from worker_count for %s",
+                                    collection_size,
+                                    parent_step,
+                                )
+                            else:
+                                context = state.get_render_context(event)
+                                rendered_collection = self._render_template(parent_step_def.loop.in_, context)
+                                rendered_collection = self._normalize_loop_collection(rendered_collection, parent_step)
+                                loop_state["collection"] = list(rendered_collection)
+                                collection_size = len(rendered_collection or [])
+                                logger.info(f"[TASK_SEQ-LOOP] Re-rendered collection for {parent_step}: {collection_size} items")
 
                             # Backfill NATS metadata if it was missing.
                             if collection_size > 0 and not nats_loop_state:
@@ -596,22 +669,58 @@ class EventHandlingMixin:
                         remaining_count = max(0, collection_size - new_count)
 
                         # Tail-repair fallback:
-                        # If all loop slots were scheduled but a small number of iterations never reached
-                        # a terminal command event (started-only or dropped), reissue those exact indexes.
-                        # This keeps loop.done from hanging indefinitely on missing tail items.
-                        if (
-                            _TASKSEQ_LOOP_REPAIR_THRESHOLD > 0
+                        # Covers two failure modes that both leave loop.done stuck:
+                        #
+                        # (a) All slots scheduled (scheduled_count >= collection_size) but a
+                        #     handful of iterations never reached a terminal event — dispatched
+                        #     to a worker that died, or the command event was lost in flight.
+                        #
+                        # (b) The head/dispatch side got CAS-throttled in
+                        #     claim_next_loop_indices and some tail indices were never even
+                        #     scheduled (scheduled_count < collection_size).  In that case
+                        #     the gap between scheduled and collection_size is at least as
+                        #     important as the remaining_count window — we need to reissue
+                        #     the un-scheduled tail, otherwise loop.done waits forever.
+                        #
+                        # Both cases trigger a best-effort reissue when the remaining work
+                        # is within the repair threshold.
+                        _unscheduled_gap = max(0, collection_size - scheduled_count)
+                        # Cursor loops do not tolerate tail-repair: each
+                        # worker is a persistent slot, not an enumerable
+                        # row.  Reclaim of crashed mid-flight rows is the
+                        # driver's job (SQL claim prelude resets stale
+                        # claims), not the engine's.
+                        _is_cursor_loop_parent = bool(
+                            parent_step_def.loop and parent_step_def.loop.is_cursor
+                        )
+                        _tail_needs_repair = (
+                            not _is_cursor_loop_parent
+                            and _TASKSEQ_LOOP_REPAIR_THRESHOLD > 0
                             and collection_size > 0
                             and remaining_count > 0
                             and remaining_count <= _TASKSEQ_LOOP_REPAIR_THRESHOLD
-                            and scheduled_count >= collection_size
-                        ):
+                            and (
+                                scheduled_count >= collection_size
+                                or _unscheduled_gap <= _TASKSEQ_LOOP_REPAIR_THRESHOLD
+                            )
+                        )
+                        if _tail_needs_repair:
                             missing_indexes = await self._find_missing_loop_iteration_indices(
                                 state.execution_id,
                                 event.step,
                                 loop_event_id=resolved_loop_event_id,
                                 limit=_TASKSEQ_LOOP_REPAIR_THRESHOLD,
                             )
+                            # When scheduled_count fell short of collection_size (CAS-throttled
+                            # dispatch), the un-scheduled indices never got a command.issued
+                            # event and therefore won't be found by _find_missing_loop_iteration_indices.
+                            # Add them explicitly here.
+                            if _unscheduled_gap > 0:
+                                for _gap_idx in range(scheduled_count, collection_size):
+                                    if _gap_idx not in missing_indexes:
+                                        missing_indexes.append(_gap_idx)
+                                        if len(missing_indexes) >= _TASKSEQ_LOOP_REPAIR_THRESHOLD:
+                                            break
                             if missing_indexes:
                                 issued_repairs_raw = loop_state.get("repair_issued_indexes", [])
                                 issued_repairs = {
@@ -861,7 +970,39 @@ class EventHandlingMixin:
                 else normalized_payload
             )
             response_data = await _hydrate_reference_only_step_result(response_data)
+            if event.step in ("load_next_facility", "setup_facility_work") or (isinstance(event.step, str) and event.step.startswith("mark_")):
+                try:
+                    _rd_keys = list(response_data.keys()) if isinstance(response_data, dict) else type(response_data).__name__
+                    _ctx = response_data.get("context") if isinstance(response_data, dict) else None
+                    _ctx_keys = list(_ctx.keys()) if isinstance(_ctx, dict) else type(_ctx).__name__
+                    _top_rows = response_data.get("rows") if isinstance(response_data, dict) else None
+                    _ctx_rows = _ctx.get("rows") if isinstance(_ctx, dict) else None
+                    logger.info(
+                        "[DIAG-SET] step=%s response_keys=%s context_keys=%s "
+                        "top_rows_len=%s ctx_rows_len=%s",
+                        event.step, _rd_keys, _ctx_keys,
+                        len(_top_rows) if isinstance(_top_rows, list) else None,
+                        len(_ctx_rows) if isinstance(_ctx_rows, list) else None,
+                    )
+                except Exception as _e:
+                    logger.info("[DIAG-SET] failed to dump response_data: %s", _e)
             await state.mark_step_completed(event.step, response_data)
+            if event.step in ("load_next_facility", "setup_facility_work") or (isinstance(event.step, str) and event.step.startswith("mark_")):
+                try:
+                    _sr = state.step_results.get(event.step)
+                    _sr_keys = list(_sr.keys()) if isinstance(_sr, dict) else type(_sr).__name__
+                    _sr_ctx = _sr.get("context") if isinstance(_sr, dict) else None
+                    _sr_ctx_keys = list(_sr_ctx.keys()) if isinstance(_sr_ctx, dict) else type(_sr_ctx).__name__
+                    _sr_top_rows = _sr.get("rows") if isinstance(_sr, dict) else None
+                    _sr_ctx_rows = _sr_ctx.get("rows") if isinstance(_sr_ctx, dict) else None
+                    logger.info(
+                        "[DIAG-POST-MARK] step=%s keys=%s ctx_keys=%s top_rows_len=%s ctx_rows_len=%s",
+                        event.step, _sr_keys, _sr_ctx_keys,
+                        len(_sr_top_rows) if isinstance(_sr_top_rows, list) else None,
+                        len(_sr_ctx_rows) if isinstance(_sr_ctx_rows, list) else None,
+                    )
+                except Exception as _e:
+                    logger.info("[DIAG-POST-MARK] failed: %s", _e)
             logger.debug(f"[CALL.DONE] Stored result for step {event.step} in state BEFORE next evaluation")
         elif event.name == "call.error":
             # Mark step as completed even on error - it finished executing (with failure)
@@ -911,9 +1052,10 @@ class EventHandlingMixin:
         # fan-out where each loop iteration triggers the next step independently.
         next_commands: list[Command] = []
         next_any_matched: Optional[bool] = None
+        next_any_raised: bool = False
         is_loop_step = step_def.loop is not None and event.step in state.loop_state
         if event.name in ("call.done", "call.error") and not is_loop_step:
-            next_commands, next_any_matched = await self._evaluate_next_transitions_with_match(
+            next_commands, next_any_matched, next_any_raised = await self._evaluate_next_transitions_with_status(
                 state,
                 step_def,
                 event,
@@ -963,6 +1105,17 @@ class EventHandlingMixin:
                             else (str(payload_loop_event_id) if payload_loop_event_id else None)
                         )
                     )
+                    if _pinned_epoch_id and not self._loop_event_id_belongs_to_execution(
+                        _pinned_epoch_id,
+                        state.execution_id,
+                    ):
+                        logger.warning(
+                            "[LOOP-CALL.DONE] Ignoring stale pinned epoch for %s execution=%s epoch=%s",
+                            event.step,
+                            state.execution_id,
+                            _pinned_epoch_id,
+                        )
+                        _pinned_epoch_id = None
                     loop_event_id = _pinned_epoch_id or loop_state.get("event_id")
                     event_id_candidates = []
                     if loop_event_id:
@@ -1088,12 +1241,25 @@ class EventHandlingMixin:
                     collection_size = int((nats_loop_state or {}).get("collection_size", 0) or 0)
 
                     if collection_size == 0:
-                        loop_context = state.get_render_context(event)
-                        rendered_collection = self._render_template(step_def.loop.in_, loop_context)
-                        rendered_collection = self._normalize_loop_collection(rendered_collection, event.step)
-                        loop_state["collection"] = list(rendered_collection)
-                        collection_size = len(rendered_collection or [])
-                        logger.info(f"[LOOP-CALL.DONE] Re-rendered collection for {event.step}: {collection_size} items")
+                        if step_def.loop and step_def.loop.is_cursor:
+                            # Cursor loops: collection_size == worker concurrency.
+                            worker_count_fallback = 1
+                            if step_def.loop.spec and step_def.loop.spec.max_in_flight:
+                                worker_count_fallback = max(1, int(step_def.loop.spec.max_in_flight))
+                            collection_size = worker_count_fallback
+                            loop_state["collection_size"] = collection_size
+                            logger.info(
+                                "[CURSOR-LOOP] Restored collection_size=%d from worker_count for %s (call.done handler)",
+                                collection_size,
+                                event.step,
+                            )
+                        else:
+                            loop_context = state.get_render_context(event)
+                            rendered_collection = self._render_template(step_def.loop.in_, loop_context)
+                            rendered_collection = self._normalize_loop_collection(rendered_collection, event.step)
+                            loop_state["collection"] = list(rendered_collection)
+                            collection_size = len(rendered_collection or [])
+                            logger.info(f"[LOOP-CALL.DONE] Re-rendered collection for {event.step}: {collection_size} items")
 
                     # Check if loop is done
                     if collection_size > 0 and new_count >= collection_size:
@@ -1321,6 +1487,22 @@ class EventHandlingMixin:
                     logger.debug(f"Skipping step.exit result storage for task sequence step {event.step} (already handled on call.done)")
                 else:
                     hydrated_result = await _hydrate_reference_only_step_result(event.payload["result"])
+                    if event.step in ("load_next_facility", "setup_facility_work") or (isinstance(event.step, str) and event.step.startswith("mark_")):
+                        try:
+                            _hr_keys = list(hydrated_result.keys()) if isinstance(hydrated_result, dict) else type(hydrated_result).__name__
+                            _ctx = hydrated_result.get("context") if isinstance(hydrated_result, dict) else None
+                            _ctx_keys = list(_ctx.keys()) if isinstance(_ctx, dict) else type(_ctx).__name__
+                            _top_rows = hydrated_result.get("rows") if isinstance(hydrated_result, dict) else None
+                            _ctx_rows = _ctx.get("rows") if isinstance(_ctx, dict) else None
+                            logger.info(
+                                "[DIAG-EXIT] step=%s hydrated_keys=%s context_keys=%s "
+                                "top_rows_len=%s ctx_rows_len=%s",
+                                event.step, _hr_keys, _ctx_keys,
+                                len(_top_rows) if isinstance(_top_rows, list) else None,
+                                len(_ctx_rows) if isinstance(_ctx_rows, list) else None,
+                            )
+                        except Exception as _e:
+                            logger.info("[DIAG-EXIT] failed: %s", _e)
                     await state.mark_step_completed(event.step, hydrated_result)
                     logger.debug(f"Stored result for step {event.step} in state")
         
@@ -1459,11 +1641,25 @@ class EventHandlingMixin:
                     
                     # Only render collection if not already cached (expensive operation)
                     if loop_state and not loop_state.get("collection"):
-                        context = state.get_render_context(event)
-                        collection = self._render_template(step_def.loop.in_, context)
-                        collection = self._normalize_loop_collection(collection, event.step)
-                        loop_state["collection"] = list(collection)
-                        logger.info(f"[LOOP-SETUP] Rendered collection for {event.step}: {len(collection or [])} items")
+                        if step_def.loop and step_def.loop.is_cursor:
+                            # Cursor loops: collection is synthetic (one
+                            # slot per worker); there is no loop.in_ to
+                            # render.  Rebuild the synthetic collection.
+                            worker_count_fallback = 1
+                            if step_def.loop.spec and step_def.loop.spec.max_in_flight:
+                                worker_count_fallback = max(1, int(step_def.loop.spec.max_in_flight))
+                            collection = list(range(worker_count_fallback))
+                            loop_state["collection"] = collection
+                            logger.info(
+                                "[CURSOR-LOOP] Rebuilt synthetic collection (size=%d) for %s",
+                                len(collection), event.step,
+                            )
+                        else:
+                            context = state.get_render_context(event)
+                            collection = self._render_template(step_def.loop.in_, context)
+                            collection = self._normalize_loop_collection(collection, event.step)
+                            loop_state["collection"] = list(collection)
+                            logger.info(f"[LOOP-SETUP] Rendered collection for {event.step}: {len(collection or [])} items")
                         
                         # Store initial loop state in NATS K/V with event_id
                         # NOTE: We store only metadata and completed_count, NOT results array
@@ -1826,7 +2022,46 @@ class EventHandlingMixin:
                         has_pending_commands = pending_count > 0
                         if has_pending_commands:
                             logger.debug(f"[COMPLETION] execution={event.execution_id} pending_in_db={pending_count}")
-        # If in-memory state shows no pending AND issued_steps is populated, trust it
+        # Durable projection is the last word before a dead-end can complete an
+        # execution. This keeps distributed pods from trusting an incomplete
+        # in-memory issued/completed step set while command rows are still live.
+        if not has_pending_commands and is_completion_trigger:
+            durable_pending_count = await self._count_durable_pending_commands(
+                event.execution_id,
+                conn=conn,
+            )
+            if durable_pending_count is not None:
+                has_pending_commands = durable_pending_count > 0
+                if has_pending_commands:
+                    logger.debug(
+                        "[COMPLETION] execution=%s pending_in_command_table=%s",
+                        event.execution_id,
+                        durable_pending_count,
+                    )
+        # If in-memory state shows no pending AND command table agrees, trust it.
+
+        # Also probe arc rendering for step.exit and other fallback paths that did
+        # not go through _evaluate_next_transitions_with_status (which sets
+        # next_any_raised).  Without this, a step.exit arriving after a call.done
+        # whose arcs all raised would appear dead-end-eligible and prematurely fire
+        # workflow.completed.
+        if not next_any_raised and is_completion_trigger and step_def.next and not is_loop_step:
+            from .transitions import _get_next_arcs  # local import to avoid cycles
+            for probe in _get_next_arcs(step_def):
+                probe_when = getattr(probe, "when", None)
+                if not probe_when:
+                    continue
+                try:
+                    self._render_template(probe_when, context)
+                except Exception:
+                    next_any_raised = True
+                    logger.warning(
+                        "[COMPLETION] Arc probe raised on step=%s event=%s when=%r — "
+                        "treating completion check as indeterminate",
+                        event.step, event.name,
+                        (probe_when[:80] + "...") if isinstance(probe_when, str) and len(probe_when) > 80 else probe_when,
+                    )
+                    break
 
         has_matching_next_transition = (
             (
@@ -1837,6 +2072,12 @@ class EventHandlingMixin:
             if (is_completion_trigger and step_def.next and not is_loop_step)
             else False
         )
+        next_no_match_action = "complete"
+        if step_def and step_def.next and getattr(step_def.next, "spec", None):
+            next_no_match_action = str(
+                getattr(step_def.next.spec, "on_no_match", "complete") or "complete"
+            ).lower()
+        quiet_no_match = next_no_match_action == "quiet"
         is_dead_end_no_match = (
             is_completion_trigger
             and bool(step_def.next)
@@ -1844,7 +2085,23 @@ class EventHandlingMixin:
             and not has_matching_next_transition
             and not commands
             and not has_pending_commands
+            and not next_any_raised
+            and not quiet_no_match
         )
+        if quiet_no_match and is_completion_trigger and bool(step_def.next) and not has_matching_next_transition and not commands:
+            logger.info(
+                "[COMPLETION] Quiet branch end: execution=%s step=%s has no matching next arcs",
+                event.execution_id,
+                event.step,
+            )
+        if next_any_raised:
+            logger.warning(
+                "[COMPLETION] Skipping dead-end completion for execution=%s step=%s: "
+                "arc condition(s) raised during evaluation — treating as indeterminate "
+                "to avoid prematurely emitting workflow.completed on a rendering failure",
+                event.execution_id,
+                event.step,
+            )
         if is_dead_end_no_match:
             logger.info(
                 "[COMPLETION] Dead-end transition with no matching next arcs: execution=%s step=%s",
@@ -2029,4 +2286,3 @@ class EventHandlingMixin:
                 logger.warning("[ENGINE] Failed to save state: %s", exc)
 
         return commands
-

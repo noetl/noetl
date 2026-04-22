@@ -346,7 +346,7 @@ CREATE TABLE IF NOT EXISTS noetl.result_ref (
     source_step TEXT,
 
     -- Storage tier
-    store_tier TEXT NOT NULL CHECK (store_tier IN ('memory', 'kv', 'object', 's3', 'gcs', 'db', 'duckdb', 'eventlog')),
+    store_tier TEXT NOT NULL CHECK (store_tier IN ('memory', 'kv', 'disk', 'object', 's3', 'gcs', 'db', 'duckdb', 'eventlog')),
     physical_uri TEXT,  -- Actual storage location (s3://..., gs://..., kv://bucket/key)
 
     -- Metadata
@@ -385,7 +385,7 @@ CREATE INDEX IF NOT EXISTS idx_result_ref_store_tier ON noetl.result_ref (store_
 COMMENT ON TABLE noetl.result_ref IS 'ResultRef projection table - metadata index for result storage. Actual data in NATS/cloud storage.';
 COMMENT ON COLUMN noetl.result_ref.ref IS 'Logical URI: noetl://execution/<eid>/result/<name>/<id>';
 COMMENT ON COLUMN noetl.result_ref.scope IS 'Lifecycle scope: step (cleanup on step done), execution (cleanup on playbook done), workflow (cleanup on root done), permanent (never auto-cleaned)';
-COMMENT ON COLUMN noetl.result_ref.store_tier IS 'Storage backend: memory, kv (NATS KV), object (NATS Object), s3, gcs, db (PostgreSQL), duckdb, eventlog';
+COMMENT ON COLUMN noetl.result_ref.store_tier IS 'Storage backend: memory (in-process), kv (NATS KV), disk (local SSD cache + cloud spill), s3 (S3/MinIO), gcs, db (PostgreSQL), duckdb, eventlog. "object" retained for in-flight rows; auto-remapped to "disk" on read.';
 COMMENT ON COLUMN noetl.result_ref.physical_uri IS 'Actual storage URI (s3://bucket/key, kv://bucket/key, etc.)';
 COMMENT ON COLUMN noetl.result_ref.preview IS 'Truncated sample of data for UI preview (max 1KB JSON)';
 COMMENT ON COLUMN noetl.result_ref.extracted IS 'Fields from output.select available without resolution';
@@ -575,19 +575,35 @@ CREATE INDEX IF NOT EXISTS idx_event_loop_epoch_coalesce
     WHERE COALESCE(meta->>'loop_event_id', meta->>'__loop_epoch_id') IS NOT NULL;
 
 -- ============================================================================
--- noetl.command — Runtime worker instruction projection
+-- noetl.command — Runtime worker instruction projection (HASH-partitioned)
 -- ============================================================================
 -- Mutable table: one row per executable instruction. Server creates on
 -- command.issued, updates on claim/start/complete/fail. Workers fetch
 -- context from here. Event table stays append-only and fact-only.
+--
+-- Partitioning: HASH (execution_id) into 16 partitions to:
+--   - Prune to one partition for the dominant `WHERE execution_id = ?`
+--     query pattern (~3% of the data per scan vs. 100%).
+--   - Enable partition-wise joins with noetl.event (when event is also
+--     hash-partitioned by execution_id with the same modulus).
+--   - Distribute insert load across 16 b-trees instead of one.
+--
+-- PRIMARY KEY is composite (execution_id, command_id) because Postgres
+-- requires the partition key to participate in any UNIQUE constraint on
+-- a partitioned table. command_id is constructed application-side as
+-- `<execution_id>:<step_name>:<seq>` so the composite is effectively
+-- already unique.
+--
+-- An online migration script for existing flat noetl.command tables is
+-- provided in `scripts/db/migrate_command_to_hash_partitioned.sql`.
 
 CREATE TABLE IF NOT EXISTS noetl.command (
-    command_id          TEXT PRIMARY KEY,
+    command_id          BIGINT NOT NULL,
     event_id            BIGINT NOT NULL,
     execution_id        BIGINT NOT NULL,
     catalog_id          BIGINT NOT NULL,
     parent_execution_id BIGINT,
-    parent_command_id   TEXT,
+    parent_command_id   BIGINT,
 
     step_name           TEXT NOT NULL,
     tool_kind           TEXT,
@@ -612,8 +628,29 @@ CREATE TABLE IF NOT EXISTS noetl.command (
     latest_event_id     BIGINT,
 
     created_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
-    updated_at          TIMESTAMPTZ NOT NULL DEFAULT now()
-);
+    updated_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
+
+    PRIMARY KEY (execution_id, command_id)
+) PARTITION BY HASH (execution_id);
+
+-- 16 hash partitions (matching planned noetl.event modulus for
+-- partition-wise joins).
+CREATE TABLE IF NOT EXISTS noetl.command_p00 PARTITION OF noetl.command FOR VALUES WITH (MODULUS 16, REMAINDER 0);
+CREATE TABLE IF NOT EXISTS noetl.command_p01 PARTITION OF noetl.command FOR VALUES WITH (MODULUS 16, REMAINDER 1);
+CREATE TABLE IF NOT EXISTS noetl.command_p02 PARTITION OF noetl.command FOR VALUES WITH (MODULUS 16, REMAINDER 2);
+CREATE TABLE IF NOT EXISTS noetl.command_p03 PARTITION OF noetl.command FOR VALUES WITH (MODULUS 16, REMAINDER 3);
+CREATE TABLE IF NOT EXISTS noetl.command_p04 PARTITION OF noetl.command FOR VALUES WITH (MODULUS 16, REMAINDER 4);
+CREATE TABLE IF NOT EXISTS noetl.command_p05 PARTITION OF noetl.command FOR VALUES WITH (MODULUS 16, REMAINDER 5);
+CREATE TABLE IF NOT EXISTS noetl.command_p06 PARTITION OF noetl.command FOR VALUES WITH (MODULUS 16, REMAINDER 6);
+CREATE TABLE IF NOT EXISTS noetl.command_p07 PARTITION OF noetl.command FOR VALUES WITH (MODULUS 16, REMAINDER 7);
+CREATE TABLE IF NOT EXISTS noetl.command_p08 PARTITION OF noetl.command FOR VALUES WITH (MODULUS 16, REMAINDER 8);
+CREATE TABLE IF NOT EXISTS noetl.command_p09 PARTITION OF noetl.command FOR VALUES WITH (MODULUS 16, REMAINDER 9);
+CREATE TABLE IF NOT EXISTS noetl.command_p10 PARTITION OF noetl.command FOR VALUES WITH (MODULUS 16, REMAINDER 10);
+CREATE TABLE IF NOT EXISTS noetl.command_p11 PARTITION OF noetl.command FOR VALUES WITH (MODULUS 16, REMAINDER 11);
+CREATE TABLE IF NOT EXISTS noetl.command_p12 PARTITION OF noetl.command FOR VALUES WITH (MODULUS 16, REMAINDER 12);
+CREATE TABLE IF NOT EXISTS noetl.command_p13 PARTITION OF noetl.command FOR VALUES WITH (MODULUS 16, REMAINDER 13);
+CREATE TABLE IF NOT EXISTS noetl.command_p14 PARTITION OF noetl.command FOR VALUES WITH (MODULUS 16, REMAINDER 14);
+CREATE TABLE IF NOT EXISTS noetl.command_p15 PARTITION OF noetl.command FOR VALUES WITH (MODULUS 16, REMAINDER 15);
 
 CREATE INDEX IF NOT EXISTS idx_command_execution_id
     ON noetl.command (execution_id);
@@ -626,8 +663,22 @@ CREATE INDEX IF NOT EXISTS idx_command_worker
 CREATE INDEX IF NOT EXISTS idx_command_loop
     ON noetl.command (execution_id, loop_event_id, status)
     WHERE loop_event_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_command_loop_step_status
+    ON noetl.command (execution_id, step_name, loop_event_id, status, iter_index)
+    WHERE loop_event_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_command_pending_loop_step_created
+    ON noetl.command (execution_id, step_name, loop_event_id, created_at, iter_index)
+    WHERE status = 'PENDING' AND iter_index IS NOT NULL;
+-- Lookup-by-command_id (non-unique because partitioned UNIQUE requires
+-- the partition key; collisions are application-prevented via the
+-- command_id construction).
+CREATE INDEX IF NOT EXISTS idx_command_command_id
+    ON noetl.command (command_id);
 
--- Linkage: event → command
-ALTER TABLE noetl.event ADD COLUMN IF NOT EXISTS command_id TEXT;
+-- Linkage: event → command (BIGINT to match noetl.command.command_id)
+ALTER TABLE noetl.event ADD COLUMN IF NOT EXISTS command_id BIGINT;
 CREATE INDEX IF NOT EXISTS idx_event_command_id
     ON noetl.event (command_id) WHERE command_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_event_exec_type_command_id_event_id_desc
+    ON noetl.event (execution_id, event_type, command_id, event_id DESC)
+    WHERE command_id IS NOT NULL;

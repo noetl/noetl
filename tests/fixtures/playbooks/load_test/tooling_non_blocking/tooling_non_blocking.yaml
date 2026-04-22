@@ -6,7 +6,12 @@ metadata:
   description: |
     Validate that representative tools do not serialize execution under parallel loop load.
     Core probes (HTTP/Postgres/DuckDB) run by default.
-    Optional probes (Snowflake, NATS KV, NATS Object Store) can be enabled via workload flags.
+    Optional probes (Snowflake, NATS KV) can be enabled via workload flags.
+
+    Phase 0 RisingWave alignment removed the NATS Object Store probe
+    (`run_nats_object_probe`) along with the `object` storage tier. The
+    disk-cache-backed large-payload path will be covered by a dedicated
+    probe once phase 1 lands the DiskCacheBackend.
 
 workload:
   api_url: "http://paginated-api.test-server.svc.cluster.local:5555"
@@ -15,7 +20,6 @@ workload:
   expected_min_parallel: 2
   enable_snowflake_probe: false
   enable_nats_kv_probe: false
-  enable_nats_object_probe: false
   mandatory_steps:
     - run_http_probe
     - run_postgres_probe
@@ -23,7 +27,6 @@ workload:
   optional_steps:
     - run_snowflake_probe
     - run_nats_kv_probe
-    - run_nats_object_probe
   probe_items:
     - label: "slow"
       delay_seconds: 4.0
@@ -44,12 +47,10 @@ workload:
   # Optional probes are disabled by default so the fixture stays runnable in local kind.
   enable_snowflake_probe: false
   enable_nats_kv_probe: false
-  enable_nats_object_probe: false
 
   snowflake_auth: "sf_test"
   nats_auth: "nats_credential"
   nats_kv_bucket: "sessions"
-  nats_object_bucket: "test-objects"
 
 workflow:
   - step: start
@@ -256,7 +257,7 @@ workflow:
       arcs:
         - step: run_nats_kv_probe
           when: "{{ gate_nats_kv_probe.run }}"
-        - step: gate_nats_object_probe
+        - step: analyze_matrix
 
   - step: run_nats_kv_probe
     desc: Execute NATS KV probes in parallel (optional)
@@ -276,57 +277,6 @@ workflow:
         label: "{{ iter.item.label }}"
         execution_id: "{{ execution_id }}"
         loop_index: "{{ loop_index }}"
-      spec:
-        policy:
-          rules:
-            - when: "{{ output.status == 'error' and output.error.retryable }}"
-              then: { do: retry, attempts: 2, backoff: fixed, delay: 0.5 }
-            - when: "{{ output.status == 'error' }}"
-              then: { do: fail }
-            - else:
-                then: { do: continue }
-    next:
-      spec:
-        mode: exclusive
-      arcs:
-        - step: gate_nats_object_probe
-          when: '{{ event.name == "loop.done" }}'
-
-  - step: gate_nats_object_probe
-    desc: Determine if NATS Object Store probe should run
-    tool:
-      kind: python
-      input:
-        enabled: "{{ workload.enable_nats_object_probe }}"
-      code: |
-        value = str(enabled).strip().lower() if enabled is not None else "false"
-        run = value in {"1", "true", "yes", "on"}
-        result = {"run": run}
-    next:
-      spec:
-        mode: exclusive
-      arcs:
-        - step: run_nats_object_probe
-          when: "{{ gate_nats_object_probe.run }}"
-        - step: analyze_matrix
-
-  - step: run_nats_object_probe
-    desc: Execute NATS Object Store probes in parallel (optional)
-    loop:
-      in: "{{ ctx.probe_items }}"
-      iterator: item
-      spec:
-        mode: parallel
-        max_in_flight: 5
-    tool:
-      kind: nats
-      auth: "{{ workload.nats_auth }}"
-      operation: object_put
-      bucket: "{{ workload.nats_object_bucket }}"
-      name: "tooling-non-blocking-{{ execution_id }}-{{ loop_index }}-{{ iter.item.label }}.json"
-      data: |
-        {"label":"{{ iter.item.label }}","execution_id":"{{ execution_id }}","loop_index":"{{ loop_index }}"}
-      encoding: utf-8
       spec:
         policy:
           rules:

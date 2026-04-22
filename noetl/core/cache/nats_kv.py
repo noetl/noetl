@@ -1242,7 +1242,16 @@ class NATSKVCache:
         safe_max_in_flight = max(1, int(max_in_flight or 1))
         safe_requested_count = max(1, int(requested_count))
 
-        max_retries = 5
+        # Bumped from 5 to 20 because high-concurrency fetch loops
+        # (max_in_flight=100, concurrent call.done processors) routinely trigger
+        # 5-attempt CAS exhaustion on the last few iterations: all concurrent
+        # updaters see the same `completed_count` and race to increment
+        # `scheduled_count`, with only one winning per CAS round.  Exhausting
+        # retries leaves scheduled_count < collection_size and the loop never
+        # issues the tail iterations → loop.done never fires.  The retry body
+        # sleeps 0.01s × attempt so 20 retries cap at ~2s total, well under any
+        # single iteration's processing time.
+        max_retries = 20
         for attempt in range(max_retries):
             try:
                 try:

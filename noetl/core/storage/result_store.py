@@ -547,23 +547,25 @@ class TempStore:
         except Exception as e:
             logger.debug(f"TEMP: KV fetch failed: {e}")
 
-        # Try NATS Object Store
-        try:
-            from noetl.core.storage.backends import NATSObjectBackend
-            if not hasattr(self, '_object_backend'):
-                self._object_backend = NATSObjectBackend()
-            data_bytes = await self._object_backend.get(key)
+        # Try S3/MinIO if configured (covers disk-tier writes spilled here in phase 0)
+        import os
+        if os.getenv("NOETL_S3_BUCKET"):
+            try:
+                from noetl.core.storage.backends import S3Backend
+                if not hasattr(self, '_s3_backend'):
+                    self._s3_backend = S3Backend()
+                data_bytes = await self._s3_backend.get(key)
 
-            # Decompress if gzipped
-            if data_bytes and len(data_bytes) >= 2 and data_bytes[:2] == b'\x1f\x8b':
-                data_bytes = gzip.decompress(data_bytes)
+                # Decompress if gzipped
+                if data_bytes and len(data_bytes) >= 2 and data_bytes[:2] == b'\x1f\x8b':
+                    data_bytes = gzip.decompress(data_bytes)
 
-            logger.debug(f"TEMP: Direct fetch from Object Store successful: {ref_str}")
-            return json.loads(data_bytes.decode('utf-8'))
-        except KeyError:
-            logger.debug(f"TEMP: Object not found: {key}")
-        except Exception as e:
-            logger.debug(f"TEMP: Object Store fetch failed: {e}")
+                logger.debug(f"TEMP: Direct fetch from S3 successful: {ref_str}")
+                return json.loads(data_bytes.decode('utf-8'))
+            except KeyError:
+                logger.debug(f"TEMP: S3 object not found: {key}")
+            except Exception as e:
+                logger.debug(f"TEMP: S3 fetch failed: {e}")
 
         # Try GCS if configured
         import os
@@ -617,17 +619,24 @@ class TempStore:
                 temp_ref.store = StoreTier.MEMORY
                 return f"memory://{temp_ref.ref}"
 
-        elif store == StoreTier.OBJECT:
+        elif store == StoreTier.DISK:
+            # Phase 1: local SSD/NVMe cache + async cloud spill.
+            # DiskCacheBackend writes to the local cache pool (meta or data
+            # depending on size) and asynchronously replicates to the
+            # configured cloud tier for durability.
             try:
-                from noetl.core.storage.backends import NATSObjectBackend
-                if not hasattr(self, '_object_backend'):
-                    self._object_backend = NATSObjectBackend()
-                uri = await self._object_backend.put(key, data_bytes)
+                uri = await (await self._get_or_init_disk_backend()).put(key, data_bytes)
                 return uri
             except Exception as e:
-                logger.warning(f"TEMP: Object store failed, falling back to KV: {e}")
-                # Fallback to KV
-                return await self._store_data_fallback(temp_ref, data_bytes, StoreTier.KV)
+                # If the disk backend is unavailable (e.g., cache dir missing
+                # in a dev env), fall back to the cloud tier directly.
+                logger.warning(
+                    f"TEMP: DISK backend put failed, falling back to cloud: {e}"
+                )
+                from noetl.core.storage.router import default_router
+                return await self._store_data_fallback(
+                    temp_ref, data_bytes, default_router.default_cloud_tier
+                )
 
         elif store == StoreTier.S3:
             try:
@@ -637,8 +646,8 @@ class TempStore:
                 uri = await self._s3_backend.put(key, data_bytes)
                 return uri
             except Exception as e:
-                logger.warning(f"TEMP: S3 store failed, falling back to Object: {e}")
-                return await self._store_data_fallback(temp_ref, data_bytes, StoreTier.OBJECT)
+                logger.warning(f"TEMP: S3 store failed, falling back to KV: {e}")
+                return await self._store_data_fallback(temp_ref, data_bytes, StoreTier.KV)
 
         elif store == StoreTier.GCS:
             try:
@@ -648,8 +657,8 @@ class TempStore:
                 uri = await self._gcs_backend.put(key, data_bytes)
                 return uri
             except Exception as e:
-                logger.warning(f"TEMP: GCS store failed, falling back to Object: {e}")
-                return await self._store_data_fallback(temp_ref, data_bytes, StoreTier.OBJECT)
+                logger.warning(f"TEMP: GCS store failed, falling back to KV: {e}")
+                return await self._store_data_fallback(temp_ref, data_bytes, StoreTier.KV)
 
         elif store == StoreTier.DB:
             # DB storage not implemented yet, use NATS KV
@@ -665,6 +674,32 @@ class TempStore:
         """Store data using a fallback tier."""
         temp_ref.store = fallback_tier
         return await self._store_data(temp_ref, data_bytes)
+
+    async def _get_or_init_disk_backend(self):
+        """Return a lazily-initialized DiskCacheBackend wired with the configured cloud spill target."""
+        if hasattr(self, "_disk_backend"):
+            return self._disk_backend
+        from noetl.core.storage.backends import (
+            DiskCacheBackend,
+            S3Backend,
+            GCSBackend,
+        )
+        from noetl.core.storage.router import default_router
+
+        # Pick the cloud backend used as the spill target. MinIO uses S3Backend
+        # with NOETL_S3_ENDPOINT honored by the existing env plumbing.
+        cloud_backend = None
+        try:
+            cloud_tier = default_router.default_cloud_tier
+            if cloud_tier == StoreTier.GCS:
+                cloud_backend = GCSBackend()
+            else:
+                cloud_backend = S3Backend()
+        except Exception as e:
+            logger.debug(f"TEMP: disk-cache cloud spill disabled: {e}")
+
+        self._disk_backend = DiskCacheBackend(cloud_backend=cloud_backend)
+        return self._disk_backend
 
     async def _retrieve_data(self, temp_ref: TempRef) -> Any:
         """Retrieve data from storage backend."""
@@ -688,16 +723,18 @@ class TempStore:
             except Exception as e:
                 raise KeyError(f"Failed to retrieve from KV: {e}")
 
-        elif store == StoreTier.OBJECT:
+        elif store == StoreTier.DISK:
+            # Phase 1: read through DiskCacheBackend. Local hit -> served
+            # from the on-worker SSD cache. Local miss -> read-through to
+            # the cloud spill target, which also re-populates the local
+            # cache for subsequent reads.
             try:
-                from noetl.core.storage.backends import NATSObjectBackend
-                if not hasattr(self, '_object_backend'):
-                    self._object_backend = NATSObjectBackend()
-                data_bytes = await self._object_backend.get(key)
+                backend = await self._get_or_init_disk_backend()
+                data_bytes = await backend.get(key)
             except KeyError:
                 raise
             except Exception as e:
-                raise KeyError(f"Failed to retrieve from Object Store: {e}")
+                raise KeyError(f"Failed to retrieve DISK: {e}")
 
         elif store == StoreTier.S3:
             try:
@@ -750,14 +787,14 @@ class TempStore:
             except Exception as e:
                 logger.warning(f"TEMP: Failed to delete from KV: {e}")
 
-        elif store == StoreTier.OBJECT:
+        elif store == StoreTier.DISK:
+            # Phase 1: DiskCacheBackend.delete drops the local pool entry
+            # AND the cloud spill copy (best-effort).
             try:
-                from noetl.core.storage.backends import NATSObjectBackend
-                if not hasattr(self, '_object_backend'):
-                    self._object_backend = NATSObjectBackend()
-                await self._object_backend.delete(key)
+                backend = await self._get_or_init_disk_backend()
+                await backend.delete(key)
             except Exception as e:
-                logger.warning(f"TEMP: Failed to delete from Object Store: {e}")
+                logger.warning(f"TEMP: Failed to delete DISK: {e}")
 
         elif store == StoreTier.S3:
             try:
@@ -798,14 +835,6 @@ class TempStore:
             if not hasattr(self, '_kv_backend'):
                 self._kv_backend = NATSKVBackend()
             deleted = await self._kv_backend.delete(key) or deleted
-        except Exception:
-            pass
-
-        try:
-            from noetl.core.storage.backends import NATSObjectBackend
-            if not hasattr(self, '_object_backend'):
-                self._object_backend = NATSObjectBackend()
-            deleted = await self._object_backend.delete(key) or deleted
         except Exception:
             pass
 

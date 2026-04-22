@@ -6,14 +6,254 @@ from .store import PlaybookRepo, StateStore
 
 class TransitionMixin:
     def _get_loop_max_in_flight(self, step: Step) -> int:
-        """Resolve max in-flight limit for loop scheduling."""
+        """Resolve max in-flight limit for loop scheduling.
+
+        For cursor loops max_in_flight is the worker concurrency — the
+        number of persistent worker commands dispatched in parallel —
+        rather than a per-tick dispatch budget.
+        """
         if not step.loop:
             return 1
-        if step.loop.mode != "parallel":
+        loop_mode = step.loop.mode
+        if loop_mode not in ("parallel", "cursor"):
             return 1
         if step.loop.spec and step.loop.spec.max_in_flight:
             return max(1, int(step.loop.spec.max_in_flight))
         return 1
+
+    async def _issue_cursor_loop_commands(
+        self,
+        state: "ExecutionState",
+        step_def: Step,
+        step_input: dict[str, Any],
+    ) -> list[Command]:
+        """Dispatch N persistent worker commands for a cursor-driven loop.
+
+        One command per worker slot; each command runs the worker-side
+        claim-process-release loop until the cursor is drained.  The
+        engine does not claim loop indices, render the collection, or
+        participate in per-item iteration — that all happens server-side
+        in the worker against the cursor driver.
+
+        Re-entry (``__loop_continue`` / ``__loop_retry``) is a no-op: a
+        single dispatch per epoch is enough since each worker loops
+        server-side until exhaustion.
+        """
+        import time
+        from noetl.core.dsl.render import render_template as recursive_render
+
+        if not step_def.loop or not step_def.loop.is_cursor:
+            return []
+
+        existing_loop_state = state.loop_state.get(step_def.step)
+        is_continuation = bool(
+            existing_loop_state
+            and (step_input.get("__loop_continue") or step_input.get("__loop_retry"))
+        )
+        if is_continuation:
+            # Workers self-continue; nothing to re-dispatch.
+            return []
+
+        worker_count = self._get_loop_max_in_flight(step_def)
+        loop_event_id = f"loop_{state.execution_id}_{int(time.time() * 1_000_000)}"
+        if existing_loop_state:
+            del state.loop_state[step_def.step]
+
+        # Clear prior completion snapshot so the engine's dedup guard
+        # (issued_steps / completed_steps) does not block a re-entry
+        # routing from another step (e.g. facility-N's
+        # mark_facility_processed → load_next_facility →
+        # setup_facility_work → fetch_X routing for facility N+1 needs
+        # a clean slate on fetch_X).  _create_command_for_step does this
+        # for non-cursor loops via the should_reset_existing_loop branch;
+        # cursor dispatch bypasses that path so we replicate it here.
+        state.completed_steps.discard(step_def.step)
+        state.step_results.pop(step_def.step, None)
+        state.variables.pop(step_def.step, None)
+
+        # Seed loop_state so loop.done aggregation treats one worker
+        # exit (call.done) as one "slot complete".  The synthetic
+        # collection has length = worker_count; completed_count reaches
+        # that value when all workers exit.
+        state.init_loop(
+            step_def.step,
+            collection=list(range(worker_count)),
+            iterator=step_def.loop.iterator,
+            mode="cursor",
+            event_id=loop_event_id,
+        )
+
+        # Also seed the distributed NATS KV loop-state entry so the
+        # call.done path's increment_loop_completed() can find the
+        # epoch on the first terminal event.  Without this, the
+        # fallback count path runs and skips the loop.done claim.
+        nats_cache = await get_nats_cache()
+        await nats_cache.set_loop_state(
+            str(state.execution_id),
+            step_def.step,
+            {
+                "collection_size": worker_count,
+                "completed_count": 0,
+                "scheduled_count": worker_count,
+                "iterator": step_def.loop.iterator,
+                "mode": "cursor",
+                "event_id": loop_event_id,
+            },
+            event_id=loop_event_id,
+        )
+
+        # Render context built once at dispatch time; the worker renders
+        # `iter.<iterator>` per-claim against its own row.  ctx/workload
+        # come from the engine snapshot, same as a normal step.
+        try:
+            _lnf = state.step_results.get("load_next_facility")
+            _lnf_keys = list(_lnf.keys()) if isinstance(_lnf, dict) else type(_lnf).__name__
+            _lnf_ctx = _lnf.get("context") if isinstance(_lnf, dict) else None
+            _lnf_ctx_keys = list(_lnf_ctx.keys()) if isinstance(_lnf_ctx, dict) else type(_lnf_ctx).__name__
+            _lnf_top_rows = _lnf.get("rows") if isinstance(_lnf, dict) else None
+            _lnf_ctx_rows = _lnf_ctx.get("rows") if isinstance(_lnf_ctx, dict) else None
+            logger.info(
+                "[DIAG-DISPATCH] step=%s lnf_keys=%s lnf_ctx_keys=%s "
+                "top_rows_len=%s ctx_rows_len=%s",
+                step_def.step, _lnf_keys, _lnf_ctx_keys,
+                len(_lnf_top_rows) if isinstance(_lnf_top_rows, list) else None,
+                len(_lnf_ctx_rows) if isinstance(_lnf_ctx_rows, list) else None,
+            )
+        except Exception as _e:
+            logger.info("[DIAG-DISPATCH] failed: %s", _e)
+        base_context = state.get_render_context(Event(
+            execution_id=state.execution_id,
+            step=step_def.step,
+            name="cursor_loop_init",
+            payload={},
+        ))
+
+        # Cursor spec — serialize so the worker receives a plain dict.
+        cursor_spec = step_def.loop.cursor.model_dump()
+
+        # Pre-render the claim SQL against the engine's full render
+        # context so any execution-scoped values (e.g. a facility id
+        # resolved from a prior step's result) are baked into the
+        # claim statement at dispatch time.  This sidesteps the
+        # worker-side rendering pitfalls where a step-result proxy
+        # has not surfaced its rows yet, and guarantees every worker
+        # slot for this epoch uses the *same* facility / partition
+        # value even if the upstream control table flips active=true
+        # to another row mid-flight.
+        claim_template = cursor_spec.get("claim")
+        if claim_template:
+            try:
+                rendered_claim = self._render_template(claim_template, base_context)
+                if isinstance(rendered_claim, str) and rendered_claim.strip():
+                    cursor_spec["claim"] = rendered_claim
+                    logger.info(
+                        "[CURSOR-LOOP] Pre-rendered claim SQL for %s (%d chars)",
+                        step_def.step, len(rendered_claim),
+                    )
+                else:
+                    logger.warning(
+                        "[CURSOR-LOOP] Pre-render of claim SQL for %s returned "
+                        "non-string/empty; falling back to worker-side render",
+                        step_def.step,
+                    )
+            except Exception as exc:
+                logger.warning(
+                    "[CURSOR-LOOP] Pre-render of claim SQL for %s failed (%s); "
+                    "falling back to worker-side render",
+                    step_def.step, exc,
+                )
+
+        # Tool config: pipeline (list of labeled tasks) is the expected
+        # shape for a cursor loop body; single-tool shorthand is allowed
+        # and wrapped into a one-task pipeline for uniform execution.
+        if step_def.tool is None:
+            logger.error(
+                "[CURSOR-LOOP] Step %s has loop.cursor but no tool pipeline; refusing to dispatch",
+                step_def.step,
+            )
+            return []
+        if isinstance(step_def.tool, list):
+            tasks = step_def.tool
+        else:
+            tool_dict = step_def.tool.model_dump()
+            tasks = [{"name": f"{step_def.step}_task", **tool_dict}]
+
+        # Input bindings mirror the normal step path.
+        step_args: dict[str, Any] = {}
+        if step_def.input:
+            step_args.update(step_def.input)
+        filtered_input = {
+            k: v for k, v in (step_input or {}).items()
+            if not k.startswith("__")
+        }
+        step_args.update(filtered_input)
+        rendered_input = recursive_render(self.jinja_env, step_args, base_context)
+
+        # Next router passes through unchanged — evaluated when
+        # loop.done fires (i.e. all workers exited).
+        next_targets = None
+        if step_def.next:
+            next_targets = [arc.model_dump(exclude_none=True) for arc in _get_next_arcs(step_def)]
+            next_mode = _get_next_mode(step_def)
+        else:
+            next_mode = "exclusive"
+        command_spec = CommandSpec(next_mode=next_mode)
+
+        commands: list[Command] = []
+        for slot in range(worker_count):
+            worker_slot_id = f"{loop_event_id}:slot-{slot}"
+            tool_config = {
+                "cursor": cursor_spec,
+                "iterator": step_def.loop.iterator,
+                "tasks": tasks,
+                "worker_slot_id": worker_slot_id,
+                "worker_slot_index": slot,
+                "worker_count": worker_count,
+                "loop_event_id": loop_event_id,
+            }
+            command_metadata = {
+                "task_sequence": True,
+                "parent_step": step_def.step,
+                "cursor_worker": True,
+                "worker_slot_id": worker_slot_id,
+                "loop_step": step_def.step,
+                "loop_event_id": loop_event_id,
+                "__loop_epoch_id": loop_event_id,
+                "loop_worker_count": worker_count,
+                # Each worker slot counts as one loop iteration for
+                # aggregation purposes: one terminal call.done per slot
+                # advances completed_count by 1; loop.done fires when
+                # completed_count == worker_count.
+                "loop_iteration_index": slot,
+            }
+            command = Command(
+                execution_id=state.execution_id,
+                # Use :task_sequence suffix so the engine's existing
+                # loop.done aggregation path (events.py ~line 216)
+                # recognizes our worker call.done events as iteration
+                # terminals and increments the loop counter.  The
+                # tool.kind remains cursor_worker so the worker routes
+                # the command to the cursor runtime, not the plain
+                # task_sequence executor.
+                step=f"{step_def.step}:task_sequence",
+                tool=ToolCall(kind="cursor_worker", config=tool_config),
+                input=rendered_input,
+                render_context=base_context,
+                pipeline=tasks,
+                next_targets=next_targets,
+                spec=command_spec,
+                attempt=1,
+                priority=0,
+                metadata=command_metadata,
+            )
+            commands.append(command)
+
+        logger.info(
+            "[CURSOR-LOOP] Dispatched %d worker command(s) for step %s "
+            "(kind=%s, epoch=%s)",
+            len(commands), step_def.step, cursor_spec.get("kind"), loop_event_id,
+        )
+        return commands
 
     async def _issue_loop_commands(
         self,
@@ -25,6 +265,11 @@ class TransitionMixin:
         if not step_def.loop:
             command = await self._create_command_for_step(state, step_def, step_input)
             return [command] if command else []
+
+        # Cursor loops take a different dispatch shape — N worker commands
+        # up-front, each running its own claim-process-release loop.
+        if step_def.loop.is_cursor:
+            return await self._issue_cursor_loop_commands(state, step_def, step_input)
 
         # Optimization: Fetch loop collection once for the entire batch
         nats_cache = await get_nats_cache()
@@ -129,30 +374,41 @@ class TransitionMixin:
     
     def _evaluate_condition(self, when_expr: str, context: dict[str, Any]) -> bool:
         """Evaluate when condition."""
+        matched, _raised = self._evaluate_condition_with_status(when_expr, context)
+        return matched
+
+    def _evaluate_condition_with_status(
+        self, when_expr: str, context: dict[str, Any]
+    ) -> tuple[bool, bool]:
+        """Evaluate a `when` expression and report whether rendering raised.
+
+        Returns (matched, raised). `raised=True` means the expression itself
+        could not be rendered (e.g. StrictUndefined on a missing field) — the
+        caller should treat this arc as indeterminate, not as a definitive
+        False, so a missing result-store reference does not make a step look
+        like a dead-end and prematurely complete the execution.
+        """
         try:
-            # Render the condition
             result = self._render_template(when_expr, context)
-            
-            # Convert to boolean
+
             if isinstance(result, bool):
                 logger.debug("[COND] Evaluated condition -> %s", result)
-                return result
+                return result, False
             if isinstance(result, str):
-                # Check for explicit false values, otherwise treat non-empty strings as truthy
                 is_false = result.lower() in ("false", "0", "no", "none", "")
-                is_true = not is_false
-                logger.debug("[COND] Evaluated string condition -> %s", is_true)
-                return is_true
-            bool_result = bool(result)
-            logger.debug("[COND] Evaluated condition value_type=%s -> %s", type(result).__name__, bool_result)
-            return bool_result
+                matched = not is_false
+                logger.debug("[COND] Evaluated string condition -> %s", matched)
+                return matched, False
+            matched = bool(result)
+            logger.debug("[COND] Evaluated condition value_type=%s -> %s", type(result).__name__, matched)
+            return matched, False
         except Exception as e:
             logger.error(
                 "Condition evaluation error: %s | condition_preview=%s",
                 e,
                 (when_expr[:160] + "...") if isinstance(when_expr, str) and len(when_expr) > 160 else when_expr,
             )
-            return False
+            return False, True
     
     async def _evaluate_next_transitions(
         self,
@@ -160,7 +416,7 @@ class TransitionMixin:
         step_def: Step,
         event: Event
     ) -> list[Command]:
-        commands, _actionable_match = await self._evaluate_next_transitions_with_match(
+        commands, _actionable_match, _raised = await self._evaluate_next_transitions_with_status(
             state,
             step_def,
             event,
@@ -173,6 +429,19 @@ class TransitionMixin:
         step_def: Step,
         event: Event,
     ) -> tuple[list[Command], bool]:
+        commands, matched, _raised = await self._evaluate_next_transitions_with_status(
+            state,
+            step_def,
+            event,
+        )
+        return commands, matched
+
+    async def _evaluate_next_transitions_with_status(
+        self,
+        state: ExecutionState,
+        step_def: Step,
+        event: Event,
+    ) -> tuple[list[Command], bool, bool]:
         """
         Evaluate next.arcs[].when conditions and return commands plus matched-arc status.
 
@@ -190,13 +459,14 @@ class TransitionMixin:
         context = state.get_render_context(event)
 
         if not step_def.next:
-            return commands, False
+            return commands, False, False
         next_mode = _get_next_mode(step_def)
         next_items = _get_next_arcs(step_def)
 
         logger.info(f"[NEXT-EVAL] Step {event.step} has {len(next_items)} next targets, mode={next_mode}, evaluating for event {event.name}")
 
         any_matched = False
+        any_raised = False
 
         for idx, next_target in enumerate(next_items):
             target_step = next_target.step
@@ -210,7 +480,10 @@ class TransitionMixin:
             # Evaluate when condition (if present)
             if when_condition:
                 logger.debug(f"[NEXT-EVAL] Evaluating next[{idx}].when: {when_condition}")
-                if not self._evaluate_condition(when_condition, context):
+                matched, raised = self._evaluate_condition_with_status(when_condition, context)
+                if raised:
+                    any_raised = True
+                if not matched:
                     logger.debug(f"[NEXT-EVAL] Next[{idx}] condition not matched: {when_condition}")
                     continue
                 logger.info(f"[NEXT-MATCH] Step {event.step}: matched next[{idx}] -> {target_step} (when: {when_condition})")
@@ -276,8 +549,14 @@ class TransitionMixin:
 
         if not any_matched:
             logger.debug(f"[NEXT-EVAL] No next targets matched for step {event.step}")
+        if any_raised:
+            logger.warning(
+                "[NEXT-EVAL] Step %s had arc condition(s) that raised during rendering; "
+                "caller should treat outcome as indeterminate",
+                event.step,
+            )
 
-        return commands, any_matched
+        return commands, any_matched, any_raised
 
     def _has_matching_next_transition(
         self,

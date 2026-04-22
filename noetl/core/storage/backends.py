@@ -1,11 +1,21 @@
 """
 Storage backends for NoETL ResultStore.
 
-Implements drivers for each storage tier:
-- NATS KV: < 1MB, execution-scoped (distributed cache)
-- NATS Object Store: < 10MB, larger objects with streaming
-- S3/MinIO: Large blobs, cloud storage
-- GCS: Google Cloud Storage for large blobs
+Implements drivers for each storage tier (aligned with RisingWave
+three-tier hot/warm/cold hierarchy):
+
+- Memory (hot, <10KB, step-scoped, in-process dict)
+- NATS KV (warm, <1MB, execution-scoped, distributed cache)
+- DiskCache (warm, >=1MB, local SSD/NVMe + async cloud spill; phase 1)
+- S3/MinIO (cold/durable, any size; MinIO via NOETL_S3_ENDPOINT)
+- GCS (cold/durable, any size)
+
+Phase 0 removes the previous `NATSObjectBackend` ("object" tier).
+Payloads carrying `store: "object"` are auto-mapped to `"disk"` by
+`noetl.core.storage.models._normalize_store_value` with a one-time
+deprecation warning.
+
+See `docs/features/noetl_storage_and_streaming_alignment.md`.
 
 Each backend implements async get/put/delete operations.
 """
@@ -16,6 +26,7 @@ import hashlib
 import json
 import os
 from abc import ABC, abstractmethod
+from collections import OrderedDict
 from typing import Any, Dict, Optional, Tuple
 from datetime import datetime, timezone
 
@@ -198,110 +209,420 @@ class NATSKVBackend(StorageBackend):
             return False
 
 
-class NATSObjectBackend(StorageBackend):
-    """NATS JetStream Object Store for larger objects (< 10MB)."""
+class StorageNotImplementedError(NotImplementedError):
+    """Backend is declared but not yet implemented in the current phase."""
+
+
+class _TokenBucket:
+    """Async token bucket rate limiter (bytes/sec). 0 rate = unlimited."""
+
+    def __init__(self, rate_bytes_per_sec: int, burst_bytes: Optional[int] = None):
+        self._rate = max(0, int(rate_bytes_per_sec))
+        self._capacity = burst_bytes if burst_bytes is not None else max(self._rate, 1)
+        self._tokens = float(self._capacity)
+        self._last = asyncio.get_event_loop().time() if False else None  # lazy-init
+        self._lock = asyncio.Lock()
+
+    async def take(self, n: int) -> None:
+        if self._rate <= 0 or n <= 0:
+            return
+        async with self._lock:
+            loop = asyncio.get_event_loop()
+            if self._last is None:
+                self._last = loop.time()
+            while True:
+                now = loop.time()
+                delta = now - self._last
+                self._last = now
+                self._tokens = min(self._capacity, self._tokens + delta * self._rate)
+                if self._tokens >= n:
+                    self._tokens -= n
+                    return
+                # Not enough tokens; wait for the shortfall.
+                need = n - self._tokens
+                wait = need / self._rate
+                await asyncio.sleep(wait)
+
+
+class _DiskCachePool:
+    """
+    Single-tier local disk cache with LRU eviction.
+
+    Used as a building block for DiskCacheBackend's meta + data pools.
+    Safe for concurrent coroutines on one event loop; not cross-process.
+    """
 
     def __init__(
         self,
-        bucket_name: str = "noetl_result_objects",
-        nats_url: Optional[str] = None,
-        max_object_size: int = 10 * 1024 * 1024,  # 10MB
+        root_dir: str,
+        capacity_bytes: int,
+        rate_limiter: Optional[_TokenBucket],
+        name: str,
     ):
-        self._bucket_name = bucket_name
-        self._nats_url = nats_url or os.getenv("NATS_URL", "nats://nats.nats.svc.cluster.local:4222")
-        self._max_object_size = max_object_size
-        self._nc = None
-        self._js = None
-        self._obs = None
+        self._root = root_dir
+        self._capacity = max(0, int(capacity_bytes))
+        self._rate = rate_limiter
+        self._name = name
+        # OrderedDict: key -> (file_path, size_bytes). move_to_end on access = LRU.
+        self._index: "OrderedDict[str, tuple[str, int]]" = OrderedDict()
+        self._current_bytes = 0
         self._lock = asyncio.Lock()
+        self._dirs_created = False
 
-    async def _ensure_connected(self):
-        """Ensure NATS Object Store connection."""
-        if self._obs is not None:
+    def _ensure_dirs(self) -> None:
+        """Create cache directories on first write. Deferred so instantiation is side-effect free."""
+        if self._dirs_created:
             return
+        os.makedirs(os.path.join(self._root, "tmp"), exist_ok=True)
+        self._dirs_created = True
 
-        async with self._lock:
-            if self._obs is not None:
-                return
+    def _key_to_rel_path(self, key: str) -> str:
+        # Hash keeps filenames bounded and avoids special-char issues.
+        h = hashlib.sha256(key.encode("utf-8")).hexdigest()
+        return os.path.join(h[:2], h)
 
-            try:
-                import nats
-                # Use env vars directly to avoid full config validation (workers don't have DB settings)
-                nats_user = os.getenv("NATS_USER", "")
-                nats_password = os.getenv("NATS_PASSWORD", "")
+    def _abs_path(self, key: str) -> str:
+        return os.path.join(self._root, self._key_to_rel_path(key))
 
-                connect_kwargs = {
-                    "servers": [self._nats_url],
-                    "name": "noetl_object_store"
-                }
-                if nats_user and nats_password:
-                    connect_kwargs["user"] = nats_user
-                    connect_kwargs["password"] = nats_password
-
-                self._nc = await nats.connect(**connect_kwargs)
-                self._js = self._nc.jetstream()
-
-                # Create or get Object Store bucket
+    async def warm_start(self) -> int:
+        """Re-index on-disk files. Returns bytes indexed."""
+        indexed = 0
+        if not os.path.isdir(self._root):
+            return 0
+        entries: list[tuple[str, int, float]] = []
+        for dirpath, _dirnames, filenames in os.walk(self._root):
+            # skip tmp/
+            if os.path.basename(dirpath) == "tmp":
+                continue
+            for fn in filenames:
+                full = os.path.join(dirpath, fn)
                 try:
-                    self._obs = await self._js.create_object_store(
-                        bucket=self._bucket_name,
-                        description="NoETL result objects",
-                        max_bytes=1024 * 1024 * 1024,  # 1GB total bucket size
-                    )
-                    logger.info(f"[NATS-OBJ] Created bucket: {self._bucket_name}")
-                except Exception:
-                    self._obs = await self._js.object_store(self._bucket_name)
-                    logger.info(f"[NATS-OBJ] Connected to existing bucket: {self._bucket_name}")
+                    st = os.stat(full)
+                except OSError:
+                    continue
+                entries.append((full, st.st_size, st.st_mtime))
+        # Sort oldest-first so LRU order after insertion matches mtime order.
+        entries.sort(key=lambda e: e[2])
+        for full, size, _mt in entries:
+            # On-disk layout is <root>/<hash[:2]>/<hash>. The full sha256
+            # filename IS the cache-index key used by put()/get(), so we
+            # just take the basename.
+            cache_key = os.path.basename(full)
+            async with self._lock:
+                self._index[cache_key] = (full, size)
+                self._current_bytes += size
+                indexed += size
+        logger.info(
+            f"[DISK:{self._name}] warm-start indexed {len(entries)} files / {indexed} bytes"
+        )
+        return indexed
 
-            except Exception as e:
-                logger.error(f"[NATS-OBJ] Connection failed: {e}")
-                raise
+    async def _evict_until_fits(self, incoming: int) -> None:
+        if self._capacity <= 0:
+            return
+        while self._current_bytes + incoming > self._capacity and self._index:
+            # Pop LRU
+            key, (path, size) = self._index.popitem(last=False)
+            self._current_bytes -= size
+            try:
+                os.remove(path)
+            except OSError as e:
+                logger.debug(f"[DISK:{self._name}] evict remove failed {path}: {e}")
+            logger.debug(
+                f"[DISK:{self._name}] evicted {key[:16]}... ({size} bytes); "
+                f"current={self._current_bytes}"
+            )
 
-    async def put(self, key: str, data: bytes, metadata: Optional[Dict[str, Any]] = None) -> str:
-        await self._ensure_connected()
+    async def put(self, key: str, data: bytes) -> str:
+        # Hash-based cache-index key (see warm_start for the reasoning).
+        cache_key = hashlib.sha256(key.encode("utf-8")).hexdigest()
+        abs_path = self._abs_path(key)
+        size = len(data)
 
-        if len(data) > self._max_object_size:
-            raise ValueError(f"Data too large for NATS Object Store: {len(data)} > {self._max_object_size}")
+        if self._rate:
+            await self._rate.take(size)
 
-        # Object store uses names directly
-        obj_name = key.replace("/", "_").replace(":", "_")
+        self._ensure_dirs()
+        os.makedirs(os.path.dirname(abs_path), exist_ok=True)
+        tmp_path = os.path.join(
+            self._root,
+            "tmp",
+            f"{cache_key}.{os.getpid()}.{id(asyncio.current_task())}.tmp",
+        )
 
-        await self._obs.put(obj_name, data)
-        logger.debug(f"[NATS-OBJ] Stored {obj_name} ({len(data)} bytes)")
-        return f"nats-obj://{self._bucket_name}/{obj_name}"
+        # Atomic write: tmp + rename. We offload sync I/O to the default executor.
+        loop = asyncio.get_event_loop()
 
-    async def get(self, key: str) -> bytes:
-        await self._ensure_connected()
+        def _write_and_rename() -> None:
+            with open(tmp_path, "wb") as f:
+                f.write(data)
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(tmp_path, abs_path)
 
-        obj_name = key.replace("/", "_").replace(":", "_")
         try:
-            result = await self._obs.get(obj_name)
-            return result.data
-        except Exception as e:
-            if "object not found" in str(e).lower():
-                raise KeyError(f"Object not found: {obj_name}")
+            await loop.run_in_executor(None, _write_and_rename)
+        except Exception:
+            # Best-effort cleanup of orphan tmp.
+            try:
+                os.remove(tmp_path)
+            except OSError:
+                pass
             raise
 
-    async def delete(self, key: str) -> bool:
-        await self._ensure_connected()
+        async with self._lock:
+            # If re-inserting an existing key, subtract old size first.
+            if cache_key in self._index:
+                _old_path, old_size = self._index.pop(cache_key)
+                self._current_bytes -= old_size
+            await self._evict_until_fits(size)
+            self._index[cache_key] = (abs_path, size)
+            self._current_bytes += size
 
-        obj_name = key.replace("/", "_").replace(":", "_")
+        return f"disk://{self._name}/{cache_key}"
+
+    async def get(self, key: str) -> bytes:
+        cache_key = hashlib.sha256(key.encode("utf-8")).hexdigest()
+        async with self._lock:
+            entry = self._index.get(cache_key)
+            if entry is None:
+                raise KeyError(f"disk-cache miss: {cache_key}")
+            abs_path, _size = entry
+            self._index.move_to_end(cache_key)  # LRU: mark as fresh
+
+        loop = asyncio.get_event_loop()
+
+        def _read() -> bytes:
+            with open(abs_path, "rb") as f:
+                return f.read()
+
         try:
-            await self._obs.delete(obj_name)
+            return await loop.run_in_executor(None, _read)
+        except FileNotFoundError:
+            # On-disk entry vanished behind our back; drop index entry.
+            async with self._lock:
+                entry2 = self._index.pop(cache_key, None)
+                if entry2 is not None:
+                    self._current_bytes -= entry2[1]
+            raise KeyError(f"disk-cache on-disk file missing: {cache_key}")
+
+    async def delete(self, key: str) -> bool:
+        cache_key = hashlib.sha256(key.encode("utf-8")).hexdigest()
+        async with self._lock:
+            entry = self._index.pop(cache_key, None)
+            if entry is None:
+                return False
+            abs_path, size = entry
+            self._current_bytes -= size
+        try:
+            os.remove(abs_path)
             return True
-        except Exception as e:
-            logger.warning(f"[NATS-OBJ] Delete failed for {obj_name}: {e}")
+        except FileNotFoundError:
+            return True
+        except OSError as e:
+            logger.warning(f"[DISK:{self._name}] delete failed {abs_path}: {e}")
             return False
 
     async def exists(self, key: str) -> bool:
-        await self._ensure_connected()
+        cache_key = hashlib.sha256(key.encode("utf-8")).hexdigest()
+        return cache_key in self._index
 
-        obj_name = key.replace("/", "_").replace(":", "_")
+    def stats(self) -> Dict[str, Any]:
+        return {
+            "name": self._name,
+            "entries": len(self._index),
+            "current_bytes": self._current_bytes,
+            "capacity_bytes": self._capacity,
+        }
+
+
+class DiskCacheBackend(StorageBackend):
+    """
+    Local SSD/NVMe disk cache with async spill to a cloud backend.
+
+    RisingWave-aligned two-pool design:
+    - meta pool (~10% of total capacity): small refs + metadata payloads
+    - data pool (~90% of total capacity): payload blocks
+
+    Each pool has independent capacity, LRU eviction, and a shared
+    token-bucket rate limiter on insert. Pools can optionally warm-start
+    by re-indexing on-disk entries (`recover_mode=Quiet`).
+
+    On `put`:
+    1. Pool decides meta vs data by `size < meta_threshold_bytes`.
+    2. Bytes are written to disk atomically (tmp + rename + fsync).
+    3. If a cloud backend is configured, a background task uploads the
+       payload to provide durability beyond the local pod. Failures are
+       logged; the local copy is authoritative for the read path.
+
+    On `get`:
+    1. Local pool is checked first (hot path).
+    2. On miss, cloud backend is consulted (if configured); a hit is
+       re-inserted into the local pool for future reads (read-through).
+    3. On second miss, `KeyError` is raised.
+
+    Thread-safety: every pool's in-memory index is guarded by an
+    `asyncio.Lock`; the backend is intended for a single event loop per
+    process.
+    """
+
+    # Entries smaller than this go to the meta pool. 10 KB matches the
+    # MEMORY tier threshold in router.StorageRouter.
+    META_ENTRY_THRESHOLD_BYTES = 10 * 1024
+
+    def __init__(
+        self,
+        cache_dir: Optional[str] = None,
+        data_capacity_mb: Optional[int] = None,
+        meta_capacity_mb: Optional[int] = None,
+        insert_rate_limit_mb: Optional[int] = None,
+        recover_mode: str = "None",
+        cloud_backend: Optional[StorageBackend] = None,
+    ):
+        self._cache_dir = cache_dir or os.getenv(
+            "NOETL_STORAGE_LOCAL_CACHE_DIR", "/opt/noetl/data/disk_cache"
+        )
+        self._data_capacity_mb = int(
+            data_capacity_mb
+            if data_capacity_mb is not None
+            else os.getenv("NOETL_STORAGE_LOCAL_DATA_CACHE_CAPACITY_MB", "0") or 0
+        )
+        self._meta_capacity_mb = int(
+            meta_capacity_mb
+            if meta_capacity_mb is not None
+            else os.getenv("NOETL_STORAGE_LOCAL_META_CACHE_CAPACITY_MB", "0") or 0
+        )
+        self._insert_rate_limit_mb = int(
+            insert_rate_limit_mb
+            if insert_rate_limit_mb is not None
+            else os.getenv("NOETL_STORAGE_LOCAL_CACHE_INSERT_RATE_MB", "0") or 0
+        )
+        self._recover_mode = (
+            recover_mode
+            if recover_mode and recover_mode != "None"
+            else os.getenv("NOETL_STORAGE_LOCAL_CACHE_RECOVER_MODE", "None")
+        )
+        self._cloud = cloud_backend
+
+        # Shared rate limiter across both pools so total insert throughput
+        # is bounded by the configured cap.
+        rate_bps = self._insert_rate_limit_mb * 1024 * 1024
+        self._limiter = _TokenBucket(rate_bps) if rate_bps > 0 else None
+
+        meta_bytes = self._meta_capacity_mb * 1024 * 1024
+        data_bytes = self._data_capacity_mb * 1024 * 1024
+        self._meta_pool = _DiskCachePool(
+            os.path.join(self._cache_dir, "meta"), meta_bytes, self._limiter, "meta"
+        )
+        self._data_pool = _DiskCachePool(
+            os.path.join(self._cache_dir, "data"), data_bytes, self._limiter, "data"
+        )
+
+        self._warm_started = False
+        self._warm_lock = asyncio.Lock()
+
+    def _pool_for(self, size: int) -> _DiskCachePool:
+        if size < self.META_ENTRY_THRESHOLD_BYTES and self._meta_pool._capacity > 0:
+            return self._meta_pool
+        return self._data_pool
+
+    async def _maybe_warm_start(self) -> None:
+        if self._warm_started:
+            return
+        async with self._warm_lock:
+            if self._warm_started:
+                return
+            if self._recover_mode == "Quiet":
+                await self._meta_pool.warm_start()
+                await self._data_pool.warm_start()
+            self._warm_started = True
+
+    async def _spill_to_cloud(self, key: str, data: bytes) -> None:
+        if self._cloud is None:
+            return
         try:
-            info = await self._obs.info(obj_name)
-            return info is not None
-        except Exception:
-            return False
+            await self._cloud.put(key, data)
+        except Exception as e:
+            logger.warning(f"[DISK] cloud spill failed for {key}: {e}")
+
+    async def put(
+        self, key: str, data: bytes, metadata: Optional[Dict[str, Any]] = None
+    ) -> str:
+        await self._maybe_warm_start()
+        pool = self._pool_for(len(data))
+        uri = await pool.put(key, data)
+
+        # Fire-and-forget cloud spill. Exceptions are caught inside.
+        if self._cloud is not None:
+            try:
+                asyncio.create_task(self._spill_to_cloud(key, data))
+            except RuntimeError:
+                # No running loop — do it inline to preserve durability.
+                await self._spill_to_cloud(key, data)
+
+        logger.debug(
+            f"[DISK] put key={key[:64]} size={len(data)} pool={pool._name} uri={uri}"
+        )
+        return uri
+
+    async def _read_through_cloud(self, key: str) -> bytes:
+        if self._cloud is None:
+            raise KeyError(f"disk-cache miss and no cloud backend: {key}")
+        data = await self._cloud.get(key)
+        # Read-through: populate local pool for next time.
+        pool = self._pool_for(len(data))
+        try:
+            await pool.put(key, data)
+        except Exception as e:
+            logger.debug(f"[DISK] read-through populate failed: {e}")
+        return data
+
+    async def get(self, key: str) -> bytes:
+        await self._maybe_warm_start()
+        # Try data pool first (covers the >= 1 MB hot path).
+        try:
+            return await self._data_pool.get(key)
+        except KeyError:
+            pass
+        try:
+            return await self._meta_pool.get(key)
+        except KeyError:
+            pass
+        # Local miss — fall through to cloud.
+        return await self._read_through_cloud(key)
+
+    async def delete(self, key: str) -> bool:
+        await self._maybe_warm_start()
+        deleted = False
+        deleted = await self._data_pool.delete(key) or deleted
+        deleted = await self._meta_pool.delete(key) or deleted
+        if self._cloud is not None:
+            try:
+                deleted = await self._cloud.delete(key) or deleted
+            except Exception as e:
+                logger.debug(f"[DISK] cloud delete failed: {e}")
+        return deleted
+
+    async def exists(self, key: str) -> bool:
+        await self._maybe_warm_start()
+        if await self._data_pool.exists(key):
+            return True
+        if await self._meta_pool.exists(key):
+            return True
+        if self._cloud is not None:
+            try:
+                return await self._cloud.exists(key)
+            except Exception:
+                return False
+        return False
+
+    def stats(self) -> Dict[str, Any]:
+        return {
+            "meta": self._meta_pool.stats(),
+            "data": self._data_pool.stats(),
+            "cloud": "configured" if self._cloud else None,
+            "recover_mode": self._recover_mode,
+        }
 
 
 class S3Backend(StorageBackend):
@@ -316,7 +637,12 @@ class S3Backend(StorageBackend):
     ):
         self._bucket = bucket
         self._prefix = prefix
-        self._endpoint_url = endpoint_url or os.getenv("S3_ENDPOINT_URL")
+        # Honor both S3_ENDPOINT_URL (legacy) and NOETL_S3_ENDPOINT (phase 0+ canonical)
+        self._endpoint_url = (
+            endpoint_url
+            or os.getenv("NOETL_S3_ENDPOINT")
+            or os.getenv("S3_ENDPOINT_URL")
+        )
         self._region = region
         self._client = None
         self._lock = asyncio.Lock()
@@ -539,15 +865,22 @@ class GCSBackend(StorageBackend):
 # Factory function
 def get_backend(tier: str, **kwargs) -> StorageBackend:
     """Get storage backend by tier name."""
+    # Back-compat: map removed "object" tier to "disk" with a warning.
+    # The warning itself is emitted by noetl.core.storage.models._normalize_store_value
+    # on first exposure; here we just rewrite silently to avoid duplicate noise.
+    tier_lc = (tier or "").lower()
+    if tier_lc == "object":
+        tier_lc = "disk"
+
     backends = {
         "memory": MemoryBackend,
         "kv": NATSKVBackend,
-        "object": NATSObjectBackend,
+        "disk": DiskCacheBackend,
         "s3": S3Backend,
         "gcs": GCSBackend,
     }
 
-    backend_class = backends.get(tier.lower())
+    backend_class = backends.get(tier_lc)
     if not backend_class:
         raise ValueError(f"Unknown storage tier: {tier}")
 
@@ -558,8 +891,9 @@ __all__ = [
     "StorageBackend",
     "MemoryBackend",
     "NATSKVBackend",
-    "NATSObjectBackend",
+    "DiskCacheBackend",
     "S3Backend",
     "GCSBackend",
+    "StorageNotImplementedError",
     "get_backend",
 ]

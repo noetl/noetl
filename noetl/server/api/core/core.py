@@ -239,8 +239,7 @@ def _build_command_id_latest_lookup_sql(
         FROM noetl.event {alias}
         WHERE execution_id = %s
           AND {event_type_predicate}
-          AND meta ? 'command_id'
-          AND meta->>'command_id' = %s
+          AND command_id = %s
         ORDER BY event_id DESC
         LIMIT 1
     """
@@ -269,4 +268,3 @@ _HANDLE_EVENT_CLAIMED_LOOKUP_SQL = _build_command_id_latest_lookup_sql(
     event_type_predicate=_EVENT_TYPE_CLAIMED_PREDICATE,
     alias="claimed_event",
 )
-

@@ -5,11 +5,11 @@ MCP-compatible pointer system for efficient data passing between steps.
 Data is stored externally and only lightweight pointers are passed through
 the event log and context.
 
-Storage Tiers:
+Storage Tiers (aligned with RisingWave 3-tier hierarchy):
 - memory: In-process (<10KB, step-scoped)
 - kv: NATS KV (<1MB, execution-scoped)
-- object: NATS Object Store (<10MB)
-- s3/gcs: Cloud storage (large blobs)
+- disk: Local SSD/NVMe cache backed by cloud (>=1MB; phase 1)
+- s3/gcs: Cloud storage, durable (large blobs; MinIO via S3 endpoint)
 - db: PostgreSQL (queryable intermediate data)
 
 Scopes:
@@ -17,6 +17,10 @@ Scopes:
 - execution: Cleaned up when playbook completes
 - workflow: Persists across nested playbook calls
 - forever: Never auto-cleaned (permanent storage)
+
+Phase 0 (this release) removes the `object` (NATS Object Store) tier.
+See `docs/features/noetl_storage_and_streaming_alignment.md` for the
+full mapping and phasing.
 """
 
 from typing import Optional, Dict, Any, List, Literal, Union
@@ -30,12 +34,33 @@ class StoreTier(str, Enum):
     """Storage tier for result data."""
     MEMORY = "memory"       # In-process memory (fastest, step-scoped)
     KV = "kv"              # NATS KV (< 1MB, execution-scoped)
-    OBJECT = "object"      # NATS Object Store (< 10MB)
-    S3 = "s3"              # S3/MinIO (large blobs)
+    DISK = "disk"          # Local SSD/NVMe cache + async cloud spill (>= 1MB)
+    S3 = "s3"              # S3/MinIO (durable large blobs; MinIO via NOETL_S3_ENDPOINT)
     GCS = "gcs"            # Google Cloud Storage
     DB = "db"              # PostgreSQL (queryable)
     DUCKDB = "duckdb"      # DuckDB (local analytics)
     EVENTLOG = "eventlog"  # Event log inline (default for small results)
+
+
+# Back-compat shim: `"object"` was the NATS Object Store tier, removed in phase 0.
+# Inbound ResultRef / payload envelopes carrying `store: "object"` are mapped to
+# `"disk"` with a one-time deprecation warning per process.
+_OBJECT_DEPRECATION_LOGGED = False
+
+
+def _normalize_store_value(value):
+    """Map deprecated tier names to current ones. One-time warn per process."""
+    global _OBJECT_DEPRECATION_LOGGED
+    if isinstance(value, str) and value.lower() == "object":
+        if not _OBJECT_DEPRECATION_LOGGED:
+            import logging
+            logging.getLogger(__name__).warning(
+                "[storage] DEPRECATED: store='object' (NATS Object Store) is removed; "
+                "rewriting to 'disk'. See docs/features/noetl_storage_and_streaming_alignment.md"
+            )
+            _OBJECT_DEPRECATION_LOGGED = True
+        return "disk"
+    return value
 
 
 class Scope(str, Enum):
@@ -121,6 +146,12 @@ class ResultRef(BaseModel):
         if not v.startswith("noetl://"):
             raise ValueError("ResultRef ref must start with noetl://")
         return v
+
+    @field_validator('store', mode='before')
+    @classmethod
+    def _map_deprecated_store(cls, v):
+        """Map deprecated 'object' tier to 'disk' at parse time."""
+        return _normalize_store_value(v)
 
     @classmethod
     def create(

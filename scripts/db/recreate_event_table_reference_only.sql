@@ -26,6 +26,7 @@ CREATE TABLE noetl.event (
     current_index       INTEGER,
     current_item        TEXT,
     worker_id           VARCHAR,
+    command_id          BIGINT,
     distributed_state   VARCHAR,
     context_key         VARCHAR,
     context_value       TEXT,
@@ -83,6 +84,9 @@ CREATE INDEX idx_event_exec_type_meta_command_id_event_id_desc
 CREATE INDEX idx_event_command_issued_created_event_id_desc
     ON noetl.event (created_at DESC, event_id DESC, execution_id, ((meta->>'command_id')))
     WHERE event_type = 'command.issued' AND meta ? 'command_id';
+CREATE INDEX idx_event_exec_type_command_id_event_id_desc
+    ON noetl.event (execution_id, event_type, command_id, event_id DESC)
+    WHERE command_id IS NOT NULL;
 
 CREATE INDEX idx_event_result_reference_type
     ON noetl.event (((result->'reference'->>'type')))

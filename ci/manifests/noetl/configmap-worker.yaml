@@ -30,17 +30,34 @@ data:
   NATS_SUBJECT: "noetl.commands"
   # Keychain cache refresh threshold (15 minutes - prevents expiration during long loops)
   NOETL_KEYCHAIN_REFRESH_THRESHOLD: "900"
-  # Result Storage Configuration (output_select pattern)
+  # Worker concurrency (perf tuning for PFT load test - phase 1)
+  NOETL_WORKER_MAX_INFLIGHT_COMMANDS: "16"
+  NOETL_WORKER_MAX_INFLIGHT_DB_COMMANDS: "8"
+  # Result Storage Configuration (RisingWave-aligned, phase 1)
   # Threshold for inline vs external storage (64KB default)
   NOETL_INLINE_MAX_BYTES: "65536"
   # Preview size for large results
   NOETL_PREVIEW_MAX_BYTES: "1024"
-  # Default storage tier: kv, object, s3, gcs
+  # Default storage tier: memory, kv, disk, s3, gcs
   NOETL_DEFAULT_STORAGE_TIER: "kv"
-  # S3/MinIO configuration (optional - for large blob storage)
-  # S3_ENDPOINT_URL: ""
+  # Cloud tier for DISK async spill ('s3' covers MinIO via NOETL_S3_ENDPOINT, or 'gcs').
+  NOETL_STORAGE_CLOUD_TIER: "s3"
+  # MinIO (S3-compatible) endpoint in the local kind cluster.
+  NOETL_S3_ENDPOINT: "http://minio.minio.svc.cluster.local:9000"
   NOETL_S3_BUCKET: "noetl-results"
   NOETL_S3_REGION: "us-east-1"
+  # MinIO default dev credentials. Replace with a Secret in prod.
+  AWS_ACCESS_KEY_ID: "minioadmin"
+  AWS_SECRET_ACCESS_KEY: "minioadmin"
   # GCS configuration
   NOETL_GCS_BUCKET: "noetl-demo-output"
   NOETL_GCS_PREFIX: "results/"
+  # DISK tier (phase 1 DiskCacheBackend). Uses the shared PVC at /opt/noetl/data.
+  NOETL_STORAGE_LOCAL_CACHE_DIR: "/opt/noetl/data/disk_cache"
+  # 2 GB data pool (~90%) + 256 MB meta pool (~10%) fit inside 10Gi shared PVC.
+  NOETL_STORAGE_LOCAL_DATA_CACHE_CAPACITY_MB: "2048"
+  NOETL_STORAGE_LOCAL_META_CACHE_CAPACITY_MB: "256"
+  # Insert rate limiter (bytes/sec cap). 200 MB/s leaves headroom on local NVMe.
+  NOETL_STORAGE_LOCAL_CACHE_INSERT_RATE_MB: "200"
+  # Quiet = re-index on-disk entries on worker restart for warm replay.
+  NOETL_STORAGE_LOCAL_CACHE_RECOVER_MODE: "Quiet"

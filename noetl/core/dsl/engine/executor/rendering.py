@@ -184,7 +184,10 @@ class RenderingMixin:
         candidates: list[str] = []
 
         loop_event_id = loop_state.get("event_id") if loop_state else None
-        if loop_event_id is not None:
+        if loop_event_id is not None and self._loop_event_id_belongs_to_execution(
+            loop_event_id,
+            state.execution_id,
+        ):
             candidates.append(str(loop_event_id))
 
         execution_fallback = f"exec_{state.execution_id}"
@@ -194,10 +197,29 @@ class RenderingMixin:
         step_event_id = state.step_event_ids.get(step_name)
         if step_event_id is not None:
             step_event_id_str = str(step_event_id)
-            if step_event_id_str not in candidates:
+            if (
+                self._loop_event_id_belongs_to_execution(step_event_id_str, state.execution_id)
+                and step_event_id_str not in candidates
+            ):
                 candidates.append(step_event_id_str)
 
         return candidates
+
+    @staticmethod
+    def _loop_event_id_belongs_to_execution(
+        loop_event_id: Optional[Any],
+        execution_id: Optional[Any],
+    ) -> bool:
+        """Reject loop epoch keys that clearly belong to another execution."""
+        if loop_event_id is None or execution_id is None:
+            return True
+        candidate = str(loop_event_id)
+        current_execution = str(execution_id)
+        if candidate.startswith("loop_"):
+            return candidate.startswith(f"loop_{current_execution}_")
+        if candidate.startswith("exec_"):
+            return candidate == f"exec_{current_execution}"
+        return True
 
     async def _ensure_loop_state_for_epoch(
         self,
@@ -211,6 +233,20 @@ class RenderingMixin:
             return state.loop_state.get(step.step)
 
         desired_event_id = str(loop_event_id)
+        if not self._loop_event_id_belongs_to_execution(desired_event_id, state.execution_id):
+            logger.warning(
+                "[LOOP-HYDRATE] Ignoring stale loop epoch for %s execution=%s epoch=%s",
+                step.step,
+                state.execution_id,
+                desired_event_id,
+            )
+            existing_state = state.loop_state.get(step.step)
+            if existing_state and self._loop_event_id_belongs_to_execution(
+                existing_state.get("event_id"),
+                state.execution_id,
+            ):
+                return existing_state
+            return None
         existing_state = state.loop_state.get(step.step)
         if existing_state and str(existing_state.get("event_id") or "") == desired_event_id:
             return existing_state
@@ -239,19 +275,31 @@ class RenderingMixin:
             collection = list(existing_state.get("collection") or [])
 
         if not collection:
-            try:
-                context = state.get_render_context(event)
-                rendered_collection = self._render_template(step.loop.in_, context)
-                # Resolve reference if template rendered to a reference envelope
-                rendered_collection = await _resolve_collection_if_reference(rendered_collection)
-                collection = self._normalize_loop_collection(rendered_collection, step.step)
-            except Exception as exc:
-                logger.warning(
-                    "[LOOP-HYDRATE] Failed to render loop collection for %s epoch=%s: %s",
+            if step.loop and step.loop.is_cursor:
+                worker_count_fallback = 1
+                if step.loop.spec and step.loop.spec.max_in_flight:
+                    worker_count_fallback = max(1, int(step.loop.spec.max_in_flight))
+                collection = list(range(worker_count_fallback))
+                logger.info(
+                    "[CURSOR-LOOP] Hydrated synthetic collection (size=%d) for %s epoch=%s",
+                    len(collection),
                     step.step,
                     desired_event_id,
-                    exc,
                 )
+            else:
+                try:
+                    context = state.get_render_context(event)
+                    rendered_collection = self._render_template(step.loop.in_, context)
+                    # Resolve reference if template rendered to a reference envelope
+                    rendered_collection = await _resolve_collection_if_reference(rendered_collection)
+                    collection = self._normalize_loop_collection(rendered_collection, step.step)
+                except Exception as exc:
+                    logger.warning(
+                        "[LOOP-HYDRATE] Failed to render loop collection for %s epoch=%s: %s",
+                        step.step,
+                        desired_event_id,
+                        exc,
+                    )
 
         if not collection:
             # Try restoring the REAL collection from NATS KV (persisted at loop

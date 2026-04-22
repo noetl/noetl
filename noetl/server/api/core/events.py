@@ -71,7 +71,8 @@ def _extract_event_error(payload: dict[str, Any]) -> Optional[str]:
             return json.dumps(res_error, default=str)[:2000]
     return None
 
-def _extract_command_id_from_payload(payload: Optional[dict[str, Any]], meta: Optional[dict[str, Any]] = None) -> Optional[str]:
+def _extract_command_id_from_payload(payload: Optional[dict[str, Any]], meta: Optional[dict[str, Any]] = None) -> Optional[int]:
+    """Extract command_id (BIGINT snowflake) from event payload/meta. Accepts int or numeric str."""
     p = payload if isinstance(payload, dict) else {}
     m = meta if isinstance(meta, dict) else {}
     candidates = [p.get("command_id"), m.get("command_id")]
@@ -80,7 +81,12 @@ def _extract_command_id_from_payload(payload: Optional[dict[str, Any]], meta: Op
         candidates.append(res.get("command_id"))
         if isinstance(rctx := res.get("context"), dict): candidates.append(rctx.get("command_id"))
     for val in candidates:
-        if isinstance(val, str) and val.strip(): return val.strip()
+        if val is None:
+            continue
+        if isinstance(val, int):
+            return val
+        if isinstance(val, str) and val.strip().isdigit():
+            return int(val.strip())
     return None
 
 def _collect_compact_context(payload: dict[str, Any]) -> Optional[dict[str, Any]]:
@@ -120,10 +126,22 @@ async def handle_event(req: EventRequest) -> EventResponse:
                 async with get_pool_connection() as conn:
                     async with conn.cursor(row_factory=dict_row) as cur:
                         evt_id = await _next_snowflake_id(cur)
-                        await cur.execute("SELECT pg_try_advisory_xact_lock(hashtext(%s)::bigint) as lock_acquired", (command_id,))
+                        # command_id is BIGINT snowflake; pass directly as advisory lock key
+                        await cur.execute("SELECT pg_try_advisory_xact_lock(%s) as lock_acquired", (command_id,))
                         if not (res := await cur.fetchone()) or not res.get('lock_acquired'):
                             raise HTTPException(409, "Command already being claimed")
-                        await cur.execute("SELECT worker_id, meta FROM noetl.event WHERE execution_id = %s AND event_type = 'command.claimed' AND meta->>'command_id' = %s ORDER BY event_id DESC LIMIT 1", (int(req.execution_id), command_id))
+                        await cur.execute(
+                            """
+                            SELECT worker_id, meta
+                            FROM noetl.event
+                            WHERE execution_id = %s
+                              AND event_type = 'command.claimed'
+                              AND command_id = %s
+                            ORDER BY event_id DESC
+                            LIMIT 1
+                            """,
+                            (int(req.execution_id), int(command_id)),
+                        )
                         if existing := await cur.fetchone():
                             existing_worker = existing.get('worker_id') or (existing.get('meta') or {}).get('worker_id')
                             if existing_worker and existing_worker != req.worker_id:
@@ -153,7 +171,19 @@ async def handle_event(req: EventRequest) -> EventResponse:
                 await cur.execute("SELECT catalog_id FROM noetl.event WHERE execution_id = %s LIMIT 1", (int(req.execution_id),))
                 catalog_id = (await cur.fetchone() or {}).get('catalog_id')
                 if command_id and req.name in _COMMAND_EVENT_DEDUPE_TYPES:
-                    await cur.execute("SELECT event_id FROM noetl.event WHERE execution_id = %s AND event_type = %s AND node_name = %s AND meta->>'command_id' = %s ORDER BY event_id DESC LIMIT 1", (int(req.execution_id), req.name, req.step, command_id))
+                    await cur.execute(
+                        """
+                        SELECT event_id
+                        FROM noetl.event
+                        WHERE execution_id = %s
+                          AND event_type = %s
+                          AND node_name = %s
+                          AND command_id = %s
+                        ORDER BY event_id DESC
+                        LIMIT 1
+                        """,
+                        (int(req.execution_id), req.name, req.step, int(command_id)),
+                    )
                     if duplicate := await cur.fetchone():
                         if req.name in {"command.completed", "command.failed"}: _active_claim_cache_invalidate(command_id=command_id)
                         return EventResponse(status="ok", event_id=int(duplicate['event_id']), commands_generated=0)
@@ -172,28 +202,39 @@ async def handle_event(req: EventRequest) -> EventResponse:
                     "command.completed", "command.failed", "command.cancelled",
                 }:
                     try:
-                        _cmd_status = {
-                            "command.claimed": "CLAIMED",
-                            "command.started": "RUNNING",
-                            "command.completed": "COMPLETED",
-                            "command.failed": "FAILED",
-                            "command.cancelled": "CANCELLED",
-                        }.get(req.name, status)
-                        _cmd_updates = ["status = %s", "latest_event_id = %s", "updated_at = now()"]
-                        _cmd_params: list = [_cmd_status, evt_id]
-                        if req.name == "command.claimed":
-                            _cmd_updates.extend(["worker_id = %s", "claimed_at = now()"])
-                            _cmd_params.append(req.worker_id)
-                        elif req.name == "command.started":
-                            _cmd_updates.append("started_at = now()")
-                        elif req.name in ("command.completed", "command.failed", "command.cancelled"):
-                            _cmd_updates.extend(["completed_at = now()", "result = %s", "error = %s"])
-                            _cmd_params.extend([Json(res_obj), error_text])
-                        _cmd_params.append(command_id)
-                        await cur.execute(
-                            f"UPDATE noetl.command SET {', '.join(_cmd_updates)} WHERE command_id = %s",
-                            _cmd_params,
-                        )
+                        if req.name == "command.started":
+                            # Guard against out-of-order lifecycle events: never downgrade terminal state.
+                            await cur.execute(
+                                """
+                                UPDATE noetl.command
+                                SET status = CASE WHEN completed_at IS NULL THEN 'RUNNING' ELSE status END,
+                                    started_at = COALESCE(started_at, now()),
+                                    latest_event_id = CASE WHEN completed_at IS NULL THEN %s ELSE latest_event_id END,
+                                    updated_at = CASE WHEN completed_at IS NULL THEN now() ELSE updated_at END
+                                WHERE command_id = %s
+                                """,
+                                (evt_id, command_id),
+                            )
+                        else:
+                            _cmd_status = {
+                                "command.claimed": "CLAIMED",
+                                "command.completed": "COMPLETED",
+                                "command.failed": "FAILED",
+                                "command.cancelled": "CANCELLED",
+                            }.get(req.name, status)
+                            _cmd_updates = ["status = %s", "latest_event_id = %s", "updated_at = now()"]
+                            _cmd_params: list = [_cmd_status, evt_id]
+                            if req.name == "command.claimed":
+                                _cmd_updates.extend(["worker_id = %s", "claimed_at = now()"])
+                                _cmd_params.append(req.worker_id)
+                            elif req.name in ("command.completed", "command.failed", "command.cancelled"):
+                                _cmd_updates.extend(["completed_at = now()", "result = %s", "error = %s"])
+                                _cmd_params.extend([Json(res_obj), error_text])
+                            _cmd_params.append(command_id)
+                            await cur.execute(
+                                f"UPDATE noetl.command SET {', '.join(_cmd_updates)} WHERE command_id = %s",
+                                _cmd_params,
+                            )
                     except Exception as _cmd_exc:
                         logger.debug("[COMMAND-TABLE] Status update failed for %s: %s", command_id, _cmd_exc)
 
@@ -217,7 +258,7 @@ async def handle_event(req: EventRequest) -> EventResponse:
                     await cur.execute("SELECT catalog_id, parent_execution_id FROM noetl.event WHERE execution_id = %s LIMIT 1", (int(cmd.execution_id),))
                     row = await cur.fetchone() or {}
                     cat_id, p_exec = row.get('catalog_id', catalog_id), row.get('parent_execution_id')
-                    cmd_id, new_evt_id = f"{cmd.execution_id}:{cmd.step}:{await _next_snowflake_id(cur)}", await _next_snowflake_id(cur)
+                    cmd_id, new_evt_id = await _next_snowflake_id(cur), await _next_snowflake_id(cur)
                     ctx = _build_command_context(cmd)
                     _validate_postgres_command_context_or_422(step=cmd.step, tool_kind=cmd.tool.kind, context=ctx)
                     meta = {"command_id": cmd_id, "step": cmd.step, "tool_kind": cmd.tool.kind, "triggered_by": req.name, "trigger_step": req.step, "actionable": True, **(cmd.metadata or {})}
@@ -235,7 +276,7 @@ async def handle_event(req: EventRequest) -> EventResponse:
                         VALUES (%(command_id)s, %(event_id)s, %(execution_id)s, %(catalog_id)s,
                             %(parent_execution_id)s, %(step_name)s, %(tool_kind)s, 'PENDING',
                             %(context)s, %(loop_event_id)s, %(iter_index)s, %(meta)s, %(created_at)s)
-                        ON CONFLICT (command_id) DO NOTHING
+                        ON CONFLICT (execution_id, command_id) DO NOTHING
                     """, {
                         "command_id": cmd_id,
                         "event_id": new_evt_id,

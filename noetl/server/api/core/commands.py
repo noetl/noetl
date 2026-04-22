@@ -168,12 +168,32 @@ async def _store_command_context_if_needed(*, execution_id: int, step: str, comm
                        execution_id, step, command_id, exc)
         return compact_context
 
+_EVENT_RESULT_INLINE_ROWS_MAX = 16
+_EVENT_RESULT_INLINE_ROWS_MAX_BYTES = 64 * 1024
+
+
 def _build_reference_only_result(*, payload: dict[str, Any], status: str) -> dict[str, Any]:
     from .utils import _normalize_result_status, _estimate_json_size
     from .core import _EVENT_RESULT_CONTEXT_MAX_BYTES
     from .events import _collect_compact_context, _bounded_context
     result_obj: dict[str, Any] = {"status": _normalize_result_status(status)}
-    payload_result = payload.get("result") or payload.get("response")
+    # Prefer whichever payload envelope has actual row data, not just a compact
+    # {status, reference, context} shell.  The worker sends both `response` (raw
+    # tool output with rows) and `result` (may already be trimmed) in the same
+    # event; picking `result` blindly loses the rows and breaks replay/arc
+    # rendering for step-level set: and arc when: expressions.
+    def _has_rows(obj: Any) -> bool:
+        if not isinstance(obj, dict): return False
+        if isinstance(obj.get("rows"), list) and obj.get("rows"): return True
+        nested = obj.get("data")
+        return isinstance(nested, dict) and isinstance(nested.get("rows"), list) and bool(nested.get("rows"))
+
+    _raw_result = payload.get("result") if isinstance(payload, dict) else None
+    _raw_response = payload.get("response") if isinstance(payload, dict) else None
+    if _has_rows(_raw_response):
+        payload_result = _raw_response
+    else:
+        payload_result = _raw_result or _raw_response
     if isinstance(payload_result, dict):
         payload_status = payload_result.get("status")
         if isinstance(payload_status, str) and payload_status.strip():
@@ -182,6 +202,45 @@ def _build_reference_only_result(*, payload: dict[str, Any], status: str) -> dic
             result_obj["reference"] = payload_result.get("reference")
         context = _bounded_context(payload_result.get('context') or payload_result)
         if isinstance(context, dict): result_obj["context"] = context
+        # Preserve small inline row sets so step-level set: and arc when: expressions
+        # that reference output.data.rows[N].<col> can be re-rendered during state
+        # replay (when the state cache is invalidated).  Without this, Jinja
+        # StrictUndefined on the missing 'rows' key causes render_template to fall
+        # back to the literal template string, which then gets coerced to 0 by
+        # downstream `| int` filters and produces wrong SQL (e.g.
+        # `WHERE facility_mapping_id = 0`).  Only embed when small — both in row
+        # count and serialized bytes — to keep the event table bounded.
+        inline_rows = payload_result.get("rows")
+        if not isinstance(inline_rows, list):
+            # Worker wraps postgres tool output as {id, status, data: {rows, ...}};
+            # unwrap the inner data envelope before looking for rows.
+            nested_data = payload_result.get("data")
+            if isinstance(nested_data, dict):
+                candidate = nested_data.get("rows")
+                if isinstance(candidate, list):
+                    inline_rows = candidate
+        if (
+            isinstance(inline_rows, list)
+            and 0 < len(inline_rows) <= _EVENT_RESULT_INLINE_ROWS_MAX
+            and result_obj.get("reference") is None
+        ):
+            rows_bytes = _estimate_json_size(inline_rows)
+            if rows_bytes <= _EVENT_RESULT_INLINE_ROWS_MAX_BYTES:
+                # Nest rows INSIDE context — the event_result_check DB constraint only
+                # permits {status, reference, context, command_id} at the top level.
+                ctx = result_obj.get("context")
+                if not isinstance(ctx, dict):
+                    ctx = {}
+                    result_obj["context"] = ctx
+                ctx["rows"] = inline_rows
+                if "row_count" not in ctx:
+                    ctx["row_count"] = len(inline_rows)
+                logger.debug(
+                    "[INLINE-ROWS] Preserved %d row(s) in event.result.context (%d bytes) status=%s",
+                    len(inline_rows),
+                    rows_bytes,
+                    result_obj.get("status"),
+                )
     else:
         if isinstance(payload.get("reference"), dict):
             result_obj["reference"] = payload.get("reference")
@@ -252,7 +311,8 @@ async def claim_command(event_id: int, req: ClaimRequest):
             async with conn.cursor(row_factory=dict_row) as cur:
                 # Primary: query the command projection table (single-row PK lookup)
                 await cur.execute("""
-                    SELECT command_id, execution_id, catalog_id, step_name, tool_kind, context, meta, status, worker_id, updated_at
+                    SELECT command_id, execution_id, catalog_id, step_name, tool_kind, context, meta,
+                           status, worker_id, claimed_at, started_at, updated_at
                     FROM noetl.command
                     WHERE event_id = %s
                 """, (event_id,))
@@ -272,7 +332,17 @@ async def claim_command(event_id: int, req: ClaimRequest):
                 step = cmd_row['step_name']
                 tool_kind = cmd_row['tool_kind']
                 context, meta = cmd_row['context'] or {}, cmd_row['meta'] or {}
-                command_id = cmd_row.get('command_id') or meta.get('command_id', f"{execution_id}:{step}:{event_id}")
+                # command_id is BIGINT snowflake. Fall back to event_id when neither
+                # cmd_row nor meta has a usable id (last-resort, same numeric domain).
+                _raw_cid = cmd_row.get('command_id') or meta.get('command_id')
+                if _raw_cid is None:
+                    command_id = int(event_id)
+                elif isinstance(_raw_cid, int):
+                    command_id = _raw_cid
+                elif isinstance(_raw_cid, str) and _raw_cid.strip().isdigit():
+                    command_id = int(_raw_cid.strip())
+                else:
+                    command_id = int(event_id)
 
                 # Check terminal status from command table (O(1) instead of event scan)
                 cmd_status = cmd_row.get('status', 'PENDING')
@@ -282,8 +352,9 @@ async def claim_command(event_id: int, req: ClaimRequest):
 
                 # Fallback: check event table for terminal status (pre-command-table)
                 if not cmd_row.get('command_id'):
+                    # meta->>'command_id' returns TEXT; cast %s to text to compare safely
                     await cur.execute(
-                        f"SELECT event_type FROM noetl.event WHERE execution_id = %s AND event_type = ANY(%s) AND meta->>'command_id' = %s ORDER BY event_id DESC LIMIT 1",
+                        f"SELECT event_type FROM noetl.event WHERE execution_id = %s AND event_type = ANY(%s) AND meta->>'command_id' = %s::text ORDER BY event_id DESC LIMIT 1",
                         (execution_id, _COMMAND_TERMINAL_EVENT_TYPES, command_id),
                     )
                 if await cur.fetchone():
@@ -294,21 +365,26 @@ async def claim_command(event_id: int, req: ClaimRequest):
                     _active_claim_cache_invalidate(command_id=command_id, event_id=event_id)
                     raise HTTPException(409, detail={"code": "already_terminal", "message": "Execution already reached terminal state"})
 
-                await cur.execute("SELECT pg_try_advisory_xact_lock(hashtext(%s)::bigint) as lock_acquired", (command_id,))
+                # command_id is BIGINT snowflake; pass directly as advisory lock key
+                await cur.execute("SELECT pg_try_advisory_xact_lock(%s) as lock_acquired", (command_id,))
                 if not (row := await cur.fetchone()) or not row.get('lock_acquired'):
                     raise HTTPException(409, detail={"code": "active_claim", "message": "Command is being claimed"},
                                         headers={"Retry-After": str(max(1, _CLAIM_ACTIVE_RETRY_AFTER_SECONDS))})
 
-                await cur.execute(
-                    "SELECT event_id, worker_id, meta, created_at FROM noetl.event WHERE execution_id = %s AND event_type IN ('command.claimed', 'command.heartbeat') AND meta->>'command_id' = %s ORDER BY event_id DESC LIMIT 1",
-                    (execution_id, command_id),
-                )
-                existing = await cur.fetchone()
+                existing = None
+                if cmd_row.get("command_id") and cmd_status in ("CLAIMED", "RUNNING"):
+                    existing = {
+                        "worker_id": cmd_row.get("worker_id"),
+                        "created_at": cmd_row.get("claimed_at") or cmd_row.get("started_at") or cmd_row.get("updated_at"),
+                        "status": cmd_status,
+                    }
                 stale_reclaim = False
                 if existing:
                     existing_worker = existing.get('worker_id') or (existing.get('meta') or {}).get('worker_id')
                     if existing_worker and existing_worker != req.worker_id:
                         created_at = existing.get("created_at")
+                        if created_at is None:
+                            created_at = datetime.now(timezone.utc)
                         if created_at.tzinfo is None: created_at = created_at.replace(tzinfo=timezone.utc)
                         claim_age = (datetime.now(timezone.utc) - created_at).total_seconds()
                         
@@ -336,8 +412,7 @@ async def claim_command(event_id: int, req: ClaimRequest):
                             raise HTTPException(409, detail={"code": "active_claim", "worker_id": existing_worker},
                                                 headers={"Retry-After": str(_CLAIM_ACTIVE_RETRY_AFTER_SECONDS)})
                     elif existing_worker == req.worker_id:
-                        await cur.execute("SELECT event_type FROM noetl.event WHERE execution_id = %s AND event_type IN ('command.started', 'command.heartbeat', 'command.completed', 'command.failed') AND meta->>'command_id' = %s ORDER BY event_id DESC LIMIT 1", (execution_id, command_id))
-                        if (r := await cur.fetchone()) and r.get("event_type") == "command.started":
+                        if existing.get("status") == "RUNNING":
                             _active_claim_cache_set(event_id, command_id, existing_worker)
                             raise HTTPException(409, detail={"code": "active_claim", "worker_status": "running"},
                                                 headers={"Retry-After": str(_CLAIM_ACTIVE_RETRY_AFTER_SECONDS)})

@@ -5,12 +5,16 @@ Zero-copy, borrow-like architecture for efficient data passing between playbook 
 Data is stored externally and only lightweight pointers (ResultRef) are passed
 through the event log and context.
 
-Storage Tiers:
+Storage Tiers (aligned with RisingWave 3-tier hot/warm/cold):
 - memory: In-process (<10KB, step-scoped)
 - kv: NATS KV (<1MB, execution-scoped)
-- object: NATS Object Store (<10MB)
-- s3/gcs: Cloud storage (large blobs)
+- disk: Local SSD cache + async cloud spill (>=1MB; phase 1 implements)
+- s3/gcs: Cloud storage, durable (MinIO via NOETL_S3_ENDPOINT)
 - db: PostgreSQL (queryable intermediate data)
+
+Phase 0 removes the experimental `object` tier (NATS Object Store).
+Payloads carrying `store: "object"` are auto-mapped to `disk` at load
+time with a one-time deprecation warning.
 
 Scopes:
 - step: Cleaned when step completes
@@ -65,9 +69,10 @@ from noetl.core.storage.backends import (
     StorageBackend,
     MemoryBackend,
     NATSKVBackend,
-    NATSObjectBackend,
+    DiskCacheBackend,
     S3Backend,
     GCSBackend,
+    StorageNotImplementedError,
     get_backend,
 )
 
@@ -116,9 +121,10 @@ __all__ = [
     'StorageBackend',
     'MemoryBackend',
     'NATSKVBackend',
-    'NATSObjectBackend',
+    'DiskCacheBackend',
     'S3Backend',
     'GCSBackend',
+    'StorageNotImplementedError',
     'get_backend',
     # Extractor
     'extract_output_select',

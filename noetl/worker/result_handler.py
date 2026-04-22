@@ -76,10 +76,16 @@ class ResultHandler:
     def _get_default_tier(self) -> StoreTier:
         """Get default storage tier from environment."""
         tier_name = os.getenv("NOETL_DEFAULT_STORAGE_TIER", "kv").lower()
+        # Back-compat: the removed 'object' tier maps to 'disk'. The
+        # warning itself is emitted from storage.models on first use.
+        if tier_name == "object":
+            from noetl.core.storage.models import _normalize_store_value
+            _normalize_store_value("object")
+            tier_name = "disk"
         tier_map = {
             "memory": StoreTier.MEMORY,
             "kv": StoreTier.KV,
-            "object": StoreTier.OBJECT,
+            "disk": StoreTier.DISK,
             "s3": StoreTier.S3,
             "gcs": StoreTier.GCS,
         }
@@ -213,29 +219,29 @@ class ResultHandler:
     def _select_tier(self, size_bytes: int, store_config: Dict[str, Any]) -> StoreTier:
         """Select storage tier based on size and config."""
         # Explicit tier from config
-        kind = store_config.get("kind", "auto")
+        kind = (store_config.get("kind") or "auto").lower()
+
+        # Back-compat: remap removed 'object' tier name.
+        if kind == "object":
+            from noetl.core.storage.models import _normalize_store_value
+            _normalize_store_value("object")
+            kind = "disk"
+
         if kind != "auto":
             tier_map = {
                 "memory": StoreTier.MEMORY,
                 "kv": StoreTier.KV,
-                "object": StoreTier.OBJECT,
+                "disk": StoreTier.DISK,
                 "s3": StoreTier.S3,
                 "gcs": StoreTier.GCS,
             }
             return tier_map.get(kind, self.default_tier)
 
-        # Auto-select based on size
+        # Auto-select based on size (RisingWave-aligned)
         if size_bytes < 1024 * 1024:  # < 1MB -> NATS KV
             return StoreTier.KV
-        elif size_bytes < 10 * 1024 * 1024:  # < 10MB -> NATS Object
-            return StoreTier.OBJECT
-        else:  # >= 10MB -> Cloud storage (prefer GCS if configured, else S3)
-            if self.default_tier in (StoreTier.S3, StoreTier.GCS):
-                return self.default_tier
-            # Check if GCS is configured
-            if os.getenv("NOETL_GCS_BUCKET"):
-                return StoreTier.GCS
-            return StoreTier.S3
+        # >= 1MB -> DISK (local cache + async cloud spill; phase 0 spills to cloud).
+        return StoreTier.DISK
 
     async def resolve_ref(self, ref: Any) -> Any:
         """

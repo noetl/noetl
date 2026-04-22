@@ -54,7 +54,7 @@ async def execute(req: ExecuteRequest) -> ExecuteResponse:
                 server_url = os.getenv("NOETL_SERVER_URL", "http://noetl.noetl.svc.cluster.local:8082")
                 command_events, supervisor_commands = [], []
                 for cmd in commands:
-                    cmd_id, evt_id = f"{execution_id}:{cmd.step}:{await _next_snowflake_id(cur)}", await _next_snowflake_id(cur)
+                    cmd_id, evt_id = await _next_snowflake_id(cur), await _next_snowflake_id(cur)
                     ctx = _build_command_context(cmd)
                     _validate_postgres_command_context_or_422(step=cmd.step, tool_kind=cmd.tool.kind, context=ctx)
                     meta = {"command_id": cmd_id, "step": cmd.step, "tool_kind": cmd.tool.kind, "max_attempts": cmd.max_attempts or 3, "attempt": 1, "execution_id": str(execution_id), "catalog_id": str(catalog_id), "actionable": True, **(cmd.metadata or {})}
@@ -73,7 +73,7 @@ async def execute(req: ExecuteRequest) -> ExecuteResponse:
                             %(command_id)s, %(event_id)s, %(execution_id)s, %(catalog_id)s, %(parent_execution_id)s,
                             %(step_name)s, %(tool_kind)s, 'PENDING', %(context)s, %(loop_event_id)s, %(iter_index)s, %(meta)s, %(created_at)s
                         )
-                        ON CONFLICT (command_id) DO NOTHING
+                        ON CONFLICT (execution_id, command_id) DO NOTHING
                     """, {
                         "command_id": cmd_id,
                         "event_id": evt_id,

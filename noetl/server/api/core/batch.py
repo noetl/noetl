@@ -173,10 +173,10 @@ async def _persist_batch_acceptance(req: BatchEventRequest, idempotency_key: Opt
                     await cur.execute(
                         """
                         UPDATE noetl.command
-                        SET status = 'RUNNING',
-                            started_at = now(),
-                            latest_event_id = %s,
-                            updated_at = now()
+                        SET status = CASE WHEN completed_at IS NULL THEN 'RUNNING' ELSE status END,
+                            started_at = COALESCE(started_at, now()),
+                            latest_event_id = CASE WHEN completed_at IS NULL THEN %s ELSE latest_event_id END,
+                            updated_at = CASE WHEN completed_at IS NULL THEN now() ELSE updated_at END
                         WHERE command_id = %s
                         """,
                         (evt_id, cmd_id),
@@ -237,7 +237,7 @@ async def _issue_commands_for_batch(job: _BatchAcceptJob, commands: list) -> Non
                 cmd_suffix = all_snowflakes[i * 2]
                 new_evt_id = all_snowflakes[i * 2 + 1]
                 
-                cmd_id = f"{cmd.execution_id}:{cmd.step}:{cmd_suffix}"
+                cmd_id = cmd_suffix  # already a snowflake bigint
                 ctx = _build_command_context(cmd)
                 _validate_postgres_command_context_or_422(step=cmd.step, tool_kind=cmd.tool.kind, context=ctx)
                 meta = {
@@ -287,7 +287,7 @@ async def _issue_commands_for_batch(job: _BatchAcceptJob, commands: list) -> Non
                         step_name, tool_kind, status, context, loop_event_id, iter_index, meta, created_at
                     )
                     VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                    ON CONFLICT (command_id) DO NOTHING
+                    ON CONFLICT (execution_id, command_id) DO NOTHING
                 """, command_table_params[j:j + chunk_size])
                 await conn.commit()
 

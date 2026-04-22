@@ -94,7 +94,13 @@ _LOOP_RESULT_MAX_ITEMS = max(
 )
 _TASKSEQ_LOOP_REPAIR_THRESHOLD = max(
     0,
-    int(os.getenv("NOETL_TASKSEQ_LOOP_REPAIR_THRESHOLD", "3")),
+    # Default bumped from 3 to 64 because high-concurrency fetch loops (e.g.
+    # max_in_flight=100) routinely leave >3 iterations in a "started-only or
+    # dropped" state when the engine/worker restarts or a command event is
+    # lost in flight.  Observed up to 34 stuck iterations across a facility's
+    # 1000-patient fetch loops; raising the repair window to 64 covers that
+    # in practice while still keeping the reissue scope bounded.
+    int(os.getenv("NOETL_TASKSEQ_LOOP_REPAIR_THRESHOLD", "64")),
 )
 _TASKSEQ_LOOP_MISSING_MIN_AGE_SECONDS = max(
     0.0,
@@ -339,10 +345,21 @@ def _unwrap_event_payload(payload: Any) -> Any:
     return payload
 
 
-def _extract_command_id_from_event_payload(payload: Any, meta: Optional[dict[str, Any]] = None) -> Optional[str]:
-    """Best-effort extraction of command_id from worker event payloads."""
+def _extract_command_id_from_event_payload(payload: Any, meta: Optional[dict[str, Any]] = None) -> Optional[int]:
+    """Best-effort extraction of command_id (BIGINT snowflake) from worker event payloads.
+
+    Accepts int (current shape), or numeric str (legacy). Returns int or None.
+    """
+    def _coerce(v: Any) -> Optional[int]:
+        if v is None: return None
+        if isinstance(v, int): return v
+        if isinstance(v, str) and v.strip().isdigit(): return int(v.strip())
+        return None
+
     if isinstance(meta, dict) and "command_id" in meta:
-        return meta.get("command_id")
+        coerced = _coerce(meta.get("command_id"))
+        if coerced is not None:
+            return coerced
 
     if not isinstance(payload, dict):
         return None
@@ -374,8 +391,9 @@ def _extract_command_id_from_event_payload(payload: Any, meta: Optional[dict[str
                 candidates.append(response_result_context.get("command_id"))
 
     for value in candidates:
-        if isinstance(value, str) and value.strip():
-            return value.strip()
+        coerced = _coerce(value)
+        if coerced is not None:
+            return coerced
     return None
 
 
@@ -595,6 +613,23 @@ def _build_output_view(
         if isinstance(payload_result.get("context"), dict):
             output["context"] = payload_result.get("context")
             output["data"] = payload_result.get("context")
+        # When the event.result column carries small inline rows (preserved by
+        # server/_build_reference_only_result inside payload_result.context to
+        # satisfy the event_result_check DB constraint), surface them as
+        # output.data.rows so replay-time re-rendering of step-level set: and
+        # arc when: expressions like {{ output.data.rows[0].<col> }} can still
+        # resolve the value.
+        inline_rows = payload_result.get("rows")
+        if not isinstance(inline_rows, list):
+            ctx = payload_result.get("context") if isinstance(payload_result.get("context"), dict) else None
+            if isinstance(ctx, dict) and isinstance(ctx.get("rows"), list):
+                inline_rows = ctx.get("rows")
+        if isinstance(inline_rows, list):
+            data_view = output.get("data") if isinstance(output.get("data"), dict) else {}
+            data_view = {**data_view, "rows": inline_rows}
+            if "row_count" not in data_view:
+                data_view["row_count"] = len(inline_rows)
+            output["data"] = data_view
 
     if isinstance(step_result, dict):
         if "status" in step_result:

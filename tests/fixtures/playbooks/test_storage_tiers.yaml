@@ -3,27 +3,25 @@ kind: Playbook
 metadata:
   name: test_storage_tiers
   path: tests/storage_tiers_test
-  description: 'Test all storage tier auto-selection based on result size.
+  description: |
+    Test storage tier auto-selection based on result size.
 
-
-    Storage Tiers:
-
+    Storage Tiers (RisingWave-aligned, phase 0):
     - Inline: < 64KB (no externalization)
-
     - NATS KV: 64KB - 1MB
+    - DISK: >= 1MB (local SSD cache + async cloud spill; phase 0 spills
+      directly to the configured cloud tier)
+    - S3/GCS: explicit durable
 
-    - NATS Object Store: 1MB - 10MB
-
-    - S3/GCS: > 10MB (fallback to Object Store if not configured)
-
-    '
+    The previous `NATS Object Store` probe has been replaced by a
+    `DISK` probe that exercises the new large-payload routing path.
 workload:
   inline_items: 100
   inline_item_size: 50
   kv_items: 500
   kv_item_size: 200
-  object_items: 2000
-  object_item_size: 1000
+  disk_items: 2000
+  disk_item_size: 1000
   large_items: 5000
   large_item_size: 3000
 workflow:
@@ -69,16 +67,16 @@ workflow:
     spec:
       mode: exclusive
     arcs:
-    - step: test_nats_object
-- step: test_nats_object
+    - step: test_disk
+- step: test_disk
   tool:
-  - name: generate_object
+  - name: generate_disk
     kind: python
     input:
-      count: '{{ object_items }}'
-      size: '{{ object_item_size }}'
-    code: "items = [{\"id\": i, \"data\": \"O\" * size, \"active\": True} for i in\
-      \ range(count)]\nresult = {\n    \"status\": \"ok\",\n    \"tier\": \"object_expected\"\
+      count: '{{ disk_items }}'
+      size: '{{ disk_item_size }}'
+    code: "items = [{\"id\": i, \"data\": \"D\" * size, \"active\": True} for i in\
+      \ range(count)]\nresult = {\n    \"status\": \"ok\",\n    \"tier\": \"disk_expected\"\
       ,\n    \"count\": len(items),\n    \"total_bytes\": count * size,\n    \"items\"\
       : items\n}\n"
   output:
@@ -100,7 +98,7 @@ workflow:
       count: '{{ large_items }}'
       size: '{{ large_item_size }}'
     code: "items = [{\"id\": i, \"data\": \"L\" * size, \"active\": True} for i in\
-      \ range(count)]\nresult = {\n    \"status\": \"ok\",\n    \"tier\": \"s3_or_object_expected\"\
+      \ range(count)]\nresult = {\n    \"status\": \"ok\",\n    \"tier\": \"cloud_expected\"\
       ,\n    \"count\": len(items),\n    \"total_bytes\": count * size,\n    \"items\"\
       : items\n}\n"
   output:
@@ -126,36 +124,64 @@ workflow:
       kv_store: '{{ test_nats_kv._store | default(''none'') }}'
       kv_status: '{{ test_nats_kv.status }}'
       kv_bytes: '{{ test_nats_kv.total_bytes }}'
-      object_has_ref: '{{ test_nats_object._ref is defined }}'
-      object_store: '{{ test_nats_object._store | default(''none'') }}'
-      object_status: '{{ test_nats_object.status }}'
-      object_bytes: '{{ test_nats_object.total_bytes }}'
+      disk_has_ref: '{{ test_disk._ref is defined }}'
+      disk_store: '{{ test_disk._store | default(''none'') }}'
+      disk_status: '{{ test_disk.status }}'
+      disk_bytes: '{{ test_disk.total_bytes }}'
       large_has_ref: '{{ test_large_storage._ref is defined }}'
       large_store: '{{ test_large_storage._store | default(''none'') }}'
       large_status: '{{ test_large_storage.status }}'
       large_bytes: '{{ test_large_storage.total_bytes }}'
-    code: "results = {\n    \"inline\": {\n        \"externalized\": inline_has_ref,\n\
-      \        \"expected_externalized\": False,  # Under 64KB threshold\n       \
-      \ \"status\": inline_status,\n        \"bytes\": inline_bytes,\n        \"correct\"\
-      : not inline_has_ref  # Should NOT be externalized\n    },\n    \"nats_kv\"\
-      : {\n        \"externalized\": kv_has_ref,\n        \"store\": kv_store,\n \
-      \       \"expected_store\": \"kv\",\n        \"status\": kv_status,\n      \
-      \  \"bytes\": kv_bytes,\n        \"correct\": kv_has_ref and kv_store == \"\
-      kv\"\n    },\n    \"nats_object\": {\n        \"externalized\": object_has_ref,\n\
-      \        \"store\": object_store,\n        \"expected_store\": \"object\",\n\
-      \        \"status\": object_status,\n        \"bytes\": object_bytes,\n    \
-      \    \"correct\": object_has_ref and object_store == \"object\"\n    },\n  \
-      \  \"large_storage\": {\n        \"externalized\": large_has_ref,\n        \"\
-      store\": large_store,\n        \"expected_store\": \"s3 or object (fallback)\"\
-      ,\n        \"status\": large_status,\n        \"bytes\": large_bytes,\n    \
-      \    \"correct\": large_has_ref and large_store in (\"s3\", \"object\", \"gcs\"\
-      )\n    }\n}\n\nall_correct = all(r[\"correct\"] for r in results.values())\n\
-      \nresult = {\n    \"test_result\": \"PASSED\" if all_correct else \"FAILED\"\
-      ,\n    \"all_tiers_correct\": all_correct,\n    \"tier_results\": results,\n\
-      \    \"summary\": {\n        \"inline_correct\": results[\"inline\"][\"correct\"\
-      ],\n        \"kv_correct\": results[\"nats_kv\"][\"correct\"],\n        \"object_correct\"\
-      : results[\"nats_object\"][\"correct\"],\n        \"large_correct\": results[\"\
-      large_storage\"][\"correct\"]\n    }\n}\n"
+    code: |
+      results = {
+          "inline": {
+              "externalized": inline_has_ref,
+              "expected_externalized": False,  # Under 64KB threshold
+              "status": inline_status,
+              "bytes": inline_bytes,
+              "correct": not inline_has_ref
+          },
+          "nats_kv": {
+              "externalized": kv_has_ref,
+              "store": kv_store,
+              "expected_store": "kv",
+              "status": kv_status,
+              "bytes": kv_bytes,
+              "correct": kv_has_ref and kv_store == "kv"
+          },
+          "disk": {
+              "externalized": disk_has_ref,
+              "store": disk_store,
+              # Phase 0: DISK spills to the configured cloud tier (s3 / gcs).
+              # Phase 1 will have a local disk-cache backend of its own.
+              "expected_store": "disk | s3 | gcs",
+              "status": disk_status,
+              "bytes": disk_bytes,
+              "correct": disk_has_ref and disk_store in ("disk", "s3", "gcs")
+          },
+          "large_storage": {
+              "externalized": large_has_ref,
+              "store": large_store,
+              "expected_store": "disk | s3 | gcs",
+              "status": large_status,
+              "bytes": large_bytes,
+              "correct": large_has_ref and large_store in ("disk", "s3", "gcs")
+          }
+      }
+
+      all_correct = all(r["correct"] for r in results.values())
+
+      result = {
+          "test_result": "PASSED" if all_correct else "FAILED",
+          "all_tiers_correct": all_correct,
+          "tier_results": results,
+          "summary": {
+              "inline_correct": results["inline"]["correct"],
+              "kv_correct": results["nats_kv"]["correct"],
+              "disk_correct": results["disk"]["correct"],
+              "large_correct": results["large_storage"]["correct"]
+          }
+      }
   next:
     spec:
       mode: exclusive
@@ -172,14 +198,14 @@ workflow:
     spec:
       mode: exclusive
     arcs:
-    - step: load_object_data
-- step: load_object_data
+    - step: load_disk_data
+- step: load_disk_data
   tool:
-  - name: load_object
+  - name: load_disk
     kind: artifact
     action: get
     input:
-      result_ref: '{{ test_nats_object._ref }}'
+      result_ref: '{{ test_disk._ref }}'
   next:
     spec:
       mode: exclusive
@@ -204,18 +230,31 @@ workflow:
     input:
       tier_results: '{{ verify_storage_tiers.tier_results }}'
       kv_loaded_count: '{{ load_kv_data.count | default(0) }}'
-      object_loaded_count: '{{ load_object_data.count | default(0) }}'
+      disk_loaded_count: '{{ load_disk_data.count | default(0) }}'
       large_loaded_count: '{{ load_large_data.count | default(0) }}'
-    code: "load_results = {\n    \"kv_loaded\": kv_loaded_count == 500,\n    \"kv_count\"\
-      : kv_loaded_count,\n    \"object_loaded\": object_loaded_count == 2000,\n  \
-      \  \"object_count\": object_loaded_count,\n    \"large_loaded\": large_loaded_count\
-      \ == 5000,\n    \"large_count\": large_loaded_count\n}\n\nall_loaded = all([\n\
-      \    load_results[\"kv_loaded\"],\n    load_results[\"object_loaded\"],\n  \
-      \  load_results[\"large_loaded\"]\n])\n\nall_tiers_correct = all(r[\"correct\"\
-      ] for r in tier_results.values())\n\nresult = {\n    \"test_result\": \"PASSED\"\
-      \ if (all_loaded and all_tiers_correct) else \"FAILED\",\n    \"storage_tier_selection\"\
-      : \"PASSED\" if all_tiers_correct else \"FAILED\",\n    \"lazy_loading\": \"\
-      PASSED\" if all_loaded else \"FAILED\",\n    \"tier_details\": tier_results,\n\
-      \    \"load_details\": load_results,\n    \"message\": \"All storage tiers working\
-      \ correctly\" if (all_loaded and all_tiers_correct) else \"Some tests failed\"\
-      \n}\n"
+    code: |
+      load_results = {
+          "kv_loaded": kv_loaded_count == 500,
+          "kv_count": kv_loaded_count,
+          "disk_loaded": disk_loaded_count == 2000,
+          "disk_count": disk_loaded_count,
+          "large_loaded": large_loaded_count == 5000,
+          "large_count": large_loaded_count
+      }
+
+      all_loaded = all([
+          load_results["kv_loaded"],
+          load_results["disk_loaded"],
+          load_results["large_loaded"]
+      ])
+
+      all_tiers_correct = all(r["correct"] for r in tier_results.values())
+
+      result = {
+          "test_result": "PASSED" if (all_loaded and all_tiers_correct) else "FAILED",
+          "storage_tier_selection": "PASSED" if all_tiers_correct else "FAILED",
+          "lazy_loading": "PASSED" if all_loaded else "FAILED",
+          "tier_details": tier_results,
+          "load_details": load_results,
+          "message": "All storage tiers working correctly" if (all_loaded and all_tiers_correct) else "Some tests failed"
+      }
