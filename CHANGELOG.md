@@ -2,6 +2,59 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.23.0](https://github.com/noetl/noetl/compare/v2.22.1...v2.23.0) (2026-04-22)
+
+### Features
+
+* **engine:** cursor loop.done aggregation (Phase 5) ([aad1f36](https://github.com/noetl/noetl/commit/aad1f363f72306d7c4190db2f367037e8f42aece))
+* **engine:** cursor loops build dedicated cursor_worker command ([f4a8b16](https://github.com/noetl/noetl/commit/f4a8b160f3f81d3d2b703e4c41fa52c4fa763fb2))
+* **engine:** cursor-driven loop — pydantic model + driver registry (Phase 1+2) ([83c8820](https://github.com/noetl/noetl/commit/83c88204fd5e630471e9a7bb519211558efeda5c))
+* **engine:** cursor-driven loop dispatch (Phase 3) ([5583ec7](https://github.com/noetl/noetl/commit/5583ec77df558b4815a2f648fa2d34195944626e))
+* **pft:** migrate all 5 fetch_X loops to cursor mode (Phase 6) ([9f82ab0](https://github.com/noetl/noetl/commit/9f82ab0f788e934bfde572263467e49a86ff2a56))
+* **worker:** cursor_worker runtime — claim/process/release loop (Phase 4) ([d99294a](https://github.com/noetl/noetl/commit/d99294a5993dc5f54df7704c2f960ff1b32c0f55))
+
+### Bug Fixes
+
+* **cursor:** clear completed_steps snapshot on cursor dispatch ([fa21d8e](https://github.com/noetl/noetl/commit/fa21d8eae2c63d290f15b0d3fa09b6037e1b8619))
+* **cursor:** seed NATS KV loop_state so call.done increments reach epoch ([440c21f](https://github.com/noetl/noetl/commit/440c21f0ef1a2541badb62bbc0c250dbf43c02a4))
+* **cursor:** share Postgres connection pool per process, not per worker ([47397c9](https://github.com/noetl/noetl/commit/47397c94a74b979ea4fd5347c9e9e827428bfb46))
+* **cursor:** use :task_sequence step suffix so loop.done path fires ([f0ce4c3](https://github.com/noetl/noetl/commit/f0ce4c31081ce5e5658b84c135ff404efa736b9f))
+* **engine:** do not treat arc-evaluation exceptions as dead-end completion ([7f31664](https://github.com/noetl/noetl/commit/7f31664da4b6bd962645f456642812bd5562d2c7))
+* **engine:** loop tail-repair handles CAS-throttled dispatch + bumped thresholds ([44eadcd](https://github.com/noetl/noetl/commit/44eadcd832666fbedf6b1ebe31e41231df797906))
+* **engine:** preserve small inline rows in event.result for replay rehydration ([26cdb1c](https://github.com/noetl/noetl/commit/26cdb1c578374a7945392c1a48a48f89e5294248))
+* **engine:** probe arc conditions on completion to catch fallback-path raises ([086a4cd](https://github.com/noetl/noetl/commit/086a4cdfc93ada3762ba94a414023beab3490090))
+* **pft+cursor:** reach rows via load_next_facility.context.rows + pre-render claim ([c689ddc](https://github.com/noetl/noetl/commit/c689ddc5dad50037a699ce49b84716dbcbbfdbad))
+* **pft:** add wait_for_all_barriers fan-in step before prepare_mds_work ([bff9091](https://github.com/noetl/noetl/commit/bff9091d91488fb3a1bf6cdb49e1e2f4cc2c713d))
+* **pft:** bump claim_batch_size 500→1000 to claim full facility queue per wave ([e74adc1](https://github.com/noetl/noetl/commit/e74adc13ead4cc1b6686ef78904c13c16665b715))
+* **pft:** drop ctx.facility_mapping_id — resolve via subquery in every SQL ([3621a74](https://github.com/noetl/noetl/commit/3621a74f5cf10914c6112cc1cda63e01d8ea8e03))
+* **pft:** drop run_mds_batch_workers max_in_flight 100→5 to avoid worker-pool deadlock ([0bfbba6](https://github.com/noetl/noetl/commit/0bfbba6be963919a575a72392cc0828c6174cc7c))
+* **pft:** mark_X_done checks result-table counts, loops back on shortfall ([8dc17f6](https://github.com/noetl/noetl/commit/8dc17f6cbe1cb97df914aee4bb620c8de787aaa4))
+* **pft:** mark_X_done done_count must include own CTE insert ([b697053](https://github.com/noetl/noetl/commit/b697053f4775e17a90b87c6dc46533768df83e3c))
+* **pft:** remove deliberate SYNTAX_ERROR injection for patient 15 ([39c426a](https://github.com/noetl/noetl/commit/39c426a4c2007fedd94b63cddc85c6d78573006f))
+* **pft:** thread ctx.facility_mapping_id; drop racy active=TRUE subqueries ([304ea75](https://github.com/noetl/noetl/commit/304ea753d88f3ce9ec168084187795f1f25ae626))
+* **pft:** use load_next_facility.context.rows[0] for facility id ([a3c2020](https://github.com/noetl/noetl/commit/a3c2020b55cab7abc7dd284de34c5ad49f202562))
+* **pft:** use load_next_facility.rows[0].facility_mapping_id directly ([04b7223](https://github.com/noetl/noetl/commit/04b7223fd9662ad618f4696e0f4298a2cb222831))
+* **pft:** wait_for_all_barriers uses multi-statement command with pg_sleep ([7fe039b](https://github.com/noetl/noetl/commit/7fe039b404ac1b2f59b5662187c65a4e3a1ecc28))
+* **postgres:** keep small result sets inline (skip TempStore externalization) ([d6391a6](https://github.com/noetl/noetl/commit/d6391a6a61dcfe0131223ac574be0110dcee12a9))
+* **server:** adapt INSERT ON CONFLICT to noetl.command composite PK ([533af79](https://github.com/noetl/noetl/commit/533af7958bca4957a182a186d2c173c3a948abbf))
+* **server:** extract inline rows from the nested .data envelope ([f862434](https://github.com/noetl/noetl/commit/f862434f0520423504805280e17fb04046fcc373))
+* **server:** handle BIGINT command_id in claim_command path ([8e7b6d9](https://github.com/noetl/noetl/commit/8e7b6d9fff2211288031fb8079da43209c87b1f0))
+* **server:** nest inline rows inside result.context to satisfy event_result_check ([66aefe2](https://github.com/noetl/noetl/commit/66aefe224be33a6d9e06374c0d1b7ebc3374b32b))
+* **server:** prefer payload.response over payload.result when rows are present ([acfcc70](https://github.com/noetl/noetl/commit/acfcc70c418b6768cb4dd8d8df868cd029a35e53))
+* **server:** use command_id directly as advisory-lock key (no more hashtext) ([e6b6898](https://github.com/noetl/noetl/commit/e6b6898bf6e379025b31a4ca1477d588e01e811d))
+* **state:** preserve rows/columns across mark_step_completed calls ([c81e991](https://github.com/noetl/noetl/commit/c81e9910ce861e03ac26fe0412ea448ebb931951))
+
+### Performance Improvements
+
+* **pft:** bump claim_batch_size and switch to scoped delete ([1afbe70](https://github.com/noetl/noetl/commit/1afbe7080ae78418decc4a13709a42661a4b87c6))
+* **pft:** bump worker concurrency + claim_batch_size for sub-15min/facility target ([832c9a1](https://github.com/noetl/noetl/commit/832c9a1ecfde37e4b37a1cb0c3a902fce72f9843))
+* **pft:** parallelize 5 data types per facility (DAG fan-out + barrier) ([b55b227](https://github.com/noetl/noetl/commit/b55b22759fb129bfcdfc54b6b84d82bde5d4dd61))
+* **schema:** hash-partition noetl.command on execution_id (16 partitions) ([a6477b6](https://github.com/noetl/noetl/commit/a6477b62e6b8536e098ddcee5d33ee16dad996d0))
+
+### Reverts
+
+* **pft:** restore SELECT active=TRUE subquery for cursor claim SQL ([9da20e6](https://github.com/noetl/noetl/commit/9da20e6b0c5577fcfb30ef2af765e46d1459f7c2))
+
 ## [2.22.1](https://github.com/noetl/noetl/compare/v2.22.0...v2.22.1) (2026-04-19)
 
 ### Bug Fixes
