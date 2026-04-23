@@ -100,18 +100,33 @@ Results are written to `pft_test_validation_log` and asserted in `check_results`
 
 ## Running the test
 
-Register and execute via the HTTP API (the NoETL CLI ≤ v2.13.0 cannot parse multi-tool loop steps):
+### Preferred (CLI, validated on v2.23.0)
+
+Use the catalog path without the `.yaml` extension:
+
+```bash
+noetl execute playbook tests/fixtures/playbooks/pft_flow_test/test_pft_flow
+```
+
+Notes:
+
+- Using the `.yaml` suffix with `noetl execute playbook` can return `404 Playbook not found` on server-backed execution.
+- `noetl execute playbook tests/fixtures/playbooks/pft_flow_test/test_pft_flow` starts successfully on v2.23.0.
+
+### HTTP API fallback
+
+If you need explicit catalog version control, register and execute via API:
 
 ```bash
 # Register (bump version each time the playbook changes)
 curl -X POST http://localhost:8082/api/catalog \
-  -H "Content-Type: application/json" \
-  -d @tests/fixtures/playbooks/pft_flow_test/test_pft_flow.yaml
+     -H "Content-Type: application/json" \
+     -d @tests/fixtures/playbooks/pft_flow_test/test_pft_flow.yaml
 
 # Execute
 curl -X POST http://localhost:8082/api/execute \
-  -H "Content-Type: application/json" \
-  -d '{"path": "tests/fixtures/playbooks/pft_flow_test/test_pft_flow", "version": <N>}'
+     -H "Content-Type: application/json" \
+     -d '{"path": "tests/fixtures/playbooks/pft_flow_test/test_pft_flow", "version": <N>}'
 ```
 
 Check results after completion:
@@ -148,3 +163,19 @@ curl -X POST http://localhost:8082/api/execute \
 It fetches assessment details from `/api/v1/mds/assessment/{id}` and upserts into
 `pft_test_mds_assessment_details`. Called with `max_in_flight: 1` from the parent to keep
 concurrency predictable during testing.
+
+### How it is called from the main playbook
+
+`test_pft_flow.yaml` calls this sub-playbook from `run_mds_batch_workers` using `execute_playbook`
+for each generated batch (`offset`, `batch_size`, `batch_number`).
+
+For each call:
+
+- A child execution is created in `noetl.execution`.
+- The child row has `parent_execution_id = <main_execution_id>`.
+- Child events are written to `noetl.event` with the child `execution_id`.
+- Parent and child command metadata can be correlated through command lifecycle events and,
+  on newer builds, records in the `commands` table.
+
+This parent/child chain is the most reliable way to produce a full execution report for the
+fixture, especially when `run_mds_batch_workers` fans out many sub-playbook calls.
