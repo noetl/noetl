@@ -27,11 +27,15 @@ NoETL development is now coordinated through the `ai-meta` repository:
 - Gateway: https://github.com/noetl/gateway
 - CLI: https://github.com/noetl/cli
 - Tools: https://github.com/noetl/tools
+- End-to-end fixtures: https://github.com/noetl/e2e
 - Ops/automation: https://github.com/noetl/ops
 - Docs: https://github.com/noetl/docs
 
 `ai-meta` tracks all component repositories as Git submodules and is the primary place to
 coordinate cross-repo changes, pointer bumps, and release choreography.
+
+End-to-end integration playbooks, fixture payloads, local credential templates, notebooks,
+and Gateway UI test fixtures live in `noetl/e2e`.
 
 ## Distribution channels
 
