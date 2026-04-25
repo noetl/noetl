@@ -144,29 +144,96 @@ class StateStore:
                 if isinstance(alias, str) and alias:
                     self.playbook_repo.register(state.playbook, alias)
         
-        # Determine status for SQL update
+        # Determine status for SQL projection. This table powers observability
+        # APIs and must be created on the first state save; older code only
+        # updated existing rows, which left /api/executions empty.
         status = "FAILED" if state.failed else ("COMPLETED" if state.completed else "RUNNING")
-        
+        if state.catalog_id is None:
+            sql = """
+                UPDATE noetl.execution
+                SET state = %s,
+                    updated_at = CURRENT_TIMESTAMP,
+                    end_time = CASE
+                        WHEN end_time IS NULL AND %s IN ('COMPLETED', 'FAILED', 'CANCELLED') THEN CURRENT_TIMESTAMP
+                        ELSE end_time
+                    END,
+                    status = CASE
+                        WHEN status IN ('COMPLETED', 'FAILED', 'CANCELLED') THEN status
+                        ELSE %s
+                    END,
+                    last_event_id = GREATEST(COALESCE(last_event_id, 0), %s)
+                WHERE execution_id = %s
+            """
+            json_str = json.dumps(state_dict)
+            params = (
+                json_str,
+                status,
+                status,
+                int(last_event_id or 0),
+                int(state.execution_id),
+            )
+            if conn is None:
+                async with get_pool_connection() as c:
+                    async with c.cursor() as cur:
+                        await cur.execute(sql, params)
+            else:
+                async with conn.cursor() as cur:
+                    await cur.execute(sql, params)
+            log.debug("Skipped execution projection insert for execution %s without catalog_id", state.execution_id)
+            return
+
         sql = """
-            UPDATE noetl.execution 
-            SET state = %s, 
+            INSERT INTO noetl.execution (
+                execution_id,
+                catalog_id,
+                parent_execution_id,
+                status,
+                start_time,
+                end_time,
+                last_event_id,
+                state,
+                created_at,
+                updated_at
+            )
+            VALUES (
+                %s,
+                %s,
+                %s,
+                %s,
+                CURRENT_TIMESTAMP,
+                CASE WHEN %s IN ('COMPLETED', 'FAILED', 'CANCELLED') THEN CURRENT_TIMESTAMP ELSE NULL END,
+                %s,
+                %s,
+                CURRENT_TIMESTAMP,
+                CURRENT_TIMESTAMP
+            )
+            ON CONFLICT (execution_id) DO UPDATE
+            SET state = EXCLUDED.state,
+                parent_execution_id = COALESCE(noetl.execution.parent_execution_id, EXCLUDED.parent_execution_id),
                 updated_at = CURRENT_TIMESTAMP,
                 end_time = CASE
-                    WHEN noetl.execution.end_time IS NULL AND %s IN ('COMPLETED', 'FAILED', 'CANCELLED') THEN CURRENT_TIMESTAMP
+                    WHEN noetl.execution.end_time IS NULL AND EXCLUDED.status IN ('COMPLETED', 'FAILED', 'CANCELLED') THEN CURRENT_TIMESTAMP
                     ELSE noetl.execution.end_time
                 END,
-                status = CASE 
-                    WHEN status IN ('COMPLETED', 'FAILED', 'CANCELLED') THEN status 
-                    ELSE %s 
+                status = CASE
+                    WHEN noetl.execution.status IN ('COMPLETED', 'FAILED', 'CANCELLED') THEN noetl.execution.status
+                    ELSE EXCLUDED.status
                 END,
-                last_event_id = GREATEST(COALESCE(last_event_id, 0), %s)
-            WHERE execution_id = %s
+                last_event_id = GREATEST(COALESCE(noetl.execution.last_event_id, 0), EXCLUDED.last_event_id)
         """
         import json
         t2 = time.perf_counter()
         json_str = json.dumps(state_dict)
         t3 = time.perf_counter()
-        params = (json_str, status, status, last_event_id, int(state.execution_id))
+        params = (
+            int(state.execution_id),
+            int(state.catalog_id),
+            int(state.parent_execution_id) if state.parent_execution_id is not None else None,
+            status,
+            status,
+            int(last_event_id or 0),
+            json_str,
+        )
 
         
         if conn is None:

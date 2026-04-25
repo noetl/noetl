@@ -140,6 +140,8 @@ async def get_execution_status(execution_id: str, full: bool = False):
                 completed = t_type == "execution.cancelled"; failed = t_type != "execution.cancelled"
             elif latest["node_name"] == "end" and latest["status"] == "COMPLETED" and latest["event_type"] in {"command.completed", "call.done", "step.exit"}:
                 completed, inferred = True, True
+            elif latest["event_type"] == "batch.completed" and latest["status"] == "COMPLETED" and int((pending_row or {}).get("pending_count", 0) or 0) <= 0:
+                completed, inferred = True, True
             if failed: completed = False
             seen = set(); completed_steps = [r["node_name"] for r in (step_rows or []) if r["node_name"] and r["node_name"] not in seen and not r["node_name"].endswith(':task_sequence') and not seen.add(r["node_name"])]
             terminal_time = (terminal or latest).get("created_at") if (terminal or latest) else None
@@ -182,6 +184,8 @@ async def get_execution_status(execution_id: str, full: bool = False):
                 elif t_type in {"playbook.failed", "workflow.failed", "execution.cancelled"}:
                     completed = t_type == "execution.cancelled"; failed = t_type != "execution.cancelled"
                 elif latest and latest["node_name"] == "end" and latest["status"] == "COMPLETED" and latest["event_type"] in {"command.completed", "call.done", "step.exit"}:
+                    completed, inferred = True, True
+                elif latest and latest["event_type"] == "batch.completed" and latest["status"] == "COMPLETED" and int((pending_row or {}).get("pending_count", 0) or 0) <= 0:
                     completed, inferred = True, True
         if failed: completed = False
         duration = _duration_fields(

@@ -9,14 +9,43 @@ class FinalizeExecutionResponse(BaseModel):
     status: str = Field(..., description="Finalization status: finalized, already_completed, not_found")
     execution_id: str = Field(..., description="The execution ID that was finalized")
     message: str = Field(..., description="Human-readable status message")
-"""Pydantic schemas for execution API responses."""
-
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, JsonValue
 
 from noetl.core.common import AppBaseModel
+
+
+class ExecutionEventResponse(AppBaseModel):
+    """Typed event row used by execution observability endpoints."""
+
+    execution_id: str = Field(..., description="Execution identifier")
+    event_id: int = Field(..., description="Event identifier")
+    event_type: str = Field(..., description="Event type")
+    node_id: Optional[str] = Field(None, description="Node identifier")
+    node_name: Optional[str] = Field(None, description="Node display name")
+    status: Optional[str] = Field(None, description="Event status")
+    created_at: Optional[datetime] = Field(None, description="Event creation timestamp")
+    timestamp: Optional[datetime] = Field(None, description="Alias for created_at")
+    context: Optional[JsonValue] = Field(None, description="Typed JSON context payload")
+    result: Optional[JsonValue] = Field(None, description="Typed JSON result payload")
+    error: Optional[str] = Field(None, description="Event error text")
+    catalog_id: Optional[str] = Field(None, description="Catalog identifier")
+    parent_execution_id: Optional[str] = Field(None, description="Parent execution identifier")
+    parent_event_id: Optional[str] = Field(None, description="Parent event identifier")
+    duration: Optional[float] = Field(None, description="Event duration in seconds")
+
+
+class ExecutionEventsPagination(AppBaseModel):
+    """Pagination metadata for execution event pages."""
+
+    page: int = Field(..., ge=1)
+    page_size: int = Field(..., ge=1)
+    total_events: int = Field(..., ge=0)
+    total_pages: int = Field(..., ge=1)
+    has_next: bool
+    has_prev: bool
 
 class ExecutionEntryResponse(AppBaseModel):
     """Response schema for a single execution entry."""
@@ -31,9 +60,18 @@ class ExecutionEntryResponse(AppBaseModel):
     duration_seconds: Optional[float] = Field(None, description="Execution duration in seconds")
     duration_human: Optional[str] = Field(None, description="Human-readable execution duration")
     progress: int = Field(..., ge=0, le=100, description="Execution progress percentage (0-100)")
-    result: Optional[Dict[str, Any]] = Field(None, description="Execution results with command outputs")
+    result: Optional[JsonValue] = Field(None, description="Execution results with command outputs")
     error: Optional[str] = Field(None, description="Error message if execution failed")
     parent_execution_id: Optional[str] = Field(None, description="Parent execution ID if this is a sub-playbook")
+
+
+class ExecutionDetailResponse(ExecutionEntryResponse):
+    """Typed response for a single execution plus optional event page."""
+
+    events: List[ExecutionEventResponse] = Field(default_factory=list)
+    events_included: bool = Field(default=True)
+    events_endpoint: str = Field(..., description="Endpoint for paginated execution events")
+    pagination: Optional[ExecutionEventsPagination] = None
 
 
 class CancelExecutionRequest(BaseModel):
