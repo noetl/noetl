@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.23.1](https://github.com/noetl/noetl/compare/v2.23.0...v2.23.1) (2026-04-25)
+
+### Bug Fixes
+
+* **regression:** wait for sub-playbooks via return_step ([e1b5bfd](https://github.com/noetl/noetl/commit/e1b5bfde7d74491b1f18743b0c03f43beba12b54))
+
 ## [2.23.0](https://github.com/noetl/noetl/compare/v2.22.1...v2.23.0) (2026-04-22)
 
 ### Features
