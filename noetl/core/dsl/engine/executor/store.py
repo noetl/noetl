@@ -144,9 +144,9 @@ class StateStore:
                 if isinstance(alias, str) and alias:
                     self.playbook_repo.register(state.playbook, alias)
         
-        # Determine status for SQL projection. This table powers observability
-        # APIs and must be created on the first state save; older code only
-        # updated existing rows, which left /api/executions empty.
+        # Determine status for the execution-state projection. noetl.event is
+        # the append-only event-sourcing log; noetl.command and noetl.execution
+        # are projections maintained for workers, APIs, and UI observability.
         status = "FAILED" if state.failed else ("COMPLETED" if state.completed else "RUNNING")
         if state.catalog_id is None:
             sql = """

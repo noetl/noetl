@@ -1,13 +1,13 @@
 """
 NoETL Core Worker with NATS Integration
 
-Pure event-sourced worker that:
+Event-driven worker that:
 1. Subscribes to NATS JetStream for command notifications (event_id references)
-2. Fetches command details from GET /api/commands/{event_id} (reads command.issued event)
+2. Fetches command details from GET /api/commands/{event_id}
 3. Executes based on tool.kind
 4. Emits events back to server (POST /api/events)
 
-Single source of truth: event table. No queue table.
+noetl.event is the event log; noetl.command and noetl.execution are projections.
 """
 
 from jinja2 import Environment, BaseLoader
@@ -152,13 +152,13 @@ class Worker:
     """
     Core Worker that receives command notifications from NATS and executes them.
     
-    Architecture (Pure Event Sourcing):
+    Architecture:
     - Subscribes to NATS JetStream for command notifications
     - Receives lightweight message with {execution_id, event_id, command_id, step, server_url}
-    - Fetches full command from GET /api/commands/{event_id} (reads command.issued event)
+    - Fetches full command from GET /api/commands/{event_id}
     - Executes tool based on tool.kind
     - Emits events to POST /api/events (command.completed or command.failed)
-    - Single source of truth: event table. No queue table.
+    - Reads noetl.command projection and writes noetl.event entries
     """
     
     def __init__(
