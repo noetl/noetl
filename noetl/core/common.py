@@ -381,7 +381,7 @@ def ordered_yaml_load(stream):
         yaml.resolver.BaseResolver.DEFAULT_MAPPING_TAG,
         construct_mapping
     )
-    return yaml.load(stream, OrderedLoader)
+    return yaml.safe_load(stream, OrderedLoader)
 
 def encode_version(version: str) -> str:
     major, minor, patch = map(int, version.split("."))

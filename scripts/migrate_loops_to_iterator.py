@@ -140,7 +140,7 @@ def process_file(path: Path, apply: bool) -> Tuple[bool, str]:
     yaml.indent(mapping=2, sequence=2, offset=2)
 
     try:
-        data = yaml.load(path.read_text(encoding="utf-8"))
+        data = yaml.safe_load(path.read_text(encoding="utf-8"))
     except Exception as e:
         return False, f"Failed to parse {path}: {e}"
 
