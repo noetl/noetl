@@ -4,7 +4,7 @@ import os
 import time
 from collections import Counter, defaultdict
 from datetime import datetime, timezone
-from typing import Any, Optional
+from typing import Annotated, Any, Optional
 from urllib.parse import quote
 from fastapi import APIRouter, HTTPException, Body, Query
 from fastapi.responses import JSONResponse
@@ -1138,7 +1138,7 @@ async def get_execution(
     page_size: int = Query(default=100, ge=10, le=500, description="Events per page"),
     since_event_id: Optional[int] = Query(default=None, description="Get events after this event_id (for incremental loading)"),
     event_type: Optional[str] = Query(default=None, description="Filter by event type"),
-    include_events: bool = Query(default=True, description="Include paginated events in the response"),
+    include_events: Annotated[bool, Query(description="Include paginated events in the response")] = True,
 ):
     """
     Get execution by ID with paginated event history.
@@ -1198,7 +1198,7 @@ async def get_execution(
 
             # Get terminal status efficiently
             await cursor.execute("""
-                SELECT event_type, status, created_at
+                SELECT event_type, status, created_at, error
                 FROM noetl.event
                 WHERE execution_id = %(execution_id)s
                   AND event_type IN ('execution.cancelled', 'playbook.failed', 'workflow.failed',
@@ -1210,7 +1210,7 @@ async def get_execution(
 
             # Get latest event for end_time and fallback completion inference
             await cursor.execute("""
-                SELECT event_type, node_name, created_at, status
+                SELECT event_type, node_name, created_at, status, error
                 FROM noetl.event
                 WHERE execution_id = %(execution_id)s
                 ORDER BY event_id DESC
@@ -1305,7 +1305,11 @@ async def get_execution(
         duration_human=_format_duration_human(duration_seconds),
         progress=100 if final_status in {"COMPLETED", "FAILED", "CANCELLED"} else 0,
         result=None,
-        error=terminal_event.get("error") if terminal_event else None,
+        error=(
+            terminal_event.get("error")
+            if terminal_event and terminal_event.get("error") is not None
+            else latest_event.get("error") if latest_event else None
+        ),
         parent_execution_id=str(first_event["parent_execution_id"]) if first_event.get("parent_execution_id") is not None else None,
         events=[ExecutionEventResponse(**event) for event in events] if include_events else [],
         events_included=include_events,
@@ -1341,9 +1345,9 @@ async def get_execution_events(
                 event_type=event_type,
             )
     return {
-        "execution_id": detail.get("execution_id"),
-        "path": detail.get("path"),
-        "status": detail.get("status"),
+        "execution_id": detail.execution_id,
+        "path": detail.path,
+        "status": detail.status,
         "events": events,
         "pagination": pagination,
     }

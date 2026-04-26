@@ -221,7 +221,6 @@ class StateStore:
                 END,
                 last_event_id = GREATEST(COALESCE(noetl.execution.last_event_id, 0), EXCLUDED.last_event_id)
         """
-        import json
         t2 = time.perf_counter()
         json_str = json.dumps(state_dict)
         t3 = time.perf_counter()
