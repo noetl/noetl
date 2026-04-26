@@ -1,10 +1,11 @@
 """
 NoETL API package.
 
-Pure event sourcing architecture:
-- Event table is the single source of truth
-- No legacy endpoints, no queue tables
-- All state derived from events
+Execution state architecture:
+- noetl.event is the append-only event-sourcing table
+- noetl.command is the worker command projection
+- noetl.execution is the execution-state projection
+- APIs read command, event, and execution projections together
 """
 
 from fastapi import APIRouter

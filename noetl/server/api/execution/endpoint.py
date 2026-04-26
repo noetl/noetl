@@ -4,7 +4,7 @@ import os
 import time
 from collections import Counter, defaultdict
 from datetime import datetime, timezone
-from typing import Any, Optional
+from typing import Annotated, Any, Optional
 from urllib.parse import quote
 from fastapi import APIRouter, HTTPException, Body, Query
 from fastapi.responses import JSONResponse
@@ -16,6 +16,9 @@ from noetl.core.common import convert_snowflake_ids_for_api
 from noetl.server.api.event_queries import PENDING_COMMAND_COUNT_SQL
 from .schema import (
     ExecutionEntryResponse,
+    ExecutionDetailResponse,
+    ExecutionEventResponse,
+    ExecutionEventsPagination,
     CancelExecutionRequest,
     CancelExecutionResponse,
     FinalizeExecutionRequest,
@@ -48,6 +51,14 @@ def _as_iso(value: Optional[datetime]) -> Optional[str]:
     if value.tzinfo is None:
         value = value.replace(tzinfo=timezone.utc)
     return value.isoformat()
+
+
+def _ensure_utc(value: Optional[datetime]) -> Optional[datetime]:
+    if value is None:
+        return None
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value
 
 
 def _duration_seconds(start_time: Optional[datetime], end_time: Optional[datetime]) -> Optional[float]:
@@ -102,7 +113,8 @@ def _build_execution_event_filters(
 def _deserialize_event_row(row: dict[str, Any], execution_id: str) -> dict[str, Any]:
     event_data = dict(row)
     event_data["execution_id"] = execution_id
-    event_data["timestamp"] = row["created_at"].isoformat() if row["created_at"] else None
+    event_data["created_at"] = _ensure_utc(row.get("created_at"))
+    event_data["timestamp"] = _ensure_utc(row.get("created_at"))
     if isinstance(row.get("context"), str):
         try:
             event_data["context"] = json.loads(row["context"])
@@ -500,6 +512,47 @@ def _infer_execution_completion_from_events(
     return "RUNNING", None
 
 
+def _execution_entry_from_row(row_dict: dict[str, Any], pending_count: int) -> ExecutionEntryResponse:
+    latest_event = {
+        "event_type": row_dict.get("event_type"),
+        "node_name": row_dict.get("node_name"),
+        "created_at": row_dict.get("end_time"),
+        "status": row_dict.get("event_status") or row_dict.get("status"),
+    }
+    terminal_event = None
+    terminal_event_type = row_dict.get("terminal_event_type")
+    if terminal_event_type:
+        terminal_event = {
+            "event_type": terminal_event_type,
+            "created_at": row_dict.get("terminal_end_time"),
+            "status": row_dict.get("terminal_status"),
+        }
+    derived_status, inferred_end_time = _infer_execution_completion_from_events(
+        latest_event,
+        terminal_event,
+        pending_count,
+    )
+    start_time = _ensure_utc(row_dict.get("start_time"))
+    response_end_time = _ensure_utc(inferred_end_time) if derived_status != "RUNNING" else None
+    duration_end = response_end_time or datetime.now(timezone.utc)
+    duration_seconds = _duration_seconds(start_time, duration_end)
+    return ExecutionEntryResponse(
+        execution_id=str(row_dict["execution_id"]),
+        catalog_id=str(row_dict["catalog_id"]) if row_dict.get("catalog_id") is not None else "",
+        path=row_dict.get("path") or "unknown",
+        version=int(row_dict.get("version") or 0),
+        status=derived_status,
+        start_time=start_time or datetime.now(timezone.utc),
+        end_time=response_end_time,
+        duration_seconds=round(duration_seconds, 3) if duration_seconds is not None else None,
+        duration_human=_format_duration_human(duration_seconds),
+        progress=100 if derived_status in {"COMPLETED", "FAILED", "CANCELLED"} else 0,
+        result=row_dict.get("result"),
+        error=row_dict.get("error"),
+        parent_execution_id=str(row_dict["parent_execution_id"]) if row_dict.get("parent_execution_id") is not None else None,
+    )
+
+
 def _default_validation_commands(path: str, version: Any) -> tuple[list[str], list[str]]:
     version_suffix = f"@{version}" if version not in (None, "", "latest") else ""
     catalog_ref = f"catalog://{path}{version_suffix}" if path else "catalog://<playbook-path>"
@@ -688,7 +741,7 @@ async def _load_ai_execution_output(
         async with conn.cursor(row_factory=dict_row) as cursor:
             await cursor.execute(
                 """
-                SELECT event_type, status, created_at
+                SELECT event_type, status, created_at, error
                 FROM noetl.event
                 WHERE execution_id = %s
                 ORDER BY event_id DESC
@@ -798,26 +851,61 @@ async def get_executions(
                 # Keep this endpoint lightweight for UI polling. Avoid scanning giant payload columns.
                 await cursor.execute("SET LOCAL statement_timeout = '8s'")
                 await cursor.execute("""
+                    WITH latest AS (
+                        SELECT DISTINCT ON (execution_id)
+                            execution_id, event_type, node_name, status AS event_status,
+                            created_at, catalog_id, parent_execution_id, error
+                        FROM noetl.event
+                        WHERE execution_id IS NOT NULL
+                        ORDER BY execution_id, event_id DESC
+                    ),
+                    first_event AS (
+                        SELECT DISTINCT ON (execution_id)
+                            execution_id, created_at AS first_created_at, catalog_id AS first_catalog_id,
+                            parent_execution_id AS first_parent_execution_id
+                        FROM noetl.event
+                        WHERE execution_id IS NOT NULL
+                        ORDER BY execution_id, event_id ASC
+                    ),
+                    terminal AS (
+                        SELECT DISTINCT ON (execution_id)
+                            execution_id, event_type, status, created_at, error
+                        FROM noetl.event
+                        WHERE execution_id IS NOT NULL
+                          AND event_type IN (
+                            'execution.cancelled',
+                            'playbook.failed',
+                            'workflow.failed',
+                            'command.failed',
+                            'playbook.completed',
+                            'workflow.completed'
+                          )
+                        ORDER BY execution_id, event_id DESC
+                    )
                     SELECT
-                        e.execution_id,
-                        e.catalog_id,
-                        e.last_event_type AS event_type,
-                        e.last_node_name AS node_name,
-                        e.status,
-                        e.last_event_type AS derived_event_type,
-                        e.start_time,
-                        COALESCE(e.end_time, e.updated_at) AS end_time,
+                        l.execution_id,
+                        COALESCE(e.catalog_id, l.catalog_id, f.first_catalog_id) AS catalog_id,
+                        l.event_type,
+                        l.node_name,
+                        COALESCE(e.status, l.event_status) AS status,
+                        l.event_status,
+                        l.event_type AS derived_event_type,
+                        COALESCE(e.start_time, f.first_created_at) AS start_time,
+                        COALESCE(e.end_time, l.created_at) AS end_time,
                         NULL::jsonb AS result,
-                        e.error,
-                        e.parent_execution_id,
-                        CASE WHEN e.status IN ('COMPLETED', 'FAILED', 'CANCELLED') THEN e.last_event_type ELSE NULL END AS terminal_event_type,
-                        CASE WHEN e.status IN ('COMPLETED', 'FAILED', 'CANCELLED') THEN e.status ELSE NULL END AS terminal_status,
-                        e.end_time AS terminal_end_time,
+                        COALESCE(e.error, t.error, l.error) AS error,
+                        COALESCE(e.parent_execution_id, l.parent_execution_id, f.first_parent_execution_id) AS parent_execution_id,
+                        t.event_type AS terminal_event_type,
+                        t.status AS terminal_status,
+                        t.created_at AS terminal_end_time,
                         COALESCE(c.path, 'unknown') AS path,
                         COALESCE(c.version, 0) AS version
-                    FROM noetl.execution e
-                    LEFT JOIN noetl.catalog c ON c.catalog_id = e.catalog_id
-                    ORDER BY e.start_time DESC NULLS LAST, e.execution_id DESC
+                    FROM latest l
+                    JOIN first_event f ON f.execution_id = l.execution_id
+                    LEFT JOIN terminal t ON t.execution_id = l.execution_id
+                    LEFT JOIN noetl.execution e ON e.execution_id = l.execution_id
+                    LEFT JOIN noetl.catalog c ON c.catalog_id = COALESCE(e.catalog_id, l.catalog_id, f.first_catalog_id)
+                    ORDER BY COALESCE(e.start_time, f.first_created_at) DESC NULLS LAST, l.execution_id DESC
                     LIMIT %(limit)s
                     OFFSET %(offset)s
                 """, {"limit": page_size, "offset": offset})
@@ -826,7 +914,7 @@ async def get_executions(
                     str(row["execution_id"])
                     for row in rows
                     if row.get("derived_event_type") == "batch.completed"
-                    and str(row.get("status") or "").upper() == "COMPLETED"
+                    and str(row.get("event_status") or "").upper() == "COMPLETED"
                     and row.get("terminal_event_type") is None
                 ]
                 pending_counts = await _fetch_pending_command_counts_for_executions(
@@ -842,45 +930,7 @@ async def get_executions(
             resp = []
             for row_dict in rows:
                 pending_count = pending_counts.get(str(row_dict["execution_id"]), 0)
-                latest_event = {
-                    "event_type": row_dict.get("event_type"),
-                    "node_name": row_dict.get("node_name"),
-                    "created_at": row_dict.get("end_time"),
-                    "status": row_dict.get("status"),
-                }
-                terminal_event = None
-                terminal_event_type = row_dict.get("terminal_event_type")
-                if terminal_event_type:
-                    terminal_event = {
-                        "event_type": terminal_event_type,
-                        "created_at": row_dict.get("terminal_end_time"),
-                        "status": row_dict.get("terminal_status"),
-                    }
-                derived_status, inferred_end_time = _infer_execution_completion_from_events(
-                    latest_event,
-                    terminal_event,
-                    pending_count,
-                )
-                # Non-terminal latest events can be status=COMPLETED (e.g. batch.completed)
-                # while the execution is still active; keep these as RUNNING.
-                response_end_time = inferred_end_time if derived_status != "RUNNING" else None
-                duration_end = response_end_time or datetime.now(timezone.utc)
-                duration_seconds = _duration_seconds(row_dict["start_time"], duration_end)
-                resp.append(ExecutionEntryResponse(
-                    execution_id=row_dict["execution_id"],
-                    catalog_id=row_dict["catalog_id"],
-                    path=row_dict["path"],
-                    version=row_dict["version"],
-                    status=derived_status,
-                    start_time=row_dict["start_time"],
-                    end_time=response_end_time,
-                    duration_seconds=round(duration_seconds, 3) if duration_seconds is not None else None,
-                    duration_human=_format_duration_human(duration_seconds),
-                    progress=0,  # Not in query, needs to be computed
-                    result=row_dict["result"],
-                    error=row_dict["error"],
-                    parent_execution_id=row_dict.get("parent_execution_id")
-                ))
+                resp.append(_execution_entry_from_row(row_dict, pending_count))
             return resp
 
 
@@ -1081,14 +1131,14 @@ async def get_execution_cancellation_status(execution_id: str):
             }
 
 
-@router.get("/executions/{execution_id}", response_class=JSONResponse)
+@router.get("/executions/{execution_id}", response_model=ExecutionDetailResponse)
 async def get_execution(
     execution_id: str,
     page: int = Query(default=1, ge=1, description="Page number (1-indexed)"),
     page_size: int = Query(default=100, ge=10, le=500, description="Events per page"),
     since_event_id: Optional[int] = Query(default=None, description="Get events after this event_id (for incremental loading)"),
     event_type: Optional[str] = Query(default=None, description="Filter by event type"),
-    include_events: bool = Query(default=True, description="Include paginated events in the response"),
+    include_events: Annotated[bool, Query(description="Include paginated events in the response")] = True,
 ):
     """
     Get execution by ID with paginated event history.
@@ -1148,7 +1198,7 @@ async def get_execution(
 
             # Get terminal status efficiently
             await cursor.execute("""
-                SELECT event_type, status, created_at
+                SELECT event_type, status, created_at, error
                 FROM noetl.event
                 WHERE execution_id = %(execution_id)s
                   AND event_type IN ('execution.cancelled', 'playbook.failed', 'workflow.failed',
@@ -1160,7 +1210,7 @@ async def get_execution(
 
             # Get latest event for end_time and fallback completion inference
             await cursor.execute("""
-                SELECT event_type, node_name, created_at, status
+                SELECT event_type, node_name, created_at, status, error
                 FROM noetl.event
                 WHERE execution_id = %(execution_id)s
                 ORDER BY event_id DESC
@@ -1193,20 +1243,25 @@ async def get_execution(
                     if state.playbook and getattr(state.playbook, "metadata", None):
                         path = state.playbook.metadata.get("path") or state.playbook.metadata.get("name")
                     status = "FAILED" if state.failed else "COMPLETED" if state.completed else "RUNNING"
-                    return {
-                        "execution_id": execution_id,
-                        "path": path or "unknown",
-                        "status": status,
-                        "start_time": None,
-                        "end_time": None,
-                        "duration_seconds": None,
-                        "duration_human": None,
-                        "parent_execution_id": state.parent_execution_id,
-                        "events": events if include_events else [],
-                        "events_included": include_events,
-                        "events_endpoint": f"/api/executions/{execution_id}/events",
-                        "pagination": pagination if include_events else None,
-                    }
+                    return ExecutionDetailResponse(
+                        execution_id=execution_id,
+                        catalog_id=str(state.catalog_id) if state.catalog_id is not None else "",
+                        path=path or "unknown",
+                        version=0,
+                        status=status,
+                        start_time=datetime.now(timezone.utc),
+                        end_time=None,
+                        duration_seconds=None,
+                        duration_human=None,
+                        progress=100 if status in {"COMPLETED", "FAILED", "CANCELLED"} else 0,
+                        result=None,
+                        error=None,
+                        parent_execution_id=str(state.parent_execution_id) if state.parent_execution_id is not None else None,
+                        events=[ExecutionEventResponse(**event) for event in events] if include_events else [],
+                        events_included=include_events,
+                        events_endpoint=f"/api/executions/{execution_id}/events",
+                        pagination=ExecutionEventsPagination(**pagination) if include_events else None,
+                    )
             except Exception as e:
                 logger.warning(f"Execution engine fallback failed for execution {execution_id}: {e}")
         raise HTTPException(status_code=404, detail=f"Execution {execution_id} not found")
@@ -1233,27 +1288,34 @@ async def get_execution(
         pending_count,
     )
 
-    start_time = first_event.get("created_at") if first_event else None
-    end_time = inferred_end_time
+    start_time = _ensure_utc(first_event.get("created_at")) if first_event else None
+    end_time = _ensure_utc(inferred_end_time)
     duration_end = end_time or datetime.now(timezone.utc)
     duration_seconds = _duration_seconds(start_time, duration_end)
 
-    return {
-        "execution_id": execution_id,
-        "path": playbook_path,
-        "catalog_id": str(catalog_id) if catalog_id else None,
-        "version": playbook_version,
-        "status": final_status,
-        "start_time": _as_iso(start_time),
-        "end_time": _as_iso(end_time),
-        "duration_seconds": round(duration_seconds, 3) if duration_seconds is not None else None,
-        "duration_human": _format_duration_human(duration_seconds),
-        "parent_execution_id": first_event.get("parent_execution_id"),
-        "events": events if include_events else [],
-        "events_included": include_events,
-        "events_endpoint": f"/api/executions/{execution_id}/events",
-        "pagination": pagination if include_events else None,
-    }
+    return ExecutionDetailResponse(
+        execution_id=execution_id,
+        path=playbook_path,
+        catalog_id=str(catalog_id) if catalog_id else "",
+        version=int(playbook_version or 0),
+        status=final_status,
+        start_time=start_time,
+        end_time=end_time,
+        duration_seconds=round(duration_seconds, 3) if duration_seconds is not None else None,
+        duration_human=_format_duration_human(duration_seconds),
+        progress=100 if final_status in {"COMPLETED", "FAILED", "CANCELLED"} else 0,
+        result=None,
+        error=(
+            terminal_event.get("error")
+            if terminal_event and terminal_event.get("error") is not None
+            else latest_event.get("error") if latest_event else None
+        ),
+        parent_execution_id=str(first_event["parent_execution_id"]) if first_event.get("parent_execution_id") is not None else None,
+        events=[ExecutionEventResponse(**event) for event in events] if include_events else [],
+        events_included=include_events,
+        events_endpoint=f"/api/executions/{execution_id}/events",
+        pagination=ExecutionEventsPagination(**pagination) if include_events else None,
+    )
 
 
 @router.get("/executions/{execution_id}/events", response_class=JSONResponse)
@@ -1283,9 +1345,9 @@ async def get_execution_events(
                 event_type=event_type,
             )
     return {
-        "execution_id": detail.get("execution_id"),
-        "path": detail.get("path"),
-        "status": detail.get("status"),
+        "execution_id": detail.execution_id,
+        "path": detail.path,
+        "status": detail.status,
         "events": events,
         "pagination": pagination,
     }

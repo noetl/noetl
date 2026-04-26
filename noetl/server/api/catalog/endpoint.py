@@ -65,6 +65,9 @@ def _unwrap_result_payload(value: Any) -> Any:
         if "result" in current:
             current = _parse_json_text(current.get("result"))
             continue
+        if "context" in current:
+            current = _parse_json_text(current.get("context"))
+            continue
         if "data" in current:
             current = _parse_json_text(current.get("data"))
             continue

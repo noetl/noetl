@@ -241,7 +241,7 @@ class SystemService:
         """
         Verify database connectivity and schema readiness.
         
-        Pure event sourcing - we don't modify schema, just validate it exists.
+        Validate schema readiness without modifying externally managed DDL.
         Schema is managed externally (k8s init, migrations, etc).
         
         Returns:
@@ -250,9 +250,9 @@ class SystemService:
         from noetl.core.db.pool import get_pool_connection
         from psycopg.rows import dict_row
         
-        # Pure event sourcing: event table is the single source of truth
-        # runtime table stores server and worker pool registrations
-        required_tables = ["catalog", "credential", "event", "keychain", "runtime"]
+        # Event log plus command/execution projections are required for runtime state.
+        # runtime table stores server and worker pool registrations.
+        required_tables = ["catalog", "credential", "event", "command", "execution", "keychain", "runtime"]
         
         async with get_pool_connection() as conn:
             async with conn.cursor(row_factory=dict_row) as cur:
@@ -295,9 +295,9 @@ class SystemService:
         from noetl.core.db.pool import get_pool_connection
         from psycopg.rows import dict_row
         
-        # Pure event sourcing: event table is the single source of truth
-        # runtime table stores server and worker pool registrations
-        required_tables = ["catalog", "credential", "event", "keychain", "runtime"]
+        # Event log plus command/execution projections are required for runtime state.
+        # runtime table stores server and worker pool registrations.
+        required_tables = ["catalog", "credential", "event", "command", "execution", "keychain", "runtime"]
         
         async with get_pool_connection() as conn:
             async with conn.cursor(row_factory=dict_row) as cur:

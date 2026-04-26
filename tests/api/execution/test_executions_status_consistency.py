@@ -386,9 +386,9 @@ async def test_get_execution_infers_completed_from_batch_done_without_pending_co
         event_type=None,
     )
 
-    assert result["status"] == "COMPLETED"
-    assert result["end_time"] == latest.isoformat()
-    assert result["duration_human"] == "1h 51m 2s"
+    assert result.status == "COMPLETED"
+    assert result.end_time == latest
+    assert result.duration_human == "1h 51m 2s"
 
 
 @pytest.mark.asyncio
@@ -453,8 +453,8 @@ async def test_get_execution_keeps_running_when_batch_done_still_has_pending_com
         event_type=None,
     )
 
-    assert result["status"] == "RUNNING"
-    assert result["end_time"] is None
+    assert result.status == "RUNNING"
+    assert result.end_time is None
 
 
 @pytest.mark.asyncio
@@ -503,10 +503,10 @@ async def test_get_execution_can_omit_events_payload(monkeypatch):
         include_events=False,
     )
 
-    assert result["events"] == []
-    assert result["events_included"] is False
-    assert result["events_endpoint"] == "/api/executions/587316413618979403/events"
-    assert result["pagination"] is None
+    assert result.events == []
+    assert result.events_included is False
+    assert result.events_endpoint == "/api/executions/587316413618979403/events"
+    assert result.pagination is None
 
 
 @pytest.mark.asyncio
@@ -577,5 +577,5 @@ async def test_get_execution_prefers_terminal_failure_over_batch_completion_infe
         event_type=None,
     )
 
-    assert result["status"] == "FAILED"
-    assert result["end_time"] == terminal.isoformat()
+    assert result.status == "FAILED"
+    assert result.end_time == terminal
