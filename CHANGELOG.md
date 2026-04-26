@@ -2,6 +2,15 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.23.2](https://github.com/noetl/noetl/compare/v2.23.1...v2.23.2) (2026-04-26)
+
+### Bug Fixes
+
+* **api:** address execution review feedback ([80dbf0d](https://github.com/noetl/noetl/commit/80dbf0d85dfd49c2b784629d85eef22bec294a2c))
+* **api:** export core execute request ([617ccbc](https://github.com/noetl/noetl/commit/617ccbcb22137041f4535330103e0324b8886387))
+* **api:** unwrap AI explain report context ([54a133d](https://github.com/noetl/noetl/commit/54a133db250b0ff006d0f6237052afeb85767c5e))
+* **execution:** type observability responses ([59111f5](https://github.com/noetl/noetl/commit/59111f5f1a5dc3603a576c6803d3ffdb20d53e67))
+
 ## [2.23.1](https://github.com/noetl/noetl/compare/v2.23.0...v2.23.1) (2026-04-25)
 
 ### Bug Fixes
