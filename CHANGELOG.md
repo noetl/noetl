@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.24.0](https://github.com/noetl/noetl/compare/v2.23.2...v2.24.0) (2026-04-27)
+
+### Features
+
+* execute MCP tools through agent playbooks ([6fb4f8c](https://github.com/noetl/noetl/commit/6fb4f8ca12ef2d7191471e24da24de094012e940))
+
+### Bug Fixes
+
+* address MCP agent review feedback ([a0e86be](https://github.com/noetl/noetl/commit/a0e86be2c1e41e97451081b082551c261c57dc5d))
+* address MCP review timeout handling ([ace8275](https://github.com/noetl/noetl/commit/ace82755fa9705d723ecb5561bfa4ba128a40f16))
+
 ## [2.23.2](https://github.com/noetl/noetl/compare/v2.23.1...v2.23.2) (2026-04-26)
 
 ### Bug Fixes
