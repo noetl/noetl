@@ -8,6 +8,10 @@ class ExecuteRequest(BaseModel):
     path: Optional[str] = Field(None, description="Playbook catalog path")
     catalog_id: Optional[int] = Field(None, description="Catalog ID (alternative to path)")
     version: Optional[int] = Field(None, description="Specific version to execute (used with path)")
+    resource_kind: Optional[str] = Field(
+        None,
+        description="Executable catalog kind to run. Defaults to playbook or agent.",
+    )
     payload: dict[str, Any] = Field(default_factory=dict, alias="workload", description="Input payload/workload")
     parent_execution_id: Optional[int] = Field(None, description="Parent execution ID")
 

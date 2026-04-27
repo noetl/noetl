@@ -306,13 +306,63 @@ class CatalogService:
         }
 
     @staticmethod
+    def _normalize_resource_type(resource_type: Optional[str]) -> str:
+        value = str(resource_type or "playbook").strip()
+        if not value:
+            return "playbook"
+        aliases = {
+            "Playbook": "playbook",
+            "Credential": "credential",
+            "Credentials": "credential",
+            "Secret": "credential",
+            "Secrets": "credential",
+            "MCP": "mcp",
+            "ModelContextProtocol": "mcp",
+            "Agent": "agent",
+            "Memory": "memory",
+        }
+        return aliases.get(value, value).strip().lower()
+
+    @staticmethod
+    def _resource_type_meta(resource_type: str) -> Dict[str, Any]:
+        catalog_types = {
+            "playbook": {
+                "description": "Executable NoETL workflow definition",
+                "executable": True,
+                "catalog": True,
+            },
+            "credential": {
+                "description": "Credential or secret reference metadata",
+                "executable": False,
+                "catalog": True,
+            },
+            "mcp": {
+                "description": "Model Context Protocol server/tool provider",
+                "executable": False,
+                "catalog": True,
+            },
+            "agent": {
+                "description": "Agent-as-playbook or agent capability resource",
+                "executable": True,
+                "catalog": True,
+            },
+            "memory": {
+                "description": "AI memory, knowledge, or coordination artifact",
+                "executable": False,
+                "catalog": True,
+            },
+        }
+        return catalog_types.get(resource_type, {"catalog": True})
+
+    @staticmethod
     async def register_resource(content: str, resource_type: str = "Playbook") -> Dict[str, Any]:
         resource_data = yaml.safe_load(content) or {}
+        resource_type = CatalogService._normalize_resource_type(resource_type)
         path = (resource_data.get("metadata") or {}).get("path") or resource_data.get("path") or (
             resource_data.get("metadata") or {}).get("name") or resource_data.get("name") or "unknown"
 
         # Inject implicit "end" step if playbook doesn't have one
-        if resource_type == "Playbook":
+        if resource_type in {"playbook", "agent"}:
             workflow = resource_data.get("workflow", [])
             if workflow and not any(step.get("step", "").lower() == "end" for step in workflow):
                 logger.info(f"CATALOG: Injecting implicit 'end' step for playbook '{path}'")
@@ -333,8 +383,16 @@ class CatalogService:
         async with get_pool_connection() as conn:
             async with conn.cursor(row_factory=dict_row) as cursor:
                 await cursor.execute(
-                    "INSERT INTO noetl.resource (name) VALUES (%(resource_type)s) ON CONFLICT DO NOTHING",
-                    {"resource_type": resource_type}
+                    """
+                    INSERT INTO noetl.resource (name, meta)
+                    VALUES (%(resource_type)s, %(resource_meta)s)
+                    ON CONFLICT (name) DO UPDATE
+                    SET meta = COALESCE(noetl.resource.meta, '{}'::jsonb) || EXCLUDED.meta
+                    """,
+                    {
+                        "resource_type": resource_type,
+                        "resource_meta": Json(CatalogService._resource_type_meta(resource_type)),
+                    }
                 )
 
                 
@@ -409,7 +467,7 @@ class CatalogService:
     ) -> List[CatalogEntry]:
         """List catalog entries marked as agents, optionally filtered by capability/path."""
         return await CatalogService.fetch_entries(
-            resource_type="Playbook",
+            resource_type=None,
             path=path,
             agent_only=True,
             capabilities=capabilities,
@@ -442,8 +500,8 @@ class CatalogService:
         conditions = []
         
         if resource_type:
-            conditions.append("AND c.kind = %(resource_type)s")
-            params["resource_type"] = resource_type
+            conditions.append("AND lower(c.kind) = %(resource_type)s")
+            params["resource_type"] = CatalogService._normalize_resource_type(resource_type)
         
         if path:
             conditions.append("AND c.path = %(path)s")
@@ -451,7 +509,12 @@ class CatalogService:
 
         if agent_only:
             conditions.append(
-                "AND lower(coalesce(c.payload->'metadata'->>'agent', c.meta->>'agent', 'false')) IN ('1', 'true', 'yes', 'on')"
+                """
+                AND (
+                    lower(c.kind) = 'agent'
+                    OR lower(coalesce(c.payload->'metadata'->>'agent', c.meta->>'agent', 'false')) IN ('1', 'true', 'yes', 'on')
+                )
+                """
             )
 
         normalized_capabilities = [str(c).strip() for c in (capabilities or []) if str(c).strip()]

@@ -153,6 +153,7 @@ class ToolSpec(BaseModel):
         "gateway",
         "nats",
         "agent",
+        "mcp",
         "shell",
         "artifact",
         "noop",           # No-operation tool for routing/initialization
@@ -228,4 +229,3 @@ class ToolOutcome(BaseModel):
 # ============================================================================
 # Loop Models - Step-level looping (canonical v10)
 # ============================================================================
-

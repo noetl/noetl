@@ -1,103 +1,71 @@
-"""
-NoETL tool implementations for workflow execution.
+"""NoETL tool implementations for workflow execution.
 
-This package contains all action executors moved from plugin/tools/:
-
-- python: Python code execution
-- http: HTTP request execution
-- postgres: PostgreSQL task execution
-- duckdb: DuckDB query execution
-- ducklake: DuckLake distributed DuckDB with Postgres metastore
-- snowflake: Snowflake task execution
-- transfer: Data transfer operations
-- container: Container execution
-- artifact: Result artifact storage (get/put from S3, GCS, filesystem)
-- nats: NATS JetStream, K/V Store, and Object Store operations
-- agent: External AI agent framework bridge (ADK/LangChain/custom)
+This package intentionally keeps imports lazy. Tool modules may import worker
+helpers, and workers import tool executors; eager imports here create circular
+initialization paths.
 """
 
-# Import tool modules
-from noetl.tools import (
-    python,
-    http,
-    postgres,
-    duckdb,
-    ducklake,
-    snowflake,
-    transfer,
-    container,
-    gcs,
-    artifact,
-    nats,
-    agent,
-)
-from noetl.tools.transfer import snowflake_transfer
+from __future__ import annotations
 
-# Import executors
-from noetl.tools.python import execute_python_task, execute_python_task_async
-from noetl.tools.http import execute_http_task
-from noetl.tools.postgres import execute_postgres_task
-from noetl.tools.duckdb import execute_duckdb_task
-from noetl.tools.ducklake import execute_ducklake_task
-from noetl.tools.snowflake import execute_snowflake_task, execute_snowflake_transfer_task
-from noetl.tools.transfer import execute_transfer_action
-from noetl.tools.transfer.snowflake_transfer import execute_snowflake_transfer_action
-from noetl.tools.container import execute_container_task
-from noetl.tools.gcs import execute_gcs_task
-from noetl.tools.artifact import execute_artifact_task, execute_artifact_get, execute_artifact_put
-from noetl.tools.nats import execute_nats_task
-from noetl.tools.agent import execute_agent_task
+from importlib import import_module
+from typing import Any
 
-# Tool registry for dynamic lookup
-REGISTRY = {
-    "python": python,
-    "http": http,
-    "postgres": postgres,
-    "duckdb": duckdb,
-    "ducklake": ducklake,
-    "snowflake": snowflake,
-    "transfer": transfer,
-    "snowflake_transfer": snowflake_transfer,
-    "container": container,
-    "gcs": gcs,
-    "artifact": artifact,
-    "nats": nats,
-    "agent": agent,
+_MODULES = {
+    "python": "noetl.tools.python",
+    "http": "noetl.tools.http",
+    "postgres": "noetl.tools.postgres",
+    "duckdb": "noetl.tools.duckdb",
+    "ducklake": "noetl.tools.ducklake",
+    "snowflake": "noetl.tools.snowflake",
+    "transfer": "noetl.tools.transfer",
+    "snowflake_transfer": "noetl.tools.transfer.snowflake_transfer",
+    "container": "noetl.tools.container",
+    "gcs": "noetl.tools.gcs",
+    "artifact": "noetl.tools.artifact",
+    "nats": "noetl.tools.nats",
+    "agent": "noetl.tools.agent",
+    "mcp": "noetl.tools.mcp",
 }
 
-__all__ = [
-    # Modules
-    "python",
-    "http",
-    "postgres",
-    "duckdb",
-    "ducklake",
-    "snowflake",
-    "transfer",
-    "snowflake_transfer",
-    "container",
-    "gcs",
-    "artifact",
-    "nats",
-    "agent",
-    # Executors
-    "execute_python_task",
-    "execute_python_task_async",
-    "execute_http_task",
-    "execute_postgres_task",
-    "execute_duckdb_task",
-    "execute_ducklake_task",
-    "execute_snowflake_task",
-    "execute_snowflake_transfer_task",
-    "execute_transfer_action",
-    "execute_snowflake_transfer_action",
-    "execute_container_task",
-    "execute_gcs_task",
-    "execute_artifact_task",
-    "execute_artifact_get",
-    "execute_artifact_put",
-    "execute_nats_task",
-    "execute_agent_task",
-    # Registry
-    "REGISTRY",
-]
+_EXECUTORS = {
+    "execute_python_task": ("noetl.tools.python", "execute_python_task"),
+    "execute_python_task_async": ("noetl.tools.python", "execute_python_task_async"),
+    "execute_http_task": ("noetl.tools.http", "execute_http_task"),
+    "execute_postgres_task": ("noetl.tools.postgres", "execute_postgres_task"),
+    "execute_postgres_task_async": ("noetl.tools.postgres", "execute_postgres_task_async"),
+    "execute_duckdb_task": ("noetl.tools.duckdb", "execute_duckdb_task"),
+    "execute_ducklake_task": ("noetl.tools.ducklake", "execute_ducklake_task"),
+    "execute_snowflake_task": ("noetl.tools.snowflake", "execute_snowflake_task"),
+    "execute_snowflake_transfer_task": ("noetl.tools.snowflake", "execute_snowflake_transfer_task"),
+    "execute_transfer_action": ("noetl.tools.transfer", "execute_transfer_action"),
+    "execute_snowflake_transfer_action": (
+        "noetl.tools.transfer.snowflake_transfer",
+        "execute_snowflake_transfer_action",
+    ),
+    "execute_container_task": ("noetl.tools.container", "execute_container_task"),
+    "execute_gcs_task": ("noetl.tools.gcs", "execute_gcs_task"),
+    "execute_artifact_task": ("noetl.tools.artifact", "execute_artifact_task"),
+    "execute_artifact_get": ("noetl.tools.artifact", "execute_artifact_get"),
+    "execute_artifact_put": ("noetl.tools.artifact", "execute_artifact_put"),
+    "execute_nats_task": ("noetl.tools.nats", "execute_nats_task"),
+    "execute_agent_task": ("noetl.tools.agent", "execute_agent_task"),
+    "execute_mcp_task": ("noetl.tools.mcp", "execute_mcp_task"),
+}
+
+REGISTRY = {name: name for name in _MODULES}
+
+
+def __getattr__(name: str) -> Any:
+    if name in _MODULES:
+        module = import_module(_MODULES[name])
+        globals()[name] = module
+        return module
+    if name in _EXECUTORS:
+        module_name, attr = _EXECUTORS[name]
+        value = getattr(import_module(module_name), attr)
+        globals()[name] = value
+        return value
+    raise AttributeError(f"module 'noetl.tools' has no attribute {name!r}")
+
+
+__all__ = [*_MODULES.keys(), *_EXECUTORS.keys(), "REGISTRY"]

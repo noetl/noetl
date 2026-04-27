@@ -24,26 +24,107 @@ _STATUS_TERMINAL_EVENT_TYPES = (
     "execution.cancelled",
     "command.failed",
 )
+_EXECUTABLE_CATALOG_KINDS = {"playbook", "agent"}
+
+
+def _normalize_catalog_kind(value: Optional[str]) -> Optional[str]:
+    if value is None:
+        return None
+    normalized = str(value).strip().lower()
+    aliases = {
+        "playbooks": "playbook",
+        "agents": "agent",
+    }
+    return aliases.get(normalized, normalized) if normalized else None
 
 @router.post("/execute", response_model=ExecuteResponse)
 async def execute(req: ExecuteRequest) -> ExecuteResponse:
     from .commands import _build_command_context, _validate_postgres_command_context_or_422, _store_command_context_if_needed
     try:
         engine = get_engine()
+        requested_kind = _normalize_catalog_kind(req.resource_kind)
+        if requested_kind and requested_kind not in _EXECUTABLE_CATALOG_KINDS:
+            raise HTTPException(
+                status_code=422,
+                detail=f"Catalog kind '{req.resource_kind}' is not executable",
+            )
+        allowed_kinds = [requested_kind] if requested_kind else sorted(_EXECUTABLE_CATALOG_KINDS)
+        include_meta_executable = requested_kind is None
         async with get_pool_connection() as conn:
             async with conn.cursor(row_factory=dict_row) as cur:
                 if req.catalog_id:
-                    await cur.execute("SELECT path, catalog_id FROM noetl.catalog WHERE catalog_id = %s", (req.catalog_id,))
+                    await cur.execute(
+                        """
+                        SELECT c.path, c.catalog_id, c.kind
+                        FROM noetl.catalog c
+                        LEFT JOIN noetl.resource r ON r.name = lower(c.kind)
+                        WHERE c.catalog_id = %(catalog_id)s
+                          AND (
+                            lower(c.kind) = ANY(%(allowed_kinds)s)
+                            OR (
+                              %(include_meta_executable)s
+                              AND lower(coalesce(r.meta->>'executable', 'false')) IN ('1', 'true', 'yes', 'on')
+                            )
+                          )
+                        """,
+                        {
+                            "catalog_id": req.catalog_id,
+                            "allowed_kinds": allowed_kinds,
+                            "include_meta_executable": include_meta_executable,
+                        },
+                    )
                     row = await cur.fetchone()
-                    if not row: raise HTTPException(404, f"Playbook not found: catalog_id={req.catalog_id}")
+                    if not row: raise HTTPException(404, f"Executable catalog entry not found: catalog_id={req.catalog_id}")
                     path, catalog_id = row['path'], row['catalog_id']
                 else:
                     if req.version is not None:
-                        await cur.execute("SELECT catalog_id, path FROM noetl.catalog WHERE path = %s AND version = %s", (req.path, req.version))
+                        await cur.execute(
+                            """
+                            SELECT c.catalog_id, c.path
+                            FROM noetl.catalog c
+                            LEFT JOIN noetl.resource r ON r.name = lower(c.kind)
+                            WHERE c.path = %(path)s
+                              AND c.version = %(version)s
+                              AND (
+                                lower(c.kind) = ANY(%(allowed_kinds)s)
+                                OR (
+                                  %(include_meta_executable)s
+                                  AND lower(coalesce(r.meta->>'executable', 'false')) IN ('1', 'true', 'yes', 'on')
+                                )
+                              )
+                            """,
+                            {
+                                "path": req.path,
+                                "version": req.version,
+                                "allowed_kinds": allowed_kinds,
+                                "include_meta_executable": include_meta_executable,
+                            },
+                        )
                     else:
-                        await cur.execute("SELECT catalog_id, path FROM noetl.catalog WHERE path = %s ORDER BY version DESC LIMIT 1", (req.path,))
+                        await cur.execute(
+                            """
+                            SELECT c.catalog_id, c.path
+                            FROM noetl.catalog c
+                            LEFT JOIN noetl.resource r ON r.name = lower(c.kind)
+                            WHERE c.path = %(path)s
+                              AND (
+                                lower(c.kind) = ANY(%(allowed_kinds)s)
+                                OR (
+                                  %(include_meta_executable)s
+                                  AND lower(coalesce(r.meta->>'executable', 'false')) IN ('1', 'true', 'yes', 'on')
+                                )
+                              )
+                            ORDER BY c.version DESC
+                            LIMIT 1
+                            """,
+                            {
+                                "path": req.path,
+                                "allowed_kinds": allowed_kinds,
+                                "include_meta_executable": include_meta_executable,
+                            },
+                        )
                     row = await cur.fetchone()
-                    if not row: raise HTTPException(404, f"Playbook not found: {req.path}")
+                    if not row: raise HTTPException(404, f"Executable catalog entry not found: {req.path}")
                     catalog_id, path = row['catalog_id'], row['path']
         
         execution_id, commands = await engine.start_execution(path, req.payload, catalog_id, req.parent_execution_id)

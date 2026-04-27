@@ -68,6 +68,7 @@ from noetl.tools.transfer import execute_transfer_action
 from noetl.tools.transfer.snowflake_transfer import execute_snowflake_transfer_action
 from noetl.tools.script import execute_script_task
 from noetl.tools.agent import execute_agent_task
+from noetl.tools.mcp import execute_mcp_task
 from noetl.core.secrets import execute_secrets_task
 from noetl.core.workflow.workbook import execute_workbook_task
 from noetl.core.workflow.playbook import execute_playbook_task
@@ -2601,6 +2602,15 @@ class Worker:
             # Agent runtime bridge (ADK/LangChain/custom callable adapters)
             task_with = {**config, **args}
             result = await execute_agent_task(task_config, context, jinja_env, task_with)
+            if isinstance(result, dict) and result.get("status") == "error":
+                return result
+            return result.get("data", result) if isinstance(result, dict) else result
+
+        elif tool_kind == "mcp":
+            # Model Context Protocol server bridge. Operations stay inside
+            # playbook execution so MCP activity is visible in command/event state.
+            task_with = {**config, **args}
+            result = await execute_mcp_task(task_config, context, jinja_env, task_with)
             if isinstance(result, dict) and result.get("status") == "error":
                 return result
             return result.get("data", result) if isinstance(result, dict) else result

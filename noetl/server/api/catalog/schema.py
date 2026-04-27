@@ -20,8 +20,8 @@ class CatalogEntriesRequest(AppBaseModel):
     """Request schema for listing catalog entries."""
     resource_type: Optional[str] = Field(
         default=None,
-        description="Filter by resource kind (e.g., 'Playbook', 'Tool', 'Model')",
-        example="Playbook"
+        description="Filter by resource kind (e.g., 'playbook', 'agent', 'mcp', 'memory', 'credential')",
+        example="playbook"
     )
     path: Optional[str] = Field(
         default=None,
@@ -211,8 +211,8 @@ class CatalogRegisterRequest(AppBaseModel):
     )
     resource_type: str = Field(
         default="Playbook",
-        description="Type of resource to register (e.g., 'Playbook', 'Tool', 'Model')",
-        example="Playbook"
+        description="Type of resource to register (e.g., 'playbook', 'agent', 'mcp', 'memory', 'credential'). Legacy 'Playbook' is accepted.",
+        example="playbook"
     )
 
     @field_validator('content', mode="before")

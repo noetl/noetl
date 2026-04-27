@@ -6,6 +6,15 @@ CREATE TABLE IF NOT EXISTS noetl.resource (
     meta JSONB
 );
 
+INSERT INTO noetl.resource (name, meta) VALUES
+    ('playbook', '{"description":"Executable NoETL workflow definition","executable":true,"catalog":true}'::jsonb),
+    ('credential', '{"description":"Credential or secret reference metadata","executable":false,"catalog":true}'::jsonb),
+    ('mcp', '{"description":"Model Context Protocol server/tool provider","executable":false,"catalog":true}'::jsonb),
+    ('agent', '{"description":"Agent-as-playbook or agent capability resource","executable":true,"catalog":true}'::jsonb),
+    ('memory', '{"description":"AI memory, knowledge, or coordination artifact","executable":false,"catalog":true}'::jsonb)
+ON CONFLICT (name) DO UPDATE
+SET meta = COALESCE(noetl.resource.meta, '{}'::jsonb) || EXCLUDED.meta;
+
 -- Catalog
 CREATE TABLE IF NOT EXISTS noetl.catalog (
     catalog_id BIGINT PRIMARY KEY,
