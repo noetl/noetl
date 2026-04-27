@@ -25,14 +25,14 @@ def test_catalog_query_builder_includes_agent_filters():
         capabilities=["release-management", "deployment"],
     )
 
-    assert "c.kind = %(resource_type)s" in query
+    assert "lower(c.kind) = %(resource_type)s" in query
     assert "c.path = %(path)s" in query
     assert "payload->'metadata'->>'agent'" in query
     assert "c.meta->>'agent'" in query
     assert "jsonb_array_elements_text" in query
     assert "jsonb_typeof" in query
     assert "capabilities" in params
-    assert params["resource_type"] == "Playbook"
+    assert params["resource_type"] == "playbook"
     assert params["path"] == "agents/release-coordinator"
     assert params["capabilities"] == ["release-management", "deployment"]
 

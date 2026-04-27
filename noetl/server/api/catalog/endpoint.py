@@ -525,7 +525,7 @@ async def explain_playbook_with_ai(
 
     if not target:
         raise HTTPException(status_code=404, detail="Target playbook not found in catalog")
-    if target.kind != "Playbook":
+    if str(target.kind).lower() != "playbook":
         raise HTTPException(status_code=400, detail=f"Catalog entry kind must be Playbook, got {target.kind}")
 
     payload: dict[str, Any] = {

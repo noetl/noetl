@@ -68,6 +68,7 @@ from noetl.tools.transfer import execute_transfer_action
 from noetl.tools.transfer.snowflake_transfer import execute_snowflake_transfer_action
 from noetl.tools.script import execute_script_task
 from noetl.tools.agent import execute_agent_task
+from noetl.tools.mcp import execute_mcp_task
 from noetl.core.secrets import execute_secrets_task
 from noetl.core.workflow.workbook import execute_workbook_task
 from noetl.core.workflow.playbook import execute_playbook_task
@@ -2368,9 +2369,12 @@ class Worker:
         # For workbook tool, preserve 'name' field from config (it's the workbook action name)
         # For other tools, add 'name' as step name for logging
         task_config = {**config}
-        # Merge canonical tool.input with command input overrides.
+        # Merge canonical tool args/input with command input overrides.
+        # `args` is still used by Python playbooks, while newer tools prefer
+        # `input`; keep both forms flowing through the worker adapter.
+        config_args = config.get("args") if isinstance(config.get("args"), dict) else {}
         config_input = config.get("input") if isinstance(config.get("input"), dict) else {}
-        merged_input = {**config_input, **args} if config_input or args else {}
+        merged_input = {**config_args, **config_input, **args} if config_args or config_input or args else {}
         task_config["input"] = merged_input
         task_config["args"] = merged_input  # plugin compatibility until all tools read `input`
         if "name" not in config:
@@ -2601,6 +2605,17 @@ class Worker:
             # Agent runtime bridge (ADK/LangChain/custom callable adapters)
             task_with = {**config, **args}
             result = await execute_agent_task(task_config, context, jinja_env, task_with)
+            if isinstance(result, dict) and result.get("status") == "error":
+                return result
+            return result.get("data", result) if isinstance(result, dict) else result
+
+        elif tool_kind == "mcp":
+            # Model Context Protocol server bridge. Operations stay inside
+            # playbook execution so MCP activity is visible in command/event state.
+            # Pass only runtime overrides. task_config already contains merged
+            # input/args, and stale config values must not override it again.
+            task_with = dict(args or {})
+            result = await execute_mcp_task(task_config, context, jinja_env, task_with)
             if isinstance(result, dict) and result.get("status") == "error":
                 return result
             return result.get("data", result) if isinstance(result, dict) else result
