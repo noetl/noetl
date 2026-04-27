@@ -1,6 +1,7 @@
 import pytest
 from jinja2 import Environment
 
+from noetl.tools import execute_task
 from noetl.tools.mcp import execute_mcp_task
 
 
@@ -16,7 +17,10 @@ class _FakeResponse:
 
 
 class _FakeAsyncClient:
+    timeouts = []
+
     def __init__(self, *args, **kwargs):
+        self.__class__.timeouts.append(kwargs.get("timeout"))
         self.posts = []
         self.gets = []
 
@@ -54,8 +58,13 @@ class _FakeErrorAsyncClient(_FakeAsyncClient):
         return _FakeResponse('data: {"jsonrpc":"2.0","id":2,"error":{"message":"tool failed"}}')
 
 
+def test_tools_package_preserves_execute_task_export():
+    assert callable(execute_task)
+
+
 @pytest.mark.asyncio
 async def test_execute_mcp_tool_call(monkeypatch):
+    _FakeAsyncClient.timeouts = []
     monkeypatch.setattr("noetl.tools.mcp.executor.httpx.AsyncClient", _FakeAsyncClient)
 
     result = await execute_mcp_task(
@@ -77,10 +86,12 @@ async def test_execute_mcp_tool_call(monkeypatch):
     assert result["tool"] == "pods_list_in_namespace"
     assert result["arguments"] == {"namespace": "noetl"}
     assert result["text"] == "pod-a Running"
+    assert _FakeAsyncClient.timeouts == [60.0]
 
 
 @pytest.mark.asyncio
 async def test_execute_mcp_health(monkeypatch):
+    _FakeAsyncClient.timeouts = []
     monkeypatch.setattr("noetl.tools.mcp.executor.httpx.AsyncClient", _FakeAsyncClient)
 
     result = await execute_mcp_task(
@@ -95,10 +106,54 @@ async def test_execute_mcp_health(monkeypatch):
 
     assert result["status"] == "ok"
     assert result["healthy"] is True
+    assert _FakeAsyncClient.timeouts == [60.0]
+
+
+@pytest.mark.asyncio
+async def test_execute_mcp_timeout_is_bounded(monkeypatch):
+    _FakeAsyncClient.timeouts = []
+    monkeypatch.setenv("NOETL_MCP_REQUEST_TIMEOUT_SECONDS", "999")
+    monkeypatch.setenv("NOETL_WORKER_COMMAND_TIMEOUT_SECONDS", "2")
+    monkeypatch.setattr("noetl.tools.mcp.executor.httpx.AsyncClient", _FakeAsyncClient)
+
+    result = await execute_mcp_task(
+        {
+            "endpoint": "http://mcp.example/mcp",
+            "method": "health",
+            "timeout_seconds": "inf",
+        },
+        {},
+        Environment(),
+        {},
+    )
+
+    assert result["status"] == "ok"
+    assert _FakeAsyncClient.timeouts == [2.0]
+
+
+@pytest.mark.asyncio
+async def test_execute_mcp_timeout_zero_keeps_safe_floor(monkeypatch):
+    _FakeAsyncClient.timeouts = []
+    monkeypatch.setattr("noetl.tools.mcp.executor.httpx.AsyncClient", _FakeAsyncClient)
+
+    result = await execute_mcp_task(
+        {
+            "endpoint": "http://mcp.example/mcp",
+            "method": "health",
+            "timeout_seconds": 0,
+        },
+        {},
+        Environment(),
+        {},
+    )
+
+    assert result["status"] == "ok"
+    assert _FakeAsyncClient.timeouts == [0.1]
 
 
 @pytest.mark.asyncio
 async def test_execute_mcp_returns_structured_error(monkeypatch):
+    _FakeErrorAsyncClient.timeouts = []
     monkeypatch.setattr("noetl.tools.mcp.executor.httpx.AsyncClient", _FakeErrorAsyncClient)
 
     result = await execute_mcp_task(

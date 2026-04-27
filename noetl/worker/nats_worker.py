@@ -2612,7 +2612,9 @@ class Worker:
         elif tool_kind == "mcp":
             # Model Context Protocol server bridge. Operations stay inside
             # playbook execution so MCP activity is visible in command/event state.
-            task_with = {**config, **args}
+            # Pass only runtime overrides. task_config already contains merged
+            # input/args, and stale config values must not override it again.
+            task_with = dict(args or {})
             result = await execute_mcp_task(task_config, context, jinja_env, task_with)
             if isinstance(result, dict) and result.get("status") == "error":
                 return result

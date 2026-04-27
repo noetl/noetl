@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 import os
 from typing import Any, Dict, Optional
 from urllib.parse import urlsplit, urlunsplit
@@ -14,6 +15,37 @@ from noetl.core.dsl.render import render_template
 from noetl.core.logger import setup_logger
 
 logger = setup_logger(__name__, include_location=True)
+
+
+def _read_float_env(name: str, default: float, min_value: float = 0.1) -> float:
+    raw = os.getenv(name)
+    if raw is None or not str(raw).strip():
+        return default
+    try:
+        parsed = float(raw)
+    except (TypeError, ValueError):
+        return default
+    if not math.isfinite(parsed):
+        return default
+    return max(min_value, parsed)
+
+
+def _resolve_timeout_seconds(timeout_value: Any) -> float:
+    default_timeout = _read_float_env("NOETL_MCP_REQUEST_TIMEOUT_SECONDS", 60.0)
+    command_timeout_budget = _read_float_env("NOETL_WORKER_COMMAND_TIMEOUT_SECONDS", 180.0, min_value=1.0)
+    max_timeout = max(1.0, command_timeout_budget)
+
+    if timeout_value is None or (isinstance(timeout_value, str) and not timeout_value.strip()):
+        return min(default_timeout, max_timeout)
+
+    try:
+        parsed = float(timeout_value)
+    except (TypeError, ValueError):
+        return min(default_timeout, max_timeout)
+    if not math.isfinite(parsed):
+        return min(default_timeout, max_timeout)
+
+    return min(max(0.1, parsed), max_timeout)
 
 
 def _trim_slash(value: str) -> str:
@@ -141,7 +173,7 @@ async def execute_mcp_task(
         server = str(config.get("server") or "kubernetes")
         endpoint = _resolve_endpoint(config, context or {})
         method = str(config.get("method") or config.get("action") or "tools/call")
-        timeout = float(config.get("timeout_seconds") or 60)
+        timeout = _resolve_timeout_seconds(config.get("timeout_seconds"))
         request_id = int(config.get("request_id") or 1)
 
         async with httpx.AsyncClient(timeout=timeout) as client:
