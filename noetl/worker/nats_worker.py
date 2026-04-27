@@ -2369,9 +2369,12 @@ class Worker:
         # For workbook tool, preserve 'name' field from config (it's the workbook action name)
         # For other tools, add 'name' as step name for logging
         task_config = {**config}
-        # Merge canonical tool.input with command input overrides.
+        # Merge canonical tool args/input with command input overrides.
+        # `args` is still used by Python playbooks, while newer tools prefer
+        # `input`; keep both forms flowing through the worker adapter.
+        config_args = config.get("args") if isinstance(config.get("args"), dict) else {}
         config_input = config.get("input") if isinstance(config.get("input"), dict) else {}
-        merged_input = {**config_input, **args} if config_input or args else {}
+        merged_input = {**config_args, **config_input, **args} if config_args or config_input or args else {}
         task_config["input"] = merged_input
         task_config["args"] = merged_input  # plugin compatibility until all tools read `input`
         if "name" not in config:

@@ -43,6 +43,17 @@ class _FakeAsyncClient:
         )
 
 
+class _FakeErrorAsyncClient(_FakeAsyncClient):
+    async def post(self, endpoint, json, headers):
+        self.posts.append((endpoint, json, headers))
+        if json["method"] == "initialize":
+            return _FakeResponse(
+                'data: {"jsonrpc":"2.0","id":1,"result":{"serverInfo":{"name":"fake"}}}',
+                headers={"mcp-session-id": "session-1"},
+            )
+        return _FakeResponse('data: {"jsonrpc":"2.0","id":2,"error":{"message":"tool failed"}}')
+
+
 @pytest.mark.asyncio
 async def test_execute_mcp_tool_call(monkeypatch):
     monkeypatch.setattr("noetl.tools.mcp.executor.httpx.AsyncClient", _FakeAsyncClient)
@@ -84,3 +95,22 @@ async def test_execute_mcp_health(monkeypatch):
 
     assert result["status"] == "ok"
     assert result["healthy"] is True
+
+
+@pytest.mark.asyncio
+async def test_execute_mcp_returns_structured_error(monkeypatch):
+    monkeypatch.setattr("noetl.tools.mcp.executor.httpx.AsyncClient", _FakeErrorAsyncClient)
+
+    result = await execute_mcp_task(
+        {
+            "endpoint": "http://mcp.example/mcp",
+            "method": "tools/call",
+            "tool": "pods_list",
+        },
+        {},
+        Environment(),
+        {},
+    )
+
+    assert result["status"] == "error"
+    assert result["error"] == "tool failed"

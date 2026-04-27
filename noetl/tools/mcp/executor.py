@@ -128,95 +128,122 @@ async def execute_mcp_task(
     - `tools/list`: initialize, then list tools
     - `tools/call`: initialize, then call one tool with `arguments`
     """
-    rendered = render_template(jinja_env, dict(task_config or {}), context or {})
-    rendered_input = render_template(jinja_env, dict(task_with or {}), context or {})
-    config = {**rendered, **rendered_input}
+    server = "kubernetes"
+    endpoint: Optional[str] = None
+    method = "tools/call"
+    params: Dict[str, Any] = {}
 
-    server = str(config.get("server") or "kubernetes")
-    endpoint = _resolve_endpoint(config, context or {})
-    method = str(config.get("method") or config.get("action") or "tools/call")
-    timeout = float(config.get("timeout_seconds") or 60)
-    request_id = int(config.get("request_id") or 1)
+    try:
+        rendered = render_template(jinja_env, dict(task_config or {}), context or {})
+        rendered_input = render_template(jinja_env, dict(task_with or {}), context or {})
+        config = {**rendered, **rendered_input}
 
-    async with httpx.AsyncClient(timeout=timeout) as client:
-        if method == "health":
-            response = await client.get(_resolve_health_endpoint(endpoint))
-            response.raise_for_status()
-            return {
-                "status": "ok",
-                "server": server,
-                "endpoint": endpoint,
-                "method": method,
-                "healthy": True,
-                "text": response.text,
-            }
+        server = str(config.get("server") or "kubernetes")
+        endpoint = _resolve_endpoint(config, context or {})
+        method = str(config.get("method") or config.get("action") or "tools/call")
+        timeout = float(config.get("timeout_seconds") or 60)
+        request_id = int(config.get("request_id") or 1)
 
-        init_envelope, init_headers = await _post_jsonrpc(
-            client,
-            endpoint,
-            {
-                "jsonrpc": "2.0",
-                "id": request_id,
-                "method": "initialize",
-                "params": {
-                    "protocolVersion": str(config.get("protocol_version") or "2025-03-26"),
-                    "capabilities": config.get("capabilities") or {},
-                    "clientInfo": {
-                        "name": str(config.get("client_name") or "noetl-worker"),
-                        "version": str(config.get("client_version") or "0"),
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            if method == "health":
+                response = await client.get(_resolve_health_endpoint(endpoint))
+                response.raise_for_status()
+                return {
+                    "status": "ok",
+                    "server": server,
+                    "endpoint": endpoint,
+                    "method": method,
+                    "healthy": True,
+                    "text": response.text,
+                }
+
+            init_envelope, init_headers = await _post_jsonrpc(
+                client,
+                endpoint,
+                {
+                    "jsonrpc": "2.0",
+                    "id": request_id,
+                    "method": "initialize",
+                    "params": {
+                        "protocolVersion": str(config.get("protocol_version") or "2025-03-26"),
+                        "capabilities": config.get("capabilities") or {},
+                        "clientInfo": {
+                            "name": str(config.get("client_name") or "noetl-worker"),
+                            "version": str(config.get("client_version") or "0"),
+                        },
                     },
                 },
-            },
-        )
-        session_id = init_headers.get("mcp-session-id") or init_headers.get("Mcp-Session-Id")
-        if not session_id:
-            raise RuntimeError("MCP server did not return a session id")
+            )
+            session_id = init_headers.get("mcp-session-id") or init_headers.get("Mcp-Session-Id")
+            if not session_id:
+                raise RuntimeError("MCP server did not return a session id")
 
-        params: Dict[str, Any]
-        if method == "tools/call":
-            tool_name = config.get("tool") or config.get("tool_name")
-            if not tool_name:
-                raise ValueError("mcp tool name is required for tools/call")
-            arguments = config.get("arguments")
-            if arguments is None:
-                arguments = config.get("args")
-            if arguments is None:
-                arguments = {}
-            if not isinstance(arguments, dict):
-                raise ValueError("mcp arguments must be an object")
-            params = {"name": str(tool_name), "arguments": arguments}
-        elif method == "tools/list":
-            params = {}
-        else:
-            params = config.get("params") or {}
-            if not isinstance(params, dict):
-                raise ValueError("mcp params must be an object")
+            if method == "tools/call":
+                tool_name = config.get("tool") or config.get("tool_name")
+                if not tool_name:
+                    raise ValueError("mcp tool name is required for tools/call")
+                arguments = config.get("arguments")
+                if arguments is None:
+                    arguments = config.get("args")
+                if arguments is None:
+                    arguments = {}
+                if isinstance(arguments, str):
+                    arguments = json.loads(arguments)
+                if not isinstance(arguments, dict):
+                    raise ValueError("mcp arguments must be an object")
+                params = {"name": str(tool_name), "arguments": arguments}
+            elif method == "tools/list":
+                params = {}
+            else:
+                params = config.get("params") or {}
+                if isinstance(params, str):
+                    params = json.loads(params)
+                if not isinstance(params, dict):
+                    raise ValueError("mcp params must be an object")
 
-        envelope, _headers = await _post_jsonrpc(
-            client,
+            envelope, _headers = await _post_jsonrpc(
+                client,
+                endpoint,
+                {
+                    "jsonrpc": "2.0",
+                    "id": request_id + 1,
+                    "method": method,
+                    "params": params,
+                },
+                session_id=session_id,
+            )
+
+        result = envelope.get("result") or {}
+        if not isinstance(result, dict):
+            result = {"value": result}
+        text = _extract_text(result)
+        logger.debug("MCP request completed: server=%s method=%s endpoint=%s", server, method, endpoint)
+        return {
+            "status": "ok",
+            "server": server,
+            "endpoint": endpoint,
+            "method": method,
+            "tool": params.get("name") if isinstance(params, dict) else None,
+            "arguments": params.get("arguments") if isinstance(params, dict) else None,
+            "text": text,
+            "result": result,
+            "initialize": init_envelope.get("result"),
+        }
+    except (ValueError, RuntimeError, json.JSONDecodeError, httpx.HTTPError) as exc:
+        logger.warning(
+            "MCP request failed: server=%s method=%s endpoint=%s error=%s",
+            server,
+            method,
             endpoint,
-            {
-                "jsonrpc": "2.0",
-                "id": request_id + 1,
-                "method": method,
-                "params": params,
-            },
-            session_id=session_id,
+            exc,
         )
-
-    result = envelope.get("result") or {}
-    if not isinstance(result, dict):
-        result = {"value": result}
-    text = _extract_text(result)
-    logger.debug("MCP request completed: server=%s method=%s endpoint=%s", server, method, endpoint)
-    return {
-        "status": "ok",
-        "server": server,
-        "endpoint": endpoint,
-        "method": method,
-        "tool": params.get("name") if isinstance(params, dict) else None,
-        "arguments": params.get("arguments") if isinstance(params, dict) else None,
-        "text": text,
-        "result": result,
-        "initialize": init_envelope.get("result"),
-    }
+        return {
+            "status": "error",
+            "server": server,
+            "endpoint": endpoint,
+            "method": method,
+            "tool": params.get("name") if isinstance(params, dict) else None,
+            "arguments": params.get("arguments") if isinstance(params, dict) else None,
+            "error": str(exc),
+            "text": str(exc),
+        }

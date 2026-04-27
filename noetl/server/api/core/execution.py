@@ -49,7 +49,6 @@ async def execute(req: ExecuteRequest) -> ExecuteResponse:
                 detail=f"Catalog kind '{req.resource_kind}' is not executable",
             )
         allowed_kinds = [requested_kind] if requested_kind else sorted(_EXECUTABLE_CATALOG_KINDS)
-        include_meta_executable = requested_kind is None
         async with get_pool_connection() as conn:
             async with conn.cursor(row_factory=dict_row) as cur:
                 if req.catalog_id:
@@ -57,20 +56,12 @@ async def execute(req: ExecuteRequest) -> ExecuteResponse:
                         """
                         SELECT c.path, c.catalog_id, c.kind
                         FROM noetl.catalog c
-                        LEFT JOIN noetl.resource r ON r.name = lower(c.kind)
                         WHERE c.catalog_id = %(catalog_id)s
-                          AND (
-                            lower(c.kind) = ANY(%(allowed_kinds)s)
-                            OR (
-                              %(include_meta_executable)s
-                              AND lower(coalesce(r.meta->>'executable', 'false')) IN ('1', 'true', 'yes', 'on')
-                            )
-                          )
+                          AND lower(c.kind) = ANY(%(allowed_kinds)s)
                         """,
                         {
                             "catalog_id": req.catalog_id,
                             "allowed_kinds": allowed_kinds,
-                            "include_meta_executable": include_meta_executable,
                         },
                     )
                     row = await cur.fetchone()
@@ -82,22 +73,14 @@ async def execute(req: ExecuteRequest) -> ExecuteResponse:
                             """
                             SELECT c.catalog_id, c.path
                             FROM noetl.catalog c
-                            LEFT JOIN noetl.resource r ON r.name = lower(c.kind)
                             WHERE c.path = %(path)s
                               AND c.version = %(version)s
-                              AND (
-                                lower(c.kind) = ANY(%(allowed_kinds)s)
-                                OR (
-                                  %(include_meta_executable)s
-                                  AND lower(coalesce(r.meta->>'executable', 'false')) IN ('1', 'true', 'yes', 'on')
-                                )
-                              )
+                              AND lower(c.kind) = ANY(%(allowed_kinds)s)
                             """,
                             {
                                 "path": req.path,
                                 "version": req.version,
                                 "allowed_kinds": allowed_kinds,
-                                "include_meta_executable": include_meta_executable,
                             },
                         )
                     else:
@@ -105,22 +88,14 @@ async def execute(req: ExecuteRequest) -> ExecuteResponse:
                             """
                             SELECT c.catalog_id, c.path
                             FROM noetl.catalog c
-                            LEFT JOIN noetl.resource r ON r.name = lower(c.kind)
                             WHERE c.path = %(path)s
-                              AND (
-                                lower(c.kind) = ANY(%(allowed_kinds)s)
-                                OR (
-                                  %(include_meta_executable)s
-                                  AND lower(coalesce(r.meta->>'executable', 'false')) IN ('1', 'true', 'yes', 'on')
-                                )
-                              )
+                              AND lower(c.kind) = ANY(%(allowed_kinds)s)
                             ORDER BY c.version DESC
                             LIMIT 1
                             """,
                             {
                                 "path": req.path,
                                 "allowed_kinds": allowed_kinds,
-                                "include_meta_executable": include_meta_executable,
                             },
                         )
                     row = await cur.fetchone()

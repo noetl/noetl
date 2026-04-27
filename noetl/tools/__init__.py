@@ -50,6 +50,8 @@ _EXECUTORS = {
     "execute_nats_task": ("noetl.tools.nats", "execute_nats_task"),
     "execute_agent_task": ("noetl.tools.agent", "execute_agent_task"),
     "execute_mcp_task": ("noetl.tools.mcp", "execute_mcp_task"),
+    "execute_task": ("noetl.core.runtime.execution", "execute_task"),
+    "execute_task_resolved": ("noetl.core.runtime.execution", "execute_task_resolved"),
 }
 
 REGISTRY = {name: name for name in _MODULES}
