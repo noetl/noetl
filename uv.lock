@@ -2129,7 +2129,7 @@ wheels = [
 
 [[package]]
 name = "noetl"
-version = "2.24.1"
+version = "2.24.2"
 source = { editable = "." }
 dependencies = [
     { name = "aioboto3" },

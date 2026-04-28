@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.24.2](https://github.com/noetl/noetl/compare/v2.24.1...v2.24.2) (2026-04-28)
+
+### Bug Fixes
+
+* **api:** index execution observability list ([d16f103](https://github.com/noetl/noetl/commit/d16f103c92bf2e63d408145d86d9e54941fe0b5b))
+
 ## [2.24.1](https://github.com/noetl/noetl/compare/v2.24.0...v2.24.1) (2026-04-28)
 
 ### Bug Fixes
