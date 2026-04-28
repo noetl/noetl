@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.24.1](https://github.com/noetl/noetl/compare/v2.24.0...v2.24.1) (2026-04-28)
+
+### Bug Fixes
+
+* discover agent resources across catalog kinds ([ed625eb](https://github.com/noetl/noetl/commit/ed625eb39e341f89759547042b3923fbfc1a718c))
+
 ## [2.24.0](https://github.com/noetl/noetl/compare/v2.23.2...v2.24.0) (2026-04-27)
 
 ### Features
