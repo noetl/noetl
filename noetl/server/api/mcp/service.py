@@ -1,0 +1,295 @@
+"""MCP lifecycle / discovery service helpers.
+
+Wraps catalog lookups, agent dispatch, and tool-list refresh so the
+endpoints stay thin. All public helpers are async to fit the existing
+catalog/service layer.
+"""
+
+from __future__ import annotations
+
+import json
+from datetime import datetime, timezone
+from typing import Any, Optional
+
+import yaml as _yaml
+
+from fastapi import HTTPException
+
+from noetl.core.logger import setup_logger
+
+from . import schema as mcp_schema
+from .ui_schema import infer_ui_schema
+
+logger = setup_logger(__name__, include_location=True)
+
+
+# ---------------------------------------------------------------------------
+# Catalog accessors
+# ---------------------------------------------------------------------------
+
+
+async def fetch_mcp_resource(catalog_service, path: str, version: Any) -> dict[str, Any]:
+    """Look up an Mcp catalog entry by path + version.
+
+    Returns the parsed YAML payload as a dict so callers can read
+    spec.lifecycle / spec.discovery / spec.runtime without re-parsing.
+    Raises HTTPException(404) when the entry is absent or not an Mcp.
+    """
+    entry = await _fetch_entry(catalog_service, path, version)
+    kind = (entry.get("kind") or "").lower()
+    if kind not in ("mcp",):
+        raise HTTPException(
+            status_code=400,
+            detail=f"resource '{path}' is kind='{kind}', expected 'mcp'",
+        )
+
+    payload = entry.get("payload") or _parse_yaml_string(entry.get("content"))
+    if not isinstance(payload, dict):
+        raise HTTPException(
+            status_code=500,
+            detail=f"Mcp resource '{path}' has unparseable payload",
+        )
+    payload["_catalog"] = {
+        "catalog_id": entry.get("catalog_id"),
+        "path": entry.get("path"),
+        "version": entry.get("version"),
+        "kind": entry.get("kind"),
+    }
+    return payload
+
+
+async def fetch_any_resource(catalog_service, path: str, version: Any) -> dict[str, Any]:
+    """Look up any catalog entry (Playbook / Agent / Mcp) for ui_schema."""
+    return await _fetch_entry(catalog_service, path, version)
+
+
+async def _fetch_entry(catalog_service, path: str, version: Any) -> dict[str, Any]:
+    if catalog_service is None:
+        raise HTTPException(status_code=503, detail="catalog service unavailable")
+
+    requested_version = "latest" if version in (None, "", "latest") else version
+    try:
+        entry = await catalog_service.get_entry(path=path, version=requested_version)
+    except Exception as exc:  # pragma: no cover -- service-layer error surface varies
+        logger.warning("catalog lookup failed for %s@%s: %s", path, requested_version, exc)
+        raise HTTPException(status_code=404, detail=f"resource not found: {path}@{requested_version}") from exc
+
+    if not entry:
+        raise HTTPException(status_code=404, detail=f"resource not found: {path}@{requested_version}")
+    return entry
+
+
+# ---------------------------------------------------------------------------
+# Lifecycle dispatch
+# ---------------------------------------------------------------------------
+
+
+async def dispatch_lifecycle(
+    *,
+    catalog_service,
+    execute_callable,
+    path: str,
+    verb: str,
+    version: Any,
+    workload_overrides: Optional[dict[str, Any]] = None,
+) -> mcp_schema.McpLifecycleResponse:
+    """Resolve resource.lifecycle.{verb} -> Agent path and dispatch.
+
+    `execute_callable(path: str, workload: dict) -> str` is injected so
+    this stays testable without standing up the full /api/execute
+    machinery in unit tests. Pass a thin wrapper around the existing
+    execute service in production wiring.
+    """
+    resource = await fetch_mcp_resource(catalog_service, path, version)
+    spec = resource.get("spec") or {}
+    lifecycle = spec.get("lifecycle") or {}
+    agent_path = lifecycle.get(verb)
+    if not agent_path:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"Mcp resource '{path}' does not declare lifecycle verb '{verb}' "
+                f"(known verbs: {sorted(lifecycle.keys())})"
+            ),
+        )
+
+    workload = {
+        "mcp_resource": {
+            "path": path,
+            "version": resource["_catalog"]["version"],
+            "spec": spec,
+            "metadata": resource.get("metadata") or {},
+        },
+        "verb": verb,
+    }
+    if workload_overrides:
+        workload.update(workload_overrides)
+
+    execution_id = await execute_callable(path=agent_path, workload=workload)
+
+    return mcp_schema.McpLifecycleResponse(
+        status="started",
+        verb=verb,
+        mcp_path=path,
+        mcp_version=int(resource["_catalog"]["version"]),
+        agent_path=str(agent_path),
+        execution_id=str(execution_id),
+    )
+
+
+# ---------------------------------------------------------------------------
+# Discovery
+# ---------------------------------------------------------------------------
+
+
+async def dispatch_discover(
+    *,
+    catalog_service,
+    execute_callable,
+    fetch_url_callable,
+    register_callable,
+    path: str,
+    version: Any,
+    force: bool,
+) -> mcp_schema.McpDiscoverResponse:
+    """Refresh the Mcp resource's tools list.
+
+    Strategy 1 -- agent: when spec.discovery.refresh_via is set, dispatch
+    that Agent playbook and return immediately. The agent is responsible
+    for re-registering the catalog entry.
+
+    Strategy 2 -- direct: when spec.discovery.tools_list_url is set,
+    fetch the URL, parse `tools`, diff against current spec.tools, and
+    re-register a new catalog version when changed (or always when
+    force=True).
+    """
+    resource = await fetch_mcp_resource(catalog_service, path, version)
+    spec = resource.get("spec") or {}
+    discovery = spec.get("discovery") or {}
+    refresh_via = discovery.get("refresh_via")
+    tools_list_url = discovery.get("tools_list_url")
+
+    if refresh_via:
+        execution_id = await execute_callable(
+            path=refresh_via,
+            workload={
+                "mcp_resource": {
+                    "path": path,
+                    "version": resource["_catalog"]["version"],
+                    "spec": spec,
+                    "metadata": resource.get("metadata") or {},
+                },
+                "verb": "discover",
+                "force": force,
+            },
+        )
+        return mcp_schema.McpDiscoverResponse(
+            status="started",
+            mcp_path=path,
+            mcp_version_old=int(resource["_catalog"]["version"]),
+            mcp_version_new=None,
+            strategy="agent",
+            execution_id=str(execution_id),
+        )
+
+    if tools_list_url:
+        body = await fetch_url_callable(tools_list_url)
+        try:
+            payload = json.loads(body) if isinstance(body, (str, bytes)) else body
+        except Exception as exc:
+            raise HTTPException(
+                status_code=502,
+                detail=f"discovery URL returned non-JSON body: {exc}",
+            ) from exc
+
+        new_tools = payload.get("tools") if isinstance(payload, dict) else None
+        if not isinstance(new_tools, list):
+            raise HTTPException(
+                status_code=502,
+                detail="discovery URL must return {'tools': [...]} JSON",
+            )
+
+        old_tools = spec.get("tools") if isinstance(spec.get("tools"), list) else []
+        old_count = len(old_tools)
+        new_count = len(new_tools)
+        changed = force or _tool_lists_differ(old_tools, new_tools)
+
+        new_version = None
+        if changed:
+            spec_copy = dict(spec)
+            spec_copy["tools"] = new_tools
+            updated_doc = dict(resource)
+            updated_doc.pop("_catalog", None)
+            updated_doc["spec"] = spec_copy
+            new_yaml = _yaml.safe_dump(updated_doc, sort_keys=False)
+            register = await register_callable(content=new_yaml, resource_type="mcp")
+            new_version = int(register.get("version"))
+
+        return mcp_schema.McpDiscoverResponse(
+            status="updated" if changed else "started",
+            mcp_path=path,
+            mcp_version_old=int(resource["_catalog"]["version"]),
+            mcp_version_new=new_version,
+            strategy="direct",
+            execution_id=None,
+            tool_count_before=old_count,
+            tool_count_after=new_count,
+        )
+
+    raise HTTPException(
+        status_code=422,
+        detail=(
+            f"Mcp resource '{path}' has no discovery configured "
+            "(set spec.discovery.refresh_via or spec.discovery.tools_list_url)"
+        ),
+    )
+
+
+# ---------------------------------------------------------------------------
+# UI schema inference
+# ---------------------------------------------------------------------------
+
+
+async def build_ui_schema(catalog_service, path: str, version: Any) -> mcp_schema.UiSchemaResponse:
+    entry = await fetch_any_resource(catalog_service, path, version)
+    payload = entry.get("payload") or _parse_yaml_string(entry.get("content")) or {}
+    metadata = payload.get("metadata") or {}
+    fields = infer_ui_schema(entry.get("content") or "")
+    return mcp_schema.UiSchemaResponse(
+        path=str(entry.get("path") or path),
+        version=int(entry.get("version") or 0),
+        kind=str(entry.get("kind") or "").lower(),
+        title=metadata.get("name") if isinstance(metadata, dict) else None,
+        description_markdown=metadata.get("description") if isinstance(metadata, dict) else None,
+        exposed_in_ui=bool((metadata or {}).get("exposed_in_ui", False)) if isinstance(metadata, dict) else False,
+        fields=fields,
+        generated_at=datetime.now(timezone.utc),
+    )
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+
+def _parse_yaml_string(content: Any) -> Optional[dict[str, Any]]:
+    if not isinstance(content, str) or not content.strip():
+        return None
+    try:
+        parsed = _yaml.safe_load(content)
+    except Exception:
+        return None
+    return parsed if isinstance(parsed, dict) else None
+
+
+def _tool_lists_differ(old_tools: list[Any], new_tools: list[Any]) -> bool:
+    def _normalize(items: list[Any]) -> list[tuple[str, str]]:
+        out: list[tuple[str, str]] = []
+        for item in items:
+            if isinstance(item, dict):
+                out.append((str(item.get("name") or ""), str(item.get("title") or "")))
+            else:
+                out.append((str(item), ""))
+        return sorted(out)
+
+    return _normalize(old_tools) != _normalize(new_tools)

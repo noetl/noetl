@@ -17,6 +17,9 @@ from . import core
 # Essential management APIs (catalog, credentials, database utilities)
 from . import credential, catalog, database, keychain, playbook_tests
 
+# MCP lifecycle / discovery / ui_schema operations on top of the catalog.
+from . import mcp
+
 # Query/monitoring APIs
 from . import execution, vars, dashboard, system, runtime
 
@@ -45,6 +48,9 @@ router.include_router(database.router)
 router.include_router(keychain.router)
 router.include_router(playbook_tests.router)
 
+# MCP lifecycle / discovery / ui_schema endpoints — depend on catalog.
+router.include_router(mcp.router)
+
 # Query/monitoring APIs
 router.include_router(execution.router)
 router.include_router(vars.router)
@@ -64,7 +70,7 @@ router.include_router(temp.router)
 __all__ = [
     "router",
     "core",
-    "catalog", "credential", "database", "keychain", "playbook_tests",
+    "catalog", "credential", "database", "keychain", "playbook_tests", "mcp",
     "execution", "vars", "dashboard", "system", "runtime",
     "context", "result", "temp"
 ]
