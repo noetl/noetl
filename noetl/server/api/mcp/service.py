@@ -64,19 +64,70 @@ async def fetch_any_resource(catalog_service, path: str, version: Any) -> dict[s
 
 
 async def _fetch_entry(catalog_service, path: str, version: Any) -> dict[str, Any]:
+    """Look up a catalog entry and normalize the result to a plain dict.
+
+    The real ``CatalogService`` exposes its lookups as static methods —
+    most callers pass the class itself rather than an instance. The
+    canonical method is ``fetch_entry(path=..., version=...)`` which
+    returns a ``CatalogEntry`` Pydantic model. We probe for
+    ``fetch_entry`` first (the contract the rest of the server uses) and
+    fall back to ``get`` if a future refactor moves the surface around.
+    Tests can pass an arbitrary object that exposes either method.
+    """
     if catalog_service is None:
+        raise HTTPException(status_code=503, detail="catalog service unavailable")
+
+    fetcher = getattr(catalog_service, "fetch_entry", None) or getattr(
+        catalog_service, "get", None
+    )
+    if fetcher is None:
+        logger.warning(
+            "catalog service does not expose fetch_entry/get for %s@%s",
+            path,
+            version,
+        )
         raise HTTPException(status_code=503, detail="catalog service unavailable")
 
     requested_version = "latest" if version in (None, "", "latest") else version
     try:
-        entry = await catalog_service.get_entry(path=path, version=requested_version)
+        entry = await fetcher(path=path, version=requested_version)
     except Exception as exc:  # pragma: no cover -- service-layer error surface varies
         logger.warning("catalog lookup failed for %s@%s: %s", path, requested_version, exc)
-        raise HTTPException(status_code=404, detail=f"resource not found: {path}@{requested_version}") from exc
+        raise HTTPException(
+            status_code=404,
+            detail=f"resource not found: {path}@{requested_version}",
+        ) from exc
 
     if not entry:
-        raise HTTPException(status_code=404, detail=f"resource not found: {path}@{requested_version}")
-    return entry
+        raise HTTPException(
+            status_code=404,
+            detail=f"resource not found: {path}@{requested_version}",
+        )
+
+    return _normalize_entry(entry)
+
+
+def _normalize_entry(entry: Any) -> dict[str, Any]:
+    """Return a plain dict view of a catalog entry.
+
+    Pydantic models go through ``model_dump`` (which serialises nested
+    models too); dicts pass through unchanged; anything else gets a
+    ``__dict__`` snapshot as a last resort. Test fakes that yield dicts
+    directly stay supported.
+    """
+    if isinstance(entry, dict):
+        return entry
+    if hasattr(entry, "model_dump"):
+        dumped = entry.model_dump()
+        if isinstance(dumped, dict):
+            return dumped
+    fallback = getattr(entry, "__dict__", None)
+    if isinstance(fallback, dict):
+        return dict(fallback)
+    raise HTTPException(
+        status_code=500,
+        detail=f"catalog entry has unsupported type: {type(entry).__name__}",
+    )
 
 
 # ---------------------------------------------------------------------------

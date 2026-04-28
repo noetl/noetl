@@ -6,28 +6,46 @@ from typing import Any
 
 import pytest
 from fastapi import HTTPException
+from pydantic import BaseModel
 
 from noetl.server.api.mcp.service import dispatch_lifecycle
 
 
-class _FakeCatalogService:
-    """Minimal stand-in implementing the get_entry contract used here."""
+class _CatalogEntryStub(BaseModel):
+    """Minimal stand-in for noetl.server.api.catalog.CatalogEntry.
 
-    def __init__(self, entry: dict[str, Any] | None = None):
+    Matches the fields the service actually reads (``catalog_id``,
+    ``path``, ``version``, ``kind``, ``payload``, ``content``) so the
+    Pydantic ``model_dump`` path through ``_normalize_entry`` is
+    exercised the same way it would be in production.
+    """
+
+    catalog_id: str
+    path: str
+    version: int
+    kind: str
+    payload: dict[str, Any] | None = None
+    content: str | None = None
+
+
+class _FakeCatalogService:
+    """Minimal stand-in implementing the fetch_entry contract."""
+
+    def __init__(self, entry: _CatalogEntryStub | None = None):
         self.entry = entry
 
-    async def get_entry(self, *, path: str, version: Any):
+    async def fetch_entry(self, *, path: str, version: Any):  # noqa: D401
         return self.entry
 
 
 @pytest.mark.asyncio
 async def test_dispatch_resolves_lifecycle_to_agent_and_returns_execution_id():
-    entry = {
-        "catalog_id": "100",
-        "path": "mcp/kubernetes",
-        "version": 4,
-        "kind": "Mcp",
-        "payload": {
+    entry = _CatalogEntryStub(
+        catalog_id="100",
+        path="mcp/kubernetes",
+        version=4,
+        kind="Mcp",
+        payload={
             "metadata": {"name": "kubernetes"},
             "spec": {
                 "lifecycle": {
@@ -35,7 +53,7 @@ async def test_dispatch_resolves_lifecycle_to_agent_and_returns_execution_id():
                 },
             },
         },
-    }
+    )
     captured: dict[str, Any] = {}
 
     async def fake_execute(*, path: str, workload: dict[str, Any]) -> str:
@@ -64,13 +82,13 @@ async def test_dispatch_resolves_lifecycle_to_agent_and_returns_execution_id():
 
 @pytest.mark.asyncio
 async def test_dispatch_422s_when_verb_is_not_in_lifecycle():
-    entry = {
-        "catalog_id": "100",
-        "path": "mcp/kubernetes",
-        "version": 1,
-        "kind": "Mcp",
-        "payload": {"spec": {"lifecycle": {"status": "agents/k8s/status"}}},
-    }
+    entry = _CatalogEntryStub(
+        catalog_id="100",
+        path="mcp/kubernetes",
+        version=1,
+        kind="Mcp",
+        payload={"spec": {"lifecycle": {"status": "agents/k8s/status"}}},
+    )
 
     async def fake_execute(**_: Any) -> str:  # pragma: no cover -- not reached
         return "should-not-run"
@@ -89,13 +107,13 @@ async def test_dispatch_422s_when_verb_is_not_in_lifecycle():
 
 @pytest.mark.asyncio
 async def test_dispatch_400s_when_resource_kind_is_not_mcp():
-    entry = {
-        "catalog_id": "100",
-        "path": "mcp/kubernetes",
-        "version": 1,
-        "kind": "Playbook",
-        "payload": {"spec": {}},
-    }
+    entry = _CatalogEntryStub(
+        catalog_id="100",
+        path="mcp/kubernetes",
+        version=1,
+        kind="Playbook",
+        payload={"spec": {}},
+    )
 
     async def fake_execute(**_: Any) -> str:  # pragma: no cover
         return "noop"
@@ -109,3 +127,53 @@ async def test_dispatch_400s_when_resource_kind_is_not_mcp():
             version="latest",
         )
     assert info.value.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_dispatch_503s_when_service_lacks_lookup_method():
+    """Service objects without fetch_entry/get should produce a 503."""
+
+    class _NoLookup:
+        pass
+
+    async def fake_execute(**_: Any) -> str:  # pragma: no cover
+        return "noop"
+
+    with pytest.raises(HTTPException) as info:
+        await dispatch_lifecycle(
+            catalog_service=_NoLookup(),
+            execute_callable=fake_execute,
+            path="mcp/kubernetes",
+            verb="deploy",
+            version="latest",
+        )
+    assert info.value.status_code == 503
+
+
+@pytest.mark.asyncio
+async def test_dispatch_falls_back_to_get_when_fetch_entry_missing():
+    """Catalog services exposing only `get` should still work."""
+    entry = _CatalogEntryStub(
+        catalog_id="100",
+        path="mcp/kubernetes",
+        version=1,
+        kind="Mcp",
+        payload={"spec": {"lifecycle": {"status": "agents/k8s/status"}}},
+    )
+
+    class _GetOnly:
+        async def get(self, *, path: str, version: Any):
+            return entry
+
+    async def fake_execute(*, path: str, workload: dict[str, Any]) -> str:
+        return "exec-7"
+
+    response = await dispatch_lifecycle(
+        catalog_service=_GetOnly(),
+        execute_callable=fake_execute,
+        path="mcp/kubernetes",
+        verb="status",
+        version="latest",
+    )
+    assert response.execution_id == "exec-7"
+    assert response.agent_path == "agents/k8s/status"

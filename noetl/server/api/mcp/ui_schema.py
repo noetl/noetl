@@ -3,16 +3,26 @@
 Public entry point: ``infer_ui_schema(yaml_content) -> list[UiSchemaField]``.
 
 Approach:
-- Parse the YAML *with comments preserved* via ruamel.yaml so we can
-  read `# ui:` directives next to scalar keys.
-- For each top-level key under ``workload:``, build a UiSchemaField from
-  the value's type plus any directives.
-- Recurse for nested mappings; lists of scalars become ``kind=array``.
 
-The inference is intentionally forgiving: if a comment is malformed or
-ruamel can't load the document, we fall back to plain PyYAML and emit
-a flat schema with no directives. Callers should treat the returned
-schema as a best-effort hint, not a strict contract.
+- Parse the document with plain PyYAML for the structural shape (no
+  extra dependency on ruamel).
+- Scan the raw text for inline ``# ui:`` directives next to the line
+  that defines each workload key. The directive parser is a small
+  regex; it ignores anything it can't recognise so a malformed
+  comment never breaks registration.
+
+Supported directives (always after the key/value on the same line):
+
+- ``# ui:secret`` -- mark the field as masked input.
+- ``# ui:enum=[a,b,c]`` -- force ``kind=enum`` and populate options.
+- ``# ui:credential=pg_*`` -- restrict to a credential picker
+  filtered by glob.
+- ``# ui:description=Some help text`` -- per-field description.
+
+The inference is intentionally forgiving: malformed YAML or unknown
+directives just return an empty / less-rich schema rather than
+raising. Callers should treat the returned schema as a best-effort
+hint, not a strict contract.
 """
 
 from __future__ import annotations
@@ -20,21 +30,22 @@ from __future__ import annotations
 import re
 from typing import Any, Iterable, Optional
 
-import yaml as _plain_yaml
-
-try:
-    from ruamel.yaml import YAML  # type: ignore[import-not-found]
-
-    _RUAMEL_AVAILABLE = True
-except Exception:  # pragma: no cover -- ruamel always available in our deps
-    _RUAMEL_AVAILABLE = False
-    YAML = None  # type: ignore[assignment]
+import yaml as _yaml
 
 from .schema import UiSchemaField
 
 
-_UI_DIRECTIVE_RE = re.compile(r"^\s*#\s*ui:(?P<key>[a-zA-Z_][a-zA-Z0-9_]*)\s*=?\s*(?P<value>.*)$")
-_UI_FLAG_RE = re.compile(r"^\s*#\s*ui:(?P<key>[a-zA-Z_][a-zA-Z0-9_]*)\s*$")
+# Match an inline directive like `key: value # ui:secret` or
+# `key: value # ui:enum=[a,b]`. The leading capture lets us strip the
+# directive itself before parsing the value with PyYAML.
+_DIRECTIVE_INLINE_RE = re.compile(
+    r"#\s*ui:(?P<key>[A-Za-z_][A-Za-z0-9_]*)(?:\s*=\s*(?P<value>[^\n]*))?$"
+)
+
+# Match the start of a top-level workload key line so we can correlate
+# the parsed dict back to the raw text. We require at least two leading
+# spaces so we don't mistake `workload:` itself for one of its keys.
+_TOP_KEY_RE = re.compile(r"^(?P<indent> {2})(?P<name>[A-Za-z_][A-Za-z0-9_-]*)\s*:")
 
 
 def infer_ui_schema(yaml_text: str) -> list[UiSchemaField]:
@@ -45,40 +56,28 @@ def infer_ui_schema(yaml_text: str) -> list[UiSchemaField]:
     if not yaml_text or not yaml_text.strip():
         return []
 
-    parsed = _load_with_comments(yaml_text) or _load_plain(yaml_text)
-    if parsed is None:
-        return []
-
+    parsed = _load_yaml(yaml_text)
     workload = _get_workload(parsed)
     if workload is None:
         return []
 
+    directives = _scan_inline_directives(yaml_text)
     fields: list[UiSchemaField] = []
-    for key, value in _iter_mapping_items(workload):
-        directives = _read_directives(workload, key)
-        fields.append(_field_from_value(str(key), value, directives))
+    for key, value in workload.items():
+        fields.append(
+            _field_from_value(str(key), value, directives.get(str(key), {}))
+        )
     return fields
 
 
 # ---------------------------------------------------------------------------
-# Internals
+# YAML helpers
 # ---------------------------------------------------------------------------
 
 
-def _load_with_comments(yaml_text: str):
-    if not _RUAMEL_AVAILABLE:
-        return None
+def _load_yaml(yaml_text: str) -> Any:
     try:
-        loader = YAML(typ="rt")
-        loader.preserve_quotes = True
-        return loader.load(yaml_text)
-    except Exception:
-        return None
-
-
-def _load_plain(yaml_text: str):
-    try:
-        return _plain_yaml.safe_load(yaml_text)
+        return _yaml.safe_load(yaml_text)
     except Exception:
         return None
 
@@ -92,64 +91,78 @@ def _get_workload(doc: Any) -> Optional[dict[str, Any]]:
     return workload
 
 
-def _iter_mapping_items(mapping: Any) -> Iterable[tuple[Any, Any]]:
-    if hasattr(mapping, "items"):
-        return list(mapping.items())
-    return []
+# ---------------------------------------------------------------------------
+# Comment scanning
+# ---------------------------------------------------------------------------
 
 
-def _read_directives(mapping: Any, key: Any) -> dict[str, Any]:
-    """Pull `# ui:foo=bar` directives from comments adjacent to a key.
+def _scan_inline_directives(yaml_text: str) -> dict[str, dict[str, Any]]:
+    """Walk the raw text once and pull `# ui:` directives per top-level key.
 
-    Returns a mapping of directive name -> value. Flag-style directives
-    (``# ui:secret``) map to True. Returns an empty dict when ruamel is
-    not in use or the key has no comments.
+    Returns a mapping of ``key_name -> directive_dict`` where the
+    directive dict has entries like ``{"secret": True, "enum":
+    ["a", "b"], "description": "...", "credential": "pg_*"}``.
+
+    Only inline comments on the same line as the key/value are
+    considered. The implementation deliberately ignores keys nested
+    deeper than the immediate workload children — Phase 1 covers the
+    flat case the GUI run-dialog needs first.
     """
-    out: dict[str, Any] = {}
-    ca = getattr(mapping, "ca", None)
-    if ca is None:
-        return out
+    out: dict[str, dict[str, Any]] = {}
+    in_workload = False
+    workload_indent = -1
 
-    items_meta = getattr(ca, "items", None)
-    if not items_meta:
-        return out
+    for line in yaml_text.splitlines():
+        stripped = line.lstrip()
+        if not stripped:
+            continue
+        if stripped.startswith("workload:"):
+            in_workload = True
+            workload_indent = len(line) - len(stripped)
+            continue
+        if not in_workload:
+            continue
 
-    raw = items_meta.get(key)
-    if not raw:
-        return out
+        indent = len(line) - len(stripped)
+        if stripped and indent <= workload_indent and not line.startswith(" "):
+            # Left the workload block.
+            in_workload = False
+            continue
 
-    # ruamel stores comments as a 4-tuple [pre, post, eol, multi]; the
-    # exact slot depends on whether the comment is on the same line as
-    # the key (eol) or above it. We inspect every slot and union them.
-    for entry in raw:
-        for token in _flatten_tokens(entry):
-            text = getattr(token, "value", None) or str(token)
-            if not text or "ui:" not in text:
-                continue
-            for line in text.splitlines():
-                line = line.rstrip()
-                if not line:
-                    continue
-                m = _UI_DIRECTIVE_RE.match(line)
-                if m and m.group("value").strip() != "":
-                    out[m.group("key")] = _parse_directive_value(m.group("value"))
-                    continue
-                m = _UI_FLAG_RE.match(line)
-                if m:
-                    out[m.group("key")] = True
+        match = _TOP_KEY_RE.match(line)
+        if not match:
+            continue
+        key_name = match.group("name")
+        directives = _extract_directives_from_line(line)
+        if directives:
+            out[key_name] = directives
+
     return out
 
 
-def _flatten_tokens(entry: Any) -> Iterable[Any]:
-    """Yield comment tokens from a ruamel comment entry, ignoring None."""
-    if entry is None:
-        return []
-    if isinstance(entry, list):
-        flat: list[Any] = []
-        for sub in entry:
-            flat.extend(_flatten_tokens(sub))
-        return flat
-    return [entry]
+def _extract_directives_from_line(line: str) -> dict[str, Any]:
+    """Pull every `# ui:foo` and `# ui:foo=bar` token from one raw line."""
+    out: dict[str, Any] = {}
+    # `# ui:` may appear more than once on a line, though rare. Find them
+    # all by repeatedly matching from the position after each hit.
+    cursor = 0
+    while True:
+        idx = line.find("# ui:", cursor)
+        if idx == -1:
+            break
+        rest = line[idx:]
+        # The directive runs until end-of-line. The regex grabs the key
+        # plus optional value.
+        m = _DIRECTIVE_INLINE_RE.search(rest)
+        if not m:
+            break
+        key = m.group("key")
+        raw_value = (m.group("value") or "").strip()
+        out[key] = _parse_directive_value(raw_value) if raw_value else True
+        cursor = idx + len(m.group(0))
+        if cursor >= len(line):
+            break
+    return out
 
 
 def _parse_directive_value(text: str) -> Any:
@@ -160,12 +173,17 @@ def _parse_directive_value(text: str) -> Any:
         if not inner:
             return []
         return [piece.strip().strip("'\"") for piece in inner.split(",") if piece.strip()]
-    # quoted
+    # quoted single value
     if (text.startswith("'") and text.endswith("'")) or (
         text.startswith('"') and text.endswith('"')
     ):
         return text[1:-1]
     return text
+
+
+# ---------------------------------------------------------------------------
+# Field construction
+# ---------------------------------------------------------------------------
 
 
 def _field_from_value(name: str, value: Any, directives: dict[str, Any]) -> UiSchemaField:
@@ -197,13 +215,13 @@ def _field_from_value(name: str, value: Any, directives: dict[str, Any]) -> UiSc
         kind = "null"
     elif isinstance(value, dict):
         children = [
-            _field_from_value(str(k), v, _read_directives(value, k))
-            for k, v in _iter_mapping_items(value)
+            _field_from_value(str(k), v, {})
+            for k, v in value.items()
         ]
         return UiSchemaField(
             name=name,
             kind="object",
-            default=_clean_default(value),
+            default=value,
             description=description,
             secret=secret,
             credential_glob=credential_glob if isinstance(credential_glob, str) else None,
@@ -217,17 +235,8 @@ def _field_from_value(name: str, value: Any, directives: dict[str, Any]) -> UiSc
     return UiSchemaField(
         name=name,
         kind=kind,
-        default=_clean_default(value),
+        default=value,
         description=description,
         secret=secret,
         credential_glob=credential_glob if isinstance(credential_glob, str) else None,
     )
-
-
-def _clean_default(value: Any) -> Any:
-    """Strip ruamel comment metadata from defaults so they JSON-serialize cleanly."""
-    if isinstance(value, dict):
-        return {k: _clean_default(v) for k, v in value.items()}
-    if isinstance(value, list):
-        return [_clean_default(v) for v in value]
-    return value
