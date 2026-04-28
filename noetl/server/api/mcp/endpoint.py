@@ -95,6 +95,8 @@ async def _fetch_url_default(url: str) -> str:
     requests targeting loopback, link-local, multicast, or RFC 1918
     addresses unless the URL host explicitly resolves to a kind/cluster
     namespace (the most common case for kubernetes-native MCP servers).
+    DNS resolution and the actual HTTP fetch both run off the event
+    loop so a slow resolver can't stall the server.
     """
     parsed = urllib.parse.urlparse(url)
     if parsed.scheme not in ("http", "https"):
@@ -106,10 +108,7 @@ async def _fetch_url_default(url: str) -> str:
     if not host:
         raise HTTPException(status_code=400, detail="discovery URL missing host")
 
-    # Allow common in-cluster hostnames. Anything that resolves to a
-    # publicly-routable address is also fine; the only thing we block is the
-    # subset of private/loopback that's a likely SSRF target.
-    if not _host_is_safe_for_discovery(host):
+    if not await _host_is_safe_for_discovery(host):
         raise HTTPException(
             status_code=400,
             detail=(
@@ -138,10 +137,14 @@ async def _fetch_url_default(url: str) -> str:
     return await asyncio.get_running_loop().run_in_executor(None, _read)
 
 
-def _host_is_safe_for_discovery(host: str) -> bool:
+async def _host_is_safe_for_discovery(host: str) -> bool:
     """Best-effort SSRF guard. Allows in-cluster service DNS by name.
 
+    Async because DNS resolution is delegated to
+    ``loop.getaddrinfo`` so a slow resolver can't stall other handlers.
+
     We let through:
+
     - hostnames ending in `.svc`, `.svc.cluster.local`, `.cluster.local`
       (typical kubernetes service DNS — operators target the same MCP
       pod via these names).
@@ -149,13 +152,14 @@ def _host_is_safe_for_discovery(host: str) -> bool:
       loopback / link-local / multicast / private ranges.
 
     We block:
+
     - explicit IPs in loopback (127.0.0.0/8, ::1), link-local
       (169.254.0.0/16, fe80::/10), multicast (224.0.0.0/4),
-      RFC 1918 (10/8, 172.16/12, 192.168/16) when the URL is an IP literal
-      and *not* one of the in-cluster DNS suffixes above. (Cluster DNS
-      typically resolves to a private 10.x or 172.x address, but the
-      hostname-based allowlist short-circuits the check before we hit
-      that branch.)
+      RFC 1918 (10/8, 172.16/12, 192.168/16) when the URL is an IP
+      literal and *not* one of the in-cluster DNS suffixes above.
+      Cluster DNS typically resolves to a private 10.x or 172.x
+      address, but the hostname-based allowlist short-circuits the
+      check before we hit that branch.
     """
     suffix_allowlist = (
         ".svc",
@@ -167,14 +171,16 @@ def _host_is_safe_for_discovery(host: str) -> bool:
         return True
 
     try:
-        # If the hostname is a literal IP, this returns the IP back.
-        # Otherwise it does a DNS lookup.
-        infos = socket.getaddrinfo(host, None)
+        loop = asyncio.get_running_loop()
+        # loop.getaddrinfo runs the lookup in a thread/executor so the
+        # event loop stays responsive. Returns the same tuple shape as
+        # socket.getaddrinfo.
+        infos = await loop.getaddrinfo(host, None)
     except socket.gaierror:
         return False
 
     seen_ok = False
-    for family, _type, _proto, _canon, sockaddr in infos:
+    for _family, _type, _proto, _canon, sockaddr in infos:
         addr = sockaddr[0]
         try:
             ip = ipaddress.ip_address(addr)

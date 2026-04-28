@@ -109,3 +109,28 @@ def test_ignores_unknown_directives():
     field = infer_ui_schema(yaml)[0]
     assert field.kind == "string"
     assert field.secret is False
+
+
+def test_multiple_directives_on_one_line_are_all_parsed():
+    yaml = textwrap.dedent(
+        """
+        workload:
+          api_key: "" # ui:secret # ui:description=API key for upstream
+        """
+    )
+    field = infer_ui_schema(yaml)[0]
+    assert field.secret is True
+    assert field.description == "API key for upstream"
+
+
+def test_four_space_indent_is_recognised():
+    yaml = textwrap.dedent(
+        """
+        workload:
+            api_key: "" # ui:secret
+            username: alice
+        """
+    )
+    fields = {f.name: f for f in infer_ui_schema(yaml)}
+    assert fields["api_key"].secret is True
+    assert fields["username"].kind == "string"
