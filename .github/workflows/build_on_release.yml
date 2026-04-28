@@ -66,26 +66,10 @@ jobs:
         with:
           ref: ${{ github.event.release.tag_name }}
       
-      - name: Install Node v23
-        uses: actions/setup-node@v4
-        with:
-          node-version: "23.11.x"
-
       - name: Install UV
         uses: astral-sh/setup-uv@v7
         with:
           version: "0.9.x"
-
-      - name: Install UI dependencies
-        working-directory: ui-src
-        run: npm ci
-
-      - name: Build UI
-        working-directory: ui-src
-        run: npm run build
-
-      - name: Copy built UI artifacts to noetl/core/ui
-        run: cp -R ui-src/dist/* noetl/core/ui/
 
       - name: Install NoETL dependencies
         run: uv sync --locked --all-extras
