@@ -134,3 +134,25 @@ def test_four_space_indent_is_recognised():
     fields = {f.name: f for f in infer_ui_schema(yaml)}
     assert fields["api_key"].secret is True
     assert fields["username"].kind == "string"
+
+
+def test_nested_key_directive_does_not_bleed_to_top_level_with_same_name():
+    """A `# ui:secret` on a deeply-nested key must not promote up to a
+    top-level workload field that happens to share its name."""
+    yaml = textwrap.dedent(
+        """
+        workload:
+          host: public.example.com
+          db:
+            host: secrets.internal # ui:secret
+            port: 5432
+        """
+    )
+    fields = {f.name: f for f in infer_ui_schema(yaml)}
+    # Nested directive should not have polluted the top-level `host`.
+    assert fields["host"].secret is False
+    # The top-level `db` is itself an object; its child mappings are
+    # parsed structurally but the directive scope is intentionally only
+    # immediate-child of workload, so `db.host`'s secret tag is ignored
+    # in this phase.
+    assert fields["db"].kind == "object"

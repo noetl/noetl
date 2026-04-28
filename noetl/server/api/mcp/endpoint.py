@@ -113,8 +113,9 @@ async def _fetch_url_default(url: str) -> str:
             status_code=400,
             detail=(
                 f"discovery URL host '{host}' resolves to a blocked address range "
-                "(loopback / link-local / multicast). Use the in-cluster service "
-                "DNS or a routable public host instead."
+                "(loopback / link-local / multicast / RFC 1918 private). "
+                "Use the in-cluster service DNS (e.g. *.svc.cluster.local) "
+                "or a routable public host instead."
             ),
         )
 

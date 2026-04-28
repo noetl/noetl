@@ -108,13 +108,24 @@ def _scan_inline_directives(yaml_text: str) -> dict[str, dict[str, Any]]:
     ["a", "b"], "description": "...", "credential": "pg_*"}``.
 
     Only inline comments on the same line as the key/value are
-    considered. The implementation deliberately ignores keys nested
-    deeper than the immediate workload children — Phase 1 covers the
-    flat case the GUI run-dialog needs first.
+    considered, and only for the *immediate children* of ``workload:``.
+    A directive on a nested mapping (e.g. ``workload.db.host``) is
+    intentionally ignored — without that filter the parser would
+    happily attach an inner ``# ui:secret`` to an unrelated top-level
+    field that just happens to share the same key name. Phase 1 only
+    covers the flat case the GUI run-dialog needs first.
+
+    Detection of "immediate child" is data-driven: the first non-empty,
+    deeper-than-``workload:`` line we see fixes ``child_indent`` for
+    the rest of the block. Lines at deeper indents are skipped; lines
+    at the same indent but inside a nested mapping (i.e. anything
+    that's not the very next sibling) are skipped because the regex
+    still matches them.
     """
     out: dict[str, dict[str, Any]] = {}
     in_workload = False
     workload_indent = -1
+    child_indent = -1  # established lazily on the first child we see
 
     for line in yaml_text.splitlines():
         stripped = line.lstrip()
@@ -123,14 +134,25 @@ def _scan_inline_directives(yaml_text: str) -> dict[str, dict[str, Any]]:
         if stripped.startswith("workload:"):
             in_workload = True
             workload_indent = len(line) - len(stripped)
+            child_indent = -1
             continue
         if not in_workload:
             continue
 
         indent = len(line) - len(stripped)
-        if stripped and indent <= workload_indent and not line.startswith(" "):
-            # Left the workload block.
+        if indent <= workload_indent:
+            # Left the workload block — `start:` or another top-level key.
             in_workload = False
+            child_indent = -1
+            continue
+
+        # Establish the immediate-child indent on the first qualifying line.
+        if child_indent == -1:
+            child_indent = indent
+
+        # Filter strictly to the immediate children of workload:. Anything
+        # deeper is a nested mapping and gets ignored for directive scope.
+        if indent != child_indent:
             continue
 
         match = _TOP_KEY_RE.match(line)
