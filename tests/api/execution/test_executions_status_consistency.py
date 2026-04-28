@@ -119,6 +119,14 @@ def test_pending_command_count_sql_tracks_command_ids():
 
 
 @pytest.mark.asyncio
+async def test_pending_command_count_lookup_rejects_invalid_execution_ids():
+    cursor = _FakeCursor([])
+
+    with pytest.raises(ValueError):
+        await execution_api._fetch_pending_command_counts_for_executions(cursor, ["not-a-snowflake"])
+
+
+@pytest.mark.asyncio
 async def test_get_executions_normalizes_non_terminal_completed_to_running(monkeypatch):
     now = datetime(2026, 3, 21, 7, 0, 0, tzinfo=timezone.utc)
     rows = [
@@ -307,6 +315,9 @@ async def test_get_executions_applies_page_size_and_offset(monkeypatch):
 
     assert len(result) == 1
     assert cursor._params == {"limit": 25, "offset": 25}
+    assert "FROM noetl.execution e" in cursor._query
+    assert "FROM noetl.event" not in cursor._query
+    assert "WHEN e.last_event_type IN (" in cursor._query
 
 
 @pytest.mark.asyncio
