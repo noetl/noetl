@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.25.0](https://github.com/noetl/noetl/compare/v2.24.2...v2.25.0) (2026-04-28)
+
+### Features
+
+* **mcp:** lifecycle / discover / ui_schema endpoints (architecture phase 1) ([ab4a764](https://github.com/noetl/noetl/commit/ab4a764cb55cb91ea6d2d8e093a53a959683be6e))
+
+### Bug Fixes
+
+* **db:** make event constraint DDL re-runnable ([c497657](https://github.com/noetl/noetl/commit/c497657ae5d2209d76e98ebe05d913f42d64e252))
+* **mcp:** address Copilot review on [#392](https://github.com/noetl/noetl/issues/392) (route prefix, contracts, SSRF, deps) ([bf636e1](https://github.com/noetl/noetl/commit/bf636e183b459d9cbe6ca65cc57d4d052035e8d5)), closes [#6](https://github.com/noetl/noetl/issues/6) [#7](https://github.com/noetl/noetl/issues/7) [#12](https://github.com/noetl/noetl/issues/12) [#2](https://github.com/noetl/noetl/issues/2) [#3](https://github.com/noetl/noetl/issues/3) [#9](https://github.com/noetl/noetl/issues/9) [#11](https://github.com/noetl/noetl/issues/11) [#8](https://github.com/noetl/noetl/issues/8) [#1](https://github.com/noetl/noetl/issues/1) [#10](https://github.com/noetl/noetl/issues/10) [#4](https://github.com/noetl/noetl/issues/4) [#5](https://github.com/noetl/noetl/issues/5)
+
 ## [2.24.2](https://github.com/noetl/noetl/compare/v2.24.1...v2.24.2) (2026-04-28)
 
 ### Bug Fixes
