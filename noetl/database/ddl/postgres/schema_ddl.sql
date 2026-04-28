@@ -57,22 +57,22 @@ COMMENT ON COLUMN noetl.transient.accessed_at IS 'Last time this variable was re
 -- Event (range-partitioned by execution_id for instant per-execution cleanup)
 --
 -- Partition key: execution_id (snowflake bigint, epoch = 2024-01-01 UTC)
---   id = (elapsed_ms << 22) | (node_id << 12) | seq
---   IDs per quarter ≈ 33 trillion; quarterly boundaries below.
+--   id = (elapsed_ms << 23) | (node_id << 12) | seq
+--   IDs per quarter ≈ 66 trillion; quarterly boundaries below.
 --
 -- Cleanup: DROP TABLE noetl.event_<quarter> — instant, no VACUUM needed.
 -- Add new partitions before each quarter starts:
 --   CREATE TABLE noetl.event_2028_q1 PARTITION OF noetl.event
---     FOR VALUES FROM (595000000000000000) TO (628000000000000000);
+--     FOR VALUES FROM (1058897343283200000) TO (1124137159091200000);
 --
 -- Boundary reference (id_for_date, epoch=2024-01-01):
---   2026-01-01:  264_905_529_753_600_000
---   2026-04-01:  297_520_437_657_600_000
---   2026-07-01:  330_497_733_427_200_000
---   2026-10-01:  363_837_417_062_400_000
---   2027-01-01:  397_177_100_697_600_000
---   2027-07-01:  462_769_304_371_200_000
---   2028-01-01:  529_448_671_641_600_000
+--   2026-01-01:  529_811_059_507_200_000
+--   2026-04-01:  595_040_875_315_200_000
+--   2026-07-01:  660_995_466_854_400_000
+--   2026-10-01:  727_674_834_124_800_000
+--   2027-01-01:  794_354_201_395_200_000
+--   2027-07-01:  925_538_608_742_400_000
+--   2028-01-01:  1_058_897_343_283_200_000
 CREATE TABLE IF NOT EXISTS noetl.event (
     execution_id        BIGINT,
     catalog_id          BIGINT NOT NULL REFERENCES noetl.catalog(catalog_id),
@@ -160,6 +160,68 @@ CREATE TABLE IF NOT EXISTS noetl.event_2027_h2
 -- GKE deployment uses a non-standard snowflake epoch producing IDs in the 569T–600T range
 CREATE TABLE IF NOT EXISTS noetl.event_2026_gke
     PARTITION OF noetl.event FOR VALUES FROM (569000000000000000) TO (600000000000000000);
+-- Current/future ranges for the standard noetl.snowflake_id() layout. These are
+-- skipped per-range when event_default already contains overlapping rows so
+-- schema re-apply never fails on clusters that already caught rows in default.
+-- The 569T-600T interval is already covered by event_2026_gke, so the standard
+-- 2026 ranges are split around it to avoid overlapping partition bounds.
+DO $$
+DECLARE
+    partition_names text[] := ARRAY[
+        'event_2026_q1_standard',
+        'event_2026_q2_standard',
+        'event_2026_q3_standard',
+        'event_2026_q4_standard',
+        'event_2027_h1_standard',
+        'event_2027_h2_standard',
+        'event_2028_q1_standard'
+    ];
+    start_ids bigint[] := ARRAY[
+        529811059507200000,
+        600000000000000000,
+        660995466854400000,
+        727674834124800000,
+        794354201395200000,
+        925538608742400000,
+        1058897343283200000
+    ];
+    end_ids bigint[] := ARRAY[
+        569000000000000000,
+        660995466854400000,
+        727674834124800000,
+        794354201395200000,
+        925538608742400000,
+        1058897343283200000,
+        1124137159091200000
+    ];
+    idx int;
+    default_has_overlap boolean;
+BEGIN
+    FOR idx IN 1..array_length(partition_names, 1) LOOP
+        default_has_overlap := false;
+        IF to_regclass('noetl.event_default') IS NOT NULL THEN
+            EXECUTE format(
+                'SELECT EXISTS (SELECT 1 FROM noetl.event_default WHERE execution_id >= %s AND execution_id < %s LIMIT 1)',
+                start_ids[idx],
+                end_ids[idx]
+            ) INTO default_has_overlap;
+        END IF;
+
+        IF default_has_overlap THEN
+            RAISE NOTICE
+                'Skipping %. Move/split overlapping rows from noetl.event_default before attaching this partition.',
+                partition_names[idx];
+        ELSE
+            EXECUTE format(
+                'CREATE TABLE IF NOT EXISTS noetl.%I PARTITION OF noetl.event FOR VALUES FROM (%s) TO (%s)',
+                partition_names[idx],
+                start_ids[idx],
+                end_ids[idx]
+            );
+        END IF;
+    END LOOP;
+END;
+$$;
 -- Default catches any IDs not covered by named partitions above
 CREATE TABLE IF NOT EXISTS noetl.event_default
     PARTITION OF noetl.event DEFAULT;
@@ -563,6 +625,9 @@ ALTER TABLE noetl.execution
 CREATE INDEX IF NOT EXISTS idx_execution_status ON noetl.execution (status);
 CREATE INDEX IF NOT EXISTS idx_execution_catalog_id ON noetl.execution (catalog_id);
 CREATE INDEX IF NOT EXISTS idx_execution_start_time ON noetl.execution (start_time DESC);
+CREATE INDEX IF NOT EXISTS idx_execution_list_page
+    ON noetl.execution ((COALESCE(start_time, created_at)) DESC NULLS LAST, execution_id DESC)
+    INCLUDE (catalog_id, parent_execution_id, status, last_event_type, last_node_name, last_event_id, end_time, error);
 -- Execution projection is maintained by the projection worker and state store.
 -- Explicitly remove the old row-level trigger so schema re-application after
 -- Postgres recovery cannot recreate the high-contention hot path.
@@ -667,6 +732,9 @@ CREATE INDEX IF NOT EXISTS idx_command_execution_step
     ON noetl.command (execution_id, step_name);
 CREATE INDEX IF NOT EXISTS idx_command_status
     ON noetl.command (status) WHERE status IN ('PENDING', 'CLAIMED');
+CREATE INDEX IF NOT EXISTS idx_command_execution_status
+    ON noetl.command (execution_id, status)
+    WHERE status IN ('PENDING', 'CLAIMED', 'RUNNING');
 CREATE INDEX IF NOT EXISTS idx_command_worker
     ON noetl.command (worker_id, updated_at) WHERE status = 'CLAIMED';
 CREATE INDEX IF NOT EXISTS idx_command_loop

@@ -12,7 +12,7 @@ from psycopg.rows import dict_row
 from psycopg.types.json import Json
 from noetl.core.db.pool import get_pool_connection, get_snowflake_id
 from noetl.core.logger import setup_logger
-from noetl.core.common import convert_snowflake_ids_for_api
+from noetl.core.common import convert_snowflake_ids_for_api, normalize_execution_id_for_db
 from noetl.server.api.event_queries import PENDING_COMMAND_COUNT_SQL
 from .schema import (
     ExecutionEntryResponse,
@@ -195,38 +195,26 @@ async def _fetch_execution_events_page(
 
 async def _fetch_pending_command_counts_for_executions(
     cursor,
-    execution_ids: list[str],
+    execution_ids: list[Any],
 ) -> dict[str, int]:
     if not execution_ids:
         return {}
 
+    numeric_execution_ids = [normalize_execution_id_for_db(execution_id) for execution_id in execution_ids]
+    if any(execution_id <= 0 for execution_id in numeric_execution_ids):
+        raise ValueError(f"Invalid execution_id values for pending command lookup: {execution_ids!r}")
+    if not numeric_execution_ids:
+        return {}
+
     await cursor.execute(
         """
-        WITH filtered_events AS (
-            SELECT
-                execution_id,
-                event_type,
-                meta->>'command_id' AS command_id
-            FROM noetl.event
-            WHERE execution_id::text IN (SELECT unnest(%s::text[]))
-              AND meta ? 'command_id'
-              AND event_type IN ('command.issued', 'command.completed', 'command.failed', 'command.cancelled')
-        ),
-        command_status AS (
-            SELECT
-                execution_id,
-                command_id,
-                MAX(CASE WHEN event_type = 'command.issued' THEN 1 ELSE 0 END) AS is_issued,
-                MAX(CASE WHEN event_type IN ('command.completed', 'command.failed', 'command.cancelled') THEN 1 ELSE 0 END) AS is_terminal
-            FROM filtered_events
-            GROUP BY execution_id, command_id
-        )
         SELECT execution_id, COUNT(*) AS pending_count
-        FROM command_status
-        WHERE is_issued = 1 AND is_terminal = 0
+        FROM noetl.command
+        WHERE execution_id = ANY(%s::bigint[])
+          AND status IN ('PENDING', 'CLAIMED', 'RUNNING')
         GROUP BY execution_id
         """,
-        (execution_ids,),
+        (numeric_execution_ids,),
     )
     rows = await cursor.fetchall()
     return {str(row["execution_id"]): int(row["pending_count"] or 0) for row in rows}
@@ -851,67 +839,78 @@ async def get_executions(
                 # Keep this endpoint lightweight for UI polling. Avoid scanning giant payload columns.
                 await cursor.execute("SET LOCAL statement_timeout = '8s'")
                 await cursor.execute("""
-                    WITH latest AS (
-                        SELECT DISTINCT ON (execution_id)
-                            execution_id, event_type, node_name, status AS event_status,
-                            created_at, catalog_id, parent_execution_id, error
-                        FROM noetl.event
-                        WHERE execution_id IS NOT NULL
-                        ORDER BY execution_id, event_id DESC
-                    ),
-                    first_event AS (
-                        SELECT DISTINCT ON (execution_id)
-                            execution_id, created_at AS first_created_at, catalog_id AS first_catalog_id,
-                            parent_execution_id AS first_parent_execution_id
-                        FROM noetl.event
-                        WHERE execution_id IS NOT NULL
-                        ORDER BY execution_id, event_id ASC
-                    ),
-                    terminal AS (
-                        SELECT DISTINCT ON (execution_id)
-                            execution_id, event_type, status, created_at, error
-                        FROM noetl.event
-                        WHERE execution_id IS NOT NULL
-                          AND event_type IN (
-                            'execution.cancelled',
-                            'playbook.failed',
-                            'workflow.failed',
-                            'command.failed',
-                            'playbook.completed',
-                            'workflow.completed'
-                          )
-                        ORDER BY execution_id, event_id DESC
-                    )
                     SELECT
-                        l.execution_id,
-                        COALESCE(e.catalog_id, l.catalog_id, f.first_catalog_id) AS catalog_id,
-                        l.event_type,
-                        l.node_name,
-                        COALESCE(e.status, l.event_status) AS status,
-                        l.event_status,
-                        l.event_type AS derived_event_type,
-                        COALESCE(e.start_time, f.first_created_at) AS start_time,
-                        COALESCE(e.end_time, l.created_at) AS end_time,
+                        e.execution_id,
+                        e.catalog_id,
+                        COALESCE(
+                            e.last_event_type,
+                            CASE
+                                WHEN e.status IN ('COMPLETED', 'FAILED', 'CANCELLED')
+                                THEN 'execution.' || lower(e.status)
+                                ELSE 'execution.projected'
+                            END
+                        ) AS event_type,
+                        e.last_node_name AS node_name,
+                        e.status,
+                        e.status AS event_status,
+                        COALESCE(e.last_event_type, 'execution.projected') AS derived_event_type,
+                        COALESCE(e.start_time, e.created_at) AS start_time,
+                        e.end_time,
                         NULL::jsonb AS result,
-                        COALESCE(e.error, t.error, l.error) AS error,
-                        COALESCE(e.parent_execution_id, l.parent_execution_id, f.first_parent_execution_id) AS parent_execution_id,
-                        t.event_type AS terminal_event_type,
-                        t.status AS terminal_status,
-                        t.created_at AS terminal_end_time,
+                        e.error,
+                        e.parent_execution_id,
+                        CASE
+                            WHEN e.last_event_type IN (
+                                'execution.cancelled',
+                                'playbook.failed',
+                                'workflow.failed',
+                                'command.failed',
+                                'playbook.completed',
+                                'workflow.completed'
+                            )
+                            THEN e.last_event_type
+                            WHEN e.last_event_type IS NULL
+                             AND e.status IN ('COMPLETED', 'FAILED', 'CANCELLED')
+                            THEN 'execution.' || lower(e.status)
+                            ELSE NULL
+                        END AS terminal_event_type,
+                        CASE
+                            WHEN e.last_event_type IN (
+                                'execution.cancelled',
+                                'playbook.failed',
+                                'workflow.failed',
+                                'command.failed',
+                                'playbook.completed',
+                                'workflow.completed'
+                            )
+                             OR (e.last_event_type IS NULL AND e.status IN ('COMPLETED', 'FAILED', 'CANCELLED'))
+                            THEN e.status
+                            ELSE NULL
+                        END AS terminal_status,
+                        CASE
+                            WHEN e.last_event_type IN (
+                                'execution.cancelled',
+                                'playbook.failed',
+                                'workflow.failed',
+                                'command.failed',
+                                'playbook.completed',
+                                'workflow.completed'
+                            )
+                             OR (e.last_event_type IS NULL AND e.status IN ('COMPLETED', 'FAILED', 'CANCELLED'))
+                            THEN COALESCE(e.end_time, e.updated_at)
+                            ELSE NULL
+                        END AS terminal_end_time,
                         COALESCE(c.path, 'unknown') AS path,
                         COALESCE(c.version, 0) AS version
-                    FROM latest l
-                    JOIN first_event f ON f.execution_id = l.execution_id
-                    LEFT JOIN terminal t ON t.execution_id = l.execution_id
-                    LEFT JOIN noetl.execution e ON e.execution_id = l.execution_id
-                    LEFT JOIN noetl.catalog c ON c.catalog_id = COALESCE(e.catalog_id, l.catalog_id, f.first_catalog_id)
-                    ORDER BY COALESCE(e.start_time, f.first_created_at) DESC NULLS LAST, l.execution_id DESC
+                    FROM noetl.execution e
+                    LEFT JOIN noetl.catalog c ON c.catalog_id = e.catalog_id
+                    ORDER BY COALESCE(e.start_time, e.created_at) DESC NULLS LAST, e.execution_id DESC
                     LIMIT %(limit)s
                     OFFSET %(offset)s
                 """, {"limit": page_size, "offset": offset})
                 rows = await cursor.fetchall()
                 candidate_execution_ids = [
-                    str(row["execution_id"])
+                    row["execution_id"]
                     for row in rows
                     if row.get("derived_event_type") == "batch.completed"
                     and str(row.get("event_status") or "").upper() == "COMPLETED"
