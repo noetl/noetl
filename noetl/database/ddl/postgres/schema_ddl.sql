@@ -98,7 +98,7 @@ CREATE TABLE IF NOT EXISTS noetl.event (
     context_value       TEXT,
     trace_component     JSONB,
     stack_trace         TEXT,
-        CHECK (
+        CONSTRAINT chk_event_result_shape CHECK (
             result IS NULL
             OR (
                 jsonb_typeof(result) = 'object'
@@ -127,7 +127,8 @@ BEGIN
              AND t.relname = 'event'
        ) THEN
         ALTER TABLE noetl.event
-                CHECK (
+            ADD CONSTRAINT chk_event_result_shape
+            CHECK (
                     result IS NULL
                     OR (
                         jsonb_typeof(result) = 'object'
