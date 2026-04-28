@@ -37,6 +37,18 @@ def test_catalog_query_builder_includes_agent_filters():
     assert params["capabilities"] == ["release-management", "deployment"]
 
 
+def test_catalog_query_builder_can_discover_agents_across_resource_kinds():
+    query, params = CatalogService._build_query_filter(
+        resource_type=None,
+        agent_only=True,
+        capabilities=["mcp:kubernetes"],
+    )
+
+    assert "c.kind = %(resource_type)s" not in query
+    assert "payload->'metadata'->>'agent'" in query
+    assert params["capabilities"] == ["mcp:kubernetes"]
+
+
 def test_catalog_agents_request_normalizes_capabilities():
     req = CatalogAgentsRequest(capability="code-review", capabilities=["security-audit"])
     assert req.capabilities == ["security-audit", "code-review"]
@@ -48,3 +60,22 @@ def test_extract_agent_metadata_normalizes_string_capability():
     )
     assert metadata["agent"] is True
     assert metadata["capabilities"] == ["release-management"]
+
+
+def test_extract_agent_metadata_preserves_terminal_scopes():
+    metadata = CatalogService._extract_agent_metadata(
+        {
+            "metadata": {
+                "agent": True,
+                "terminal": {
+                    "visible": True,
+                    "workspace": "kubernetes",
+                    "scopes": ["/mcp/kubernetes"],
+                },
+            }
+        }
+    )
+
+    assert metadata["terminal_visible"] is True
+    assert metadata["terminal"]["workspace"] == "kubernetes"
+    assert metadata["terminal_scopes"] == ["/mcp/kubernetes"]

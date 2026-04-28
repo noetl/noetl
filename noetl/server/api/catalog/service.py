@@ -300,9 +300,22 @@ class CatalogService:
         else:
             normalized_capabilities = []
 
+        terminal = metadata.get("terminal")
+        terminal = terminal if isinstance(terminal, dict) else {}
+        terminal_scopes = terminal.get("scopes") or terminal.get("scope") or []
+        if isinstance(terminal_scopes, str):
+            normalized_terminal_scopes = [scope.strip() for scope in terminal_scopes.split(",") if scope.strip()]
+        elif isinstance(terminal_scopes, list):
+            normalized_terminal_scopes = [str(scope).strip() for scope in terminal_scopes if str(scope).strip()]
+        else:
+            normalized_terminal_scopes = []
+
         return {
             "agent": CatalogService._is_truthy(metadata.get("agent", False)),
             "capabilities": normalized_capabilities,
+            "terminal": terminal,
+            "terminal_visible": CatalogService._is_truthy(terminal.get("visible", False)),
+            "terminal_scopes": normalized_terminal_scopes,
         }
 
     @staticmethod
@@ -409,7 +422,7 @@ class CatalogService:
     ) -> List[CatalogEntry]:
         """List catalog entries marked as agents, optionally filtered by capability/path."""
         return await CatalogService.fetch_entries(
-            resource_type="Playbook",
+            resource_type=None,
             path=path,
             agent_only=True,
             capabilities=capabilities,
