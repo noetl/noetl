@@ -51,14 +51,26 @@ def _build_schema() -> dict:
     # nvim w/ jsonls).
     schema["$schema"] = SCHEMA_DRAFT
     schema["$id"] = SCHEMA_ID
-    schema.setdefault("title", SCHEMA_TITLE)
+    # Override Pydantic's auto-derived title ("Playbook") with the
+    # human-readable name editors render in their hover tooltips.
+    # ``setdefault`` would be a no-op here because Pydantic already
+    # populates the field.
+    schema["title"] = SCHEMA_TITLE
     schema["description"] = SCHEMA_DESCRIPTION
     return schema
 
 
 def main() -> None:
     schema = _build_schema()
-    OUT_PATH.write_text(json.dumps(schema, indent=2, sort_keys=False) + "\n")
+    # ensure_ascii=False keeps em-dashes / non-ASCII text in docstrings
+    # readable in the generated artifact (instead of rendering as
+    # ``—`` escape sequences) and produces stable diffs across
+    # locales. Pair with explicit utf-8 encoding so the file isn't at
+    # the mercy of the host's default codec.
+    OUT_PATH.write_text(
+        json.dumps(schema, indent=2, sort_keys=False, ensure_ascii=False) + "\n",
+        encoding="utf-8",
+    )
     print(f"wrote {OUT_PATH} ({OUT_PATH.stat().st_size:,} bytes)")
 
 

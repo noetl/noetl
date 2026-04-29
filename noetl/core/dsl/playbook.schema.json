@@ -387,7 +387,7 @@
       "type": "object"
     },
     "LoopSpec": {
-      "description": "Loop runtime specification (canonical v10).\n\nControls loop execution behavior.\n\nModes:\n- sequential: one iteration at a time (collection loops only)\n- parallel: up to max_in_flight concurrent iterations (collection loops)\n- cursor: pull-model \u2014 engine dispatches max_in_flight worker commands\n  that each poll the cursor for the next row.  Works with cursor loops\n  only (requires loop.cursor, not loop.in).",
+      "description": "Loop runtime specification (canonical v10).\n\nControls loop execution behavior.\n\nModes:\n- sequential: one iteration at a time (collection loops only)\n- parallel: up to max_in_flight concurrent iterations (collection loops)\n- cursor: pull-model — engine dispatches max_in_flight worker commands\n  that each poll the cursor for the next row.  Works with cursor loops\n  only (requires loop.cursor, not loop.in).",
       "properties": {
         "mode": {
           "default": "sequential",
@@ -1293,7 +1293,7 @@
     "metadata",
     "workflow"
   ],
-  "title": "Playbook",
+  "title": "NoETL Playbook (canonical v10)",
   "type": "object",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://noetl.io/schemas/playbook.json"
