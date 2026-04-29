@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.27.0](https://github.com/noetl/noetl/compare/v2.26.2...v2.27.0) (2026-04-29)
+
+### Features
+
+* **catalog:** validate Playbook/Agent payloads at register time ([75be2be](https://github.com/noetl/noetl/commit/75be2bee00aef8cbbc0285074b173aa846a607a9)), closes [noetl/ops#15](https://github.com/noetl/ops/issues/15) [noetl/ops#15](https://github.com/noetl/ops/issues/15) [noetl/ops#16](https://github.com/noetl/ops/issues/16) [noetl/noetl#395](https://github.com/noetl/noetl/issues/395) [noetl/noetl#396](https://github.com/noetl/noetl/issues/396)
+
 ## [2.26.2](https://github.com/noetl/noetl/compare/v2.26.1...v2.26.2) (2026-04-29)
 
 ### Bug Fixes
