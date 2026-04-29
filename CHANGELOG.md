@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.28.0](https://github.com/noetl/noetl/compare/v2.27.1...v2.28.0) (2026-04-29)
+
+### Features
+
+* **docker:** bake helm + kubectl into the noetl worker image ([1889d17](https://github.com/noetl/noetl/commit/1889d17fbfb0d4a7c2f8db9228f4166b12a7efaf)), closes [noetl/ops#15](https://github.com/noetl/ops/issues/15) [noetl/ops#16](https://github.com/noetl/ops/issues/16) [noetl/ops#17](https://github.com/noetl/ops/issues/17) [noetl/ops#18](https://github.com/noetl/ops/issues/18)
+
 ## [2.27.1](https://github.com/noetl/noetl/compare/v2.27.0...v2.27.1) (2026-04-29)
 
 ### Bug Fixes
