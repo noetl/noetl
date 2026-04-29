@@ -31,10 +31,36 @@ FROM python:3.12-slim AS production
 LABEL org.opencontainers.image.source=https://github.com/noetl/noetl
 LABEL org.opencontainers.image.licenses=MIT
 
+# kubectl + helm are first-class tool dependencies for `kind: shell`
+# steps in lifecycle agents (e.g. the kubernetes MCP server's
+# automation/agents/kubernetes/lifecycle/{deploy,undeploy,...}). The
+# noetl worker dispatches those agents in-process; without these
+# binaries on PATH every helm-driven deploy fails with
+# "helm: not found".
+#
+# Multi-arch handled via dpkg --print-architecture (amd64 / arm64).
+# Versions pinned to recent stable releases — bump at the same
+# cadence as the upstream release notes.
+ARG KUBECTL_VERSION=v1.30.5
+ARG HELM_VERSION=v3.16.2
+
 RUN apt-get update && apt-get --no-install-recommends install -y \
     curl \
     libpq-dev \
-    && rm -rf /var/lib/apt/lists/*
+    ca-certificates \
+    && rm -rf /var/lib/apt/lists/* \
+    && DPKG_ARCH="$(dpkg --print-architecture)" \
+    && curl -fsSLo /usr/local/bin/kubectl \
+         "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/${DPKG_ARCH}/kubectl" \
+    && chmod +x /usr/local/bin/kubectl \
+    && kubectl version --client \
+    && curl -fsSLo /tmp/helm.tar.gz \
+         "https://get.helm.sh/helm-${HELM_VERSION}-linux-${DPKG_ARCH}.tar.gz" \
+    && tar -xzf /tmp/helm.tar.gz -C /tmp \
+    && mv "/tmp/linux-${DPKG_ARCH}/helm" /usr/local/bin/helm \
+    && chmod +x /usr/local/bin/helm \
+    && rm -rf /tmp/helm.tar.gz "/tmp/linux-${DPKG_ARCH}" \
+    && helm version --short
 
 # ENV TZ=America/Chicago
 # RUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone
