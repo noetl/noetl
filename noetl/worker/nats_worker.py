@@ -2752,6 +2752,33 @@ class Worker:
             logger.debug(f"[NOOP] Step '{step}' - no-op execution")
             return {"status": "noop", "step": step}
 
+        elif tool_kind == "shell":
+            # Shell-out (subprocess via /bin/sh -c) — needed by the
+            # MCP lifecycle agents (deploy / undeploy / status /
+            # restart / discover) which drive helm + kubectl from
+            # inside the worker pod. Without this branch every
+            # dispatcher-driven invocation of a kind:shell step
+            # raised NotImplementedError before even reaching the
+            # binary, which is how the kubernetes-mcp-server install
+            # silently failed during the v2.27/v2.28 ramp-up. The
+            # executor uses subprocess with shell=False (we exec
+            # /bin/sh -c <program> ourselves) and a clean env that
+            # only forwards PATH + KUBERNETES_SERVICE_* by default;
+            # callers add anything else via task.env.
+            from noetl.tools.shell import execute_shell_task
+            task_with = {**config, **args}  # plugin signature compatibility
+            loop = asyncio.get_running_loop()
+            result = await loop.run_in_executor(
+                None,
+                lambda: execute_shell_task(task_config, context, jinja_env, task_with),
+            )
+            if isinstance(result, dict) and result.get("status") == "error":
+                # Keep error payload intact — the dispatcher needs
+                # status=error to mark the step as failed and the
+                # GUI's run dialog renders text/stderr inline.
+                return result
+            return result.get("data", result) if isinstance(result, dict) else result
+
         else:
             raise NotImplementedError(f"Tool kind '{tool_kind}' not implemented")
     
