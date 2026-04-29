@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.26.0](https://github.com/noetl/noetl/compare/v2.25.1...v2.26.0) (2026-04-29)
+
+### Features
+
+* **server:** noetl-side check_playbook_access enforcement (architecture phase 2) ([92f0090](https://github.com/noetl/noetl/commit/92f0090ba55f946d766aea22301aa6d28f99c4d5)), closes [noetl/noetl#392](https://github.com/noetl/noetl/issues/392) [noetl/noetl#393](https://github.com/noetl/noetl/issues/393) [noetl/ops#15](https://github.com/noetl/ops/issues/15)
+
+### Bug Fixes
+
+* **server:** address Copilot review on PR [#394](https://github.com/noetl/noetl/issues/394) (Phase 2 auth enforcement) ([799342a](https://github.com/noetl/noetl/commit/799342a3cbd284d88b840082efc2a5e0848df120)), closes [#1](https://github.com/noetl/noetl/issues/1) [#2](https://github.com/noetl/noetl/issues/2)
+
 ## [2.25.1](https://github.com/noetl/noetl/compare/v2.25.0...v2.25.1) (2026-04-29)
 
 ### Bug Fixes
