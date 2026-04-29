@@ -1,0 +1,1300 @@
+{
+  "$defs": {
+    "AdmitPolicy": {
+      "description": "Step admission policy (server-side, canonical v10).\n\nEvaluated before scheduling a step.\nIf omitted, default is allow.\n\nExample:\n    admit:\n      mode: exclusive\n      rules:\n        - when: \"{{ ctx.enabled }}\"\n          then: { allow: true }\n        - else:\n            then: { allow: false }",
+      "properties": {
+        "mode": {
+          "default": "exclusive",
+          "description": "Evaluation mode (exclusive = first match wins)",
+          "enum": [
+            "exclusive",
+            "inclusive"
+          ],
+          "title": "Mode",
+          "type": "string"
+        },
+        "rules": {
+          "description": "Admission rules with when/then",
+          "items": {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          "title": "Rules",
+          "type": "array"
+        }
+      },
+      "title": "AdmitPolicy",
+      "type": "object"
+    },
+    "Arc": {
+      "description": "Routing arc (Petri-net transition, canonical v10).\n\nEvaluated by server on terminal boundary events.\n\nExample:\n    arcs:\n      - step: success_handler\n        when: \"{{ event.name == 'step.done' }}\"\n        set:\n          ctx.result_ref: \"{{ output.ref }}\"\n      - step: error_handler\n        when: \"{{ event.name == 'step.failed' }}\"",
+      "properties": {
+        "step": {
+          "description": "Target step name",
+          "title": "Step",
+          "type": "string"
+        },
+        "when": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Arc guard expression (Jinja2). Default true if omitted.",
+          "title": "When"
+        },
+        "set": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Transition-scoped variable mutations (ctx.*, step.*, iter.*)",
+          "title": "Set"
+        },
+        "spec": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Arc-level spec (placeholder for future)",
+          "title": "Spec"
+        }
+      },
+      "required": [
+        "step"
+      ],
+      "title": "Arc",
+      "type": "object"
+    },
+    "CursorSpec": {
+      "description": "Cursor loop source (canonical v10).\n\nDescribes a pull-model data source where workers atomically claim one\nwork item at a time.  Alternative to `loop.in` (collection-based).\n\nThe cursor's `kind` selects a driver (postgres / mysql / snowflake /\nredis / nats_stream / ...); `auth` is a credential name resolved the\nsame way tool.auth is resolved today.  `claim` is a driver-specific\nstatement that returns one row (or nothing when the cursor is drained).\n\nCanonical format:\n    loop:\n      cursor:\n        kind: postgres\n        auth: pg_k8s\n        claim: |\n          WITH c AS (...)\n          UPDATE ... FROM c\n          RETURNING patient_id, facility_mapping_id;\n      iterator: patient\n      spec:\n        mode: cursor\n        max_in_flight: 100",
+      "properties": {
+        "kind": {
+          "description": "Driver kind: postgres, mysql, snowflake, redis, nats_stream, ...",
+          "title": "Kind",
+          "type": "string"
+        },
+        "auth": {
+          "description": "Credential name for the cursor connection (same lookup as tool.auth)",
+          "title": "Auth",
+          "type": "string"
+        },
+        "claim": {
+          "description": "Driver-specific claim statement (e.g. UPDATE ... FOR UPDATE SKIP LOCKED RETURNING ...)",
+          "title": "Claim",
+          "type": "string"
+        },
+        "options": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Driver-specific options (timeout, reclaim_after, max_attempts, ...)",
+          "title": "Options"
+        }
+      },
+      "required": [
+        "kind",
+        "auth",
+        "claim"
+      ],
+      "title": "CursorSpec",
+      "type": "object"
+    },
+    "Executor": {
+      "description": "Executor configuration (canonical v10).",
+      "properties": {
+        "profile": {
+          "default": "auto",
+          "description": "Runtime profile",
+          "enum": [
+            "local",
+            "distributed",
+            "auto"
+          ],
+          "title": "Profile",
+          "type": "string"
+        },
+        "version": {
+          "default": "noetl-runtime/1",
+          "description": "Semantic contract version",
+          "title": "Version",
+          "type": "string"
+        },
+        "requires": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ExecutorRequires"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Required capabilities"
+        },
+        "spec": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ExecutorSpecFull"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Executor spec with policy"
+        }
+      },
+      "title": "Executor",
+      "type": "object"
+    },
+    "ExecutorPolicy": {
+      "description": "Executor-level policy (global defaults, canonical v10).\n\nPlaceholders for global settings.",
+      "properties": {
+        "defaults": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Default timeouts, resources",
+          "title": "Defaults"
+        },
+        "results": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Result handling: reference_first",
+          "title": "Results"
+        },
+        "limits": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Limits: max_payload_bytes",
+          "title": "Limits"
+        }
+      },
+      "title": "ExecutorPolicy",
+      "type": "object"
+    },
+    "ExecutorRequires": {
+      "description": "Executor capability requirements.",
+      "properties": {
+        "tools": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Required tool kinds",
+          "title": "Tools"
+        },
+        "features": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Required runtime features",
+          "title": "Features"
+        }
+      },
+      "title": "ExecutorRequires",
+      "type": "object"
+    },
+    "ExecutorSpecFull": {
+      "description": "Full executor spec with policy (canonical v10).",
+      "properties": {
+        "entry_step": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Override entry step",
+          "title": "Entry Step"
+        },
+        "final_step": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Finalization step",
+          "title": "Final Step"
+        },
+        "no_next_is_error": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "No-match is error",
+          "title": "No Next Is Error"
+        },
+        "policy": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ExecutorPolicy"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Global policy defaults"
+        }
+      },
+      "title": "ExecutorSpecFull",
+      "type": "object"
+    },
+    "Loop": {
+      "description": "Step-level loop configuration (canonical v10).\n\nLoop is a step MODIFIER, not a tool kind.\n\nTwo sources are supported, and exactly one must be set:\n\n1. Collection source (`in`): the legacy push-model loop.  A Jinja\n   expression produces a list; the engine dispatches one iteration\n   per list element.\n\n2. Cursor source (`cursor`): the pull-model loop.  The engine\n   dispatches `spec.max_in_flight` worker commands; each worker polls\n   the cursor for the next row until the cursor is drained.\n\nCanonical collection format:\n    loop:\n      in: \"{{ workload.items }}\"\n      iterator: item\n      spec:\n        mode: parallel\n        max_in_flight: 10\n\nCanonical cursor format:\n    loop:\n      cursor:\n        kind: postgres\n        auth: pg_k8s\n        claim: |\n          UPDATE tasks SET status='claimed'\n          WHERE id = (\n            SELECT id FROM tasks WHERE status='pending'\n            FOR UPDATE SKIP LOCKED LIMIT 1\n          )\n          RETURNING id, payload;\n      iterator: task\n      spec:\n        mode: cursor\n        max_in_flight: 100",
+      "properties": {
+        "in": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Jinja expression for collection to iterate (collection source)",
+          "title": "In"
+        },
+        "cursor": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CursorSpec"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Cursor source (pull-model). Mutually exclusive with `in`."
+        },
+        "iterator": {
+          "description": "Variable name for each item (binds iter.<iterator>)",
+          "title": "Iterator",
+          "type": "string"
+        },
+        "spec": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/LoopSpec"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Loop runtime specification"
+        }
+      },
+      "required": [
+        "iterator"
+      ],
+      "title": "Loop",
+      "type": "object"
+    },
+    "LoopPolicy": {
+      "description": "Loop scheduling policy (server-side, canonical v10).\n\nControls how iterations are scheduled/distributed.",
+      "properties": {
+        "exec": {
+          "default": "local",
+          "description": "Execution intent: distributed (across workers) or local",
+          "enum": [
+            "distributed",
+            "local"
+          ],
+          "title": "Exec",
+          "type": "string"
+        }
+      },
+      "title": "LoopPolicy",
+      "type": "object"
+    },
+    "LoopSpec": {
+      "description": "Loop runtime specification (canonical v10).\n\nControls loop execution behavior.\n\nModes:\n- sequential: one iteration at a time (collection loops only)\n- parallel: up to max_in_flight concurrent iterations (collection loops)\n- cursor: pull-model \u2014 engine dispatches max_in_flight worker commands\n  that each poll the cursor for the next row.  Works with cursor loops\n  only (requires loop.cursor, not loop.in).",
+      "properties": {
+        "mode": {
+          "default": "sequential",
+          "description": "Execution mode: sequential, parallel, or cursor",
+          "enum": [
+            "sequential",
+            "parallel",
+            "cursor"
+          ],
+          "title": "Mode",
+          "type": "string"
+        },
+        "max_in_flight": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Maximum concurrent iterations (parallel) / workers (cursor)",
+          "title": "Max In Flight"
+        },
+        "policy": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/LoopPolicy"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Loop scheduling policy"
+        }
+      },
+      "title": "LoopSpec",
+      "type": "object"
+    },
+    "NextRouter": {
+      "description": "Step next router (canonical v10).\n\nReplaces simple next[] list with structured router object.\n\nCanonical format:\n    next:\n      spec:\n        mode: exclusive\n      arcs:\n        - step: validate_results\n          when: \"{{ event.name == 'loop.done' }}\"\n        - step: cleanup\n          when: \"{{ event.name == 'step.failed' }}\"",
+      "properties": {
+        "spec": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/NextSpec"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Router specification"
+        },
+        "arcs": {
+          "description": "Routing arcs",
+          "items": {
+            "$ref": "#/$defs/Arc"
+          },
+          "title": "Arcs",
+          "type": "array"
+        }
+      },
+      "title": "NextRouter",
+      "type": "object"
+    },
+    "NextSpec": {
+      "description": "Next router specification (canonical v10).\n\nControls how arcs are evaluated.",
+      "properties": {
+        "mode": {
+          "default": "exclusive",
+          "description": "Arc evaluation mode: exclusive (first match) or inclusive (all matches)",
+          "enum": [
+            "exclusive",
+            "inclusive"
+          ],
+          "title": "Mode",
+          "type": "string"
+        },
+        "on_no_match": {
+          "default": "complete",
+          "description": "What to do when no arc matches: complete workflow, or end this branch quietly",
+          "enum": [
+            "complete",
+            "quiet"
+          ],
+          "title": "On No Match",
+          "type": "string"
+        },
+        "policy": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Router policy (placeholder for priority/dedupe/partitioning)",
+          "title": "Policy"
+        }
+      },
+      "title": "NextSpec",
+      "type": "object"
+    },
+    "OutputAccumulate": {
+      "description": "Accumulation configuration for pagination/retry loops.\n\nAutomatically accumulates successful results across retries or pagination\niterations without explicit storage steps.",
+      "properties": {
+        "enabled": {
+          "default": false,
+          "description": "Enable result accumulation",
+          "title": "Enabled",
+          "type": "boolean"
+        },
+        "strategy": {
+          "default": "append",
+          "description": "How to combine results",
+          "enum": [
+            "append",
+            "replace",
+            "merge",
+            "concat"
+          ],
+          "title": "Strategy",
+          "type": "string"
+        },
+        "merge_path": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "JSONPath for nested array extraction in concat strategy",
+          "title": "Merge Path"
+        },
+        "manifest_as": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Variable name for accumulated results",
+          "title": "Manifest As"
+        },
+        "on_success": {
+          "default": true,
+          "description": "Accumulate successful results",
+          "title": "On Success",
+          "type": "boolean"
+        },
+        "on_error": {
+          "default": false,
+          "description": "Accumulate error responses",
+          "title": "On Error",
+          "type": "boolean"
+        },
+        "max_items": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Maximum items to accumulate",
+          "title": "Max Items"
+        }
+      },
+      "title": "OutputAccumulate",
+      "type": "object"
+    },
+    "OutputSelect": {
+      "description": "Field selection for output templating.\n\nExtracts specific fields from large results for efficient access\nwithout resolving the full result reference.",
+      "properties": {
+        "path": {
+          "description": "JSONPath to extract (e.g., $.data.next)",
+          "title": "Path",
+          "type": "string"
+        },
+        "as": {
+          "description": "Variable name to assign extracted value",
+          "title": "As",
+          "type": "string"
+        }
+      },
+      "required": [
+        "path",
+        "as"
+      ],
+      "title": "OutputSelect",
+      "type": "object"
+    },
+    "OutputStore": {
+      "description": "Storage configuration for tool output.\n\nControls where and how tool results are stored externally.",
+      "properties": {
+        "kind": {
+          "default": "auto",
+          "description": "Storage tier (auto selects based on size). 'object' is a deprecated alias for 'disk'; auto-remapped at load time.",
+          "enum": [
+            "auto",
+            "memory",
+            "kv",
+            "disk",
+            "object",
+            "s3",
+            "gcs",
+            "db",
+            "duckdb",
+            "eventlog"
+          ],
+          "title": "Kind",
+          "type": "string"
+        },
+        "driver": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Specific driver (e.g., minio for s3)",
+          "title": "Driver"
+        },
+        "bucket": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Bucket name for disk/s3/gcs",
+          "title": "Bucket"
+        },
+        "prefix": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Key prefix for storage",
+          "title": "Prefix"
+        },
+        "ttl": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "TTL duration (e.g., '2h', '30m', '1d', '1y', 'forever')",
+          "title": "Ttl"
+        },
+        "compression": {
+          "default": "none",
+          "description": "Compression for stored data",
+          "enum": [
+            "none",
+            "gzip",
+            "lz4"
+          ],
+          "title": "Compression",
+          "type": "string"
+        },
+        "credential": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Keychain credential name for storage access",
+          "title": "Credential"
+        }
+      },
+      "title": "OutputStore",
+      "type": "object"
+    },
+    "Step": {
+      "description": "Workflow step in canonical v10 format.\n\nKey changes from previous versions:\n- NO `step.when` field - use `step.spec.policy.admit.rules` for admission\n- NO `tool.eval` - use `task.spec.policy.rules` for output-status handling\n- `next` is a router object with `spec` + `arcs[]`\n\nCanonical step structure:\n    - step: name\n      desc: description\n      spec:\n        policy:\n          admit:\n            rules:\n              - when: \"{{ ctx.enabled }}\"\n                then: { allow: true }\n      loop:\n        in: \"{{ workload.items }}\"\n        iterator: item\n        spec:\n          mode: parallel\n      tool:\n        - task_label:\n            kind: http\n            url: \"...\"\n            spec:\n              policy:\n                rules:\n                  - when: \"{{ output.status == 'error' }}\"\n                    then: { do: retry, attempts: 3 }\n                  - else:\n                      then: { do: continue }\n      next:\n        spec:\n          mode: exclusive\n        arcs:\n          - step: success\n            when: \"{{ event.name == 'step.done' }}\"",
+      "properties": {
+        "step": {
+          "description": "Step name (unique identifier)",
+          "title": "Step",
+          "type": "string"
+        },
+        "desc": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Step description",
+          "title": "Desc"
+        },
+        "spec": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/StepSpec"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Step spec with policy"
+        },
+        "input": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Input bindings for this step",
+          "title": "Input"
+        },
+        "loop": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Loop"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Loop configuration"
+        },
+        "tool": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ToolSpec"
+            },
+            {
+              "items": {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Tool pipeline (list of labeled tasks) or single tool shorthand",
+          "title": "Tool"
+        },
+        "next": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/NextRouter"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Next router with spec and arcs"
+        },
+        "set": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Scoped variable mutations after step completes (ctx.*, step.*, iter.*)",
+          "title": "Set"
+        }
+      },
+      "required": [
+        "step"
+      ],
+      "title": "Step",
+      "type": "object"
+    },
+    "StepPolicy": {
+      "description": "Step-level policy (canonical v10).\n\nContains admission policy and lifecycle hints.\nMUST NOT include task control actions (those are task-level only).",
+      "properties": {
+        "admit": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AdmitPolicy"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Step admission policy (server-side)"
+        },
+        "lifecycle": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Lifecycle hints: timeout_s, deadline_s",
+          "title": "Lifecycle"
+        },
+        "failure": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Failure mode: fail_fast | best_effort",
+          "title": "Failure"
+        },
+        "emit": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Event emission config",
+          "title": "Emit"
+        }
+      },
+      "title": "StepPolicy",
+      "type": "object"
+    },
+    "StepSpec": {
+      "additionalProperties": true,
+      "description": "Step-level behavior configuration (canonical v10).\n\nAll knobs live under spec. Policy for admission is under spec.policy.\nNOTE: next_mode is REMOVED - routing mode belongs to next.spec.mode.",
+      "properties": {
+        "policy": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/StepPolicy"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Step policy (admission, lifecycle, failure)"
+        },
+        "timeout": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Step timeout (e.g., '30s', '5m')",
+          "title": "Timeout"
+        }
+      },
+      "title": "StepSpec",
+      "type": "object"
+    },
+    "TaskPolicy": {
+      "description": "Task output-status policy (worker-side, canonical v10).\n\nMUST be an object with required `rules:` list.\nThis is the ONLY place where control actions (retry/jump/break/fail/continue) are allowed.\n\nExample:\n    spec:\n      policy:\n        rules:\n          - when: \"{{ output.status == 'error' and output.http.status in [429,500,502,503] }}\"\n            then: { do: retry, attempts: 5, backoff: exponential, delay: 1.0 }\n          - when: \"{{ output.status == 'error' }}\"\n            then: { do: fail }\n          - else:\n              then:\n                do: continue\n                set:\n                  iter.has_more: \"{{ output.data.paging.hasMore }}\"",
+      "properties": {
+        "mode": {
+          "default": "exclusive",
+          "description": "Evaluation mode (exclusive = first match wins)",
+          "enum": [
+            "exclusive",
+            "inclusive"
+          ],
+          "title": "Mode",
+          "type": "string"
+        },
+        "on_unmatched": {
+          "default": "continue",
+          "description": "Default action if no rule matches and no else clause",
+          "enum": [
+            "continue",
+            "fail"
+          ],
+          "title": "On Unmatched",
+          "type": "string"
+        },
+        "rules": {
+          "description": "Policy rules with when/then (REQUIRED)",
+          "items": {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          "title": "Rules",
+          "type": "array"
+        },
+        "before": {
+          "anyOf": [
+            {
+              "items": {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Pre-execution hooks (placeholder)",
+          "title": "Before"
+        },
+        "after": {
+          "anyOf": [
+            {
+              "items": {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Post-execution hooks (placeholder)",
+          "title": "After"
+        },
+        "finally": {
+          "anyOf": [
+            {
+              "items": {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Cleanup hooks (placeholder)",
+          "title": "Finally"
+        }
+      },
+      "required": [
+        "rules"
+      ],
+      "title": "TaskPolicy",
+      "type": "object"
+    },
+    "TaskSpec": {
+      "additionalProperties": true,
+      "description": "Task-level spec configuration (canonical v10).\n\nContains task policy for output-status handling.\nPolicy is the ONLY place where control actions are allowed.",
+      "properties": {
+        "timeout": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Timeout config { connect: 5, read: 15 }",
+          "title": "Timeout"
+        },
+        "policy": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/TaskPolicy"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Task output-status policy with rules"
+        }
+      },
+      "title": "TaskSpec",
+      "type": "object"
+    },
+    "ToolOutput": {
+      "description": "Tool-level output configuration.\n\nControls how tool results are stored and made available to subsequent steps.\nLives inside the tool: block, not at step level.",
+      "properties": {
+        "store": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/OutputStore"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Storage tier configuration"
+        },
+        "select": {
+          "anyOf": [
+            {
+              "items": {
+                "$ref": "#/$defs/OutputSelect"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Fields to extract for templating",
+          "title": "Select"
+        },
+        "accumulate": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/OutputAccumulate"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Accumulation config for pagination/retry"
+        },
+        "inline_max_bytes": {
+          "default": 65536,
+          "description": "Max bytes to store inline in event log (64KB default)",
+          "title": "Inline Max Bytes",
+          "type": "integer"
+        },
+        "preview_max_bytes": {
+          "default": 1024,
+          "description": "Max bytes for preview (1KB default)",
+          "title": "Preview Max Bytes",
+          "type": "integer"
+        },
+        "scope": {
+          "default": "execution",
+          "description": "Lifecycle scope for stored data",
+          "enum": [
+            "step",
+            "execution",
+            "workflow",
+            "permanent"
+          ],
+          "title": "Scope",
+          "type": "string"
+        },
+        "as": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Custom name for this result",
+          "title": "As"
+        }
+      },
+      "title": "ToolOutput",
+      "type": "object"
+    },
+    "ToolSpec": {
+      "additionalProperties": true,
+      "description": "Tool configuration with tool.kind pattern (canonical v10).\n\nThe `eval` field is REJECTED in v10. Use `spec.policy.rules` instead.",
+      "properties": {
+        "kind": {
+          "description": "Tool type",
+          "enum": [
+            "http",
+            "postgres",
+            "duckdb",
+            "ducklake",
+            "python",
+            "workbook",
+            "playbook",
+            "playbooks",
+            "secrets",
+            "iterator",
+            "container",
+            "script",
+            "snowflake",
+            "transfer",
+            "snowflake_transfer",
+            "gcs",
+            "gateway",
+            "nats",
+            "agent",
+            "mcp",
+            "shell",
+            "artifact",
+            "noop",
+            "task_sequence",
+            "rhai"
+          ],
+          "title": "Kind",
+          "type": "string"
+        },
+        "spec": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/TaskSpec"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Task spec with policy.rules for output-status handling"
+        },
+        "output": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ToolOutput"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Result storage and accumulation configuration"
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "title": "ToolSpec",
+      "type": "object"
+    },
+    "WorkbookTask": {
+      "description": "Reusable task definition.",
+      "properties": {
+        "name": {
+          "description": "Task name",
+          "title": "Name",
+          "type": "string"
+        },
+        "tool": {
+          "$ref": "#/$defs/ToolSpec",
+          "description": "Tool configuration"
+        }
+      },
+      "required": [
+        "name",
+        "tool"
+      ],
+      "title": "WorkbookTask",
+      "type": "object"
+    }
+  },
+  "description": "JSON Schema for NoETL v10 playbooks. Auto-generated from noetl.core.dsl.engine.models.executor.Playbook via Playbook.model_json_schema(); regenerate with `python -m noetl.core.dsl._generate_schema` whenever the Pydantic models change.",
+  "properties": {
+    "apiVersion": {
+      "description": "API version",
+      "enum": [
+        "noetl.io/v2",
+        "noetl.io/v10"
+      ],
+      "title": "Apiversion",
+      "type": "string"
+    },
+    "kind": {
+      "const": "Playbook",
+      "description": "Resource kind",
+      "title": "Kind",
+      "type": "string"
+    },
+    "metadata": {
+      "additionalProperties": true,
+      "description": "Metadata (name, path, labels)",
+      "title": "Metadata",
+      "type": "object"
+    },
+    "executor": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/Executor"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Executor configuration"
+    },
+    "workload": {
+      "anyOf": [
+        {
+          "additionalProperties": true,
+          "type": "object"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Default variables (becomes ctx at runtime)",
+      "title": "Workload"
+    },
+    "keychain": {
+      "anyOf": [
+        {
+          "items": {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          "type": "array"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Keychain definitions",
+      "title": "Keychain"
+    },
+    "workbook": {
+      "anyOf": [
+        {
+          "items": {
+            "$ref": "#/$defs/WorkbookTask"
+          },
+          "type": "array"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Reusable tasks",
+      "title": "Workbook"
+    },
+    "workflow": {
+      "description": "Workflow steps",
+      "items": {
+        "$ref": "#/$defs/Step"
+      },
+      "title": "Workflow",
+      "type": "array"
+    }
+  },
+  "required": [
+    "apiVersion",
+    "kind",
+    "metadata",
+    "workflow"
+  ],
+  "title": "Playbook",
+  "type": "object",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://noetl.io/schemas/playbook.json"
+}
