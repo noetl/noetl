@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.26.1](https://github.com/noetl/noetl/compare/v2.26.0...v2.26.1) (2026-04-29)
+
+### Bug Fixes
+
+* **catalog:** YAML payload `kind:` is authoritative on register ([bebb459](https://github.com/noetl/noetl/commit/bebb4597fb0439acb3bc313209c42ce35142d3a7)), closes [#15](https://github.com/noetl/noetl/issues/15) [noetl/ops#15](https://github.com/noetl/ops/issues/15) [noetl/noetl#392](https://github.com/noetl/noetl/issues/392) [noetl/noetl#394](https://github.com/noetl/noetl/issues/394)
+
 ## [2.26.0](https://github.com/noetl/noetl/compare/v2.25.1...v2.26.0) (2026-04-29)
 
 ### Features
