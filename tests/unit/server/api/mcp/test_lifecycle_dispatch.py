@@ -177,3 +177,61 @@ async def test_dispatch_falls_back_to_get_when_fetch_entry_missing():
     )
     assert response.execution_id == "exec-7"
     assert response.agent_path == "agents/k8s/status"
+
+
+@pytest.mark.asyncio
+async def test_workload_overrides_cannot_clobber_reserved_fields():
+    """workload_overrides must not be allowed to overwrite mcp_resource/verb."""
+    entry = _CatalogEntryStub(
+        catalog_id="100",
+        path="mcp/kubernetes",
+        version=1,
+        kind="Mcp",
+        payload={"spec": {"lifecycle": {"deploy": "agents/k8s/lifecycle/deploy"}}},
+    )
+
+    async def fake_execute(**_: Any) -> str:  # pragma: no cover
+        return "should-not-run"
+
+    with pytest.raises(HTTPException) as info:
+        await dispatch_lifecycle(
+            catalog_service=_FakeCatalogService(entry),
+            execute_callable=fake_execute,
+            path="mcp/kubernetes",
+            verb="deploy",
+            version="latest",
+            workload_overrides={"mcp_resource": {"hijacked": True}, "extra": 1},
+        )
+    assert info.value.status_code == 422
+    assert "mcp_resource" in info.value.detail
+
+
+@pytest.mark.asyncio
+async def test_workload_overrides_merge_when_no_collision():
+    """Override keys outside the reserved set merge cleanly into workload."""
+    entry = _CatalogEntryStub(
+        catalog_id="100",
+        path="mcp/kubernetes",
+        version=2,
+        kind="Mcp",
+        payload={"spec": {"lifecycle": {"deploy": "agents/k8s/lifecycle/deploy"}}},
+    )
+    captured: dict[str, Any] = {}
+
+    async def fake_execute(*, path: str, workload: dict[str, Any]) -> str:
+        captured["workload"] = workload
+        return "exec-9"
+
+    response = await dispatch_lifecycle(
+        catalog_service=_FakeCatalogService(entry),
+        execute_callable=fake_execute,
+        path="mcp/kubernetes",
+        verb="deploy",
+        version="latest",
+        workload_overrides={"image_tag": "v1.2.3", "force": True},
+    )
+    assert response.execution_id == "exec-9"
+    assert captured["workload"]["mcp_resource"]["path"] == "mcp/kubernetes"
+    assert captured["workload"]["verb"] == "deploy"
+    assert captured["workload"]["image_tag"] == "v1.2.3"
+    assert captured["workload"]["force"] is True

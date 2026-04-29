@@ -109,3 +109,50 @@ def test_ignores_unknown_directives():
     field = infer_ui_schema(yaml)[0]
     assert field.kind == "string"
     assert field.secret is False
+
+
+def test_multiple_directives_on_one_line_are_all_parsed():
+    yaml = textwrap.dedent(
+        """
+        workload:
+          api_key: "" # ui:secret # ui:description=API key for upstream
+        """
+    )
+    field = infer_ui_schema(yaml)[0]
+    assert field.secret is True
+    assert field.description == "API key for upstream"
+
+
+def test_four_space_indent_is_recognised():
+    yaml = textwrap.dedent(
+        """
+        workload:
+            api_key: "" # ui:secret
+            username: alice
+        """
+    )
+    fields = {f.name: f for f in infer_ui_schema(yaml)}
+    assert fields["api_key"].secret is True
+    assert fields["username"].kind == "string"
+
+
+def test_nested_key_directive_does_not_bleed_to_top_level_with_same_name():
+    """A `# ui:secret` on a deeply-nested key must not promote up to a
+    top-level workload field that happens to share its name."""
+    yaml = textwrap.dedent(
+        """
+        workload:
+          host: public.example.com
+          db:
+            host: secrets.internal # ui:secret
+            port: 5432
+        """
+    )
+    fields = {f.name: f for f in infer_ui_schema(yaml)}
+    # Nested directive should not have polluted the top-level `host`.
+    assert fields["host"].secret is False
+    # The top-level `db` is itself an object; its child mappings are
+    # parsed structurally but the directive scope is intentionally only
+    # immediate-child of workload, so `db.host`'s secret tag is ignored
+    # in this phase.
+    assert fields["db"].kind == "object"

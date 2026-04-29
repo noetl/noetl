@@ -2,7 +2,7 @@
 
 from datetime import datetime
 from typing import Any, Optional
-from pydantic import Field, field_validator, model_validator
+from pydantic import Field
 
 from noetl.core.common import AppBaseModel
 
@@ -112,7 +112,8 @@ class McpDiscoverResponse(AppBaseModel):
 class UiSchemaField(AppBaseModel):
     """One workload field inferred from a playbook's YAML.
 
-    The inference rules (see service.infer_ui_schema):
+    The inference rules (see :mod:`noetl.server.api.mcp.ui_schema`,
+    function :func:`infer_ui_schema`):
     - Default-value type drives `kind`: string, number, integer, boolean,
       object, array, null.
     - Adjacent `# ui:enum=[...]` comment forces `kind=enum` and populates

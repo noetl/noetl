@@ -49,13 +49,18 @@ async def fetch_mcp_resource(catalog_service, path: str, version: Any) -> dict[s
             status_code=500,
             detail=f"Mcp resource '{path}' has unparseable payload",
         )
-    payload["_catalog"] = {
+    # Shallow-copy before mutating — the parsed payload may come from the
+    # CatalogService LRU cache and re-using it directly would leak the
+    # synthetic ``_catalog`` key into subsequent reads (and worse, into
+    # any future re-registration that round-trips the dict back to YAML).
+    resource_payload = dict(payload)
+    resource_payload["_catalog"] = {
         "catalog_id": entry.get("catalog_id"),
         "path": entry.get("path"),
         "version": entry.get("version"),
         "kind": entry.get("kind"),
     }
-    return payload
+    return resource_payload
 
 
 async def fetch_any_resource(catalog_service, path: str, version: Any) -> dict[str, Any]:
@@ -91,14 +96,25 @@ async def _fetch_entry(catalog_service, path: str, version: Any) -> dict[str, An
     requested_version = "latest" if version in (None, "", "latest") else version
     try:
         entry = await fetcher(path=path, version=requested_version)
-    except Exception as exc:  # pragma: no cover -- service-layer error surface varies
-        logger.warning("catalog lookup failed for %s@%s: %s", path, requested_version, exc)
+    except HTTPException:
+        # Catalog service may decide to surface its own typed HTTP errors —
+        # let them propagate unchanged so the client sees the right status.
+        raise
+    except Exception:  # pragma: no cover -- service-layer error surface varies
+        # Real DB/network/IO problems are 503, not 404. Masking them as
+        # "not found" makes incidents look like benign client errors.
+        logger.exception(
+            "catalog lookup failed for %s@%s; mapping to 503",
+            path,
+            requested_version,
+        )
         raise HTTPException(
-            status_code=404,
-            detail=f"resource not found: {path}@{requested_version}",
-        ) from exc
+            status_code=503,
+            detail="catalog service unavailable",
+        )
 
     if not entry:
+        # Explicit absence -- reserved 404 case.
         raise HTTPException(
             status_code=404,
             detail=f"resource not found: {path}@{requested_version}",
@@ -173,7 +189,23 @@ async def dispatch_lifecycle(
         },
         "verb": verb,
     }
+    # workload_overrides is a convenience for adding caller-specific values
+    # to the dispatched agent's workload (e.g. a ticket id or a forced
+    # image tag). It is NOT a way to overwrite the resource's own
+    # identity: blocking ``mcp_resource`` and ``verb`` here keeps audit
+    # trails and downstream dispatch logic consistent with the catalog
+    # entry that was actually resolved.
     if workload_overrides:
+        reserved = {"mcp_resource", "verb"}
+        clobbered = sorted(k for k in workload_overrides if k in reserved)
+        if clobbered:
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    "workload_overrides cannot override reserved fields: "
+                    f"{clobbered}"
+                ),
+            )
         workload.update(workload_overrides)
 
     execution_id = await execute_callable(path=agent_path, workload=workload)

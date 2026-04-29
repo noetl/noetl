@@ -35,17 +35,21 @@ import yaml as _yaml
 from .schema import UiSchemaField
 
 
-# Match an inline directive like `key: value # ui:secret` or
-# `key: value # ui:enum=[a,b]`. The leading capture lets us strip the
-# directive itself before parsing the value with PyYAML.
+# Match each `# ui:foo[=bar]` token within a line. We use ``finditer``
+# instead of an end-anchored match so two directives on one line both
+# get parsed (e.g. ``# ui:secret # ui:description=API key``). The
+# value capture stops at whitespace-then-``#`` so it doesn't swallow a
+# trailing directive.
 _DIRECTIVE_INLINE_RE = re.compile(
-    r"#\s*ui:(?P<key>[A-Za-z_][A-Za-z0-9_]*)(?:\s*=\s*(?P<value>[^\n]*))?$"
+    r"#\s*ui:(?P<key>[A-Za-z_][A-Za-z0-9_]*)"
+    r"(?:\s*=\s*(?P<value>[^\n#]*?))?(?=(?:\s+#|\s*$))"
 )
 
 # Match the start of a top-level workload key line so we can correlate
-# the parsed dict back to the raw text. We require at least two leading
-# spaces so we don't mistake `workload:` itself for one of its keys.
-_TOP_KEY_RE = re.compile(r"^(?P<indent> {2})(?P<name>[A-Za-z_][A-Za-z0-9_-]*)\s*:")
+# the parsed dict back to the raw text. We accept any indent of two or
+# more spaces so this works for the common 2-space indent and the
+# also-valid 4-space style.
+_TOP_KEY_RE = re.compile(r"^(?P<indent> {2,})(?P<name>[A-Za-z_][A-Za-z0-9_-]*)\s*:")
 
 
 def infer_ui_schema(yaml_text: str) -> list[UiSchemaField]:
@@ -104,13 +108,24 @@ def _scan_inline_directives(yaml_text: str) -> dict[str, dict[str, Any]]:
     ["a", "b"], "description": "...", "credential": "pg_*"}``.
 
     Only inline comments on the same line as the key/value are
-    considered. The implementation deliberately ignores keys nested
-    deeper than the immediate workload children — Phase 1 covers the
-    flat case the GUI run-dialog needs first.
+    considered, and only for the *immediate children* of ``workload:``.
+    A directive on a nested mapping (e.g. ``workload.db.host``) is
+    intentionally ignored — without that filter the parser would
+    happily attach an inner ``# ui:secret`` to an unrelated top-level
+    field that just happens to share the same key name. Phase 1 only
+    covers the flat case the GUI run-dialog needs first.
+
+    Detection of "immediate child" is data-driven: the first non-empty,
+    deeper-than-``workload:`` line we see fixes ``child_indent`` for
+    the rest of the block. Lines at deeper indents are skipped; lines
+    at the same indent but inside a nested mapping (i.e. anything
+    that's not the very next sibling) are skipped because the regex
+    still matches them.
     """
     out: dict[str, dict[str, Any]] = {}
     in_workload = False
     workload_indent = -1
+    child_indent = -1  # established lazily on the first child we see
 
     for line in yaml_text.splitlines():
         stripped = line.lstrip()
@@ -119,14 +134,25 @@ def _scan_inline_directives(yaml_text: str) -> dict[str, dict[str, Any]]:
         if stripped.startswith("workload:"):
             in_workload = True
             workload_indent = len(line) - len(stripped)
+            child_indent = -1
             continue
         if not in_workload:
             continue
 
         indent = len(line) - len(stripped)
-        if stripped and indent <= workload_indent and not line.startswith(" "):
-            # Left the workload block.
+        if indent <= workload_indent:
+            # Left the workload block — `start:` or another top-level key.
             in_workload = False
+            child_indent = -1
+            continue
+
+        # Establish the immediate-child indent on the first qualifying line.
+        if child_indent == -1:
+            child_indent = indent
+
+        # Filter strictly to the immediate children of workload:. Anything
+        # deeper is a nested mapping and gets ignored for directive scope.
+        if indent != child_indent:
             continue
 
         match = _TOP_KEY_RE.match(line)
@@ -141,27 +167,18 @@ def _scan_inline_directives(yaml_text: str) -> dict[str, dict[str, Any]]:
 
 
 def _extract_directives_from_line(line: str) -> dict[str, Any]:
-    """Pull every `# ui:foo` and `# ui:foo=bar` token from one raw line."""
+    """Pull every ``# ui:foo`` / ``# ui:foo=bar`` token from one raw line.
+
+    Uses :func:`re.finditer` so multiple directives on a single line are
+    parsed independently — each match is anchored only at the start of
+    a directive and the value capture is non-greedy with a lookahead
+    that terminates on the next ``# ui:`` token or end of line.
+    """
     out: dict[str, Any] = {}
-    # `# ui:` may appear more than once on a line, though rare. Find them
-    # all by repeatedly matching from the position after each hit.
-    cursor = 0
-    while True:
-        idx = line.find("# ui:", cursor)
-        if idx == -1:
-            break
-        rest = line[idx:]
-        # The directive runs until end-of-line. The regex grabs the key
-        # plus optional value.
-        m = _DIRECTIVE_INLINE_RE.search(rest)
-        if not m:
-            break
-        key = m.group("key")
-        raw_value = (m.group("value") or "").strip()
+    for match in _DIRECTIVE_INLINE_RE.finditer(line):
+        key = match.group("key")
+        raw_value = (match.group("value") or "").strip()
         out[key] = _parse_directive_value(raw_value) if raw_value else True
-        cursor = idx + len(m.group(0))
-        if cursor >= len(line):
-            break
     return out
 
 
