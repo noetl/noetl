@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.27.1](https://github.com/noetl/noetl/compare/v2.27.0...v2.27.1) (2026-04-29)
+
+### Bug Fixes
+
+* **catalog:** preserve HTTPException status on /catalog/register ([e7be000](https://github.com/noetl/noetl/commit/e7be000cdfe3cab95968666ee1657231b5047a29)), closes [noetl/noetl#397](https://github.com/noetl/noetl/issues/397) [#397](https://github.com/noetl/noetl/issues/397) [noetl/noetl#397](https://github.com/noetl/noetl/issues/397)
+
 ## [2.27.0](https://github.com/noetl/noetl/compare/v2.26.2...v2.27.0) (2026-04-29)
 
 ### Features
