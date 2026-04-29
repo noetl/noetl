@@ -235,3 +235,124 @@ async def test_workload_overrides_merge_when_no_collision():
     assert captured["workload"]["verb"] == "deploy"
     assert captured["workload"]["image_tag"] == "v1.2.3"
     assert captured["workload"]["force"] is True
+
+
+# ---------------------------------------------------------------------------
+# auth_check_callable wiring (Phase 2)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_dispatch_invokes_auth_check_with_resolved_agent_path():
+    """The lifecycle dispatcher authorises against the agent path, not the Mcp path.
+
+    Granting execute on `automation/agents/kubernetes/lifecycle/deploy`
+    should gate the deploy verb regardless of which Mcp resource exposes
+    it.
+    """
+    entry = _CatalogEntryStub(
+        catalog_id="100",
+        path="mcp/kubernetes",
+        version=4,
+        kind="Mcp",
+        payload={
+            "spec": {
+                "lifecycle": {
+                    "deploy": "automation/agents/kubernetes/lifecycle/deploy",
+                },
+            },
+        },
+    )
+    auth_calls: list[dict[str, Any]] = []
+    execute_called = False
+
+    async def fake_check(*, playbook_path: str, action: str = "execute"):
+        auth_calls.append({"playbook_path": playbook_path, "action": action})
+
+    async def fake_execute(*, path: str, workload: dict[str, Any]) -> str:
+        nonlocal execute_called
+        execute_called = True
+        return "exec-1"
+
+    response = await dispatch_lifecycle(
+        catalog_service=_FakeCatalogService(entry),
+        execute_callable=fake_execute,
+        path="mcp/kubernetes",
+        verb="deploy",
+        version="latest",
+        auth_check_callable=fake_check,
+    )
+
+    assert response.execution_id == "exec-1"
+    assert execute_called is True
+    assert auth_calls == [
+        {
+            "playbook_path": "automation/agents/kubernetes/lifecycle/deploy",
+            "action": "execute",
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_dispatch_skips_execute_when_auth_check_raises():
+    """If the auth callable raises, the execute_callable must not run."""
+    entry = _CatalogEntryStub(
+        catalog_id="100",
+        path="mcp/kubernetes",
+        version=4,
+        kind="Mcp",
+        payload={
+            "spec": {
+                "lifecycle": {
+                    "deploy": "automation/agents/kubernetes/lifecycle/deploy",
+                },
+            },
+        },
+    )
+
+    async def deny(*, playbook_path: str, action: str = "execute"):
+        raise HTTPException(status_code=403, detail="denied")
+
+    execute_called = False
+
+    async def fake_execute(*, path: str, workload: dict[str, Any]) -> str:
+        nonlocal execute_called  # pragma: no cover -- must not be reached
+        execute_called = True
+        return "should-not-run"
+
+    with pytest.raises(HTTPException) as exc:
+        await dispatch_lifecycle(
+            catalog_service=_FakeCatalogService(entry),
+            execute_callable=fake_execute,
+            path="mcp/kubernetes",
+            verb="deploy",
+            version="latest",
+            auth_check_callable=deny,
+        )
+
+    assert exc.value.status_code == 403
+    assert execute_called is False
+
+
+@pytest.mark.asyncio
+async def test_dispatch_no_auth_callable_runs_unchanged():
+    """Backwards-compat: omitting auth_check_callable keeps behaviour from before Phase 2."""
+    entry = _CatalogEntryStub(
+        catalog_id="100",
+        path="mcp/kubernetes",
+        version=4,
+        kind="Mcp",
+        payload={"spec": {"lifecycle": {"deploy": "agents/k8s/lifecycle/deploy"}}},
+    )
+
+    async def fake_execute(*, path: str, workload: dict[str, Any]) -> str:
+        return "exec-x"
+
+    response = await dispatch_lifecycle(
+        catalog_service=_FakeCatalogService(entry),
+        execute_callable=fake_execute,
+        path="mcp/kubernetes",
+        verb="deploy",
+        version="latest",
+    )
+    assert response.execution_id == "exec-x"

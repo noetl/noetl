@@ -16,15 +16,45 @@ import urllib.parse
 import urllib.request
 from typing import Any, Optional
 
-from fastapi import APIRouter, Body, Depends, HTTPException, Path
+from fastapi import APIRouter, Body, Depends, HTTPException, Path, Request
 from fastapi.responses import JSONResponse
 
 from noetl.core.logger import setup_logger
+from noetl.server.api.auth import (
+    AuthEnforcementSettings,
+    check_playbook_access,
+    load_enforcement_settings,
+)
 
 from . import schema as mcp_schema
 from . import service as mcp_service
 
 logger = setup_logger(__name__, include_location=True)
+
+
+def _build_auth_check(request: Request, settings: AuthEnforcementSettings):
+    """Bind a request + settings to a callable the service layer invokes.
+
+    The service layer doesn't know about FastAPI's ``Request`` — it just
+    knows it has been handed an awaitable that takes
+    ``playbook_path`` / ``action`` and either returns or propagates the
+    ``HTTPException`` raised by ``check_playbook_access``. In
+    ``enforce`` mode that exception may carry status 401 (missing
+    token), 403 (session valid but no permission), or 503 (auth
+    backend unreachable — fail closed). This indirection keeps the
+    dispatcher's signature stable and makes the existing unit tests
+    (which pass simple stubs) keep working.
+    """
+
+    async def _check(*, playbook_path: str, action: str = "execute"):
+        await check_playbook_access(
+            request=request,
+            playbook_path=playbook_path,
+            action=action,
+            settings=settings,
+        )
+
+    return _check
 
 
 router = APIRouter(prefix="", tags=["mcp"])
@@ -216,10 +246,12 @@ async def _register_default(*, content: str, resource_type: str) -> dict[str, An
     summary="Dispatch a lifecycle verb on a registered Mcp resource",
 )
 async def post_lifecycle_verb(
+    request: Request,
     path: str = Path(..., description="Mcp catalog path"),
     verb: str = Path(..., description="Lifecycle verb (deploy / restart / etc.)"),
     body: mcp_schema.McpLifecycleRequest = Body(default_factory=mcp_schema.McpLifecycleRequest),
     catalog_service=Depends(_get_catalog_service),
+    auth_settings: AuthEnforcementSettings = Depends(load_enforcement_settings),
 ):
     cleaned_verb = mcp_schema.coerce_lifecycle_verb(verb)
     try:
@@ -230,6 +262,7 @@ async def post_lifecycle_verb(
             verb=cleaned_verb,
             version=body.version,
             workload_overrides=body.workload_overrides,
+            auth_check_callable=_build_auth_check(request, auth_settings),
         )
     except HTTPException:
         raise
@@ -249,9 +282,11 @@ async def post_lifecycle_verb(
     summary="Refresh the tool list of a registered Mcp resource",
 )
 async def post_discover(
+    request: Request,
     path: str = Path(..., description="Mcp catalog path"),
     body: mcp_schema.McpDiscoverRequest = Body(default_factory=mcp_schema.McpDiscoverRequest),
     catalog_service=Depends(_get_catalog_service),
+    auth_settings: AuthEnforcementSettings = Depends(load_enforcement_settings),
 ):
     try:
         return await mcp_service.dispatch_discover(
@@ -262,6 +297,7 @@ async def post_discover(
             path=path,
             version=body.version,
             force=body.force,
+            auth_check_callable=_build_auth_check(request, auth_settings),
         )
     except HTTPException:
         raise
