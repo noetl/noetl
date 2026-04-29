@@ -1,14 +1,15 @@
-"""Unit tests for the catalog kind-precedence helper.
+"""Unit tests for the catalog kind-precedence helper + register-time validation.
 
 The DB-backed register_resource path is exercised by integration tests;
-these focus on the pure resolution logic so a regression in the
-"YAML kind: is authoritative" rule is caught without standing up
-Postgres.
+these focus on the pure resolution + validation logic so regressions in
+the "YAML kind: is authoritative" rule and the Pydantic validation
+gate are caught without standing up Postgres.
 """
 
 from __future__ import annotations
 
 import pytest
+from fastapi import HTTPException
 
 from noetl.server.api.catalog.service import CatalogService
 
@@ -122,3 +123,109 @@ def test_empty_payload_and_blank_fallback_uses_default_playbook():
         payload={},
         fallback="",
     ) == "playbook"
+
+
+# ---------------------------------------------------------------------------
+# _validate_payload — register-time Pydantic validation
+# ---------------------------------------------------------------------------
+
+
+def _valid_playbook_dict():
+    """Minimal v10 playbook that passes Pydantic validation."""
+    return {
+        "apiVersion": "noetl.io/v2",
+        "kind": "Playbook",
+        "metadata": {"name": "test_pb", "path": "tests/fixtures/test_pb"},
+        "workflow": [
+            {
+                "step": "start",
+                "tool": {"kind": "noop"},
+                "next": {
+                    "spec": {"mode": "exclusive"},
+                    "arcs": [{"step": "end"}],
+                },
+            },
+            {"step": "end", "tool": {"kind": "noop"}},
+        ],
+    }
+
+
+def test_validate_payload_skips_non_playbook_kinds():
+    """mcp / credential / memory kinds skip Pydantic validation entirely."""
+    for kind in ("mcp", "credential", "memory"):
+        # An obviously invalid playbook shouldn't raise — those kinds aren't
+        # validated against the Playbook model.
+        CatalogService._validate_payload(
+            resource_type=kind,
+            payload={"apiVersion": "noetl.io/v2", "kind": kind, "metadata": {"name": "x"}},
+            path="x",
+        )
+
+
+def test_validate_payload_accepts_valid_playbook():
+    CatalogService._validate_payload(
+        resource_type="playbook",
+        payload=_valid_playbook_dict(),
+        path="tests/fixtures/test_pb",
+    )
+
+
+def test_validate_payload_rejects_deprecated_list_form_next():
+    """Locks in the regression that motivated this PR.
+
+    The deprecated `next: - step: end` form (an Arc list rather than
+    a NextRouter dict) must surface as 422 at register time, not as
+    a misleading "Playbook not found" at execute time.
+    """
+    bad = _valid_playbook_dict()
+    bad["workflow"][0]["next"] = [{"step": "end"}]  # the deprecated v9 form
+
+    with pytest.raises(HTTPException) as info:
+        CatalogService._validate_payload(
+            resource_type="playbook",
+            payload=bad,
+            path="tests/fixtures/bad_pb",
+        )
+    assert info.value.status_code == 422
+    assert "tests/fixtures/bad_pb" in info.value.detail
+    assert "next" in info.value.detail.lower()
+
+
+def test_validate_payload_rejects_invalid_kind_field():
+    """An apiVersion / kind mismatch should also be a 422."""
+    bad = _valid_playbook_dict()
+    bad["kind"] = "NotAPlaybook"
+
+    with pytest.raises(HTTPException) as info:
+        CatalogService._validate_payload(
+            resource_type="playbook",
+            payload=bad,
+            path="x",
+        )
+    assert info.value.status_code == 422
+
+
+def test_validate_payload_rejects_non_dict_payload():
+    """A YAML body that parses to a list / scalar / None should 422."""
+    for bad in ([], "scalar", 42, None):
+        with pytest.raises(HTTPException) as info:
+            CatalogService._validate_payload(
+                resource_type="playbook",
+                payload=bad,
+                path="x",
+            )
+        assert info.value.status_code == 422
+
+
+def test_validate_payload_validates_agents_too():
+    """`agent` resources are playbook-shaped — same Pydantic model gates them."""
+    bad = _valid_playbook_dict()
+    bad["workflow"] = []  # empty workflow trips the validator
+
+    with pytest.raises(HTTPException) as info:
+        CatalogService._validate_payload(
+            resource_type="agent",
+            payload=bad,
+            path="x",
+        )
+    assert info.value.status_code == 422
