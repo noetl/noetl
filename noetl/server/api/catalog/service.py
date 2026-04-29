@@ -10,6 +10,7 @@ from datetime import datetime
 from collections import OrderedDict
 import time
 import yaml
+from fastapi import HTTPException
 from psycopg.rows import dict_row
 from psycopg.types.json import Json
 from noetl.core.db.pool import get_pool_connection
@@ -361,6 +362,81 @@ class CatalogService:
         return CatalogService._normalize_resource_type(fallback)
 
     @staticmethod
+    def _validate_payload(*, resource_type: str, payload: Any, path: str) -> None:
+        """Validate a catalog payload against its Pydantic model.
+
+        Catches DSL bugs at register time with a Pydantic error path
+        (``workflow.0.next: Input should be a valid dictionary or
+        instance of NextRouter``) instead of letting them surface at
+        first execute time as the misleading
+        ``"Playbook not found: catalog_id=..."`` from
+        ``PlaybookRepo.load_playbook_by_id`` swallowing the
+        ``ValidationError``.
+
+        Strategy:
+
+        - ``playbook`` / ``agent`` → validate against
+          ``Playbook.model_validate``. Agents are
+          playbook-shaped — same Pydantic model, same constraints.
+        - any other kind (``mcp``, ``credential``, ``memory``) →
+          skip. The Mcp resource has its own (less strict)
+          shape that the catalog stores opaquely; we don't yet have
+          a Pydantic model for it. Leaving an explicit branch here
+          documents the intent so a future PR can wire those up.
+
+        Raises ``HTTPException(422)`` on validation failure. The
+        detail string carries the first few field paths so the GUI's
+        run dialog or the CLI can surface them inline without forcing
+        the caller to dig through server logs.
+        """
+        if resource_type not in {"playbook", "agent"}:
+            return
+
+        if not isinstance(payload, dict):
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    f"register_resource: '{path}' kind='{resource_type}' "
+                    "payload is not a YAML mapping"
+                ),
+            )
+
+        # Late import — keeps the catalog service importable in a
+        # bare environment (tests, scripts) without dragging the full
+        # engine model graph along for the ride.
+        from pydantic import ValidationError
+        from noetl.core.dsl.engine.models.executor import Playbook
+
+        try:
+            Playbook.model_validate(payload)
+        except ValidationError as exc:
+            # Surface up to three field paths in the HTTP detail so
+            # the run dialog can show them inline. Server logs still
+            # carry the full structured error for debugging.
+            errors = exc.errors()
+            preview = []
+            for err in errors[:3]:
+                loc = ".".join(str(part) for part in err.get("loc", []))
+                msg = err.get("msg", "invalid")
+                preview.append(f"{loc}: {msg}" if loc else msg)
+            more = f" (+{len(errors) - 3} more)" if len(errors) > 3 else ""
+            logger.warning(
+                "CATALOG: rejecting %s '%s' — %d Pydantic validation error(s): %s",
+                resource_type,
+                path,
+                len(errors),
+                errors,
+            )
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    f"register_resource: '{path}' is not a valid {resource_type}: "
+                    + "; ".join(preview)
+                    + more
+                ),
+            ) from exc
+
+    @staticmethod
     def _resource_type_meta(resource_type: str) -> Dict[str, Any]:
         catalog_types = {
             "playbook": {
@@ -400,6 +476,18 @@ class CatalogService:
         )
         path = (resource_data.get("metadata") or {}).get("path") or resource_data.get("path") or (
             resource_data.get("metadata") or {}).get("name") or resource_data.get("name") or "unknown"
+
+        # Validate the payload against its Pydantic model BEFORE the
+        # implicit-end injection so the caller's intent is what's
+        # validated (a deprecated `next: - step:` form, a missing
+        # `tool:` block, etc.). The implicit-end step we tack on
+        # below is a server-side convenience and is always
+        # well-formed; we don't need to re-validate after that.
+        CatalogService._validate_payload(
+            resource_type=resource_type,
+            payload=resource_data,
+            path=str(path),
+        )
 
         # Inject implicit "end" step if playbook doesn't have one
         if resource_type in {"playbook", "agent"}:
