@@ -306,6 +306,14 @@ async def register_resource(
     try:
         result = await catalog_service.register_resource(request.content, request.resource_type)
         return CatalogRegisterResponse(**result)
+    except HTTPException:
+        # HTTPExceptions raised inside the service layer (e.g. the
+        # 422 from CatalogService._validate_payload when a Pydantic
+        # validation fails) carry their own status_code + detail.
+        # Don't downgrade them to a generic 500 with the message
+        # stringified — clients can't distinguish "bad YAML" from
+        # "DB unavailable" if both come back as 500.
+        raise
     except Exception as e:
         logger.exception(f"Error registering resource: {e}.")
         raise HTTPException(
