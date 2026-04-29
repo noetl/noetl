@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.26.2](https://github.com/noetl/noetl/compare/v2.26.1...v2.26.2) (2026-04-29)
+
+### Bug Fixes
+
+* **dsl:** address Copilot review on PR [#396](https://github.com/noetl/noetl/issues/396) (schema generator) ([c5cca51](https://github.com/noetl/noetl/commit/c5cca51ca7168c0da0c214c0763858cfc24deb32)), closes [noetl/ops#15](https://github.com/noetl/ops/issues/15) [noetl/ops#16](https://github.com/noetl/ops/issues/16) [noetl/noetl#395](https://github.com/noetl/noetl/issues/395)
+
 ## [2.26.1](https://github.com/noetl/noetl/compare/v2.26.0...v2.26.1) (2026-04-29)
 
 ### Bug Fixes
