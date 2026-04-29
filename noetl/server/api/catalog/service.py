@@ -337,6 +337,30 @@ class CatalogService:
         return aliases.get(value, value).strip().lower()
 
     @staticmethod
+    def _resolve_resource_kind(*, payload: Any, fallback: Optional[str]) -> str:
+        """Resolve the catalog kind for a registration request.
+
+        The YAML's own ``kind:`` field is authoritative — the request
+        ``resource_type`` parameter is a hint that callers (e.g. the
+        CLI's ``noetl catalog register``) tend to default to
+        "Playbook" without sniffing the file. Without this precedence,
+        an ``kind: Mcp`` template registered via the catch-all
+        ``catalog register`` path lands in the catalog as
+        ``kind: playbook`` and downstream lookups (e.g.
+        ``fetch_mcp_resource``, which guards
+        ``kind.lower() == "mcp"``) reject it as the wrong type.
+
+        Fall back to the request parameter only when the payload
+        doesn't declare a kind. Both branches go through
+        ``_normalize_resource_type`` so the alias table is the single
+        place that knows ``MCP``/``Mcp``/``mcp`` collapse to ``mcp``.
+        """
+        payload_kind = payload.get("kind") if isinstance(payload, dict) else None
+        if isinstance(payload_kind, str) and payload_kind.strip():
+            return CatalogService._normalize_resource_type(payload_kind)
+        return CatalogService._normalize_resource_type(fallback)
+
+    @staticmethod
     def _resource_type_meta(resource_type: str) -> Dict[str, Any]:
         catalog_types = {
             "playbook": {
@@ -370,7 +394,10 @@ class CatalogService:
     @staticmethod
     async def register_resource(content: str, resource_type: str = "Playbook") -> Dict[str, Any]:
         resource_data = yaml.safe_load(content) or {}
-        resource_type = CatalogService._normalize_resource_type(resource_type)
+        resource_type = CatalogService._resolve_resource_kind(
+            payload=resource_data,
+            fallback=resource_type,
+        )
         path = (resource_data.get("metadata") or {}).get("path") or resource_data.get("path") or (
             resource_data.get("metadata") or {}).get("name") or resource_data.get("name") or "unknown"
 
