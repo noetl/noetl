@@ -49,3 +49,89 @@ roleRef:
   kind: Role
   name: noetl-worker-role
   apiGroup: rbac.authorization.k8s.io
+---
+# Cluster-scoped RBAC for lifecycle-agent installs (helm-driven).
+#
+# The MCP lifecycle agents (automation/agents/kubernetes/lifecycle/
+# {deploy,undeploy,restart,status,discover,redeploy} in repos/ops)
+# run helm and kubectl from inside the worker pod. Helm's
+# `--create-namespace` flag and the kubernetes-mcp-server chart's
+# `extraClusterRoles`/`extraClusterRoleBindings` blocks both need
+# permissions outside the noetl namespace, so the existing
+# namespace-scoped Role above isn't sufficient.
+#
+# Scope deliberately narrowed to the verbs/resources lifecycle
+# installs actually need. NOT cluster-admin — a future PR can
+# tighten further (e.g. limit `namespaces` create to a label
+# selector once helm 3.x supports it cleanly), but this is the
+# minimum that lets the dispatcher path produce a real cluster
+# effect for an Mcp resource's lifecycle.deploy call.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: noetl-worker-lifecycle-installer
+rules:
+  # helm install --create-namespace needs to make/look up/cleanup
+  # the release namespace.
+  - apiGroups: [""]
+    resources: ["namespaces"]
+    verbs: ["get", "list", "create", "delete", "patch"]
+
+  # Standard chart resources — the kubernetes-mcp-server chart and
+  # most helm charts in this fleet ship some combination of these.
+  - apiGroups: [""]
+    resources:
+      - "serviceaccounts"
+      - "services"
+      - "configmaps"
+      - "secrets"  # helm 3 stores release state as a Secret per release
+      - "pods"
+      - "persistentvolumeclaims"
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  - apiGroups: ["apps"]
+    resources:
+      - "deployments"
+      - "replicasets"
+      - "statefulsets"
+      - "daemonsets"
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  - apiGroups: ["batch"]
+    resources: ["jobs", "cronjobs"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+
+  # Namespace-scoped RBAC the chart wires up for its own SA.
+  - apiGroups: ["rbac.authorization.k8s.io"]
+    resources: ["roles", "rolebindings"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+
+  # Cluster-scoped RBAC the chart's `extraClusterRoles` block ships
+  # (e.g. the runtime-observer ClusterRole the kubernetes-mcp-server
+  # uses to read pods/events/metrics across all namespaces).
+  - apiGroups: ["rbac.authorization.k8s.io"]
+    resources: ["clusterroles", "clusterrolebindings"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+
+  # Read-only on cluster-scoped objects the lifecycle.status verb
+  # surfaces for diagnostics (kubectl get nodes / events / etc.).
+  - apiGroups: [""]
+    resources: ["nodes", "events"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["events.k8s.io"]
+    resources: ["events"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["metrics.k8s.io"]
+    resources: ["pods", "nodes"]
+    verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: noetl-worker-lifecycle-installer
+subjects:
+  - kind: ServiceAccount
+    name: noetl-worker
+    namespace: noetl
+roleRef:
+  kind: ClusterRole
+  name: noetl-worker-lifecycle-installer
+  apiGroup: rbac.authorization.k8s.io
