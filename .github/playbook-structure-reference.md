@@ -361,6 +361,9 @@ workflow:
 
 Always update these files when playbook structure changes:
 - `.github/ai-instructions.md` - AI agent development guide
-- `docs/playbook_schema.json` - JSON Schema validation
+- `noetl/core/dsl/playbook.schema.json` - JSON Schema (auto-generated;
+  regenerate with `python -m noetl.core.dsl._generate_schema` after
+  any change to the Pydantic models in
+  `noetl/core/dsl/engine/models/`)
 - `docs/playbook_structure.md` - Comprehensive structure guide
 - `docs/simple/` - Simple documentation directory
