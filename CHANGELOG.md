@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.25.1](https://github.com/noetl/noetl/compare/v2.25.0...v2.25.1) (2026-04-29)
+
+### Bug Fixes
+
+* **mcp:** address Copilot pass 2 on bf636e18 (cache mutation, error mapping, async DNS, multi-directive) ([f79fb77](https://github.com/noetl/noetl/commit/f79fb77898a0d839bf9c7f296700a5963e9d532f))
+* **mcp:** scope ui_schema directives to immediate workload children + accurate SSRF error ([da5caad](https://github.com/noetl/noetl/commit/da5caad965f5ada5de4559c3f363e9a33a6e0086)), closes [#393](https://github.com/noetl/noetl/issues/393)
+
 ## [2.25.0](https://github.com/noetl/noetl/compare/v2.24.2...v2.25.0) (2026-04-28)
 
 ### Features
