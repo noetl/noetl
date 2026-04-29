@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.29.0](https://github.com/noetl/noetl/compare/v2.28.0...v2.29.0) (2026-04-29)
+
+### Features
+
+* **tools:** kind:shell executor in the distributed worker ([64e3c76](https://github.com/noetl/noetl/commit/64e3c76a72cbbf827331e6552daddcc6a42db8ed)), closes [noetl/noetl#399](https://github.com/noetl/noetl/issues/399) [noetl/ops#15](https://github.com/noetl/ops/issues/15) [noetl/ops#16](https://github.com/noetl/ops/issues/16) [noetl/ops#17](https://github.com/noetl/ops/issues/17) [noetl/ops#18](https://github.com/noetl/ops/issues/18) [noetl/noetl#395](https://github.com/noetl/noetl/issues/395) [noetl/noetl#396](https://github.com/noetl/noetl/issues/396) [noetl/noetl#397](https://github.com/noetl/noetl/issues/397) [noetl/noetl#398](https://github.com/noetl/noetl/issues/398) [noetl/noetl#399](https://github.com/noetl/noetl/issues/399)
+
 ## [2.28.0](https://github.com/noetl/noetl/compare/v2.27.1...v2.28.0) (2026-04-29)
 
 ### Features
