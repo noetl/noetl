@@ -159,6 +159,7 @@ async def dispatch_lifecycle(
     verb: str,
     version: Any,
     workload_overrides: Optional[dict[str, Any]] = None,
+    auth_check_callable=None,
 ) -> mcp_schema.McpLifecycleResponse:
     """Resolve resource.lifecycle.{verb} -> Agent path and dispatch.
 
@@ -166,6 +167,14 @@ async def dispatch_lifecycle(
     this stays testable without standing up the full /api/execute
     machinery in unit tests. Pass a thin wrapper around the existing
     execute service in production wiring.
+
+    `auth_check_callable(playbook_path: str, action: str) -> awaitable`
+    is the optional authorisation hook. The endpoint wires it to the
+    server-side ``check_playbook_access`` flow. In ``enforce`` mode
+    the callable raises ``HTTPException(403)`` on a denied result and
+    we never reach ``execute_callable``. In ``advisory`` / ``skip``
+    modes (or when no callable is provided) the dispatch proceeds
+    unchanged, preserving compatibility with existing test harnesses.
     """
     resource = await fetch_mcp_resource(catalog_service, path, version)
     spec = resource.get("spec") or {}
@@ -179,6 +188,16 @@ async def dispatch_lifecycle(
                 f"(known verbs: {sorted(lifecycle.keys())})"
             ),
         )
+
+    if auth_check_callable is not None:
+        # The callable is responsible for raising HTTPException(403) on
+        # an enforce-mode deny. We invoke it here — after the lifecycle
+        # path has been resolved — so authorisation is checked against
+        # the actual playbook the dispatcher would run, not the URL the
+        # client sent. That distinction matters: granting execute on
+        # `automation/agents/kubernetes/lifecycle/deploy` should gate
+        # the deploy verb regardless of which Mcp resource exposed it.
+        await auth_check_callable(playbook_path=str(agent_path), action="execute")
 
     workload = {
         "mcp_resource": {
@@ -234,6 +253,7 @@ async def dispatch_discover(
     path: str,
     version: Any,
     force: bool,
+    auth_check_callable=None,
 ) -> mcp_schema.McpDiscoverResponse:
     """Refresh the Mcp resource's tools list.
 
@@ -251,6 +271,17 @@ async def dispatch_discover(
     discovery = spec.get("discovery") or {}
     refresh_via = discovery.get("refresh_via")
     tools_list_url = discovery.get("tools_list_url")
+
+    # Authorisation is performed against the *agent* playbook path when
+    # discovery dispatches one (matches lifecycle's behaviour); for the
+    # direct URL strategy we authorise against the resource's own
+    # catalog path instead — there's no separate playbook to grant
+    # execute on, so the resource path is the only stable handle.
+    if auth_check_callable is not None:
+        if refresh_via:
+            await auth_check_callable(playbook_path=str(refresh_via), action="execute")
+        elif tools_list_url:
+            await auth_check_callable(playbook_path=str(path), action="execute")
 
     if refresh_via:
         execution_id = await execute_callable(
