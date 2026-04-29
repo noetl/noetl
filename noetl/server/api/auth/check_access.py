@@ -108,12 +108,19 @@ class AuthEnforcementSettings:
                 ttl_raw,
             )
             ttl = 30.0
+        # An empty NOETL_AUTH_SESSION_HEADER would otherwise produce a
+        # confusing "or : <token>" segment in the 401 detail, and
+        # invalidate the fallback header lookup entirely. Treat blank /
+        # whitespace-only as "fall back to the default".
+        session_header = (
+            os.environ.get("NOETL_AUTH_SESSION_HEADER", "X-Session-Token") or ""
+        ).strip()
+        if not session_header:
+            session_header = "X-Session-Token"
         return cls(
             mode=EnforcementMode.parse(os.environ.get("NOETL_AUTH_ENFORCEMENT_MODE")),
             cache_ttl_seconds=max(0.0, ttl),
-            session_header=os.environ.get(
-                "NOETL_AUTH_SESSION_HEADER", "X-Session-Token"
-            ),
+            session_header=session_header,
             db_connection_string=os.environ.get("NOETL_AUTH_DB_CONNECTION_STRING"),
         )
 
@@ -213,15 +220,23 @@ def extract_session_token(
     """
     auth = request.headers.get("Authorization")
     if auth:
-        # Check the Bearer prefix on the un-stripped value first — a
-        # header like "Bearer    " (prefix only, no token) should
-        # surface as "no token", not as the literal string "Bearer".
+        stripped_auth = auth.strip()
+        # Treat a bare Bearer scheme — with or without trailing
+        # whitespace — as "no token". Accepting the literal string
+        # "Bearer" as a raw token would cause a misleading DB lookup
+        # and surface as a 403 ("invalid session") instead of the
+        # 401 the missing-token path produces.
+        if stripped_auth.lower() == "bearer":
+            return None
+        # Check the Bearer prefix on the unstripped value so we still
+        # catch "Bearer    " (prefix-with-trailing-whitespace) before
+        # falling back to raw-token handling.
         if auth.lower().startswith("bearer "):
             return auth[7:].strip() or None
         # Some clients send the raw token in Authorization without the
         # Bearer prefix. Accept that form too — a 64-char opaque string
         # can't reasonably be confused with another scheme.
-        return auth.strip() or None
+        return stripped_auth or None
     header_name = settings.session_header
     if header_name:
         token = request.headers.get(header_name)
@@ -360,13 +375,17 @@ async def check_playbook_access(
             mode=settings.mode,
         )
         if settings.mode == EnforcementMode.ENFORCE:
-            raise HTTPException(
-                status_code=401,
-                detail=(
-                    "missing session token; provide Authorization: Bearer <token> "
-                    f"or {settings.session_header}: <token>"
-                ),
-            )
+            # Build the detail dynamically — only mention the fallback
+            # header when one is actually configured. ``from_env``
+            # normalises blank / whitespace values back to the default,
+            # so this branch shouldn't fire in practice, but a stray
+            # ``replace(settings, session_header="")`` from a test
+            # harness should still produce a sensible message.
+            detail = "missing session token; provide Authorization: Bearer <token>"
+            fallback_header = (settings.session_header or "").strip()
+            if fallback_header:
+                detail += f" or {fallback_header}: <token>"
+            raise HTTPException(status_code=401, detail=detail)
         logger.warning(
             "advisory: would deny dispatch of %s — missing session token",
             playbook_path,

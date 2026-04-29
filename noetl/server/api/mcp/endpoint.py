@@ -37,9 +37,13 @@ def _build_auth_check(request: Request, settings: AuthEnforcementSettings):
 
     The service layer doesn't know about FastAPI's ``Request`` — it just
     knows it has been handed an awaitable that takes
-    ``playbook_path`` / ``action`` and either raises 403 or returns.
-    This indirection keeps the dispatcher's signature stable and makes
-    the existing unit tests (which pass simple stubs) keep working.
+    ``playbook_path`` / ``action`` and either returns or propagates the
+    ``HTTPException`` raised by ``check_playbook_access``. In
+    ``enforce`` mode that exception may carry status 401 (missing
+    token), 403 (session valid but no permission), or 503 (auth
+    backend unreachable — fail closed). This indirection keeps the
+    dispatcher's signature stable and makes the existing unit tests
+    (which pass simple stubs) keep working.
     """
 
     async def _check(*, playbook_path: str, action: str = "execute"):

@@ -170,8 +170,15 @@ async def dispatch_lifecycle(
 
     `auth_check_callable(playbook_path: str, action: str) -> awaitable`
     is the optional authorisation hook. The endpoint wires it to the
-    server-side ``check_playbook_access`` flow. In ``enforce`` mode
-    the callable raises ``HTTPException(403)`` on a denied result and
+    server-side ``check_playbook_access`` flow, which in ``enforce``
+    mode may raise ``HTTPException`` with one of:
+
+    - ``401`` — no session token on the request
+    - ``403`` — the session is valid but lacks the requested permission
+    - ``503`` — the auth backend (Postgres) is unreachable; we fail
+      closed rather than silently waving the request through
+
+    Any of those propagate out of ``dispatch_lifecycle`` unchanged and
     we never reach ``execute_callable``. In ``advisory`` / ``skip``
     modes (or when no callable is provided) the dispatch proceeds
     unchanged, preserving compatibility with existing test harnesses.

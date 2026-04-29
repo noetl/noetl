@@ -37,10 +37,24 @@ def _settings(**overrides) -> ca.AuthEnforcementSettings:
 
 @pytest.fixture(autouse=True)
 def _reset_cache():
-    """Each test starts with an empty decision cache."""
-    asyncio.get_event_loop().run_until_complete(ca._cache.clear())
-    yield
-    asyncio.get_event_loop().run_until_complete(ca._cache.clear())
+    """Each test starts (and ends) with an empty decision cache.
+
+    Spin up a dedicated event loop and tear it down deterministically
+    around each test instead of relying on ``asyncio.get_event_loop()``
+    — on Python 3.12+ that helper either implicitly creates a loop and
+    leaks it, or raises ``DeprecationWarning`` / ``RuntimeError``
+    depending on the pytest-asyncio configuration. A try/finally
+    around a fresh loop keeps the fixture portable across versions and
+    avoids ``ResourceWarning: unclosed event loop`` noise on the
+    synchronous header-extraction tests.
+    """
+    loop = asyncio.new_event_loop()
+    try:
+        loop.run_until_complete(ca._cache.clear())
+        yield
+        loop.run_until_complete(ca._cache.clear())
+    finally:
+        loop.close()
 
 
 # ---------------------------------------------------------------------------
@@ -77,6 +91,26 @@ def test_extract_session_token_empty_bearer_returns_none():
     settings = _settings()
     req = _StubRequest({"Authorization": "Bearer    "})
     assert ca.extract_session_token(req, settings) is None
+
+
+def test_extract_session_token_bare_bearer_returns_none():
+    """A bare `Authorization: Bearer` (no whitespace, no token) is no token, not literal 'Bearer'."""
+    settings = _settings()
+    assert ca.extract_session_token(_StubRequest({"Authorization": "Bearer"}), settings) is None
+    assert ca.extract_session_token(_StubRequest({"Authorization": "  Bearer  "}), settings) is None
+    # Case-insensitive — RFC 7235 makes the scheme case-insensitive.
+    assert ca.extract_session_token(_StubRequest({"Authorization": "bearer"}), settings) is None
+    assert ca.extract_session_token(_StubRequest({"Authorization": "BEARER"}), settings) is None
+
+
+def test_settings_blank_session_header_falls_back_to_default(monkeypatch):
+    monkeypatch.setenv("NOETL_AUTH_SESSION_HEADER", "")
+    s = ca.AuthEnforcementSettings.from_env()
+    assert s.session_header == "X-Session-Token"
+
+    monkeypatch.setenv("NOETL_AUTH_SESSION_HEADER", "   ")
+    s = ca.AuthEnforcementSettings.from_env()
+    assert s.session_header == "X-Session-Token"
 
 
 # ---------------------------------------------------------------------------
