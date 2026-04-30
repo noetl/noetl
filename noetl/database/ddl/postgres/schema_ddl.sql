@@ -158,9 +158,33 @@ CREATE TABLE IF NOT EXISTS noetl.event_2027_h1
     PARTITION OF noetl.event FOR VALUES FROM (397177100697600000) TO (462769304371200000);
 CREATE TABLE IF NOT EXISTS noetl.event_2027_h2
     PARTITION OF noetl.event FOR VALUES FROM (462769304371200000) TO (529448671641600000);
--- GKE deployment uses a non-standard snowflake epoch producing IDs in the 569T–600T range
-CREATE TABLE IF NOT EXISTS noetl.event_2026_gke
-    PARTITION OF noetl.event FOR VALUES FROM (569000000000000000) TO (600000000000000000);
+-- GKE deployment uses a non-standard snowflake epoch producing IDs in the 569T–600T range.
+-- Existing GKE installations may already have those rows in event_default, which
+-- prevents attaching a new partition until the rows are moved. Skip instead of
+-- failing schema re-apply; operators can move/split default rows later.
+DO $$
+DECLARE
+    default_has_gke_overlap boolean := false;
+BEGIN
+    IF to_regclass('noetl.event_default') IS NOT NULL THEN
+        SELECT EXISTS (
+            SELECT 1
+            FROM noetl.event_default
+            WHERE execution_id >= 569000000000000000
+              AND execution_id < 600000000000000000
+            LIMIT 1
+        ) INTO default_has_gke_overlap;
+    END IF;
+
+    IF default_has_gke_overlap THEN
+        RAISE NOTICE
+            'Skipping event_2026_gke. Move/split overlapping rows from noetl.event_default before attaching this partition.';
+    ELSE
+        CREATE TABLE IF NOT EXISTS noetl.event_2026_gke
+            PARTITION OF noetl.event FOR VALUES FROM (569000000000000000) TO (600000000000000000);
+    END IF;
+END;
+$$;
 -- Current/future ranges for the standard noetl.snowflake_id() layout. These are
 -- skipped per-range when event_default already contains overlapping rows so
 -- schema re-apply never fails on clusters that already caught rows in default.
