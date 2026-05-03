@@ -1,16 +1,16 @@
 #!/bin/bash
 set -e
 
-# Build noetlctl for multiple architectures
+# Build the NoETL Rust CLI for multiple architectures
 # This should be run before building Docker images for multi-platform support
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-NOETLCTL_DIR="$PROJECT_ROOT/noetlctl"
+CLI_DIR="${NOETL_CLI_REPO:-$PROJECT_ROOT/../cli}"
 
-cd "$NOETLCTL_DIR"
+cd "$CLI_DIR"
 
-echo "=== Building noetlctl for multiple architectures ==="
+echo "=== Building NoETL Rust CLI for multiple architectures ==="
 
 # Install cross-compilation tools if not already installed
 if ! command -v cross &> /dev/null; then

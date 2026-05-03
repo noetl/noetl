@@ -11,14 +11,20 @@ echo "📦 Building NoETL .deb package v${VERSION} for ${ARCH}..."
 rm -rf "$BUILD_DIR"
 mkdir -p "$BUILD_DIR"
 
-# Clone or copy source
-if [ -d ".git" ] || [ -f "Cargo.toml" ]; then
-    echo "📂 Using current repository..."
+# Clone or copy CLI source
+if [ -n "${NOETL_CLI_REPO:-}" ] && [ -f "${NOETL_CLI_REPO}/Cargo.toml" ]; then
+    echo "📂 Using CLI repository from NOETL_CLI_REPO..."
+    REPO_DIR="$NOETL_CLI_REPO"
+elif [ -f "../cli/Cargo.toml" ]; then
+    echo "📂 Using sibling CLI repository..."
+    REPO_DIR="$(cd ../cli && pwd)"
+elif [ -f "Cargo.toml" ]; then
+    echo "📂 Using current CLI repository..."
     REPO_DIR=$(pwd)
 else
-    echo "📥 Cloning repository..."
-    git clone https://github.com/noetl/noetl.git "$BUILD_DIR/noetl-${VERSION}"
-    REPO_DIR="$BUILD_DIR/noetl-${VERSION}"
+    echo "📥 Cloning CLI repository..."
+    git clone https://github.com/noetl/cli.git "$BUILD_DIR/cli-${VERSION}"
+    REPO_DIR="$BUILD_DIR/cli-${VERSION}"
     cd "$REPO_DIR"
     git checkout "v${VERSION}"
 fi
@@ -41,15 +47,8 @@ fi
 echo "🔨 Building Rust binary..."
 cd "$REPO_DIR"
 
-# Try noetl first, fallback to noetl-cli for older versions
-if cargo metadata --no-deps --format-version 1 | grep -q '"name":"noetl"'; then
-    PACKAGE_NAME="noetl"
-else
-    PACKAGE_NAME="noetl-cli"
-fi
-
-echo "📦 Building package: $PACKAGE_NAME"
-cargo build --release -p "$PACKAGE_NAME"
+echo "📦 Building package: noetl"
+cargo build --release -p noetl
 
 # Create debian package structure
 PKG_DIR="$BUILD_DIR/noetl_${VERSION}-1_${ARCH}"

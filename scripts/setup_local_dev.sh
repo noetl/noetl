@@ -60,9 +60,10 @@ fi
 echo
 
 # Build Rust CLI
-if [ -d "${REPO_ROOT}/noetlctl" ]; then
+CLI_DIR="${NOETL_CLI_REPO:-${REPO_ROOT}/../cli}"
+if [ -d "${CLI_DIR}" ]; then
     echo -e "${GREEN}Building Rust CLI binary...${NC}"
-    cd "${REPO_ROOT}/noetlctl"
+    cd "${CLI_DIR}"
     
     if ! command -v cargo &> /dev/null; then
         echo -e "${RED}Error: cargo is not installed${NC}"
@@ -86,7 +87,8 @@ if [ -d "${REPO_ROOT}/noetlctl" ]; then
     echo -e "${GREEN}Rust CLI built successfully${NC}"
     echo "Binary location: ${REPO_ROOT}/bin/noetl"
 else
-    echo -e "${YELLOW}Skipping Rust CLI build (noetlctl not found)${NC}"
+    echo -e "${YELLOW}Skipping Rust CLI build (CLI repo not found at ${CLI_DIR})${NC}"
+    echo "Clone https://github.com/noetl/cli next to this repo or set NOETL_CLI_REPO."
 fi
 
 echo
