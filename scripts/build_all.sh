@@ -55,7 +55,8 @@ if [ "$BUILD_RUST" = true ]; then
     echo "Step 1: Building Rust CLI for Linux platforms..."
     echo "-------------------------------------------------------------------"
     
-    cd noetlctl
+    CLI_DIR="${NOETL_CLI_REPO:-../cli}"
+    cd "$CLI_DIR"
     
     # Install cross if needed
     if ! command -v cross &> /dev/null; then
@@ -144,8 +145,8 @@ echo "Docker image:  $TAG"
 
 if [ "$BUILD_RUST" = true ]; then
     echo "Rust binaries:"
-    echo "  - noetlctl/target/x86_64-unknown-linux-gnu/release/noetl"
-    echo "  - noetlctl/target/aarch64-unknown-linux-gnu/release/noetl"
+    echo "  - ${NOETL_CLI_REPO:-../cli}/target/x86_64-unknown-linux-gnu/release/noetl"
+    echo "  - ${NOETL_CLI_REPO:-../cli}/target/aarch64-unknown-linux-gnu/release/noetl"
     if [[ "$OSTYPE" == "darwin"* ]]; then
         echo "  - bin/noetl (local Mac)"
     fi

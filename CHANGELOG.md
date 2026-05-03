@@ -1307,7 +1307,7 @@ All notable changes to this project will be documented in this file.
 
 ### Bug Fixes
 
-* add local playbook execution to noetlctl CLI ([b46ba98](https://github.com/noetl/noetl/commit/b46ba98666f715603c43c9880d9e4506c74ec101))
+* add local playbook execution to the CLI ([b46ba98](https://github.com/noetl/noetl/commit/b46ba98666f715603c43c9880d9e4506c74ec101))
 
 ## [2.5.2](https://github.com/noetl/noetl/compare/v2.5.1...v2.5.2) (2026-01-07)
 
@@ -1325,8 +1325,8 @@ All notable changes to this project will be documented in this file.
 
 ### Features
 
-* Phase 1 - Rename noetlctl to noetl and add server/worker/db management commands ([9b404ef](https://github.com/noetl/noetl/commit/9b404ef339189068cc05878ea9543d4a1154535e))
-* remove Python CLI and complete Rust CLI migration (Phase 3) ([6823d3d](https://github.com/noetl/noetl/commit/6823d3d5a768c0176a15899df0956888092c8ef0))
+* Phase 1 - add server/worker/db management commands to the CLI ([9b404ef](https://github.com/noetl/noetl/commit/9b404ef339189068cc05878ea9543d4a1154535e))
+* complete Rust CLI migration (Phase 3) ([6823d3d](https://github.com/noetl/noetl/commit/6823d3d5a768c0176a15899df0956888092c8ef0))
 
 ### Bug Fixes
 

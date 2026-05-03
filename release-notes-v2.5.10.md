@@ -27,14 +27,9 @@ sudo apt-get update
 sudo apt-get install noetl
 ```
 
-### PyPI
-```bash
-pip install noetlctl
-```
-
 ### Cargo
 ```bash
-cargo install noetl
+cargo install --bins noetl
 ```
 
 ## Documentation

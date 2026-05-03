@@ -91,8 +91,7 @@ In use (do not delete):
 - docker/jupyter/Dockerfile — used by docker-compose jupyter service
 
 Rust CLI source:
-- noetlctl/src/main.rs — Rust CLI implementation (compiled in rust-builder stage)
-- noetlctl/Cargo.toml — Rust dependencies and build configuration
+- https://github.com/noetl/cli — Rust CLI implementation and release source
 
 Not used by current build scripts or K8s deploys (safe to remove):
 - k8s/noetl/Dockerfile

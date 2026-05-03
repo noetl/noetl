@@ -68,10 +68,9 @@ RUN apt-get update && apt-get --no-install-recommends install -y \
 COPY --from=builder /opt/noetl/.venv /opt/noetl/.venv
 
 # Optional: Copy pre-compiled Rust binary if available
-# Binaries must be built separately using: scripts/build_rust_multiarch.sh
-# For now, Rust CLI is optional - Python CLI works fine
+# Binaries must be built separately from https://github.com/noetl/cli.
 # ARG TARGETARCH
-# COPY noetlctl/target/x86_64-unknown-linux-gnu/release/noetl /usr/local/bin/noetl || echo "No Rust binary"
+# COPY target/x86_64-unknown-linux-gnu/release/noetl /usr/local/bin/noetl || echo "No Rust binary"
 
 WORKDIR /opt/noetl
 
@@ -87,5 +86,5 @@ ENV PYTHONPATH="/opt/noetl"
 ENV PATH="/opt/noetl/.venv/bin:$PATH"
 
 # Default command: Use Python directly (more reliable across architectures)
-# Rust CLI can be used manually: noetl server start --host 0.0.0.0 --port 8082
+# Rust CLI can be added manually: noetl server start --host 0.0.0.0 --port 8082
 CMD ["python", "-m", "noetl.server", "--host", "0.0.0.0", "--port", "8082", "--init-db"]

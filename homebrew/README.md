@@ -94,9 +94,9 @@ noetl k8s reset
 If you prefer to build from source:
 
 ```bash
-git clone https://github.com/noetl/noetl.git
-cd noetl
-cargo build --release -p noetl-cli
+git clone https://github.com/noetl/cli.git
+cd cli
+cargo build --release --bins
 cp target/release/noetl /usr/local/bin/
 ```
 
@@ -104,8 +104,7 @@ cp target/release/noetl /usr/local/bin/
 
 - **Homepage**: https://noetl.io
 - **Documentation**: https://noetl.io/docs
-- **GitHub**: https://github.com/noetl/noetl
-- **PyPI Package**: https://pypi.org/project/noetl-cli/
+- **CLI GitHub**: https://github.com/noetl/cli
 
 ## Support
 
