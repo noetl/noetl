@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.30.0](https://github.com/noetl/noetl/compare/v2.29.0...v2.30.0) (2026-05-03)
+
+### Features
+
+* **rbac:** cluster RBAC for noetl-worker lifecycle-agent installs ([2a2528b](https://github.com/noetl/noetl/commit/2a2528bf0887b97eefdecfa0a5e5b19409f96143)), closes [#400](https://github.com/noetl/noetl/issues/400) [noetl/noetl#395](https://github.com/noetl/noetl/issues/395) [noetl/noetl#396](https://github.com/noetl/noetl/issues/396) [noetl/noetl#397](https://github.com/noetl/noetl/issues/397) [noetl/noetl#398](https://github.com/noetl/noetl/issues/398) [noetl/noetl#399](https://github.com/noetl/noetl/issues/399) [noetl/noetl#400](https://github.com/noetl/noetl/issues/400) [noetl/ops#15](https://github.com/noetl/ops/issues/15) [noetl/ops#16](https://github.com/noetl/ops/issues/16) [noetl/ops#17](https://github.com/noetl/ops/issues/17) [noetl/ops#18](https://github.com/noetl/ops/issues/18)
+
+### Bug Fixes
+
+* **db:** guard GKE event partition attach ([461b39b](https://github.com/noetl/noetl/commit/461b39b9bc021b9b89d5a24426b42b739e905a1b))
+
 ## [2.29.0](https://github.com/noetl/noetl/compare/v2.28.0...v2.29.0) (2026-04-29)
 
 ### Features
