@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.31.0](https://github.com/noetl/noetl/compare/v2.30.0...v2.31.0) (2026-05-04)
+
+### Features
+
+* **agent:** add framework=noetl — dispatch peer playbooks as agents ([4d798fb](https://github.com/noetl/noetl/commit/4d798fbd1bc502bc9bd2842be79f98b385a95676))
+
 ## [2.30.0](https://github.com/noetl/noetl/compare/v2.29.0...v2.30.0) (2026-05-03)
 
 ### Features
