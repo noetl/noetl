@@ -254,8 +254,42 @@ def _invoke_noetl_playbook(
     that need block-on-result semantics with a particular sub-step
     output should use `tool: kind: playbook` with `return_step:`
     directly.
+
+    **Optional-dependency contract.** AI features are optional in
+    NoETL — a deployment without the workflow plugin available
+    must not crash the worker. We import ``execute_playbook_task``
+    lazily here and surface a structured error envelope on
+    ImportError rather than letting the exception leak. The worker
+    keeps running; the playbook step fails with a clear "this
+    feature is not available" message; non-AI playbooks are
+    completely unaffected.
     """
-    from noetl.core.workflow.playbook import execute_playbook_task
+    try:
+        from noetl.core.workflow.playbook import execute_playbook_task
+    except ImportError as exc:
+        # Workflow plugin not available in this deployment. Return a
+        # clean error envelope so the caller sees a typed, retryable
+        # failure rather than a worker-level traceback.
+        logger.warning(
+            "AGENT.EXECUTE framework=noetl unavailable — "
+            "noetl.core.workflow.playbook could not be imported (%s). "
+            "Returning structured error envelope.",
+            exc,
+        )
+        return {
+            "status": "error",
+            "framework": "noetl",
+            "entrypoint": entrypoint,
+            "error": {
+                "kind": "agent.dependency",
+                "code": "WORKFLOW_PLUGIN_UNAVAILABLE",
+                "message": (
+                    "framework=noetl requires noetl.core.workflow.playbook; "
+                    f"import failed: {exc}"
+                ),
+                "retryable": False,
+            },
+        }
 
     # The plugin's task_config contract expects `path` (catalog
     # playbook path) plus an optional `input` dict. Build that out
