@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.33.0](https://github.com/noetl/noetl/compare/v2.32.0...v2.33.0) (2026-05-04)
+
+### Features
+
+* **tools:** add ollama_bridge MCP server for cheap-first inference ([5aa9275](https://github.com/noetl/noetl/commit/5aa927551cc5bd2a58ec6d36cc7e03bc96391cbe))
+
 ## [2.32.0](https://github.com/noetl/noetl/compare/v2.31.0...v2.32.0) (2026-05-04)
 
 ### Features
