@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.35.1](https://github.com/noetl/noetl/compare/v2.35.0...v2.35.1) (2026-05-04)
+
+### Bug Fixes
+
+* **spike:** graceful degradation when AI subsystems are missing ([0198c24](https://github.com/noetl/noetl/commit/0198c24f859ac8d9aa9d76a63ef338a90c86b2a3)), closes [noetl/noetl#407](https://github.com/noetl/noetl/issues/407) [noetl/noetl#408](https://github.com/noetl/noetl/issues/408) [noetl/docs#22](https://github.com/noetl/docs/issues/22)
+
 ## [2.35.0](https://github.com/noetl/noetl/compare/v2.34.0...v2.35.0) (2026-05-04)
 
 ### Features
