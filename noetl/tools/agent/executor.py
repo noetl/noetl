@@ -64,12 +64,118 @@ def _load_entrypoint(entrypoint: str) -> Any:
 
 def _coerce_framework(value: Any) -> str:
     framework = str(value or "custom").strip().lower()
-    if framework not in {"adk", "langchain", "custom"}:
+    # `noetl` invokes a peer NoETL playbook as an agent — no Python
+    # entrypoint loading; the entrypoint is read as a catalog playbook
+    # path and dispatched as a sub-playbook. See
+    # `_invoke_noetl_playbook` below and the
+    # sync/issues/2026-05-03-noetl-as-ai-os-architecture-spike.md
+    # write-up for the full framing (Gap 1: playbook ≡ agent).
+    if framework not in {"adk", "langchain", "custom", "noetl"}:
         raise ValueError(
-            "agent.framework must be one of: adk, langchain, custom "
+            "agent.framework must be one of: adk, langchain, custom, noetl "
             f"(got: {framework!r})"
         )
     return framework
+
+
+def _invoke_noetl_playbook(
+    *,
+    entrypoint: str,
+    payload: Any,
+    invoke_kwargs: Dict[str, Any],
+    task_config: Dict[str, Any],
+    context: Dict[str, Any],
+    jinja_env: Any,
+) -> Dict[str, Any]:
+    """Dispatch a peer NoETL playbook as the agent runtime.
+
+    `entrypoint` is interpreted as a catalog playbook path (e.g.
+    ``agents/local_llm/gemma_chat``). The dispatch goes through the
+    same machinery `tool: kind: playbook` uses for fire-and-forget
+    execution — `execute_playbook_task` from
+    `noetl.core.workflow.playbook`. Result shape is normalised back
+    into the agent envelope (`status`, `data`, `execution_id`,
+    `duration`, optional `error`).
+
+    Why not promote this to `nats_worker._execute_tool` and use
+    `self._execute_playbook` (return-step semantics)? Because the
+    agent executor needs to be importable from the local rust
+    binary's runtime path too (no `self`); routing through the
+    plugin function keeps the call surface symmetrical. Callers
+    that need block-on-result semantics with a particular sub-step
+    output should use `tool: kind: playbook` with `return_step:`
+    directly.
+    """
+    from noetl.core.workflow.playbook import execute_playbook_task
+
+    # The plugin's task_config contract expects `path` (catalog
+    # playbook path) plus an optional `input` dict. Build that out
+    # of `entrypoint` + the agent's payload + invoke_kwargs.
+    sub_input: Dict[str, Any] = {}
+    if isinstance(payload, dict):
+        sub_input.update(payload)
+    elif payload is not None:
+        sub_input["input"] = payload
+    if isinstance(invoke_kwargs, dict):
+        # invoke_kwargs win — they're the agent caller's per-call
+        # overrides on top of whatever the payload carries.
+        sub_input.update(invoke_kwargs)
+
+    sub_task_config: Dict[str, Any] = {
+        "task": task_config.get("name") or "agent_noetl_playbook",
+        "path": entrypoint,
+        "input": sub_input,
+    }
+    # Carry through caller-supplied catalog version if present so an
+    # agent invocation pinned to a specific playbook revision stays
+    # pinned through the dispatch.
+    if "version" in task_config:
+        sub_task_config["version"] = task_config["version"]
+
+    sub_result = execute_playbook_task(
+        sub_task_config,
+        context,
+        jinja_env,
+        sub_input,
+    )
+
+    # Normalise the plugin's status-wording into the agent envelope.
+    # execute_playbook_task returns 'success'/'error'; agent callers
+    # expect 'ok'/'error'.
+    if isinstance(sub_result, dict):
+        plugin_status = sub_result.get("status")
+        normalised_status = "ok" if plugin_status == "success" else (
+            plugin_status if plugin_status else "error"
+        )
+        envelope: Dict[str, Any] = {
+            "status": normalised_status,
+            "framework": "noetl",
+            "entrypoint": entrypoint,
+            "data": sub_result.get("data"),
+            "execution_id": sub_result.get("execution_id"),
+            "duration": sub_result.get("duration"),
+        }
+        if normalised_status != "ok":
+            envelope["error"] = {
+                "kind": "agent.execution",
+                "code": "PLAYBOOK_FAILED",
+                "message": sub_result.get("error") or "sub-playbook returned non-success status",
+                "retryable": False,
+            }
+        return envelope
+
+    # Defensive: plugin returned something unexpected.
+    return {
+        "status": "error",
+        "framework": "noetl",
+        "entrypoint": entrypoint,
+        "error": {
+            "kind": "agent.execution",
+            "code": "UNEXPECTED_RESULT_SHAPE",
+            "message": f"execute_playbook_task returned non-dict: {type(sub_result).__name__}",
+            "retryable": False,
+        },
+    }
 
 
 def _call_plan(
@@ -295,6 +401,52 @@ async def execute_agent_task(
                 "retryable": False,
             },
         }
+
+    # `framework: noetl` short-circuits the Python-entrypoint path
+    # entirely — entrypoint is treated as a catalog playbook path
+    # and dispatched as a sub-playbook. This is the playbook-as-
+    # agent path; see _invoke_noetl_playbook above and the
+    # sync/issues spike for context.
+    if framework == "noetl":
+        if not entrypoint or not isinstance(entrypoint, str):
+            return {
+                "status": "error",
+                "error": {
+                    "kind": "agent.configuration",
+                    "code": "INVALID_ENTRYPOINT",
+                    "message": (
+                        "agent.framework=noetl requires agent.entrypoint to be a "
+                        "catalog playbook path string (got: "
+                        f"{type(entrypoint).__name__})"
+                    ),
+                    "retryable": False,
+                },
+            }
+        try:
+            return _invoke_noetl_playbook(
+                entrypoint=entrypoint,
+                payload=payload,
+                invoke_kwargs=invoke_kwargs,
+                task_config=merged,
+                context=context or {},
+                jinja_env=jinja_env,
+            )
+        except Exception as exc:
+            logger.error(
+                "AGENT.EXECUTE noetl-framework dispatch failed: entrypoint=%s error=%s",
+                entrypoint, exc, exc_info=True,
+            )
+            return {
+                "status": "error",
+                "framework": "noetl",
+                "entrypoint": entrypoint,
+                "error": {
+                    "kind": "agent.execution",
+                    "code": type(exc).__name__,
+                    "message": str(exc),
+                    "retryable": False,
+                },
+            }
 
     try:
         entry = _load_entrypoint(entrypoint)
