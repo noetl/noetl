@@ -26,6 +26,7 @@ from noetl.server.api.auth import (
     load_enforcement_settings,
 )
 
+from . import playbook_mcp
 from . import schema as mcp_schema
 from . import service as mcp_service
 
@@ -235,6 +236,26 @@ async def _register_default(*, content: str, resource_type: str) -> dict[str, An
     )
 
 
+async def _status_via_core(execution_id: str) -> dict[str, Any]:
+    """Default status helper for the playbook-as-MCP endpoint.
+
+    Wraps ``noetl.server.api.core.execution.get_execution_status`` so the
+    JSON-RPC dispatcher can poll an execution to terminal without
+    re-implementing the event-log fallback logic. Late-imported to keep
+    server-startup unaffected for deployments that don't enable MCP.
+    """
+    from noetl.server.api.core.execution import get_execution_status
+
+    snapshot = await get_execution_status(execution_id, full=True)
+    if isinstance(snapshot, dict):
+        return snapshot
+    if hasattr(snapshot, "model_dump"):
+        dumped = snapshot.model_dump()
+        if isinstance(dumped, dict):
+            return dumped
+    return {}
+
+
 # ---------------------------------------------------------------------------
 # Lifecycle dispatch
 # ---------------------------------------------------------------------------
@@ -304,6 +325,46 @@ async def post_discover(
     except Exception as exc:
         logger.exception("MCP discover failed")
         raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+# ---------------------------------------------------------------------------
+# Playbook-as-MCP-server (JSON-RPC over HTTP)
+# ---------------------------------------------------------------------------
+
+
+@router.post(
+    "/mcp/playbook/{path:path}/jsonrpc",
+    summary="Expose a registered playbook as an MCP-protocol JSON-RPC server",
+)
+async def post_playbook_mcp_jsonrpc(
+    request: Request,
+    path: str = Path(..., description="Catalog playbook path"),
+    body: dict[str, Any] = Body(default_factory=dict),
+    catalog_service=Depends(_get_catalog_service),
+    auth_settings: AuthEnforcementSettings = Depends(load_enforcement_settings),
+):
+    """Implement the MCP server protocol for the playbook at ``path``.
+
+    Supports the standard MCP handshake methods: ``initialize``,
+    ``tools/list``, ``tools/call``, ``ping``. ``tools/call`` dispatches
+    the playbook through the existing /api/execute machinery and polls
+    the execution to terminal status before returning the result envelope
+    as MCP content blocks.
+
+    The route returns ``200 OK`` even on protocol-level failures —
+    JSON-RPC errors travel in the response body rather than the HTTP
+    status, which is what MCP clients expect. We only return a non-200
+    status for transport-level problems (a bare-non-object body, an
+    unhandled crash inside the dispatcher).
+    """
+    return await playbook_mcp.dispatch_jsonrpc(
+        catalog_service=catalog_service,
+        execute_callable=_execute_via_core,
+        status_callable=_status_via_core,
+        path=path,
+        body=body,
+        auth_check_callable=_build_auth_check(request, auth_settings),
+    )
 
 
 # ---------------------------------------------------------------------------
