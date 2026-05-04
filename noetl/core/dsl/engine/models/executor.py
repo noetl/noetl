@@ -11,6 +11,83 @@ class WorkbookTask(BaseModel):
 
 
 # ============================================================================
+# Playbook Metadata - typed view over the metadata dict
+# ============================================================================
+
+
+class PlaybookMetadata(BaseModel):
+    """Typed view over the ``metadata`` dict on a Playbook / Agent.
+
+    The on-disk schema keeps ``metadata`` as a free-form dict (so authors
+    can attach arbitrary keys without churning the Pydantic model on
+    every new use case), but a handful of well-known fields drive
+    server / GUI behaviour and need shape validation:
+
+    - ``name`` — human-readable resource title; required for every
+      catalog entry.
+    - ``path`` — canonical catalog path; runtime falls back on this
+      via ``playbook.metadata.get("path", ...)``.
+    - ``description`` — markdown-rendered description shown in the
+      GUI; surfaces as the MCP tool's ``description`` field.
+    - ``tags`` — list of strings; used by catalog filtering.
+    - ``exposed_in_ui`` — bool; opt-in flag for surfacing the
+      resource's workload form in the GUI's run dialog.
+    - ``exposes_as_mcp`` — bool; opt-out (when false) flag that the
+      playbook-as-MCP-server endpoint reads to decide whether to
+      advertise the playbook over the MCP wire. Absent / true means
+      "expose"; explicit false means "do not expose".
+    - ``agent`` — bool; legacy flag distinguishing agent-style
+      playbooks from regular ones.
+    - ``capabilities`` — list of strings used by the agent
+      catalogue's filter endpoints.
+
+    Unknown keys pass through unchanged thanks to ``extra=allow`` —
+    the model only constrains shapes for fields it knows. Use this
+    class when you need typed access (e.g. ``meta.exposes_as_mcp``),
+    and keep using the dict directly when you need the full set of
+    keys.
+    """
+
+    name: str = Field(..., description="Human-readable resource title")
+    path: Optional[str] = Field(None, description="Canonical catalog path")
+    description: Optional[str] = Field(None, description="Markdown description")
+    tags: Optional[list[str]] = Field(None, description="Catalog filter tags")
+    exposed_in_ui: Optional[bool] = Field(
+        None,
+        description="Opt-in: render workload form in GUI run dialog",
+    )
+    exposes_as_mcp: Optional[bool] = Field(
+        None,
+        description=(
+            "Opt-out flag (when explicitly false) for the "
+            "playbook-as-MCP-server endpoint. Absent / true means the "
+            "playbook is exposed as an MCP tool; false hides it."
+        ),
+    )
+    agent: Optional[bool] = Field(None, description="Legacy agent flag")
+    capabilities: Optional[list[str]] = Field(
+        None, description="Agent capabilities for filtering"
+    )
+
+    model_config = {"extra": "allow"}
+
+    @field_validator("tags", "capabilities", mode="before")
+    @classmethod
+    def _coerce_str_list(cls, v: Any) -> Any:
+        # Accept None, a list of strings, or a single string (split once).
+        # The string-singleton case shows up in copy-paste YAML where an
+        # author wrote ``tags: foo`` instead of ``tags: [foo]`` — accept
+        # it rather than rejecting registration over a trivial mistake.
+        if v is None:
+            return v
+        if isinstance(v, str):
+            return [v]
+        if not isinstance(v, list):
+            raise ValueError("must be a list of strings (or a single string)")
+        return v
+
+
+# ============================================================================
 # Executor Models - Runtime requirements and workflow control
 # ============================================================================
 
@@ -113,9 +190,25 @@ class Playbook(BaseModel):
     @field_validator("metadata")
     @classmethod
     def validate_metadata(cls, v):
-        """Ensure metadata has required fields."""
-        if "name" not in v:
-            raise ValueError("Metadata must include 'name'")
+        """Validate metadata against the typed PlaybookMetadata view.
+
+        The on-disk shape stays as a free-form dict so existing call
+        sites that do ``playbook.metadata.get("path", ...)`` keep
+        working unchanged. We round-trip through ``PlaybookMetadata``
+        purely to enforce typed validation on the well-known fields
+        (``exposes_as_mcp`` / ``exposed_in_ui`` must be bool when
+        present, ``tags`` / ``capabilities`` must be lists of strings,
+        ``name`` is required). Unknown keys pass through because the
+        sub-model uses ``extra=allow``. ``ValueError`` from Pydantic
+        propagates as a 422 at the catalog-register endpoint.
+        """
+        if not isinstance(v, dict):
+            raise ValueError("metadata must be a mapping/dict")
+        # Validate (raises pydantic.ValidationError on bad shapes); we
+        # discard the parsed model and return the original dict so
+        # downstream code that expects ``metadata.get(...)`` keeps
+        # working without a type-shift refactor.
+        PlaybookMetadata.model_validate(v)
         return v
 
     def get_entry_step(self) -> str:

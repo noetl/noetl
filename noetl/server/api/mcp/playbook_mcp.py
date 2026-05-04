@@ -245,13 +245,16 @@ async def _build_tool_spec(catalog_service, path: str) -> dict[str, Any]:
         )
 
     payload = entry.get("payload") or _safe_yaml_load(entry.get("content")) or {}
-    metadata = payload.get("metadata") if isinstance(payload, dict) else {}
-    metadata = metadata if isinstance(metadata, dict) else {}
+    metadata_dict = payload.get("metadata") if isinstance(payload, dict) else {}
+    metadata_dict = metadata_dict if isinstance(metadata_dict, dict) else {}
+    metadata = _typed_metadata(metadata_dict)
 
-    # Soft Gap 3 enforcement: when the playbook explicitly opts out
-    # (exposes_as_mcp=false) we 403; when absent or true, allow.
-    exposes_flag = metadata.get("exposes_as_mcp")
-    if exposes_flag is False:
+    # Gap 3: read the opt-out flag through the typed PlaybookMetadata
+    # view rather than a raw dict lookup. ``exposes_as_mcp`` is now
+    # validated at catalog-register time (must be bool when present),
+    # so by the time we reach this point we know it is None / True /
+    # False. None or True → expose; False → 403.
+    if metadata.exposes_as_mcp is False:
         raise HTTPException(
             status_code=403,
             detail=(
@@ -260,8 +263,8 @@ async def _build_tool_spec(catalog_service, path: str) -> dict[str, Any]:
             ),
         )
 
-    tool_name = _coerce_tool_name(metadata.get("name") or path)
-    description = metadata.get("description") or _default_description(path, kind)
+    tool_name = _coerce_tool_name(metadata.name or path)
+    description = metadata.description or _default_description(path, kind)
     input_schema = _input_schema_from_ui_schema(entry.get("content") or "")
 
     return {
@@ -516,6 +519,32 @@ def _extract_text(status: dict[str, Any]) -> str:
     if len(rendered) > 8000:
         rendered = rendered[:8000] + "...[truncated]"
     return rendered
+
+
+def _typed_metadata(raw: dict[str, Any]):
+    """Parse a metadata dict into the typed PlaybookMetadata view.
+
+    Falls back to a permissive stub when the metadata is missing
+    required keys (e.g. catalog entries written before ``name`` was
+    enforced). Lazy import keeps this module importable in test
+    harnesses that don't load the full DSL package.
+    """
+    try:
+        from noetl.core.dsl.engine.models.executor import PlaybookMetadata
+
+        return PlaybookMetadata.model_validate(raw)
+    except Exception:
+        # Permissive fallback: hand back a duck-typed stand-in so
+        # callers can still read .name / .description / .exposes_as_mcp
+        # without crashing. The catalog-register flow already validated
+        # well-formed entries; this branch covers legacy data + harness
+        # tests with synthetic payloads.
+        class _Stub:
+            name = raw.get("name")
+            description = raw.get("description")
+            exposes_as_mcp = raw.get("exposes_as_mcp")
+
+        return _Stub()
 
 
 def _safe_yaml_load(content: Any) -> Optional[dict[str, Any]]:
