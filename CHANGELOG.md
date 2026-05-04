@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.34.0](https://github.com/noetl/noetl/compare/v2.33.0...v2.34.0) (2026-05-04)
+
+### Features
+
+* **dsl:** typed PlaybookMetadata + register-time validation ([a272d88](https://github.com/noetl/noetl/commit/a272d889886a0df5dde5858ee98157d45ba20a2c))
+
 ## [2.33.0](https://github.com/noetl/noetl/compare/v2.32.0...v2.33.0) (2026-05-04)
 
 ### Features
