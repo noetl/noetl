@@ -21,12 +21,25 @@ from __future__ import annotations
 
 import importlib
 import inspect
+import os
 from typing import Any, Dict, Optional, Tuple
 
 from jinja2 import Environment
 
 from noetl.core.dsl.render import render_template
 from noetl.core.logger import setup_logger
+
+
+# Default catalog path for the self-troubleshoot agent. Override at the
+# task level via ``on_failure.troubleshoot_path`` when a deployment
+# wants a different diagnostic agent (e.g. a domain-specific one).
+_DEFAULT_TROUBLESHOOT_PATH = "automation/agents/troubleshoot/diagnose_execution"
+
+# Global env-level opt-in. Per-task ``on_failure.troubleshoot: false``
+# always wins over the env var so operators can disable the auto-
+# dispatch for individual playbooks even when the deployment turns
+# it on globally.
+_AUTO_TROUBLESHOOT_ENV = "NOETL_AGENT_AUTO_TROUBLESHOOT"
 
 logger = setup_logger(__name__, include_location=True)
 
@@ -76,6 +89,142 @@ def _coerce_framework(value: Any) -> str:
             f"(got: {framework!r})"
         )
     return framework
+
+
+def _should_auto_troubleshoot(
+    *,
+    task_config: Dict[str, Any],
+    entrypoint: str,
+    troubleshoot_path: str,
+) -> bool:
+    """Decide whether to auto-dispatch the troubleshoot agent on failure.
+
+    Three-way precedence:
+
+    1. **Per-task explicit setting** — ``task_config.on_failure.troubleshoot``
+       (bool). If present, this wins regardless of the env. Operators
+       set ``troubleshoot: false`` on individual agents that should
+       never auto-diagnose (e.g. tight inner loops where the cost of a
+       diagnosis call would dominate).
+    2. **Env-level default** — ``NOETL_AGENT_AUTO_TROUBLESHOOT`` truthy
+       turns auto-diagnosis on for every ``tool: agent framework=noetl``
+       call that doesn't override at the task level.
+    3. **Default off** — diagnostics opt-in only when the operator
+       explicitly turns them on. Avoids surprise cost / latency on
+       deployments that haven't onboarded the troubleshoot agent.
+
+    Always skipped (regardless of the above) when the failing entrypoint
+    is *itself* the troubleshoot path — we don't troubleshoot the
+    troubleshooter. Without this guard a failed troubleshoot run would
+    re-dispatch itself, recursing until the worker hits a stack limit
+    or a per-execution duration ceiling.
+    """
+    if entrypoint == troubleshoot_path:
+        return False
+
+    on_failure = task_config.get("on_failure") if isinstance(task_config, dict) else None
+    if isinstance(on_failure, dict) and "troubleshoot" in on_failure:
+        return bool(on_failure.get("troubleshoot"))
+
+    env_value = os.environ.get(_AUTO_TROUBLESHOOT_ENV, "").strip().lower()
+    return env_value in ("1", "true", "yes", "on")
+
+
+def _dispatch_troubleshoot_diagnosis(
+    *,
+    failed_execution_id: Optional[str],
+    failed_entrypoint: str,
+    troubleshoot_path: str,
+    task_config: Dict[str, Any],
+    context: Dict[str, Any],
+    jinja_env: Any,
+) -> Optional[Dict[str, Any]]:
+    """Run the troubleshoot agent against a freshly failed sub-execution.
+
+    Returns the diagnosis dict (the inner ``data`` field of the
+    troubleshoot agent's envelope, which carries
+    ``{category, confidence, root_cause, suggested_action, source}``)
+    or ``None`` if the diagnosis itself fails. We swallow exceptions
+    here because a failing diagnostic should never *replace* the
+    original failure with a diagnosis-tool error — the original error
+    is what the caller actually wants to see.
+
+    The troubleshoot agent's workload knobs flow through
+    ``task_config.on_failure``: operators can pin a specific Ollama
+    model, raise / lower the confidence threshold, or disable
+    escalation per-call. The contract mirrors the troubleshoot
+    agent's own workload schema (see
+    ``automation/agents/troubleshoot/diagnose_execution.yaml``).
+    """
+    if not failed_execution_id:
+        # Without an execution_id the troubleshoot agent has nothing
+        # to diagnose. The fetch_events step would 422; surface the
+        # absence here so we don't waste a worker on a guaranteed bad
+        # call.
+        logger.warning(
+            "AGENT.EXECUTE auto-troubleshoot skipped: failed sub-playbook "
+            "did not return an execution_id (entrypoint=%s)",
+            failed_entrypoint,
+        )
+        return None
+
+    try:
+        from noetl.core.workflow.playbook import execute_playbook_task
+    except Exception:
+        logger.exception("AGENT.EXECUTE auto-troubleshoot import failed")
+        return None
+
+    on_failure = task_config.get("on_failure") if isinstance(task_config, dict) else {}
+    on_failure = on_failure if isinstance(on_failure, dict) else {}
+
+    diagnose_input: Dict[str, Any] = {
+        "execution_id": str(failed_execution_id),
+    }
+    # Pass-through workload overrides: operators can pin Ollama model,
+    # tighten the confidence threshold, swap escalation target. We
+    # filter to the troubleshoot agent's known knobs to avoid
+    # accidentally leaking arbitrary on_failure config into the
+    # workload (where it would be silently ignored anyway).
+    for key in (
+        "ollama_model",
+        "ollama_mcp_server",
+        "confidence_threshold",
+        "escalate_to",
+        "openai_credential",
+        "openai_model",
+        "noetl_url",
+    ):
+        if key in on_failure:
+            diagnose_input[key] = on_failure[key]
+
+    sub_task_config: Dict[str, Any] = {
+        "task": "agent_auto_troubleshoot",
+        "path": troubleshoot_path,
+        "input": diagnose_input,
+    }
+
+    try:
+        sub_result = execute_playbook_task(
+            sub_task_config,
+            context,
+            jinja_env,
+            diagnose_input,
+        )
+    except Exception:
+        logger.exception(
+            "AGENT.EXECUTE auto-troubleshoot dispatch failed for execution_id=%s",
+            failed_execution_id,
+        )
+        return None
+
+    if not isinstance(sub_result, dict):
+        return None
+    if sub_result.get("status") not in ("success", "ok"):
+        # Diagnostic itself failed; leave the envelope untouched.
+        return None
+
+    data = sub_result.get("data")
+    return data if isinstance(data, dict) else None
 
 
 def _invoke_noetl_playbook(
@@ -162,6 +311,34 @@ def _invoke_noetl_playbook(
                 "message": sub_result.get("error") or "sub-playbook returned non-success status",
                 "retryable": False,
             }
+
+            # Gap 4.1: auto-dispatch the troubleshoot agent on failure
+            # when opt-in is set. The diagnosis attaches under
+            # ``error.diagnosis`` so callers don't have to look for a
+            # separate envelope — the failure and its analysis travel
+            # together. Best-effort: if the troubleshoot agent itself
+            # fails or isn't registered, the original error stays
+            # exactly as it was.
+            on_failure = task_config.get("on_failure") if isinstance(task_config, dict) else {}
+            on_failure = on_failure if isinstance(on_failure, dict) else {}
+            troubleshoot_path = str(
+                on_failure.get("troubleshoot_path") or _DEFAULT_TROUBLESHOOT_PATH
+            )
+            if _should_auto_troubleshoot(
+                task_config=task_config,
+                entrypoint=entrypoint,
+                troubleshoot_path=troubleshoot_path,
+            ):
+                diagnosis = _dispatch_troubleshoot_diagnosis(
+                    failed_execution_id=envelope.get("execution_id"),
+                    failed_entrypoint=entrypoint,
+                    troubleshoot_path=troubleshoot_path,
+                    task_config=task_config,
+                    context=context,
+                    jinja_env=jinja_env,
+                )
+                if diagnosis is not None:
+                    envelope["error"]["diagnosis"] = diagnosis
         return envelope
 
     # Defensive: plugin returned something unexpected.
