@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.35.0](https://github.com/noetl/noetl/compare/v2.34.0...v2.35.0) (2026-05-04)
+
+### Features
+
+* **agent:** auto-dispatch troubleshoot agent on framework=noetl failures ([52fafcd](https://github.com/noetl/noetl/commit/52fafcd2bea425d295d73d55b70f547be3dcfbe9))
+
 ## [2.34.0](https://github.com/noetl/noetl/compare/v2.33.0...v2.34.0) (2026-05-04)
 
 ### Features
