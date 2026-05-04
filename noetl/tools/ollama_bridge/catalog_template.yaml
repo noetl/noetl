@@ -1,0 +1,95 @@
+# Mcp catalog template for the local Ollama bridge.
+#
+# To register:
+#
+#     curl -X POST http://noetl-server.noetl.svc.cluster.local:8080/api/catalog/register \
+#       -H "Content-Type: application/x-yaml" \
+#       --data-binary @catalog_template.yaml
+#
+# Or via the noetl CLI:
+#
+#     noetl catalog register --type mcp \
+#       repos/noetl/noetl/tools/ollama_bridge/catalog_template.yaml
+#
+# After registration, playbooks can call local Ollama models as MCP tools:
+#
+#     - step: cheap_first_pass
+#       tool:
+#         kind: mcp
+#         server: mcp/ollama
+#         tool: chat
+#         arguments:
+#           model: gemma2:2b
+#           system: "You triage NoETL execution failures. Be terse."
+#           messages:
+#             - role: user
+#               content: "{{ workflow_failure_summary }}"
+#
+# The bridge itself runs as a sidecar (see ops/charts/noetl/values for the
+# `ollamaBridge` block once it lands) or standalone via:
+#
+#     python -m noetl.tools.ollama_bridge
+
+apiVersion: noetl.io/v2
+kind: Mcp
+metadata:
+  name: ollama
+  path: mcp/ollama
+  description: |
+    Local Ollama bridge for cheap-first inference. Wraps Ollama's REST API
+    (/api/chat, /api/generate, /api/tags) as MCP tools so playbooks can
+    invoke local Gemma / Qwen / Llama models without a per-step bespoke
+    HTTP integration.
+
+    The bridge is implemented as ``noetl.tools.ollama_bridge`` and runs
+    either as a sidecar to noetl-worker or standalone. The default URL
+    points at the in-cluster sidecar service; override the spec.url for
+    standalone or different deployments.
+
+    This is the inference layer for the self-troubleshoot playbooks
+    (NoETL-as-AI-OS Gap 4): playbooks call Ollama for a first-pass log
+    analysis and only escalate to OpenAI / Claude when local models
+    return low-confidence output.
+
+  tags:
+    - inference
+    - local-models
+    - cheap-first
+    - troubleshooting
+    - exposes_as_mcp
+
+spec:
+  url: http://ollama-bridge.noetl.svc.cluster.local:8765/jsonrpc
+  protocol: mcp/1.0
+  tools:
+    - name: chat
+      description: Chat completion against a local Ollama model
+    - name: generate
+      description: Single-prompt completion (simpler than chat)
+    - name: list_models
+      description: List locally pulled Ollama models
+
+  discovery:
+    initialize_url: http://ollama-bridge.noetl.svc.cluster.local:8765/healthz
+    # Discovery refresh-via is not implemented yet — the bridge's tool
+    # list is static (chat / generate / list_models) so there's nothing
+    # to refresh until we add per-deployment tool customization. Leaving
+    # the field unset means /discover will 422, which is the correct
+    # signal: tools are pinned by the bridge's code, not discovered.
+
+  runtime:
+    # Bridge isn't backed by an Agent playbook — it's a Python sidecar.
+    # Lifecycle / discovery via Agent dispatch isn't applicable here.
+    transport: http
+
+  # Deployment knobs read by the chart's ollamaBridge block (when it
+  # lands in repos/ops/charts/noetl). Override at registration time
+  # for non-default deployments (e.g. pointing at a remote Ollama).
+  deployment:
+    namespace: noetl
+    release_name: ollama-bridge
+    image_repository: ghcr.io/noetl/noetl
+    image_tag: "latest"
+    service_port: 8765
+    ollama_url: http://ollama.noetl.svc.cluster.local:11434
+    ollama_timeout_seconds: "120"
