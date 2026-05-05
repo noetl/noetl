@@ -22,6 +22,7 @@ from __future__ import annotations
 import importlib
 import inspect
 import os
+import time
 from typing import Any, Dict, Optional, Tuple
 
 from jinja2 import Environment
@@ -430,12 +431,32 @@ def _dispatch_troubleshoot_diagnosis(
         or os.environ.get(_DIAGNOSIS_STEP_ENV, "")
         or _DEFAULT_DIAGNOSIS_STEP_NAME
     )
-    diagnosis = _fetch_persisted_diagnosis_from_doc(
-        str(diag_execution_id),
-        diagnosis_step_name=diagnosis_step,
-    )
-    if diagnosis is not None:
-        return diagnosis
+    # The status endpoint can report the diagnosis execution as terminal
+    # before the final persisted event is visible through the execution
+    # document. Retry the document fetch briefly so the parent envelope
+    # carries the actual diagnosis instead of racing a just-completed run.
+    fetch_timeout = float(on_failure.get("diagnosis_fetch_timeout_seconds", 10.0))
+    fetch_interval = float(on_failure.get("diagnosis_fetch_interval_seconds", 1.0))
+    deadline = time.monotonic() + max(0.0, fetch_timeout)
+    fetch_attempt = 0
+    while True:
+        fetch_attempt += 1
+        diagnosis = _fetch_persisted_diagnosis_from_doc(
+            str(diag_execution_id),
+            diagnosis_step_name=diagnosis_step,
+        )
+        if diagnosis is not None:
+            if fetch_attempt > 1:
+                logger.info(
+                    "AGENT.DIAGNOSIS: fetched persisted diagnosis for %s "
+                    "after %d attempts",
+                    diag_execution_id,
+                    fetch_attempt,
+                )
+            return diagnosis
+        if time.monotonic() >= deadline:
+            break
+        time.sleep(max(0.1, fetch_interval))
     if terminal.get("failed"):
         logger.warning(
             "AGENT.DIAGNOSIS: sub-execution %s failed and no persisted "
