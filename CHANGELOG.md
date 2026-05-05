@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.35.3](https://github.com/noetl/noetl/compare/v2.35.2...v2.35.3) (2026-05-05)
+
+### Bug Fixes
+
+* **agent:** preserve agent envelope + wait for sub-execution terminal ([4398a7a](https://github.com/noetl/noetl/commit/4398a7a1bf2d9324649ce3a9c5711de4e66d37ab)), closes [noetl#409](https://github.com/noetl/noetl/issues/409) [noetl/noetl#407](https://github.com/noetl/noetl/issues/407) [noetl/noetl#408](https://github.com/noetl/noetl/issues/408)
+
 ## [2.35.2](https://github.com/noetl/noetl/compare/v2.35.1...v2.35.2) (2026-05-05)
 
 ### Bug Fixes
