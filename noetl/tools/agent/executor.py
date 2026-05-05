@@ -409,7 +409,15 @@ def _dispatch_troubleshoot_diagnosis(
         str(diag_execution_id),
         timeout_seconds=wait_timeout,
     )
-    if not terminal.get("completed") or terminal.get("failed"):
+    can_fetch_persisted = bool(
+        (terminal.get("completed") and not terminal.get("failed"))
+        or (
+            terminal.get("failed")
+            and terminal.get("completion_inferred")
+            and not terminal.get("timeout")
+        )
+    )
+    if not can_fetch_persisted:
         logger.warning(
             "AGENT.DIAGNOSIS: sub-execution %s did not complete cleanly "
             "(terminal=%s); returning no diagnosis",
@@ -422,10 +430,20 @@ def _dispatch_troubleshoot_diagnosis(
         or os.environ.get(_DIAGNOSIS_STEP_ENV, "")
         or _DEFAULT_DIAGNOSIS_STEP_NAME
     )
-    return _fetch_persisted_diagnosis_from_doc(
+    diagnosis = _fetch_persisted_diagnosis_from_doc(
         str(diag_execution_id),
         diagnosis_step_name=diagnosis_step,
     )
+    if diagnosis is not None:
+        return diagnosis
+    if terminal.get("failed"):
+        logger.warning(
+            "AGENT.DIAGNOSIS: sub-execution %s failed and no persisted "
+            "diagnosis was found (terminal=%s)",
+            diag_execution_id,
+            terminal,
+        )
+    return None
 
 
 def _invoke_noetl_playbook(
