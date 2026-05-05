@@ -208,7 +208,10 @@ async def execute_mcp_task(
             )
             session_id = init_headers.get("mcp-session-id") or init_headers.get("Mcp-Session-Id")
             if not session_id:
-                raise RuntimeError("MCP server did not return a session id")
+                logger.debug(
+                    "MCP server %s did not return a session id; continuing as stateless JSON-RPC",
+                    server,
+                )
 
             if method == "tools/call":
                 tool_name = config.get("tool") or config.get("tool_name")
