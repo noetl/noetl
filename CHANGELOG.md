@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.35.6](https://github.com/noetl/noetl/compare/v2.35.5...v2.35.6) (2026-05-05)
+
+### Bug Fixes
+
+* **mcp:** allow stateless JSON-RPC servers ([135b764](https://github.com/noetl/noetl/commit/135b7645fdbf4f93227934bdded5687ad2022b05))
+
 ## [2.35.5](https://github.com/noetl/noetl/compare/v2.35.4...v2.35.5) (2026-05-05)
 
 ### Bug Fixes
