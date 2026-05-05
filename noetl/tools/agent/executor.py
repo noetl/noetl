@@ -213,6 +213,79 @@ def _should_auto_troubleshoot(
     return env_value in ("1", "true", "yes", "on")
 
 
+# Default step name the troubleshoot playbook persists its diagnosis to.
+# Configurable via task_config.on_failure.diagnosis_step or env var so
+# bespoke troubleshoot playbooks can name the step differently.
+_DEFAULT_DIAGNOSIS_STEP_NAME = "persist_diagnosis"
+_DIAGNOSIS_STEP_ENV = "NOETL_TROUBLESHOOT_DIAGNOSIS_STEP"
+_REQUIRED_DIAGNOSIS_KEYS = (
+    "category",
+    "confidence",
+    "root_cause",
+    "suggested_action",
+    "source",
+)
+
+
+def _fetch_persisted_diagnosis_from_doc(
+    execution_id: str,
+    *,
+    diagnosis_step_name: str = _DEFAULT_DIAGNOSIS_STEP_NAME,
+    request_timeout_seconds: float = 10.0,
+) -> Optional[Dict[str, Any]]:
+    """Fetch the full execution doc and pull the persisted diagnosis dict.
+
+    The troubleshoot playbook persists its result at
+    result.context.diagnosis on a terminal event, usually from the
+    persist_diagnosis step. Return None when the doc is unavailable or
+    no qualifying diagnosis exists so the original error remains intact.
+    """
+    try:
+        import requests
+    except ImportError:
+        logger.debug(
+            "AGENT.DIAGNOSIS.FETCH: requests module unavailable; cannot "
+            "extract persisted diagnosis"
+        )
+        return None
+
+    server_url = os.environ.get("NOETL_SERVER_URL", "http://localhost:8083").rstrip("/")
+    if not server_url.endswith("/api"):
+        server_url = server_url + "/api"
+    doc_url = f"{server_url}/executions/{execution_id}"
+
+    try:
+        resp = requests.get(doc_url, timeout=max(1.0, float(request_timeout_seconds)))
+        resp.raise_for_status()
+        doc = resp.json()
+    except Exception as exc:
+        logger.warning(
+            "AGENT.DIAGNOSIS.FETCH: failed to fetch %s: %s",
+            doc_url, exc,
+        )
+        return None
+
+    events = doc.get("events") if isinstance(doc, dict) else None
+    if not isinstance(events, list):
+        return None
+
+    # Walk newest-first so we pick the terminal event over command.issued.
+    for evt in reversed(events):
+        if not isinstance(evt, dict):
+            continue
+        if evt.get("node_name") != diagnosis_step_name:
+            continue
+        if evt.get("event_type") not in ("command.completed", "step.exit", "call.done"):
+            continue
+        result_block = evt.get("result") if isinstance(evt.get("result"), dict) else {}
+        ctx = result_block.get("context") if isinstance(result_block.get("context"), dict) else {}
+        candidate = ctx.get("diagnosis") if isinstance(ctx.get("diagnosis"), dict) else None
+        if candidate and set(_REQUIRED_DIAGNOSIS_KEYS).issubset(candidate.keys()):
+            return candidate
+
+    return None
+
+
 def _dispatch_troubleshoot_diagnosis(
     *,
     failed_execution_id: Optional[str],
@@ -224,11 +297,19 @@ def _dispatch_troubleshoot_diagnosis(
 ) -> Optional[Dict[str, Any]]:
     """Run the troubleshoot agent against a freshly failed sub-execution.
 
-    Returns the diagnosis dict (the inner ``data`` field of the
-    troubleshoot agent's envelope, which carries
-    ``{category, confidence, root_cause, suggested_action, source}``)
-    or ``None`` if the diagnosis itself fails. We swallow exceptions
-    here because a failing diagnostic should never *replace* the
+    Returns the diagnosis dict carrying
+    ``{category, confidence, root_cause, suggested_action, source}``
+    or ``None`` if the diagnosis itself fails.
+
+    Wait-for-terminal contract (mirrors Gap 1 fix in
+    ``_invoke_noetl_playbook``): ``execute_playbook_task`` HTTP-POSTs
+    to /api/execute and returns the started-state response immediately.
+    We poll /api/executions/<id>/status until the diagnose
+    sub-execution terminates, then fetch the full doc and extract the
+    persisted diagnosis from the terminal event.
+
+    We swallow exceptions here because a failing diagnostic should
+    never *replace* the
     original failure with a diagnosis-tool error — the original error
     is what the caller actually wants to see.
 
@@ -300,14 +381,51 @@ def _dispatch_troubleshoot_diagnosis(
         )
         return None
 
-    if not isinstance(sub_result, dict):
-        return None
-    if sub_result.get("status") not in ("success", "ok"):
-        # Diagnostic itself failed; leave the envelope untouched.
+    if not isinstance(sub_result, dict) or sub_result.get("status") not in ("success", "ok"):
+        # Dispatch itself failed (HTTP error, plugin import error, etc.)
+        # — leave the envelope untouched.
         return None
 
     data = sub_result.get("data")
-    return data if isinstance(data, dict) else None
+    if isinstance(data, dict) and set(_REQUIRED_DIAGNOSIS_KEYS).issubset(data.keys()):
+        return data
+
+    diag_execution_id = (
+        sub_result.get("execution_id")
+        or (data or {}).get("execution_id")
+    )
+    if not diag_execution_id:
+        logger.warning(
+            "AGENT.DIAGNOSIS: dispatch succeeded but no execution_id in response; "
+            "cannot wait for terminal or fetch persisted diagnosis"
+        )
+        return None
+
+    # Wait for the diagnose sub-execution to reach terminal status before
+    # fetching the persisted diagnosis. Default 60s; diagnoses are usually
+    # quick, but local model paths can stretch.
+    wait_timeout = float(on_failure.get("diagnosis_wait_timeout_seconds", 60.0))
+    terminal = _wait_for_sub_execution_terminal(
+        str(diag_execution_id),
+        timeout_seconds=wait_timeout,
+    )
+    if not terminal.get("completed") or terminal.get("failed"):
+        logger.warning(
+            "AGENT.DIAGNOSIS: sub-execution %s did not complete cleanly "
+            "(terminal=%s); returning no diagnosis",
+            diag_execution_id, terminal,
+        )
+        return None
+
+    diagnosis_step = str(
+        on_failure.get("diagnosis_step")
+        or os.environ.get(_DIAGNOSIS_STEP_ENV, "")
+        or _DEFAULT_DIAGNOSIS_STEP_NAME
+    )
+    return _fetch_persisted_diagnosis_from_doc(
+        str(diag_execution_id),
+        diagnosis_step_name=diagnosis_step,
+    )
 
 
 def _invoke_noetl_playbook(
