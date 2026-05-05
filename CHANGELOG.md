@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.35.4](https://github.com/noetl/noetl/compare/v2.35.3...v2.35.4) (2026-05-05)
+
+### Bug Fixes
+
+* **worker:** carve out kind:agent from tool_error coercion ([577053f](https://github.com/noetl/noetl/commit/577053fbd1b4d2527263d05dc60efc2c8f7b02f7)), closes [noetl/noetl#407](https://github.com/noetl/noetl/issues/407) [noetl/noetl#408](https://github.com/noetl/noetl/issues/408)
+
 ## [2.35.3](https://github.com/noetl/noetl/compare/v2.35.2...v2.35.3) (2026-05-05)
 
 ### Bug Fixes
