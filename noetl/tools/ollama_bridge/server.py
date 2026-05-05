@@ -343,29 +343,39 @@ def build_app():
 
     Imported lazily so this module can be loaded for unit tests without
     requiring FastAPI to be available.
+
+    Implementation notes:
+
+    * We declare the route handlers with ``response_class=JSONResponse``
+      in the decorator and *no* return-type annotation on the handler.
+      Some FastAPI versions interpret a ``-> JSONResponse`` annotation
+      as the response_model and try to schema-validate the return
+      value as a Pydantic model — it isn't one, so /openapi.json
+      generation fails with 500 and route validation can produce
+      misleading 422s on POST. Decorator-only response class avoids
+      both pitfalls.
+    * The route accepts the raw body via ``Body`` rather than
+      ``Request.body()`` so FastAPI does the JSON parse + content-type
+      negotiation itself. This also makes the openapi schema valid.
     """
-    from fastapi import FastAPI, Request
+    from fastapi import Body, FastAPI
     from fastapi.responses import JSONResponse
 
     app = FastAPI(title="noetl-ollama-bridge", version="1.0")
 
-    @app.post("/jsonrpc")
-    async def _jsonrpc(request: Request) -> JSONResponse:
-        try:
-            body = await request.json()
-        except Exception:
-            return JSONResponse(
-                {"jsonrpc": "2.0", "id": None, "error": {
-                    "code": -32700, "message": "parse error: body must be JSON",
-                }},
-                status_code=400,
-            )
+    @app.post("/jsonrpc", response_class=JSONResponse)
+    async def _jsonrpc(body: Any = Body(default=None)):
+        # Body is parsed by FastAPI as either dict / list / scalar / None;
+        # dispatch_jsonrpc tolerates anything (returns -32600 if not a
+        # JSON-RPC envelope). We don't do our own try/except for parse
+        # errors because FastAPI returns a clean 422 with details if
+        # the wire bytes aren't JSON — same surface MCP clients expect.
         result = await dispatch_jsonrpc(body)
         return JSONResponse(result)
 
-    @app.get("/healthz")
+    @app.get("/healthz", response_class=JSONResponse)
     async def _healthz():  # pragma: no cover -- liveness probe
-        return {"status": "ok"}
+        return JSONResponse({"status": "ok"})
 
     return app
 
