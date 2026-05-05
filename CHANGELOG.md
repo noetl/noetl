@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.35.7](https://github.com/noetl/noetl/compare/v2.35.6...v2.35.7) (2026-05-05)
+
+### Bug Fixes
+
+* **agent:** attach persisted diagnosis from inferred diagnostic runs ([8d744d6](https://github.com/noetl/noetl/commit/8d744d6cf7832e4f5485fdd89d8e01bada218766))
+
 ## [2.35.6](https://github.com/noetl/noetl/compare/v2.35.5...v2.35.6) (2026-05-05)
 
 ### Bug Fixes
