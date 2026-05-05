@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.35.8](https://github.com/noetl/noetl/compare/v2.35.7...v2.35.8) (2026-05-05)
+
+### Bug Fixes
+
+* **agent:** retry persisted diagnosis fetch after terminal wait ([49aae52](https://github.com/noetl/noetl/commit/49aae520c2045ce9b0f2b1ba52f67b7a88e51de5))
+
 ## [2.35.7](https://github.com/noetl/noetl/compare/v2.35.6...v2.35.7) (2026-05-05)
 
 ### Bug Fixes
