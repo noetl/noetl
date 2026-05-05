@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.35.5](https://github.com/noetl/noetl/compare/v2.35.4...v2.35.5) (2026-05-05)
+
+### Bug Fixes
+
+* **agent:** Gap 4.1 — wait for diagnose sub-execution + extract persisted diagnosis ([95da671](https://github.com/noetl/noetl/commit/95da6711a6475a0c916db44a49a58397fecb753f)), closes [#7](https://github.com/noetl/noetl/issues/7) [noetl/noetl#408](https://github.com/noetl/noetl/issues/408) [noetl/noetl#411](https://github.com/noetl/noetl/issues/411) [noetl/noetl#412](https://github.com/noetl/noetl/issues/412)
+
 ## [2.35.4](https://github.com/noetl/noetl/compare/v2.35.3...v2.35.4) (2026-05-05)
 
 ### Bug Fixes
