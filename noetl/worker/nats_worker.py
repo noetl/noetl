@@ -2602,12 +2602,27 @@ class Worker:
             return result.get('data', result) if isinstance(result, dict) else result
 
         elif tool_kind == "agent":
-            # Agent runtime bridge (ADK/LangChain/custom callable adapters)
+            # Agent runtime bridge (ADK/LangChain/custom callable adapters,
+            # plus the framework=noetl path that dispatches a peer playbook
+            # as the agent runtime).
+            #
+            # The agent envelope is the contract — `{status, framework,
+            # entrypoint, data, execution_id, duration, error?}`. Callers
+            # (like the spike's extract_envelope step) check `framework`
+            # and `error.kind` and `error.diagnosis` directly, so we must
+            # NOT unwrap the envelope down to just `.data` the way other
+            # tool kinds do. Without this preservation, Gap 1's
+            # framework=noetl path returns just the inner /api/execute
+            # response (status="started", no framework field) and the
+            # parent step has no way to detect errors or read diagnoses.
+            #
+            # Backward-compat: non-noetl frameworks (adk / langchain /
+            # custom) that don't follow the envelope contract still work
+            # — execute_agent_task wraps their raw output in the same
+            # envelope shape, so the caller-visible structure is uniform.
             task_with = {**config, **args}
             result = await execute_agent_task(task_config, context, jinja_env, task_with)
-            if isinstance(result, dict) and result.get("status") == "error":
-                return result
-            return result.get("data", result) if isinstance(result, dict) else result
+            return result
 
         elif tool_kind == "mcp":
             # Model Context Protocol server bridge. Operations stay inside
