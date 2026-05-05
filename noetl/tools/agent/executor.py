@@ -91,6 +91,89 @@ def _coerce_framework(value: Any) -> str:
     return framework
 
 
+def _wait_for_sub_execution_terminal(
+    execution_id: str,
+    *,
+    timeout_seconds: float = 300.0,
+    poll_interval_seconds: float = 1.0,
+) -> Dict[str, Any]:
+    """Poll noetl-server's /api/executions/{id}/status until terminal.
+
+    `execute_playbook_task` HTTP-POSTs to /api/execute and returns
+    immediately with the started-state response (status="started",
+    execution_id, commands_generated). The agent contract demands a
+    synchronous outcome — the parent step needs to see whether the
+    child succeeded, failed, or what the actual data is. Without
+    waiting, the auto-troubleshoot hook (Gap 4.1) never fires
+    because the parent's normalised_status stays "started" instead
+    of "error".
+
+    Returns the status doc from /api/executions/{id}/status (with
+    keys ``completed``, ``failed``, optionally ``current_step`` /
+    ``error``) once the execution reaches terminal status, OR a
+    synthetic timeout doc if the deadline passes. The caller then
+    builds the agent envelope based on the terminal outcome.
+
+    Imports are lazy so this module stays importable in test
+    harnesses that don't have requests available (the agent
+    executor's optional-dependency contract).
+    """
+    import time
+
+    try:
+        import requests
+    except ImportError:
+        logger.warning(
+            "AGENT.WAIT: requests not available; cannot poll sub-execution %s; "
+            "returning synthetic timeout",
+            execution_id,
+        )
+        return {"completed": False, "failed": True, "timeout": True,
+                "error": "requests module unavailable"}
+
+    server_url = os.environ.get("NOETL_SERVER_URL", "http://localhost:8083").rstrip("/")
+    if not server_url.endswith("/api"):
+        server_url = server_url + "/api"
+    status_url = f"{server_url}/executions/{execution_id}/status"
+
+    deadline = time.time() + max(1.0, float(timeout_seconds))
+    last_doc: Dict[str, Any] = {}
+    poll_n = 0
+
+    while time.time() < deadline:
+        poll_n += 1
+        try:
+            resp = requests.get(status_url, timeout=10)
+            resp.raise_for_status()
+            last_doc = resp.json()
+        except Exception as exc:
+            logger.warning(
+                "AGENT.WAIT: poll #%d for %s failed: %s",
+                poll_n, execution_id, exc,
+            )
+            time.sleep(max(0.1, float(poll_interval_seconds)))
+            continue
+
+        if last_doc.get("completed") or last_doc.get("failed"):
+            logger.debug(
+                "AGENT.WAIT: %s reached terminal after %d polls (completed=%s, failed=%s)",
+                execution_id, poll_n,
+                last_doc.get("completed"), last_doc.get("failed"),
+            )
+            return last_doc
+
+        time.sleep(max(0.1, float(poll_interval_seconds)))
+
+    logger.warning(
+        "AGENT.WAIT: %s did not reach terminal within %.1fs (last status: %s)",
+        execution_id, timeout_seconds, last_doc,
+    )
+    last_doc["timeout"] = True
+    last_doc["failed"] = True   # treat timeouts as failures so caller's
+                                 # error-branch + auto-troubleshoot fire
+    return last_doc
+
+
 def _should_auto_troubleshoot(
     *,
     task_config: Dict[str, Any],
@@ -322,27 +405,72 @@ def _invoke_noetl_playbook(
         sub_input,
     )
 
-    # Normalise the plugin's status-wording into the agent envelope.
-    # execute_playbook_task returns 'success'/'error'; agent callers
-    # expect 'ok'/'error'.
+    # `execute_playbook_task` HTTP-POSTs to /api/execute and returns
+    # the started-state response immediately. We need to wait for the
+    # sub-execution to reach terminal status so the agent contract
+    # (parent step sees the child's actual outcome) holds. Otherwise
+    # the auto-troubleshoot hook (Gap 4.1) never fires because the
+    # status stays "started" instead of resolving to "ok"/"error".
+    sub_execution_id: Optional[str] = None
+    sub_terminal: Dict[str, Any] = {}
     if isinstance(sub_result, dict):
         plugin_status = sub_result.get("status")
-        normalised_status = "ok" if plugin_status == "success" else (
-            plugin_status if plugin_status else "error"
+        # `execute_playbook_task` reports "success" when the HTTP
+        # dispatch succeeded (regardless of the inner sub-execution's
+        # outcome). The actual sub-execution_id lives either at
+        # top-level (some plugin versions) or inside `.data`.
+        sub_execution_id = (
+            sub_result.get("execution_id")
+            or (sub_result.get("data") or {}).get("execution_id")
         )
+
+        # If the dispatch succeeded and we have an execution_id, poll
+        # for terminal. Errors and missing execution_ids fall through
+        # to the existing normalisation logic below.
+        if plugin_status == "success" and sub_execution_id:
+            wait_timeout = float(task_config.get("wait_timeout_seconds", 300.0))
+            sub_terminal = _wait_for_sub_execution_terminal(
+                str(sub_execution_id),
+                timeout_seconds=wait_timeout,
+            )
+
+    # Normalise the plugin's status-wording into the agent envelope.
+    # Three sources of truth, in priority order:
+    #   1. sub_terminal (if we polled to terminal): completed → ok,
+    #      failed → error
+    #   2. execute_playbook_task's plugin_status (success/error): pre-
+    #      polling fall-back when no execution_id was available
+    #   3. Default to "error" when the shape is unrecognised
+    if isinstance(sub_result, dict):
+        if sub_terminal:
+            if sub_terminal.get("completed") and not sub_terminal.get("failed"):
+                normalised_status = "ok"
+            else:
+                normalised_status = "error"
+        else:
+            plugin_status = sub_result.get("status")
+            normalised_status = "ok" if plugin_status == "success" else (
+                plugin_status if plugin_status else "error"
+            )
+
         envelope: Dict[str, Any] = {
             "status": normalised_status,
             "framework": "noetl",
             "entrypoint": entrypoint,
-            "data": sub_result.get("data"),
-            "execution_id": sub_result.get("execution_id"),
+            "data": sub_terminal or sub_result.get("data"),
+            "execution_id": sub_execution_id or sub_result.get("execution_id"),
             "duration": sub_result.get("duration"),
         }
         if normalised_status != "ok":
+            error_message = (
+                (sub_terminal.get("error") if sub_terminal else None)
+                or sub_result.get("error")
+                or "sub-playbook returned non-success status"
+            )
             envelope["error"] = {
                 "kind": "agent.execution",
                 "code": "PLAYBOOK_FAILED",
-                "message": sub_result.get("error") or "sub-playbook returned non-success status",
+                "message": error_message,
                 "retryable": False,
             }
 
