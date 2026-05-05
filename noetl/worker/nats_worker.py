@@ -628,6 +628,16 @@ class Worker:
                     and str(nk) not in blocked_keys
                     and (not str(nk).startswith("command_") or str(nk) == "command_id")
                 }
+                if key_str == "error" and isinstance(child.get("diagnosis"), dict):
+                    diagnosis = {
+                        str(nk): nv
+                        for nk, nv in child["diagnosis"].items()
+                        if self._is_scalar(nv)
+                        and str(nk) not in blocked_keys
+                        and (not str(nk).startswith("command_") or str(nk) == "command_id")
+                    }
+                    if diagnosis:
+                        nested["diagnosis"] = diagnosis
                 if nested:
                     context[key_str] = nested
 
