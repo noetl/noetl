@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.35.2](https://github.com/noetl/noetl/compare/v2.35.1...v2.35.2) (2026-05-05)
+
+### Bug Fixes
+
+* **ollama_bridge:** route annotation causes 422 + openapi 500 ([17fae4d](https://github.com/noetl/noetl/commit/17fae4d3afef71192d1ef5f5d484dc6b54cf8546)), closes [noetl/noetl#407](https://github.com/noetl/noetl/issues/407)
+
 ## [2.35.1](https://github.com/noetl/noetl/compare/v2.35.0...v2.35.1) (2026-05-04)
 
 ### Bug Fixes
