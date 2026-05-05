@@ -1990,9 +1990,26 @@ class Worker:
             # Check if tool returned error status FIRST (before case evaluation)
             # This allows case blocks to handle errors via call.error event
             # NOTE: task_sequence returns status="failed", other tools use status="error"
+            #
+            # CARVE-OUT for tool_kind == "agent":
+            # The agent envelope is the documented contract — callers inspect
+            # `framework`, `error.kind`, `error.code`, `error.diagnosis`,
+            # `execution_id`, etc., and decide downstream what to do. An
+            # envelope with `status: "error"` describes the OUTCOME of the
+            # sub-execution (or framework adapter call), not a step-level
+            # failure of the agent dispatcher itself. The dispatcher succeeded
+            # — it produced a well-formed envelope. Treating envelope.status
+            # as a step failure terminates the parent workflow before
+            # downstream steps (extract_envelope, auto_troubleshoot, etc.)
+            # can read the envelope, which defeats the contract.
+            #
+            # If a user wants to route on agent error, they declare case
+            # blocks against `result.status == "error"` or `result.error.kind`
+            # — which evaluate normally on the call.done path.
             tool_error = None
             error_response = None
-            if isinstance(response, dict):
+            is_agent_envelope = (str(tool_kind or "").strip().lower() == "agent")
+            if isinstance(response, dict) and not is_agent_envelope:
                 if response.get('status') in ('error', 'failed'):
                     # Extract error from either 'error' dict (task_sequence) or 'error' string (other tools)
                     error_val = response.get('error')
