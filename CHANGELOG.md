@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.35.9](https://github.com/noetl/noetl/compare/v2.35.8...v2.35.9) (2026-05-05)
+
+### Bug Fixes
+
+* **worker:** preserve agent diagnosis in event context ([ed70352](https://github.com/noetl/noetl/commit/ed70352387e924f38d87b9d5c11032c40b3fdcce))
+
 ## [2.35.8](https://github.com/noetl/noetl/compare/v2.35.7...v2.35.8) (2026-05-05)
 
 ### Bug Fixes
