@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.36.0](https://github.com/noetl/noetl/compare/v2.35.9...v2.36.0) (2026-05-06)
+
+### Features
+
+* **worker:** generalise troubleshoot workload forwarding ([89b6464](https://github.com/noetl/noetl/commit/89b6464a7bcf31d99f5aca615934f4e649ae64e0)), closes [e2e#9](https://github.com/noetl/e2e/issues/9) [noetl#416](https://github.com/noetl/noetl/issues/416) [ops#39](https://github.com/noetl/ops/issues/39) [e2e#9](https://github.com/noetl/e2e/issues/9)
+
 ## [2.35.9](https://github.com/noetl/noetl/compare/v2.35.8...v2.35.9) (2026-05-05)
 
 ### Bug Fixes
