@@ -226,6 +226,26 @@ _REQUIRED_DIAGNOSIS_KEYS = (
     "suggested_action",
     "source",
 )
+_TROUBLESHOOT_ON_FAILURE_KEYS = {
+    "confidence_threshold",
+    "escalate_to",
+    "openai_credential",
+    "openai_model",
+    "anthropic_credential",
+    "anthropic_model",
+    "noetl_url",
+}
+_TROUBLESHOOT_ON_FAILURE_PREFIXES = (
+    "triage_",
+    "ollama_",
+)
+
+
+def _should_forward_troubleshoot_workload_key(key: str) -> bool:
+    """Return true for safe workload knobs forwarded to diagnose_execution."""
+    return key in _TROUBLESHOOT_ON_FAILURE_KEYS or key.startswith(
+        _TROUBLESHOOT_ON_FAILURE_PREFIXES
+    )
 
 
 def _fetch_persisted_diagnosis_from_doc(
@@ -345,22 +365,15 @@ def _dispatch_troubleshoot_diagnosis(
     diagnose_input: Dict[str, Any] = {
         "execution_id": str(failed_execution_id),
     }
-    # Pass-through workload overrides: operators can pin Ollama model,
-    # tighten the confidence threshold, swap escalation target. We
-    # filter to the troubleshoot agent's known knobs to avoid
-    # accidentally leaking arbitrary on_failure config into the
-    # workload (where it would be silently ignored anyway).
-    for key in (
-        "ollama_model",
-        "ollama_mcp_server",
-        "confidence_threshold",
-        "escalate_to",
-        "openai_credential",
-        "openai_model",
-        "noetl_url",
-    ):
-        if key in on_failure:
-            diagnose_input[key] = on_failure[key]
+    # Pass-through workload overrides: operators can pin a triage
+    # backend/model, tune the confidence threshold, or swap escalation
+    # target. Keep the allow-pattern narrow so arbitrary on_failure
+    # data is not leaked into the diagnose workload, but make the
+    # backend/model prefixes generic enough that new triage_* knobs do
+    # not need compatibility mirrors through deprecated ollama_* names.
+    for key, value in on_failure.items():
+        if _should_forward_troubleshoot_workload_key(str(key)):
+            diagnose_input[key] = value
 
     sub_task_config: Dict[str, Any] = {
         "task": "agent_auto_troubleshoot",
