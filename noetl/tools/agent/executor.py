@@ -219,6 +219,15 @@ def _should_auto_troubleshoot(
 # bespoke troubleshoot playbooks can name the step differently.
 _DEFAULT_DIAGNOSIS_STEP_NAME = "persist_diagnosis"
 _DIAGNOSIS_STEP_ENV = "NOETL_TROUBLESHOOT_DIAGNOSIS_STEP"
+# The status endpoint can report the diagnosis execution as terminal before
+# the final persisted event is visible through the execution document. Keep
+# this fetch window long enough to absorb cloud-managed inference latency
+# variance (Vertex AI: 1-3s+ per call) plus event-store flush lag. Local
+# Ollama (200-500ms) is well within this budget. Calibrated from the GKE
+# Vertex AI arc where a spike run needed the fixture's third 2s poll to find
+# the diagnosis; see sync/issues/2026-05-06-noetl-retry-budget-cloud-aware.md.
+_DIAGNOSIS_FETCH_TIMEOUT_SECONDS = 12.0
+_DIAGNOSIS_FETCH_INTERVAL_SECONDS = 1.0
 _REQUIRED_DIAGNOSIS_KEYS = (
     "category",
     "confidence",
@@ -444,12 +453,18 @@ def _dispatch_troubleshoot_diagnosis(
         or os.environ.get(_DIAGNOSIS_STEP_ENV, "")
         or _DEFAULT_DIAGNOSIS_STEP_NAME
     )
-    # The status endpoint can report the diagnosis execution as terminal
-    # before the final persisted event is visible through the execution
-    # document. Retry the document fetch briefly so the parent envelope
-    # carries the actual diagnosis instead of racing a just-completed run.
-    fetch_timeout = float(on_failure.get("diagnosis_fetch_timeout_seconds", 10.0))
-    fetch_interval = float(on_failure.get("diagnosis_fetch_interval_seconds", 1.0))
+    fetch_timeout = float(
+        on_failure.get(
+            "diagnosis_fetch_timeout_seconds",
+            _DIAGNOSIS_FETCH_TIMEOUT_SECONDS,
+        )
+    )
+    fetch_interval = float(
+        on_failure.get(
+            "diagnosis_fetch_interval_seconds",
+            _DIAGNOSIS_FETCH_INTERVAL_SECONDS,
+        )
+    )
     deadline = time.monotonic() + max(0.0, fetch_timeout)
     fetch_attempt = 0
     while True:

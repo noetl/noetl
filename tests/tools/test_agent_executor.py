@@ -205,3 +205,79 @@ def test_auto_troubleshoot_forwards_triage_workload_keys(monkeypatch):
     assert diagnose_input["confidence_threshold"] == 0.2
     assert diagnose_input["escalate_to"] == "none"
     assert "secret_token" not in diagnose_input
+
+
+def test_auto_troubleshoot_fetch_budget_covers_cloud_event_flush(monkeypatch):
+    """Persisted diagnosis arriving after the old 10s window is still attached."""
+
+    fake_clock = {"now": 0.0}
+    fetch_times = []
+
+    def fake_execute_playbook_task(task_config, context, jinja_env, task_with):
+        return {
+            "status": "success",
+            "execution_id": "diagnosis-exec-2",
+        }
+
+    def fake_fetch(execution_id, *, diagnosis_step_name):
+        fetch_times.append(fake_clock["now"])
+        if fake_clock["now"] >= 11.0:
+            return {
+                "category": "infra",
+                "confidence": 0.89,
+                "root_cause": "cloud managed inference completed after event flush lag",
+                "suggested_action": "use the longer diagnosis fetch budget",
+                "source": "vertex-ai",
+            }
+        return None
+
+    monkeypatch.setattr(
+        "noetl.core.workflow.playbook.execute_playbook_task",
+        fake_execute_playbook_task,
+    )
+    monkeypatch.setattr(
+        agent_executor,
+        "_wait_for_sub_execution_terminal",
+        lambda *args, **kwargs: {
+            "status": "COMPLETED",
+            "execution_id": "diagnosis-exec-2",
+            "completed": True,
+            "failed": False,
+        },
+    )
+    monkeypatch.setattr(
+        agent_executor,
+        "_fetch_persisted_diagnosis_from_doc",
+        fake_fetch,
+    )
+    monkeypatch.setattr(
+        agent_executor.time,
+        "monotonic",
+        lambda: fake_clock["now"],
+    )
+    monkeypatch.setattr(
+        agent_executor.time,
+        "sleep",
+        lambda seconds: fake_clock.__setitem__("now", fake_clock["now"] + seconds),
+    )
+
+    diagnosis = agent_executor._dispatch_troubleshoot_diagnosis(
+        failed_execution_id="failed-exec-2",
+        failed_entrypoint="tests/spike/spike_failing_subflow",
+        troubleshoot_path="automation/agents/troubleshoot/diagnose_execution",
+        task_config={
+            "on_failure": {
+                "troubleshoot": True,
+                "triage_model": "gemini-2.5-flash",
+                "triage_mcp_server": "mcp/vertex-ai",
+                "escalate_to": "none",
+            },
+        },
+        context={},
+        jinja_env=Environment(),
+    )
+
+    assert diagnosis["source"] == "vertex-ai"
+    assert diagnosis["category"] == "infra"
+    assert max(fetch_times) >= 11.0
+    assert max(fetch_times) <= agent_executor._DIAGNOSIS_FETCH_TIMEOUT_SECONDS
