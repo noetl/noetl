@@ -579,6 +579,42 @@ class Worker:
     def _is_scalar(value: Any) -> bool:
         return isinstance(value, (str, int, float, bool)) or value is None
 
+    @classmethod
+    def _preserve_recursive_control_value(
+        cls,
+        value: Any,
+        *,
+        max_depth: int = 8,
+    ) -> Any:
+        """Recursively preserve an explicitly allowed control value.
+
+        Recursive extension of the noetl#417 ``error.diagnosis`` carve-out.
+        This addresses the v2.37.0 ``_meta.diagnosis_fetch`` telemetry RED at
+        ``bridge/outbox/20260507-023206-adaptive-retry-backoff.result.json``.
+        The May 6 event-projection audit predicted that future nested control
+        contracts under explicit allow-paths would need matching carve-outs and
+        parity tests.
+        """
+        if max_depth <= 0:
+            return value
+        if isinstance(value, dict):
+            return {
+                str(key): cls._preserve_recursive_control_value(
+                    child,
+                    max_depth=max_depth - 1,
+                )
+                for key, child in value.items()
+            }
+        if isinstance(value, list):
+            return [
+                cls._preserve_recursive_control_value(
+                    item,
+                    max_depth=max_depth - 1,
+                )
+                for item in value
+            ]
+        return value
+
     def _extract_control_context(self, value: Any) -> Optional[dict[str, Any]]:
         if not isinstance(value, dict):
             return None
@@ -629,13 +665,7 @@ class Worker:
                     and (not str(nk).startswith("command_") or str(nk) == "command_id")
                 }
                 if key_str == "error" and isinstance(child.get("diagnosis"), dict):
-                    diagnosis = {
-                        str(nk): nv
-                        for nk, nv in child["diagnosis"].items()
-                        if self._is_scalar(nv)
-                        and str(nk) not in blocked_keys
-                        and (not str(nk).startswith("command_") or str(nk) == "command_id")
-                    }
+                    diagnosis = self._preserve_recursive_control_value(child["diagnosis"])
                     if diagnosis:
                         nested["diagnosis"] = diagnosis
                 if nested:
