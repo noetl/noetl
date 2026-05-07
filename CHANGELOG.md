@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.36.1](https://github.com/noetl/noetl/compare/v2.36.0...v2.36.1) (2026-05-07)
+
+### Performance Improvements
+
+* **agent:** tune _fetch_persisted_diagnosis_from_doc retry budget for cloud-managed inference latency ([1235ef2](https://github.com/noetl/noetl/commit/1235ef270f1e0005f3a6856fdd8ae2f8465913ca))
+
 ## [2.36.0](https://github.com/noetl/noetl/compare/v2.35.9...v2.36.0) (2026-05-06)
 
 ### Features
