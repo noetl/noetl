@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.37.1](https://github.com/noetl/noetl/compare/v2.37.0...v2.37.1) (2026-05-07)
+
+### Bug Fixes
+
+* **worker:** preserve nested content under error.diagnosis through event projection ([4a4f9f6](https://github.com/noetl/noetl/commit/4a4f9f609c5bcfa34d28044c3dfc39811aadee61)), closes [noetl#417](https://github.com/noetl/noetl/issues/417)
+
 ## [2.37.0](https://github.com/noetl/noetl/compare/v2.36.1...v2.37.0) (2026-05-07)
 
 ### Features
