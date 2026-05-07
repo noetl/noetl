@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.37.0](https://github.com/noetl/noetl/compare/v2.36.1...v2.37.0) (2026-05-07)
+
+### Features
+
+* **agent:** adaptive retry backoff with elapsed-time telemetry for diagnose-fetch ([38239f3](https://github.com/noetl/noetl/commit/38239f3d253477bdc1ca38d5edea4a38b0122f19))
+
 ## [2.36.1](https://github.com/noetl/noetl/compare/v2.36.0...v2.36.1) (2026-05-07)
 
 ### Performance Improvements
