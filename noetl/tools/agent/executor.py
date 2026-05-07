@@ -23,7 +23,7 @@ import importlib
 import inspect
 import os
 import time
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Callable, Dict, Optional, Tuple
 
 from jinja2 import Environment
 
@@ -219,15 +219,17 @@ def _should_auto_troubleshoot(
 # bespoke troubleshoot playbooks can name the step differently.
 _DEFAULT_DIAGNOSIS_STEP_NAME = "persist_diagnosis"
 _DIAGNOSIS_STEP_ENV = "NOETL_TROUBLESHOOT_DIAGNOSIS_STEP"
-# The status endpoint can report the diagnosis execution as terminal before
-# the final persisted event is visible through the execution document. Keep
-# this fetch window long enough to absorb cloud-managed inference latency
-# variance (Vertex AI: 1-3s+ per call) plus event-store flush lag. Local
-# Ollama (200-500ms) is well within this budget. Calibrated from the GKE
-# Vertex AI arc where a spike run needed the fixture's third 2s poll to find
-# the diagnosis; see sync/issues/2026-05-06-noetl-retry-budget-cloud-aware.md.
-_DIAGNOSIS_FETCH_TIMEOUT_SECONDS = 12.0
-_DIAGNOSIS_FETCH_INTERVAL_SECONDS = 1.0
+# Adaptive persisted-diagnosis fetch backoff, tuned for cloud-managed
+# inference latency. Warm path (Vertex AI ~1-3s, Ollama ~200-500ms)
+# typically completes in 1-3 polls (~0.5-2s wall time). Cold path
+# (~30s+ tail latency) completes in ~10-12 polls within the 60s
+# deadline. Calibrated against the GKE Vertex AI arc's v2.36.1
+# cold-start outlier (`diagnosis_lookup.attempts=16`) — see
+# sync/issues/2026-05-07-noetl-adaptive-retry-backoff-tail-latency.md.
+_DIAGNOSIS_BACKOFF_INITIAL_SLEEP = 0.5
+_DIAGNOSIS_BACKOFF_MULTIPLIER = 1.5
+_DIAGNOSIS_BACKOFF_MAX_SLEEP = 4.0
+_DIAGNOSIS_BACKOFF_DEADLINE = 60.0
 _REQUIRED_DIAGNOSIS_KEYS = (
     "category",
     "confidence",
@@ -314,6 +316,86 @@ def _fetch_persisted_diagnosis_from_doc(
             return candidate
 
     return None
+
+
+def _diagnosis_fetch_meta(
+    *,
+    started_at: float,
+    poll_count: int,
+    deadline_seconds: float,
+    hit_deadline: bool,
+) -> Dict[str, Any]:
+    elapsed = max(0.0, time.monotonic() - started_at)
+    return {
+        "poll_count": int(poll_count),
+        "elapsed_seconds": round(elapsed, 3),
+        "deadline_seconds": float(deadline_seconds),
+        "hit_deadline": bool(hit_deadline),
+    }
+
+
+def _attach_diagnosis_fetch_meta(
+    diagnosis: Dict[str, Any],
+    fetch_meta: Dict[str, Any],
+) -> Dict[str, Any]:
+    result = dict(diagnosis)
+    meta = result.get("_meta")
+    if not isinstance(meta, dict):
+        meta = {}
+    else:
+        meta = dict(meta)
+    meta["diagnosis_fetch"] = dict(fetch_meta)
+    result["_meta"] = meta
+    return result
+
+
+def _fetch_persisted_diagnosis_with_backoff(
+    execution_id: str,
+    *,
+    diagnosis_step_name: str = _DEFAULT_DIAGNOSIS_STEP_NAME,
+    deadline_seconds: float = _DIAGNOSIS_BACKOFF_DEADLINE,
+    initial_sleep_seconds: float = _DIAGNOSIS_BACKOFF_INITIAL_SLEEP,
+    multiplier: float = _DIAGNOSIS_BACKOFF_MULTIPLIER,
+    max_sleep_seconds: float = _DIAGNOSIS_BACKOFF_MAX_SLEEP,
+    fetch_func: Optional[Callable[..., Optional[Dict[str, Any]]]] = None,
+) -> Tuple[Optional[Dict[str, Any]], Dict[str, Any]]:
+    """Fetch a persisted diagnosis using adaptive exponential backoff."""
+    fetch = fetch_func or _fetch_persisted_diagnosis_from_doc
+    deadline_seconds = max(0.0, float(deadline_seconds))
+    sleep_seconds = max(0.1, float(initial_sleep_seconds))
+    multiplier = max(1.0, float(multiplier))
+    max_sleep_seconds = max(sleep_seconds, float(max_sleep_seconds))
+
+    started_at = time.monotonic()
+    deadline_at = started_at + deadline_seconds
+    poll_count = 0
+
+    while True:
+        poll_count += 1
+        diagnosis = fetch(
+            str(execution_id),
+            diagnosis_step_name=diagnosis_step_name,
+        )
+        now = time.monotonic()
+        if diagnosis is not None:
+            return diagnosis, _diagnosis_fetch_meta(
+                started_at=started_at,
+                poll_count=poll_count,
+                deadline_seconds=deadline_seconds,
+                hit_deadline=False,
+            )
+
+        if now >= deadline_at:
+            return None, _diagnosis_fetch_meta(
+                started_at=started_at,
+                poll_count=poll_count,
+                deadline_seconds=deadline_seconds,
+                hit_deadline=True,
+            )
+
+        remaining = max(0.0, deadline_at - now)
+        time.sleep(min(sleep_seconds, remaining))
+        sleep_seconds = min(sleep_seconds * multiplier, max_sleep_seconds)
 
 
 def _dispatch_troubleshoot_diagnosis(
@@ -453,38 +535,54 @@ def _dispatch_troubleshoot_diagnosis(
         or os.environ.get(_DIAGNOSIS_STEP_ENV, "")
         or _DEFAULT_DIAGNOSIS_STEP_NAME
     )
-    fetch_timeout = float(
+    fetch_deadline = float(
         on_failure.get(
-            "diagnosis_fetch_timeout_seconds",
-            _DIAGNOSIS_FETCH_TIMEOUT_SECONDS,
+            "diagnosis_fetch_deadline_seconds",
+            on_failure.get(
+                "diagnosis_fetch_timeout_seconds",
+                _DIAGNOSIS_BACKOFF_DEADLINE,
+            ),
         )
     )
-    fetch_interval = float(
+    fetch_initial_sleep = float(
         on_failure.get(
-            "diagnosis_fetch_interval_seconds",
-            _DIAGNOSIS_FETCH_INTERVAL_SECONDS,
+            "diagnosis_fetch_initial_sleep_seconds",
+            on_failure.get(
+                "diagnosis_fetch_interval_seconds",
+                _DIAGNOSIS_BACKOFF_INITIAL_SLEEP,
+            ),
         )
     )
-    deadline = time.monotonic() + max(0.0, fetch_timeout)
-    fetch_attempt = 0
-    while True:
-        fetch_attempt += 1
-        diagnosis = _fetch_persisted_diagnosis_from_doc(
-            str(diag_execution_id),
-            diagnosis_step_name=diagnosis_step,
+    fetch_max_sleep = float(
+        on_failure.get(
+            "diagnosis_fetch_max_sleep_seconds",
+            _DIAGNOSIS_BACKOFF_MAX_SLEEP,
         )
-        if diagnosis is not None:
-            if fetch_attempt > 1:
-                logger.info(
-                    "AGENT.DIAGNOSIS: fetched persisted diagnosis for %s "
-                    "after %d attempts",
-                    diag_execution_id,
-                    fetch_attempt,
-                )
-            return diagnosis
-        if time.monotonic() >= deadline:
-            break
-        time.sleep(max(0.1, fetch_interval))
+    )
+    fetch_multiplier = float(
+        on_failure.get(
+            "diagnosis_fetch_backoff_multiplier",
+            _DIAGNOSIS_BACKOFF_MULTIPLIER,
+        )
+    )
+    diagnosis, fetch_meta = _fetch_persisted_diagnosis_with_backoff(
+        str(diag_execution_id),
+        diagnosis_step_name=diagnosis_step,
+        deadline_seconds=fetch_deadline,
+        initial_sleep_seconds=fetch_initial_sleep,
+        multiplier=fetch_multiplier,
+        max_sleep_seconds=fetch_max_sleep,
+    )
+    if diagnosis is not None:
+        if fetch_meta.get("poll_count", 0) > 1:
+            logger.info(
+                "AGENT.DIAGNOSIS: fetched persisted diagnosis for %s "
+                "after %d polls in %.3fs",
+                diag_execution_id,
+                fetch_meta.get("poll_count"),
+                fetch_meta.get("elapsed_seconds"),
+            )
+        return _attach_diagnosis_fetch_meta(diagnosis, fetch_meta)
     if terminal.get("failed"):
         logger.warning(
             "AGENT.DIAGNOSIS: sub-execution %s failed and no persisted "

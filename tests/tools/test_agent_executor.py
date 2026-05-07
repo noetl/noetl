@@ -207,10 +207,84 @@ def test_auto_troubleshoot_forwards_triage_workload_keys(monkeypatch):
     assert "secret_token" not in diagnose_input
 
 
-def test_auto_troubleshoot_fetch_budget_covers_cloud_event_flush(monkeypatch):
-    """Persisted diagnosis arriving after the old 10s window is still attached."""
-
+def _install_fake_clock(monkeypatch):
     fake_clock = {"now": 0.0}
+    monkeypatch.setattr(
+        agent_executor.time,
+        "monotonic",
+        lambda: fake_clock["now"],
+    )
+    monkeypatch.setattr(
+        agent_executor.time,
+        "sleep",
+        lambda seconds: fake_clock.__setitem__("now", fake_clock["now"] + seconds),
+    )
+    return fake_clock
+
+
+def _diagnosis_after(fake_clock, threshold_seconds, fetch_times):
+    def fake_fetch(execution_id, *, diagnosis_step_name):
+        fetch_times.append(fake_clock["now"])
+        if fake_clock["now"] >= threshold_seconds:
+            return {
+                "category": "infra",
+                "confidence": 0.89,
+                "root_cause": "cloud managed inference completed after event flush lag",
+                "suggested_action": "use the adaptive diagnosis fetch backoff",
+                "source": "vertex-ai",
+            }
+        return None
+
+    return fake_fetch
+
+
+def test_adaptive_diagnosis_fetch_warm_path(monkeypatch):
+    fake_clock = _install_fake_clock(monkeypatch)
+    fetch_times = []
+
+    diagnosis, meta = agent_executor._fetch_persisted_diagnosis_with_backoff(
+        "diagnosis-exec-warm",
+        fetch_func=_diagnosis_after(fake_clock, 0.8, fetch_times),
+    )
+
+    assert diagnosis["source"] == "vertex-ai"
+    assert meta["poll_count"] <= 3
+    assert meta["elapsed_seconds"] < 2.0
+    assert meta["hit_deadline"] is False
+
+
+def test_adaptive_diagnosis_fetch_cold_path(monkeypatch):
+    fake_clock = _install_fake_clock(monkeypatch)
+    fetch_times = []
+
+    diagnosis, meta = agent_executor._fetch_persisted_diagnosis_with_backoff(
+        "diagnosis-exec-cold",
+        fetch_func=_diagnosis_after(fake_clock, 25.0, fetch_times),
+    )
+
+    assert diagnosis["source"] == "vertex-ai"
+    assert 10 <= meta["poll_count"] <= 14
+    assert 20.0 < meta["elapsed_seconds"] < 30.0
+    assert meta["hit_deadline"] is False
+
+
+def test_adaptive_diagnosis_fetch_missing_hits_deadline(monkeypatch):
+    fake_clock = _install_fake_clock(monkeypatch)
+    fetch_times = []
+
+    diagnosis, meta = agent_executor._fetch_persisted_diagnosis_with_backoff(
+        "diagnosis-exec-missing",
+        fetch_func=_diagnosis_after(fake_clock, 999.0, fetch_times),
+    )
+
+    assert diagnosis is None
+    assert meta["elapsed_seconds"] >= 59.0
+    assert meta["deadline_seconds"] == agent_executor._DIAGNOSIS_BACKOFF_DEADLINE
+    assert meta["hit_deadline"] is True
+
+
+def test_auto_troubleshoot_attaches_diagnosis_fetch_telemetry(monkeypatch):
+    fake_clock = _install_fake_clock(monkeypatch)
     fetch_times = []
 
     def fake_execute_playbook_task(task_config, context, jinja_env, task_with):
@@ -218,18 +292,6 @@ def test_auto_troubleshoot_fetch_budget_covers_cloud_event_flush(monkeypatch):
             "status": "success",
             "execution_id": "diagnosis-exec-2",
         }
-
-    def fake_fetch(execution_id, *, diagnosis_step_name):
-        fetch_times.append(fake_clock["now"])
-        if fake_clock["now"] >= 11.0:
-            return {
-                "category": "infra",
-                "confidence": 0.89,
-                "root_cause": "cloud managed inference completed after event flush lag",
-                "suggested_action": "use the longer diagnosis fetch budget",
-                "source": "vertex-ai",
-            }
-        return None
 
     monkeypatch.setattr(
         "noetl.core.workflow.playbook.execute_playbook_task",
@@ -248,17 +310,7 @@ def test_auto_troubleshoot_fetch_budget_covers_cloud_event_flush(monkeypatch):
     monkeypatch.setattr(
         agent_executor,
         "_fetch_persisted_diagnosis_from_doc",
-        fake_fetch,
-    )
-    monkeypatch.setattr(
-        agent_executor.time,
-        "monotonic",
-        lambda: fake_clock["now"],
-    )
-    monkeypatch.setattr(
-        agent_executor.time,
-        "sleep",
-        lambda seconds: fake_clock.__setitem__("now", fake_clock["now"] + seconds),
+        _diagnosis_after(fake_clock, 0.8, fetch_times),
     )
 
     diagnosis = agent_executor._dispatch_troubleshoot_diagnosis(
@@ -279,5 +331,67 @@ def test_auto_troubleshoot_fetch_budget_covers_cloud_event_flush(monkeypatch):
 
     assert diagnosis["source"] == "vertex-ai"
     assert diagnosis["category"] == "infra"
-    assert max(fetch_times) >= 11.0
-    assert max(fetch_times) <= agent_executor._DIAGNOSIS_FETCH_TIMEOUT_SECONDS
+    fetch_meta = diagnosis["_meta"]["diagnosis_fetch"]
+    assert set(fetch_meta) == {
+        "poll_count",
+        "elapsed_seconds",
+        "deadline_seconds",
+        "hit_deadline",
+    }
+    assert fetch_meta["poll_count"] <= 3
+    assert fetch_meta["elapsed_seconds"] < 2.0
+    assert fetch_meta["deadline_seconds"] == agent_executor._DIAGNOSIS_BACKOFF_DEADLINE
+    assert fetch_meta["hit_deadline"] is False
+
+
+def test_auto_troubleshoot_adaptive_fetch_covers_legacy_11s_flush(monkeypatch):
+    """Regression guard for the v2.36.1 static-budget edge case."""
+
+    fake_clock = _install_fake_clock(monkeypatch)
+    fetch_times = []
+
+    def fake_execute_playbook_task(task_config, context, jinja_env, task_with):
+        return {
+            "status": "success",
+            "execution_id": "diagnosis-exec-3",
+        }
+
+    monkeypatch.setattr(
+        "noetl.core.workflow.playbook.execute_playbook_task",
+        fake_execute_playbook_task,
+    )
+    monkeypatch.setattr(
+        agent_executor,
+        "_wait_for_sub_execution_terminal",
+        lambda *args, **kwargs: {
+            "status": "COMPLETED",
+            "execution_id": "diagnosis-exec-3",
+            "completed": True,
+            "failed": False,
+        },
+    )
+    monkeypatch.setattr(
+        agent_executor,
+        "_fetch_persisted_diagnosis_from_doc",
+        _diagnosis_after(fake_clock, 11.0, fetch_times),
+    )
+
+    diagnosis = agent_executor._dispatch_troubleshoot_diagnosis(
+        failed_execution_id="failed-exec-3",
+        failed_entrypoint="tests/spike/spike_failing_subflow",
+        troubleshoot_path="automation/agents/troubleshoot/diagnose_execution",
+        task_config={
+            "on_failure": {
+                "troubleshoot": True,
+                "triage_model": "gemini-2.5-flash",
+                "triage_mcp_server": "mcp/vertex-ai",
+                "escalate_to": "none",
+            },
+        },
+        context={},
+        jinja_env=Environment(),
+    )
+
+    assert diagnosis["source"] == "vertex-ai"
+    assert diagnosis["_meta"]["diagnosis_fetch"]["elapsed_seconds"] > 10.0
+    assert diagnosis["_meta"]["diagnosis_fetch"]["hit_deadline"] is False
