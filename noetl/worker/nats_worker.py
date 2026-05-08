@@ -668,6 +668,17 @@ class Worker:
                     diagnosis = self._preserve_recursive_control_value(child["diagnosis"])
                     if diagnosis:
                         nested["diagnosis"] = diagnosis
+                # Widget render contract — see repos/gui/src/components/widgets/.
+                # Symmetric to the error.diagnosis carve-out above: render.args
+                # carries the chatui-aligned widget tree (`app:column.args.children[]`
+                # nests further `{type, args}` shapes), so we recursively preserve
+                # it under the same bounded-depth guard. Scalar `render.type` is
+                # already preserved by the loop above; this branch rescues the
+                # nested args tree that the GUI renderer dispatches on.
+                if key_str == "render" and isinstance(child.get("args"), (dict, list)):
+                    rendered_args = self._preserve_recursive_control_value(child["args"])
+                    if rendered_args is not None:
+                        nested["args"] = rendered_args
                 if nested:
                     context[key_str] = nested
 
