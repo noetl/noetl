@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.37.2](https://github.com/noetl/noetl/compare/v2.37.1...v2.37.2) (2026-05-08)
+
+### Bug Fixes
+
+* **worker:** preserve nested render.args through event projection ([a26ed7f](https://github.com/noetl/noetl/commit/a26ed7f8ecee7c388fac8177a3aaceb73c5df75e)), closes [noetl#417](https://github.com/noetl/noetl/issues/417)
+
 ## [2.37.1](https://github.com/noetl/noetl/compare/v2.37.0...v2.37.1) (2026-05-07)
 
 ### Bug Fixes
