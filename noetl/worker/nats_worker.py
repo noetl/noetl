@@ -644,6 +644,21 @@ class Worker:
 
         for key, child in candidate.items():
             key_str = str(key)
+            if (
+                key_str == "data"
+                and candidate.get("framework") == "noetl"
+                and isinstance(child, (dict, list))
+            ):
+                # NoETL-as-agent bridge contract: the child playbook's
+                # control-plane result is exposed under `data` so parent
+                # branches can use predicates such as
+                # `agent_step.data.ok`. Preserve the bounded/compacted
+                # data emitted by the agent executor without opening the
+                # generic data-plane keys below.
+                projected_data = self._preserve_recursive_control_value(child)
+                if projected_data is not None:
+                    context[key_str] = projected_data
+                continue
             if key_str in blocked_keys:
                 continue
             if key_str.startswith("command_") and key_str != "command_id":

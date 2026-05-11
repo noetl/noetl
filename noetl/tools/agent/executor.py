@@ -216,6 +216,96 @@ def _resolve_result_reference_sync(reference: Any) -> Any:
         return None
 
 
+def _compact_mcp_result_for_agent_context(result: Any) -> Any:
+    """Bound MCP-like child results so parent steps can template them.
+
+    Agent-to-NoETL calls use the child playbook's terminal result as the
+    parent agent step's ``data``. Some MCP tools legitimately return very
+    large collections; carrying the whole payload through the parent step
+    makes the parent result externalize again, which hides ``data`` from
+    immediate downstream branch predicates. Keep the MCP contract fields
+    and the first few collection items, preserving counts for observability.
+    The full child result remains available from the child execution's own
+    ResultRef; this is the control-plane view for parent routing/rendering.
+    """
+    if not isinstance(result, dict):
+        return result
+
+    data = result.get("data")
+    if not isinstance(data, dict):
+        return result
+
+    collection_keys = ("items", "offers", "hotels", "activities", "locations")
+    collection_key = next(
+        (key for key in collection_keys if isinstance(data.get(key), list)),
+        None,
+    )
+    if collection_key is None:
+        return result
+
+    max_items = 10
+    collection = data.get(collection_key) or []
+    compact_data: Dict[str, Any] = {}
+    for key, value in data.items():
+        if isinstance(value, list):
+            if key == collection_key:
+                if key in {"offers", "items"}:
+                    compact_data[key] = value[:max_items]
+                else:
+                    # Travel renderers and most MCP consumers expect the
+                    # canonical collection field to be `items`; Amadeus uses
+                    # domain-specific names for hotels/activities.
+                    compact_data["items"] = value[:max_items]
+                compact_data.setdefault(f"{key}_total", len(value))
+            else:
+                compact_data[f"{key}_total"] = len(value)
+            continue
+        compact_data[key] = value
+
+    compact: Dict[str, Any] = {
+        key: result[key]
+        for key in ("status", "isError", "_meta")
+        if key in result
+    }
+    compact["data"] = compact_data
+    return compact
+
+
+def _expand_flattened_terminal_context(context: Dict[str, Any]) -> Dict[str, Any]:
+    """Rehydrate auto-extracted ``data_*`` / ``_meta_*`` fields.
+
+    When a child result reference cannot be resolved, the terminal event
+    still carries scalar fields produced by ResultHandler's auto-extractor
+    (for example ``data_ok`` and ``data_status_code``). Expand those back
+    into an MCP-shaped envelope so parent predicates can still distinguish
+    a successful upstream call from a real failure.
+    """
+    expanded: Dict[str, Any] = {}
+    data: Dict[str, Any] = {}
+    meta: Dict[str, Any] = {}
+
+    for key, value in context.items():
+        key_str = str(key)
+        if key_str.startswith("data_"):
+            data[key_str.removeprefix("data_")] = value
+        elif key_str.startswith("_meta_"):
+            meta[key_str.removeprefix("_meta_")] = value
+        else:
+            expanded[key_str] = value
+
+    if data:
+        expanded["data"] = data
+    if meta:
+        existing_meta = expanded.get("_meta")
+        if isinstance(existing_meta, dict):
+            merged_meta = dict(existing_meta)
+            merged_meta.update(meta)
+            expanded["_meta"] = merged_meta
+        else:
+            expanded["_meta"] = meta
+    return expanded
+
+
 def _fetch_sub_execution_terminal_result(
     execution_id: str,
     *,
@@ -318,11 +408,12 @@ def _fetch_sub_execution_terminal_result(
         return None
     resolved = _resolve_result_reference_sync(result.get("reference"))
     if resolved is not None:
-        return resolved if isinstance(resolved, dict) else {"data": resolved}
+        compact = _compact_mcp_result_for_agent_context(resolved)
+        return compact if isinstance(compact, dict) else {"data": compact}
     context = result.get("context")
     if not isinstance(context, dict):
         return None
-    return context
+    return _expand_flattened_terminal_context(context)
 
 
 def _should_auto_troubleshoot(
