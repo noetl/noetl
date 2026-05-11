@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.37.7](https://github.com/noetl/noetl/compare/v2.37.6...v2.37.7) (2026-05-11)
+
+### Bug Fixes
+
+* **agent:** expose compact child data at agent data root ([42d7583](https://github.com/noetl/noetl/commit/42d7583a398d2d629e8f08da42699496de253e6b))
+* **agent:** expose compact child data at agent data root ([75f74d7](https://github.com/noetl/noetl/commit/75f74d707b1e1b8903d6185c034b454f7c7279c3))
+
 ## [2.37.6](https://github.com/noetl/noetl/compare/v2.37.5...v2.37.6) (2026-05-11)
 
 ### Bug Fixes
