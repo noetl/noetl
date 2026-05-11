@@ -262,3 +262,39 @@ def test_render_args_top_level_list_survives_projection():
     assert isinstance(projected["render"]["args"], list)
     assert len(projected["render"]["args"]) == 2
     assert projected["render"]["args"][0]["args"]["message"] == "first"
+
+
+def test_noetl_agent_data_survives_projection():
+    worker = _worker()
+    projected = worker._extract_control_context(
+        {
+            "status": "ok",
+            "framework": "noetl",
+            "entrypoint": "automation/agents/mcp/amadeus",
+            "data": {
+                "status": "ok",
+                "isError": False,
+                "data": {
+                    "ok": True,
+                    "items": [{"name": "hydrated activity"}],
+                    "items_total": 1,
+                },
+            },
+        }
+    )
+
+    assert projected["framework"] == "noetl"
+    assert projected["data"]["data"]["ok"] is True
+    assert projected["data"]["data"]["items"] == [{"name": "hydrated activity"}]
+
+
+def test_non_agent_data_stays_out_of_projection():
+    worker = _worker()
+    projected = worker._extract_control_context(
+        {
+            "status": "ok",
+            "data": {"ok": True, "items": [{"name": "too broad"}]},
+        }
+    )
+
+    assert projected == {"status": "ok"}

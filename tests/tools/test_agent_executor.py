@@ -543,6 +543,95 @@ def test_fetch_sub_execution_terminal_result_resolves_reference_before_context(m
     assert "data_ok" not in result
 
 
+def test_fetch_sub_execution_terminal_result_compacts_large_mcp_collections(monkeypatch):
+    events = [
+        {
+            "event_id": 200,
+            "event_type": "command.completed",
+            "node_name": "amadeus_search_activities",
+            "result": {
+                "reference": {
+                    "locator": "noetl://execution/123/result/amadeus_search_activities/abc",
+                    "store": "disk",
+                },
+                "context": {"status": "ok", "data_ok": True},
+            },
+        },
+    ]
+
+    class _FakeRequests:
+        def get(self, url, timeout=None):
+            return _fake_events_response(events)
+
+    monkeypatch.setitem(
+        sys.modules,
+        "requests",
+        types.SimpleNamespace(get=_FakeRequests().get),
+    )
+    monkeypatch.setattr(
+        agent_executor,
+        "_resolve_result_reference_sync",
+        lambda reference: {
+            "status": "ok",
+            "isError": False,
+            "_meta": {"tool": "search_activities"},
+            "data": {
+                "ok": True,
+                "status_code": 200,
+                "activities": [{"id": idx} for idx in range(20)],
+            },
+        },
+    )
+
+    result = agent_executor._fetch_sub_execution_terminal_result("12345")
+    assert result["status"] == "ok"
+    assert result["isError"] is False
+    assert result["data"]["ok"] is True
+    assert result["data"]["activities_total"] == 20
+    assert result["data"]["items"] == [{"id": idx} for idx in range(10)]
+    assert "activities" not in result["data"]
+
+
+def test_fetch_sub_execution_terminal_result_expands_flattened_context(monkeypatch):
+    events = [
+        {
+            "event_id": 200,
+            "event_type": "command.completed",
+            "node_name": "amadeus_search_activities",
+            "result": {
+                "reference": {
+                    "locator": "noetl://execution/123/result/amadeus_search_activities/abc",
+                    "store": "disk",
+                },
+                "context": {
+                    "status": "ok",
+                    "isError": False,
+                    "data_ok": True,
+                    "data_status_code": 200,
+                    "_meta_tool": "search_activities",
+                },
+            },
+        },
+    ]
+
+    class _FakeRequests:
+        def get(self, url, timeout=None):
+            return _fake_events_response(events)
+
+    monkeypatch.setitem(
+        sys.modules,
+        "requests",
+        types.SimpleNamespace(get=_FakeRequests().get),
+    )
+    monkeypatch.setattr(agent_executor, "_resolve_result_reference_sync", lambda reference: None)
+
+    result = agent_executor._fetch_sub_execution_terminal_result("12345")
+    assert result["status"] == "ok"
+    assert result["isError"] is False
+    assert result["data"] == {"ok": True, "status_code": 200}
+    assert result["_meta"] == {"tool": "search_activities"}
+
+
 def test_fetch_sub_execution_terminal_result_returns_none_when_no_terminal(monkeypatch):
     """No qualifying terminal event → None → caller falls back to status doc."""
 
