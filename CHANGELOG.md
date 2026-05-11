@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.37.3](https://github.com/noetl/noetl/compare/v2.37.2...v2.37.3) (2026-05-11)
+
+### Bug Fixes
+
+* **agent:** hydrate sub-playbook result from terminal events ([33fad5d](https://github.com/noetl/noetl/commit/33fad5d8ac449379912d44d59bd279b24837bf57))
+* **agent:** hydrate sub-playbook result from terminal events ([adbb656](https://github.com/noetl/noetl/commit/adbb6560849daa8929a242758b7b7db183e4994f))
+
 ## [2.37.2](https://github.com/noetl/noetl/compare/v2.37.1...v2.37.2) (2026-05-08)
 
 ### Bug Fixes
