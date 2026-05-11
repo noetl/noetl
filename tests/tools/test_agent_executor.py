@@ -486,6 +486,63 @@ def test_fetch_sub_execution_terminal_result_picks_last_terminal_step(monkeypatc
     assert result["isError"] is False
 
 
+def test_fetch_sub_execution_terminal_result_resolves_reference_before_context(monkeypatch):
+    """Large results use event result.reference before compact context.
+
+    Projection keeps summary fields in result.context for large payloads,
+    while the full child output is behind result.reference. The parent
+    agent envelope needs the resolved reference so templates can read
+    envelope.data.ok and envelope.data.items.
+    """
+    events = [
+        {
+            "event_id": 200,
+            "event_type": "command.completed",
+            "node_name": "shape_search_activities",
+            "result": {
+                "status": "ok",
+                "reference": {
+                    "locator": "noetl://execution/123/result/shape_search_activities/abc",
+                    "store": "disk",
+                },
+                "context": {
+                    "status": "ok",
+                    "data_ok": True,
+                    "data_activities_total": 1786,
+                },
+            },
+        },
+    ]
+
+    class _FakeRequests:
+        def get(self, url, timeout=None):
+            return _fake_events_response(events)
+
+    monkeypatch.setitem(
+        sys.modules,
+        "requests",
+        types.SimpleNamespace(get=_FakeRequests().get),
+    )
+    monkeypatch.setattr(
+        agent_executor,
+        "_resolve_result_reference_sync",
+        lambda reference: {
+            "status": "ok",
+            "data": {
+                "ok": True,
+                "items": [{"name": "Full hydrated activity"}],
+                "items_total": 1,
+            },
+            "isError": False,
+        },
+    )
+
+    result = agent_executor._fetch_sub_execution_terminal_result("12345")
+    assert result["data"]["ok"] is True
+    assert result["data"]["items"][0]["name"] == "Full hydrated activity"
+    assert "data_ok" not in result
+
+
 def test_fetch_sub_execution_terminal_result_returns_none_when_no_terminal(monkeypatch):
     """No qualifying terminal event → None → caller falls back to status doc."""
 
