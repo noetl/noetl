@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.37.8](https://github.com/noetl/noetl/compare/v2.37.7...v2.37.8) (2026-05-11)
+
+### Bug Fixes
+
+* **agent:** project bounded control data for large child results ([87e7efe](https://github.com/noetl/noetl/commit/87e7efe5a2ce7b81e46a4d98d601f917e7a7d2f0))
+
 ## [2.37.7](https://github.com/noetl/noetl/compare/v2.37.6...v2.37.7) (2026-05-11)
 
 ### Bug Fixes
