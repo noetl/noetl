@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.37.5](https://github.com/noetl/noetl/compare/v2.37.4...v2.37.5) (2026-05-11)
+
+### Bug Fixes
+
+* **agent:** preserve compact NoETL child data for parent routing ([939673a](https://github.com/noetl/noetl/commit/939673ac826bd582bf06be1ffe7e1cded94040d9))
+* **agent:** preserve compact NoETL child data for parent routing ([4bfdd06](https://github.com/noetl/noetl/commit/4bfdd0663308b4ac82d2ac37dc49fb40c752e3bf))
+
 ## [2.37.4](https://github.com/noetl/noetl/compare/v2.37.3...v2.37.4) (2026-05-11)
 
 ### Bug Fixes
