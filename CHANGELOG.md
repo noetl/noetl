@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.37.6](https://github.com/noetl/noetl/compare/v2.37.5...v2.37.6) (2026-05-11)
+
+### Bug Fixes
+
+* **agent:** read through disk refs from child terminal results ([bc56a94](https://github.com/noetl/noetl/commit/bc56a94e04af947868a6b03735ad34076d725e02))
+* **agent:** read through disk refs from child terminal results ([1c30666](https://github.com/noetl/noetl/commit/1c3066673df405be8e40fa6e7b5afd359ee50b85))
+
 ## [2.37.5](https://github.com/noetl/noetl/compare/v2.37.4...v2.37.5) (2026-05-11)
 
 ### Bug Fixes
