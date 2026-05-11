@@ -286,7 +286,14 @@ def _compact_mcp_result_for_agent_context(result: Any) -> Any:
         None,
     )
     if collection_key is None:
-        return result
+        compact_data = dict(data)
+        if "status" in result and "status" not in compact_data:
+            compact_data["_mcp_status"] = result["status"]
+        if "isError" in result and "isError" not in compact_data:
+            compact_data["isError"] = result["isError"]
+        if "_meta" in result and "_meta" not in compact_data:
+            compact_data["_meta"] = result["_meta"]
+        return compact_data
 
     max_items = 10
     collection = data.get(collection_key) or []
@@ -307,13 +314,13 @@ def _compact_mcp_result_for_agent_context(result: Any) -> Any:
             continue
         compact_data[key] = value
 
-    compact: Dict[str, Any] = {
-        key: result[key]
-        for key in ("status", "isError", "_meta")
-        if key in result
-    }
-    compact["data"] = compact_data
-    return compact
+    if "status" in result and "status" not in compact_data:
+        compact_data["_mcp_status"] = result["status"]
+    if "isError" in result and "isError" not in compact_data:
+        compact_data["isError"] = result["isError"]
+    if "_meta" in result and "_meta" not in compact_data:
+        compact_data["_meta"] = result["_meta"]
+    return compact_data
 
 
 def _expand_flattened_terminal_context(context: Dict[str, Any]) -> Dict[str, Any]:
@@ -348,6 +355,14 @@ def _expand_flattened_terminal_context(context: Dict[str, Any]) -> Dict[str, Any
             expanded["_meta"] = merged_meta
         else:
             expanded["_meta"] = meta
+    if data:
+        if "status" in expanded and "status" not in data:
+            data["_mcp_status"] = expanded["status"]
+        if "isError" in expanded and "isError" not in data:
+            data["isError"] = expanded["isError"]
+        if "_meta" in expanded and "_meta" not in data:
+            data["_meta"] = expanded["_meta"]
+        return data
     return expanded
 
 
