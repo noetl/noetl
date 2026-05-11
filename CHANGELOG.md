@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.37.4](https://github.com/noetl/noetl/compare/v2.37.3...v2.37.4) (2026-05-11)
+
+### Bug Fixes
+
+* **agent:** resolve terminal event result references ([1b86897](https://github.com/noetl/noetl/commit/1b86897f35c97fa6dc0695d1a6b5c1004750c74c))
+* **agent:** resolve terminal event result references ([5ec7468](https://github.com/noetl/noetl/commit/5ec74684cfd35c5de1d704f2b3afd5cb556e3c6e))
+
 ## [2.37.3](https://github.com/noetl/noetl/compare/v2.37.2...v2.37.3) (2026-05-11)
 
 ### Bug Fixes
