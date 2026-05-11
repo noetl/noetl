@@ -538,8 +538,8 @@ def test_fetch_sub_execution_terminal_result_resolves_reference_before_context(m
     )
 
     result = agent_executor._fetch_sub_execution_terminal_result("12345")
-    assert result["data"]["ok"] is True
-    assert result["data"]["items"][0]["name"] == "Full hydrated activity"
+    assert result["ok"] is True
+    assert result["items"][0]["name"] == "Full hydrated activity"
     assert "data_ok" not in result
 
 
@@ -584,12 +584,11 @@ def test_fetch_sub_execution_terminal_result_compacts_large_mcp_collections(monk
     )
 
     result = agent_executor._fetch_sub_execution_terminal_result("12345")
-    assert result["status"] == "ok"
     assert result["isError"] is False
-    assert result["data"]["ok"] is True
-    assert result["data"]["activities_total"] == 20
-    assert result["data"]["items"] == [{"id": idx} for idx in range(10)]
-    assert "activities" not in result["data"]
+    assert result["ok"] is True
+    assert result["activities_total"] == 20
+    assert result["items"] == [{"id": idx} for idx in range(10)]
+    assert "activities" not in result
 
 
 def test_fetch_sub_execution_terminal_result_expands_flattened_context(monkeypatch):
@@ -626,9 +625,9 @@ def test_fetch_sub_execution_terminal_result_expands_flattened_context(monkeypat
     monkeypatch.setattr(agent_executor, "_resolve_result_reference_sync", lambda reference: None)
 
     result = agent_executor._fetch_sub_execution_terminal_result("12345")
-    assert result["status"] == "ok"
     assert result["isError"] is False
-    assert result["data"] == {"ok": True, "status_code": 200}
+    assert result["ok"] is True
+    assert result["status_code"] == 200
     assert result["_meta"] == {"tool": "search_activities"}
 
 
