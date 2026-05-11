@@ -395,3 +395,134 @@ def test_auto_troubleshoot_adaptive_fetch_covers_legacy_11s_flush(monkeypatch):
     assert diagnosis["source"] == "vertex-ai"
     assert diagnosis["_meta"]["diagnosis_fetch"]["elapsed_seconds"] > 10.0
     assert diagnosis["_meta"]["diagnosis_fetch"]["hit_deadline"] is False
+
+
+# ----------------------------------------------------------------------
+# Sub-execution terminal-result hydration tests.
+#
+# Background: `/api/executions/{id}/status` compacts state.variables (any
+# value over ~_STATUS_VALUE_MAX_BYTES is replaced with a {_truncated,
+# _original_size_bytes, _preview} stub). Large MCP envelopes — e.g.
+# Amadeus activities returning 200 with many items — were silently
+# truncated, so the parent step's Jinja access `envelope.data.ok` and
+# `envelope.data.items` saw a stub instead of the real payload, routing
+# successful results to the friendly-failure widget. The fix fetches the
+# terminal step's `result.context` from /api/executions/{id}/events
+# (uncompacted) and uses that as envelope.data.
+# ----------------------------------------------------------------------
+
+
+def _fake_events_response(events, *, status_ok=True):
+    """Build a stub requests-like Response object for events endpoint."""
+    class _Resp:
+        status_code = 200 if status_ok else 500
+
+        def raise_for_status(self):
+            if not status_ok:
+                raise RuntimeError("simulated 500")
+
+        def json(self):
+            return {"events": events, "pagination": {}}
+
+    return _Resp()
+
+
+def test_fetch_sub_execution_terminal_result_picks_last_terminal_step(monkeypatch):
+    """Helper returns the highest-event_id command.completed result.context.
+
+    Multiple terminal-step events are present; the helper must pick the
+    one with the largest event_id (the workflow's tail step). Boundary
+    nodes (start/end) must be ignored.
+    """
+    events = [
+        # Older step.
+        {
+            "event_id": 100,
+            "event_type": "command.completed",
+            "node_name": "amadeus_oauth",
+            "result": {"context": {"data": {"ok": True, "token": "xyz"}}},
+        },
+        # Boundary node — should be skipped even if event_id is highest.
+        {
+            "event_id": 250,
+            "event_type": "step.exit",
+            "node_name": "end",
+            "result": {"context": {"data": {"ok": True}}},
+        },
+        # The terminal tail step — largest non-boundary event_id wins.
+        {
+            "event_id": 200,
+            "event_type": "command.completed",
+            "node_name": "shape_search_activities",
+            "result": {
+                "context": {
+                    "data": {
+                        "ok": True,
+                        "items": [{"name": "Statue of Liberty Tour"}],
+                        "items_total": 1,
+                    },
+                    "isError": False,
+                }
+            },
+        },
+    ]
+
+    class _FakeRequests:
+        def get(self, url, timeout=None):
+            assert "/executions/" in url and "/events" in url
+            assert "page_size=500" in url
+            return _fake_events_response(events)
+
+    monkeypatch.setitem(
+        sys.modules,
+        "requests",
+        types.SimpleNamespace(get=_FakeRequests().get),
+    )
+
+    result = agent_executor._fetch_sub_execution_terminal_result("12345")
+    assert isinstance(result, dict)
+    assert result["data"]["ok"] is True
+    assert result["data"]["items"][0]["name"] == "Statue of Liberty Tour"
+    assert result["isError"] is False
+
+
+def test_fetch_sub_execution_terminal_result_returns_none_when_no_terminal(monkeypatch):
+    """No qualifying terminal event → None → caller falls back to status doc."""
+
+    events = [
+        # Only boundary events — no real terminal step.
+        {"event_id": 10, "event_type": "command.completed", "node_name": "start"},
+        {"event_id": 20, "event_type": "step.exit", "node_name": "end"},
+        # Wrong event type.
+        {"event_id": 30, "event_type": "command.issued", "node_name": "shape_step"},
+    ]
+
+    class _FakeRequests:
+        def get(self, url, timeout=None):
+            return _fake_events_response(events)
+
+    monkeypatch.setitem(
+        sys.modules,
+        "requests",
+        types.SimpleNamespace(get=_FakeRequests().get),
+    )
+
+    result = agent_executor._fetch_sub_execution_terminal_result("12345")
+    assert result is None
+
+
+def test_fetch_sub_execution_terminal_result_swallows_request_failure(monkeypatch):
+    """Network failure → None, never raises. Best-effort hydration."""
+
+    class _FakeRequests:
+        def get(self, url, timeout=None):
+            raise ConnectionError("simulated network error")
+
+    monkeypatch.setitem(
+        sys.modules,
+        "requests",
+        types.SimpleNamespace(get=_FakeRequests().get),
+    )
+
+    result = agent_executor._fetch_sub_execution_terminal_result("12345")
+    assert result is None
