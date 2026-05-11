@@ -631,6 +631,44 @@ def test_fetch_sub_execution_terminal_result_expands_flattened_context(monkeypat
     assert result["_meta"] == {"tool": "search_activities"}
 
 
+def test_fetch_sub_execution_terminal_result_prefers_control_data(monkeypatch):
+    events = [
+        {
+            "event_id": 200,
+            "event_type": "command.completed",
+            "node_name": "amadeus_search_activities",
+            "result": {
+                "context": {
+                    "status": "ok",
+                    "data_ok": True,
+                    "control_data": {
+                        "ok": True,
+                        "items": [{"name": "bounded activity"}],
+                        "activities_total": 1799,
+                    },
+                },
+            },
+        },
+    ]
+
+    class _FakeRequests:
+        def get(self, url, timeout=None):
+            return _fake_events_response(events)
+
+    monkeypatch.setitem(
+        sys.modules,
+        "requests",
+        types.SimpleNamespace(get=_FakeRequests().get),
+    )
+
+    result = agent_executor._fetch_sub_execution_terminal_result("12345")
+    assert result == {
+        "ok": True,
+        "items": [{"name": "bounded activity"}],
+        "activities_total": 1799,
+    }
+
+
 def test_fetch_sub_execution_terminal_result_returns_none_when_no_terminal(monkeypatch):
     """No qualifying terminal event → None → caller falls back to status doc."""
 
