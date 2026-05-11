@@ -175,6 +175,112 @@ def _wait_for_sub_execution_terminal(
     return last_doc
 
 
+def _fetch_sub_execution_terminal_result(
+    execution_id: str,
+    *,
+    request_timeout_seconds: float = 10.0,
+) -> Optional[Dict[str, Any]]:
+    """Fetch the sub-execution's terminal-step result.context from events.
+
+    The /api/executions/{id}/status endpoint compacts ``state.variables``
+    (see `_compact_status_variables` in `noetl/server/api/core/utils.py`):
+    any value over ``_STATUS_VALUE_MAX_BYTES`` is replaced with a
+    `{_truncated, _original_size_bytes, _preview}` stub. That endpoint is
+    fine for "did it complete?" checks, but it's the wrong source for the
+    sub-execution's actual final result — large MCP envelopes (e.g.
+    Amadeus activities with N items) get silently truncated and the
+    parent's Jinja access (``.data.ok``, ``.data.items``) sees a stub
+    instead of the real payload.
+
+    The events table stores the uncompacted ``result.context`` for every
+    ``command.completed`` / ``step.exit`` / ``call.done`` event. This
+    helper walks the events page for the sub-execution, finds the last
+    terminal step's ``result.context``, and returns it. The caller
+    (``_invoke_noetl_playbook``) uses this as ``envelope.data`` so the
+    parent step sees the full result.
+
+    Returns ``None`` when the events page is unavailable or no qualifying
+    terminal-step event exists, in which case the caller falls back to
+    the (possibly truncated) status doc. Best-effort: this is a polish
+    layer over the existing terminal-status polling, not a replacement.
+    """
+    try:
+        import requests
+    except ImportError:
+        logger.debug(
+            "AGENT.RESULT.FETCH: requests module unavailable; cannot "
+            "extract terminal-step result"
+        )
+        return None
+
+    server_url = os.environ.get("NOETL_SERVER_URL", "http://localhost:8083").rstrip("/")
+    if not server_url.endswith("/api"):
+        server_url = server_url + "/api"
+    # Page size 500 is the endpoint's max; we want all terminal events
+    # in one page so we can scan back-to-front for the last result.
+    events_url = (
+        f"{server_url}/executions/{execution_id}/events"
+        "?page_size=500&page=1"
+    )
+
+    try:
+        resp = requests.get(events_url, timeout=max(1.0, float(request_timeout_seconds)))
+        resp.raise_for_status()
+        doc = resp.json()
+    except Exception as exc:
+        logger.warning(
+            "AGENT.RESULT.FETCH: failed to fetch %s: %s",
+            events_url, exc,
+        )
+        return None
+
+    events = doc.get("events") if isinstance(doc, dict) else None
+    if not isinstance(events, list):
+        return None
+
+    # Events are returned in some order (typically DESC by event_id from
+    # the endpoint). Find the LAST terminal-step event — i.e. the highest
+    # event_id whose type is in our terminal set AND whose node is not
+    # the synthetic 'end'/'start' boundary nodes. The MCP playbooks'
+    # render-as-tail pattern (round 6 from the travel arc) means the
+    # tail step's result.context IS the playbook's externally visible
+    # result.
+    _TERMINAL_EVENT_TYPES = {"command.completed", "step.exit", "call.done"}
+    _BOUNDARY_NODE_NAMES = {"start", "end", None, ""}
+
+    candidate_event: Optional[Dict[str, Any]] = None
+    candidate_event_id: int = -1
+
+    for evt in events:
+        if not isinstance(evt, dict):
+            continue
+        if evt.get("event_type") not in _TERMINAL_EVENT_TYPES:
+            continue
+        node_name = evt.get("node_name") or evt.get("step")
+        if node_name in _BOUNDARY_NODE_NAMES:
+            continue
+        # event_id is monotonically increasing; the largest one is the
+        # last terminal step event (the tail).
+        try:
+            evt_id = int(evt.get("event_id") or 0)
+        except (TypeError, ValueError):
+            evt_id = 0
+        if evt_id > candidate_event_id:
+            candidate_event_id = evt_id
+            candidate_event = evt
+
+    if candidate_event is None:
+        return None
+
+    result = candidate_event.get("result")
+    if not isinstance(result, dict):
+        return None
+    context = result.get("context")
+    if not isinstance(context, dict):
+        return None
+    return context
+
+
 def _should_auto_troubleshoot(
     *,
     task_config: Dict[str, Any],
@@ -736,11 +842,33 @@ def _invoke_noetl_playbook(
                 plugin_status if plugin_status else "error"
             )
 
+        # Hydrate ``data`` from the sub-execution's terminal-step
+        # ``result.context`` in the events table when available. The
+        # ``/status`` endpoint compacts large ``state.variables`` values
+        # to ``{_truncated, _original_size_bytes, _preview}`` stubs (see
+        # ``_compact_status_variables`` in the server utils). Large MCP
+        # envelopes — e.g. Amadeus activities — fit through the events
+        # path uncompacted, and ``result.context`` is what the parent's
+        # Jinja access (``envelope.data.ok``, ``envelope.data.items``)
+        # actually wants to see. Falls back to the (possibly truncated)
+        # status doc when the events fetch fails or returns no
+        # terminal-step event. Only meaningful when we have an
+        # execution_id to fetch against.
+        envelope_data: Any
+        if sub_execution_id:
+            envelope_data = (
+                _fetch_sub_execution_terminal_result(str(sub_execution_id))
+                or sub_terminal
+                or sub_result.get("data")
+            )
+        else:
+            envelope_data = sub_terminal or sub_result.get("data")
+
         envelope: Dict[str, Any] = {
             "status": normalised_status,
             "framework": "noetl",
             "entrypoint": entrypoint,
-            "data": sub_terminal or sub_result.get("data"),
+            "data": envelope_data,
             "execution_id": sub_execution_id or sub_result.get("execution_id"),
             "duration": sub_result.get("duration"),
         }
