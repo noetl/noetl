@@ -332,6 +332,10 @@ def _expand_flattened_terminal_context(context: Dict[str, Any]) -> Dict[str, Any
     into an MCP-shaped envelope so parent predicates can still distinguish
     a successful upstream call from a real failure.
     """
+    control_data = context.get("control_data")
+    if isinstance(control_data, dict):
+        return control_data
+
     expanded: Dict[str, Any] = {}
     data: Dict[str, Any] = {}
     meta: Dict[str, Any] = {}

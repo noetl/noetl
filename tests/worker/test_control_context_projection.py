@@ -1,4 +1,5 @@
 from noetl.worker.nats_worker import Worker
+from noetl.worker.result_handler import _compact_control_data
 
 
 def _worker() -> Worker:
@@ -286,6 +287,48 @@ def test_noetl_agent_data_survives_projection():
     assert projected["framework"] == "noetl"
     assert projected["data"]["data"]["ok"] is True
     assert projected["data"]["data"]["items"] == [{"name": "hydrated activity"}]
+
+
+def test_control_data_survives_projection_for_large_mcp_results():
+    worker = _worker()
+    projected = worker._extract_control_context(
+        {
+            "status": "ok",
+            "control_data": {
+                "ok": True,
+                "items": [{"name": "bounded activity"}],
+                "activities_total": 1799,
+            },
+        }
+    )
+
+    assert projected["status"] == "ok"
+    assert projected["control_data"]["ok"] is True
+    assert projected["control_data"]["items"] == [{"name": "bounded activity"}]
+    assert projected["control_data"]["activities_total"] == 1799
+
+
+def test_large_mcp_result_compacts_control_data_to_items():
+    compact = _compact_control_data(
+        {
+            "status": "ok",
+            "isError": False,
+            "_meta": {"tool": "search_activities"},
+            "data": {
+                "ok": True,
+                "status_code": 200,
+                "activities": [{"id": idx} for idx in range(20)],
+            },
+        }
+    )
+
+    assert compact["ok"] is True
+    assert compact["status_code"] == 200
+    assert compact["isError"] is False
+    assert compact["_meta"] == {"tool": "search_activities"}
+    assert compact["activities_total"] == 20
+    assert compact["items"] == [{"id": idx} for idx in range(10)]
+    assert "activities" not in compact
 
 
 def test_non_agent_data_stays_out_of_projection():

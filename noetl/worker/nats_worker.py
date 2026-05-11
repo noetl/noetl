@@ -659,6 +659,15 @@ class Worker:
                 if projected_data is not None:
                     context[key_str] = projected_data
                 continue
+            if key_str == "control_data" and isinstance(child, (dict, list)):
+                # Bounded data deliberately emitted by ResultHandler for large
+                # MCP-like results. This is control-plane data, not the raw
+                # payload: first-page items plus counts/status for parent
+                # agent routing and widget rendering across worker pods.
+                projected_data = self._preserve_recursive_control_value(child)
+                if projected_data is not None:
+                    context[key_str] = projected_data
+                continue
             if key_str in blocked_keys:
                 continue
             if key_str.startswith("command_") and key_str != "command_id":

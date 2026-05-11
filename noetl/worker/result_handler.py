@@ -44,6 +44,53 @@ INLINE_MAX_BYTES = int(os.getenv("NOETL_INLINE_MAX_BYTES", "10485760"))  # 64KB
 PREVIEW_MAX_BYTES = int(os.getenv("NOETL_PREVIEW_MAX_BYTES", "1024"))  # 1KB
 
 
+def _compact_control_data(result: Any, *, max_items: int = 10) -> Optional[Dict[str, Any]]:
+    """Return a bounded control-plane view for large MCP-like results.
+
+    Large child-agent results may externalize to local disk on one worker pod.
+    A parent step running on another worker cannot hydrate that disk ref, but it
+    still needs enough data to route and render. Keep status scalars, metadata,
+    and the first few collection items under a stable `items` key.
+    """
+    if not isinstance(result, dict):
+        return None
+    data = result.get("data")
+    if not isinstance(data, dict):
+        return None
+
+    collection_keys = ("items", "offers", "hotels", "activities", "locations")
+    collection_key = next(
+        (key for key in collection_keys if isinstance(data.get(key), list)),
+        None,
+    )
+
+    compact: Dict[str, Any] = {}
+    if collection_key is not None:
+        for key, value in data.items():
+            if isinstance(value, list):
+                if key == collection_key:
+                    if key in {"items", "offers"}:
+                        compact[key] = value[:max_items]
+                    else:
+                        compact["items"] = value[:max_items]
+                    compact.setdefault(f"{key}_total", len(value))
+                else:
+                    compact[f"{key}_total"] = len(value)
+                continue
+            compact[key] = value
+    else:
+        compact.update(data)
+
+    if "status" in result and "status" not in compact:
+        compact["_mcp_status"] = result["status"]
+    if "isError" in result and "isError" not in compact:
+        compact["isError"] = result["isError"]
+    if "_meta" in result and "_meta" not in compact:
+        compact["_meta"] = result["_meta"]
+
+    return compact or None
+
+
 class ResultHandler:
     """
     Handles result storage and output_select extraction for workers.
@@ -213,6 +260,9 @@ class ResultHandler:
             "_store": tier.value,
             **extracted,
         }
+        control_data = _compact_control_data(result)
+        if control_data is not None:
+            processed["control_data"] = control_data
 
         return processed
 
