@@ -175,6 +175,47 @@ def _wait_for_sub_execution_terminal(
     return last_doc
 
 
+def _normalise_result_reference(reference: Any) -> Optional[Dict[str, Any]]:
+    """Convert compact event ``result.reference`` into ResultStore ref shape."""
+    if not isinstance(reference, dict):
+        return None
+    locator = str(reference.get("locator") or reference.get("ref") or "").strip()
+    if not locator.startswith("noetl://"):
+        return None
+    store = str(reference.get("store") or "kv").strip().lower() or "kv"
+    return {
+        "kind": "temp_ref" if store == "memory" else "result_ref",
+        "ref": locator,
+        "store": store,
+    }
+
+
+def _resolve_result_reference_sync(reference: Any) -> Any:
+    """Resolve a compact event result reference from sync agent code."""
+    ref = _normalise_result_reference(reference)
+    if not isinstance(ref, dict):
+        return None
+    try:
+        import asyncio
+        import concurrent.futures
+        from noetl.core.storage.result_store import default_store
+
+        try:
+            asyncio.get_running_loop()
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+                future = pool.submit(asyncio.run, default_store.resolve(ref))
+                return future.result(timeout=10.0)
+        except RuntimeError:
+            return asyncio.run(default_store.resolve(ref))
+    except Exception as exc:
+        logger.warning(
+            "AGENT.RESULT.FETCH: failed to resolve result reference %s: %s",
+            ref.get("ref") if isinstance(ref, dict) else reference,
+            exc,
+        )
+        return None
+
+
 def _fetch_sub_execution_terminal_result(
     execution_id: str,
     *,
@@ -275,6 +316,9 @@ def _fetch_sub_execution_terminal_result(
     result = candidate_event.get("result")
     if not isinstance(result, dict):
         return None
+    resolved = _resolve_result_reference_sync(result.get("reference"))
+    if resolved is not None:
+        return resolved if isinstance(resolved, dict) else {"data": resolved}
     context = result.get("context")
     if not isinstance(context, dict):
         return None
