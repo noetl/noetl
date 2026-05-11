@@ -9,7 +9,7 @@ Storage Tiers (aligned with RisingWave 3-tier hierarchy):
 - memory: In-process (<10KB, step-scoped)
 - kv: NATS KV (<1MB, execution-scoped)
 - disk: Local SSD/NVMe cache backed by cloud (>=1MB; phase 1)
-- s3/gcs: Cloud storage, durable (large blobs; MinIO via S3 endpoint)
+- s3/gcs: Cloud storage, durable (large blobs; S3-compatible endpoints supported)
 - db: PostgreSQL (queryable intermediate data)
 
 Scopes:
@@ -35,7 +35,7 @@ class StoreTier(str, Enum):
     MEMORY = "memory"       # In-process memory (fastest, step-scoped)
     KV = "kv"              # NATS KV (< 1MB, execution-scoped)
     DISK = "disk"          # Local SSD/NVMe cache + async cloud spill (>= 1MB)
-    S3 = "s3"              # S3/MinIO (durable large blobs; MinIO via NOETL_S3_ENDPOINT)
+    S3 = "s3"              # S3-compatible durable blobs (SeaweedFS, RustFS, AWS S3)
     GCS = "gcs"            # Google Cloud Storage
     DB = "db"              # PostgreSQL (queryable)
     DUCKDB = "duckdb"      # DuckDB (local analytics)

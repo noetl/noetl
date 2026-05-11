@@ -624,7 +624,7 @@
             }
           ],
           "default": null,
-          "description": "Specific driver (e.g., minio for s3)",
+          "description": "Specific driver (e.g., s3-compatible for s3)",
           "title": "Driver"
         },
         "bucket": {

@@ -7,7 +7,7 @@ three-tier hot/warm/cold hierarchy):
 - Memory (hot, <10KB, step-scoped, in-process dict)
 - NATS KV (warm, <1MB, execution-scoped, distributed cache)
 - DiskCache (warm, >=1MB, local SSD/NVMe + async cloud spill; phase 1)
-- S3/MinIO (cold/durable, any size; MinIO via NOETL_S3_ENDPOINT)
+- S3-compatible storage (cold/durable, any size; custom endpoint via NOETL_S3_ENDPOINT)
 - GCS (cold/durable, any size)
 
 Phase 0 removes the previous `NATSObjectBackend` ("object" tier).
@@ -626,7 +626,7 @@ class DiskCacheBackend(StorageBackend):
 
 
 class S3Backend(StorageBackend):
-    """S3/MinIO storage for large objects."""
+    """S3-compatible storage for large objects."""
 
     def __init__(
         self,

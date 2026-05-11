@@ -192,7 +192,7 @@ class Settings(BaseModel):
     # (legacy value 'object' is auto-remapped to 'disk' with a deprecation warning)
     default_storage_tier: str = Field(default="kv", alias="NOETL_DEFAULT_STORAGE_TIER")
     # Cloud-tier selection for DISK async spill and >=1MB writes. One of: s3, gcs.
-    # MinIO is not a separate tier; it runs under s3 with NOETL_S3_ENDPOINT.
+    # S3-compatible systems use the abstract s3 tier with NOETL_S3_ENDPOINT.
     storage_cloud_tier: str = Field(default="s3", alias="NOETL_STORAGE_CLOUD_TIER")
 
     # Local disk-cache configuration (reserved, implemented in phase 1).
@@ -213,7 +213,7 @@ class Settings(BaseModel):
         default="None", alias="NOETL_STORAGE_LOCAL_CACHE_RECOVER_MODE"
     )
 
-    # S3 configuration for result storage (covers MinIO via endpoint override)
+    # S3-compatible configuration for result storage.
     s3_endpoint_url: Optional[str] = Field(default=None, alias="S3_ENDPOINT_URL")
     # Alias honored by newer deployments; mirrors s3_endpoint_url when set.
     s3_endpoint: Optional[str] = Field(default=None, alias="NOETL_S3_ENDPOINT")

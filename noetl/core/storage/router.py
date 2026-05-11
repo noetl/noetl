@@ -10,7 +10,7 @@ Selects optimal storage tier based on:
 Phase 0 (RisingWave alignment): removed the `OBJECT` (NATS Object
 Store) tier. Payloads >= 1 MB now route to `DISK` (local SSD cache
 with async cloud spill). The `DISK` backend is a phase-0 placeholder;
-TempStore falls back to the configured cloud tier (S3/MinIO or GCS)
+TempStore falls back to the configured cloud tier (S3-compatible storage or GCS)
 via `default_cloud_tier` until phase 1 lands the real implementation.
 See `docs/features/noetl_storage_and_streaming_alignment.md`.
 """
@@ -28,14 +28,14 @@ def _resolve_default_cloud_tier() -> StoreTier:
     """
     Resolve default cloud tier from env var.
 
-    `NOETL_STORAGE_CLOUD_TIER=s3|gcs` picks the durable backend. MinIO
-    is S3 with a custom endpoint (`NOETL_S3_ENDPOINT`); it is not a
-    separate tier value.
+    `NOETL_STORAGE_CLOUD_TIER=s3|gcs` picks the durable backend. SeaweedFS,
+    RustFS, AWS S3, and other S3-compatible systems all use the abstract
+    `s3` tier with a custom endpoint (`NOETL_S3_ENDPOINT`) when needed.
     """
     raw = (os.getenv("NOETL_STORAGE_CLOUD_TIER") or "s3").strip().lower()
     if raw == "gcs":
         return StoreTier.GCS
-    # Default and explicit `s3` both resolve here. MinIO lives under S3.
+    # Default and explicit `s3` both resolve here.
     return StoreTier.S3
 
 

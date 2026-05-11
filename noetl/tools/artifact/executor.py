@@ -152,7 +152,7 @@ def execute_artifact_get(
         # reference rather than silently fall through.
         raise ValueError(
             "nats-obj:// URIs reference the removed NATS Object Store tier. "
-            "Migrate artifacts to s3:// (MinIO/S3), gcs://, or the new "
+            "Migrate artifacts to s3:// (S3-compatible storage), gcs://, or the new "
             "DISK tier. See docs/features/noetl_storage_and_streaming_alignment.md"
         )
     else:
