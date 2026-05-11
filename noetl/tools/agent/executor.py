@@ -190,30 +190,75 @@ def _normalise_result_reference(reference: Any) -> Optional[Dict[str, Any]]:
     }
 
 
+def _is_unresolved_result_reference(value: Any) -> bool:
+    return (
+        isinstance(value, dict)
+        and value.get("kind") in {"temp_ref", "result_ref"}
+        and bool(value.get("ref"))
+    )
+
+
+def _run_async_from_sync(awaitable: Any, *, timeout_seconds: float = 10.0) -> Any:
+    import asyncio
+    import concurrent.futures
+
+    try:
+        asyncio.get_running_loop()
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+            future = pool.submit(asyncio.run, awaitable)
+            return future.result(timeout=timeout_seconds)
+    except RuntimeError:
+        return asyncio.run(awaitable)
+
+
+def _resolve_disk_result_reference_sync(ref: Dict[str, Any]) -> Any:
+    """Resolve disk-tier refs directly when metadata cache is on another worker."""
+    if str(ref.get("store") or "").lower() != "disk":
+        return None
+    ref_uri = str(ref.get("ref") or "")
+    if not ref_uri.startswith("noetl://"):
+        return None
+
+    async def _resolve() -> Any:
+        import gzip
+        import json
+        from noetl.core.storage.backends import DiskCacheBackend
+
+        key = ref_uri.replace("noetl://", "").replace("/", "_")
+        data_bytes = await DiskCacheBackend().get(key)
+        if data_bytes and len(data_bytes) >= 2 and data_bytes[:2] == b"\x1f\x8b":
+            data_bytes = gzip.decompress(data_bytes)
+        return json.loads(data_bytes.decode("utf-8"))
+
+    try:
+        return _run_async_from_sync(_resolve())
+    except Exception as exc:
+        logger.warning(
+            "AGENT.RESULT.FETCH: failed direct disk resolve for %s: %s",
+            ref_uri,
+            exc,
+        )
+        return None
+
+
 def _resolve_result_reference_sync(reference: Any) -> Any:
     """Resolve a compact event result reference from sync agent code."""
     ref = _normalise_result_reference(reference)
     if not isinstance(ref, dict):
         return None
     try:
-        import asyncio
-        import concurrent.futures
         from noetl.core.storage.result_store import default_store
 
-        try:
-            asyncio.get_running_loop()
-            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
-                future = pool.submit(asyncio.run, default_store.resolve(ref))
-                return future.result(timeout=10.0)
-        except RuntimeError:
-            return asyncio.run(default_store.resolve(ref))
+        resolved = _run_async_from_sync(default_store.resolve(ref))
+        if not _is_unresolved_result_reference(resolved):
+            return resolved
     except Exception as exc:
         logger.warning(
             "AGENT.RESULT.FETCH: failed to resolve result reference %s: %s",
             ref.get("ref") if isinstance(ref, dict) else reference,
             exc,
         )
-        return None
+    return _resolve_disk_result_reference_sync(ref)
 
 
 def _compact_mcp_result_for_agent_context(result: Any) -> Any:
