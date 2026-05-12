@@ -9,7 +9,7 @@ Storage Tiers (aligned with RisingWave 3-tier hot/warm/cold):
 - memory: In-process (<10KB, step-scoped)
 - kv: NATS KV (<1MB, execution-scoped)
 - disk: Local SSD cache + async cloud spill (>=1MB; phase 1 implements)
-- s3/gcs: Cloud storage, durable (MinIO via NOETL_S3_ENDPOINT)
+- s3/gcs: Cloud storage, durable (S3-compatible endpoints supported)
 - db: PostgreSQL (queryable intermediate data)
 
 Phase 0 removes the experimental `object` tier (NATS Object Store).

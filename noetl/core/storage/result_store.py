@@ -547,7 +547,7 @@ class TempStore:
         except Exception as e:
             logger.debug(f"TEMP: KV fetch failed: {e}")
 
-        # Try S3/MinIO if configured (covers disk-tier writes spilled here in phase 0)
+        # Try S3-compatible storage if configured (covers disk-tier spill writes).
         import os
         if os.getenv("NOETL_S3_BUCKET"):
             try:
@@ -686,8 +686,9 @@ class TempStore:
         )
         from noetl.core.storage.router import default_router
 
-        # Pick the cloud backend used as the spill target. MinIO uses S3Backend
-        # with NOETL_S3_ENDPOINT honored by the existing env plumbing.
+        # Pick the cloud backend used as the spill target. S3-compatible
+        # deployments use S3Backend with NOETL_S3_ENDPOINT honored by the
+        # existing env plumbing.
         cloud_backend = None
         try:
             cloud_tier = default_router.default_cloud_tier

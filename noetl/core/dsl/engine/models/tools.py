@@ -17,7 +17,7 @@ class OutputStore(BaseModel):
         ),
     )
     driver: Optional[str] = Field(
-        default=None, description="Specific driver (e.g., minio for s3)"
+        default=None, description="Specific driver (e.g., s3-compatible for s3)"
     )
     bucket: Optional[str] = Field(default=None, description="Bucket name for disk/s3/gcs")
     prefix: Optional[str] = Field(default=None, description="Key prefix for storage")
