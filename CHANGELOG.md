@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.38.0](https://github.com/noetl/noetl/compare/v2.37.8...v2.38.0) (2026-05-15)
+
+### Features
+
+* **server:** add command-table-first runtime command reaper ([1fd8010](https://github.com/noetl/noetl/commit/1fd8010789f24ec7d922ea116edc9b490aaeba03))
+
+### Bug Fixes
+
+* **kind:** remove GOOGLE_APPLICATION_CREDENTIALS placeholder that breaks google.auth.default() ([a29c45d](https://github.com/noetl/noetl/commit/a29c45db730e3c787d9a097c176cb6ad5aec630f))
+
 ## [2.37.8](https://github.com/noetl/noetl/compare/v2.37.7...v2.37.8) (2026-05-11)
 
 ### Bug Fixes
