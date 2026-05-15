@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.38.1](https://github.com/noetl/noetl/compare/v2.38.0...v2.38.1) (2026-05-15)
+
+### Bug Fixes
+
+* **commands:** reclaim same-worker CLAIMs past healthy hard timeout ([6096678](https://github.com/noetl/noetl/commit/609667827e1e63ae2be67020136a478b6aa15a82))
+
 ## [2.38.0](https://github.com/noetl/noetl/compare/v2.37.8...v2.38.0) (2026-05-15)
 
 ### Features
