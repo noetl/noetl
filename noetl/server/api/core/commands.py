@@ -413,9 +413,20 @@ async def claim_command(event_id: int, req: ClaimRequest):
                                                 headers={"Retry-After": str(_CLAIM_ACTIVE_RETRY_AFTER_SECONDS)})
                     elif existing_worker == req.worker_id:
                         if existing.get("status") == "RUNNING":
-                            _active_claim_cache_set(event_id, command_id, existing_worker)
-                            raise HTTPException(409, detail={"code": "active_claim", "worker_status": "running"},
-                                                headers={"Retry-After": str(_CLAIM_ACTIVE_RETRY_AFTER_SECONDS)})
+                            created_at = existing.get("created_at")
+                            if created_at is None:
+                                created_at = datetime.now(timezone.utc)
+                            if created_at.tzinfo is None:
+                                created_at = created_at.replace(tzinfo=timezone.utc)
+                            claim_age = (datetime.now(timezone.utc) - created_at).total_seconds()
+                            if claim_age >= _CLAIM_HEALTHY_WORKER_HARD_TIMEOUT_SECONDS:
+                                stale_reclaim = True
+                                reclaimed_from = existing_worker
+                                reclaimed_reason = "same_worker_hard_timeout"
+                            else:
+                                _active_claim_cache_set(event_id, command_id, existing_worker)
+                                raise HTTPException(409, detail={"code": "active_claim", "worker_status": "running"},
+                                                    headers={"Retry-After": str(_CLAIM_ACTIVE_RETRY_AFTER_SECONDS)})
                     if not stale_reclaim:
                         _active_claim_cache_set(event_id, command_id, req.worker_id)
                         return ClaimResponse(status="ok", event_id=event_id, execution_id=execution_id, node_id=step, node_name=step, action=tool_kind, context=context, meta=meta)
