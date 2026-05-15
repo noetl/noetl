@@ -29,6 +29,10 @@ from noetl.server.auto_resume import (
     resume_interrupted_executions,
     get_auto_resume_metrics_snapshot,
 )
+from noetl.server.command_reaper import (
+    run_command_reaper,
+    is_reaper_enabled as is_command_reaper_enabled,
+)
 from noetl.server.runtime_leases import RuntimeLease, load_control_lease_seconds
 
 logger = setup_logger(__name__, include_location=True)
@@ -173,6 +177,14 @@ def _create_app(settings: Settings) -> FastAPI:
                 logical_name=logical_name,
                 lease_seconds=control_lease_seconds,
             )
+            command_reaper_lease = RuntimeLease(
+                task_name="command_reaper",
+                instance_name=instance_name,
+                server_url=server_url,
+                hostname=hostname,
+                logical_name=logical_name,
+                lease_seconds=control_lease_seconds,
+            )
             async def _server_heartbeat_loop():
                 while not stop_event.is_set():
                     try:
@@ -303,6 +315,7 @@ def _create_app(settings: Settings) -> FastAPI:
             heartbeat_task: Optional[asyncio.Task] = None
             sweeper_task: Optional[asyncio.Task] = None
             auto_resume_task: Optional[asyncio.Task] = None
+            command_reaper_task: Optional[asyncio.Task] = None
             try:
                 logger.info("Starting server heartbeat background task...")
                 heartbeat_task = asyncio.create_task(_server_heartbeat_loop(), name="server-heartbeat")
@@ -326,6 +339,23 @@ def _create_app(settings: Settings) -> FastAPI:
                 logger.info("Auto-resume coordination task started successfully")
             except Exception as e:
                 logger.error(f"Auto-resume startup failed (non-fatal): {e}", exc_info=True)
+
+            try:
+                if is_command_reaper_enabled():
+                    logger.info("Starting command reaper background task...")
+                    command_reaper_task = asyncio.create_task(
+                        run_command_reaper(
+                            stop_event=stop_event,
+                            server_url=command_server_url,
+                            lease=command_reaper_lease,
+                        ),
+                        name="command-reaper",
+                    )
+                    logger.info("Command reaper background task started successfully")
+                else:
+                    logger.info("Command reaper disabled via env; skipping startup")
+            except Exception as e:
+                logger.error(f"Command reaper startup failed (non-fatal): {e}", exc_info=True)
 
             yield
             # Shutdown
@@ -351,6 +381,13 @@ def _create_app(settings: Settings) -> FastAPI:
                         await auto_resume_task
                 except Exception as e:
                     logger.exception(f"Critical error during auto-resume task shutdown: {e}")
+            if command_reaper_task:
+                try:
+                    command_reaper_task.cancel()
+                    with contextlib.suppress(asyncio.CancelledError):
+                        await command_reaper_task
+                except Exception as e:
+                    logger.exception(f"Critical error during command reaper task shutdown: {e}")
             try:
                 await shutdown_publish_recovery_tasks()
             except Exception as e:
