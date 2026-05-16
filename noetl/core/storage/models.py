@@ -76,6 +76,9 @@ class ResultRefMeta(BaseModel):
     content_type: str = Field(default="application/json")
     bytes: int = Field(default=0, description="Size in bytes")
     sha256: Optional[str] = Field(default=None, description="Content hash")
+    schema_digest: Optional[str] = Field(default=None, description="Logical payload schema digest")
+    row_count: Optional[int] = Field(default=None, description="Row count for tabular payloads")
+    media_type: Optional[str] = Field(default=None, description="Canonical media type for payload bytes")
     compression: str = Field(default="none", description="Compression: gzip, lz4, none")
     encoding: str = Field(default="utf-8")
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
@@ -85,6 +88,30 @@ class ResultRefMeta(BaseModel):
 
 # Legacy alias
 TempRefMeta = ResultRefMeta
+
+
+class IpcHint(BaseModel):
+    """Best-effort same-node shared-memory hint for a durable payload ref."""
+
+    kind: Literal["arrow_ipc"] = Field(default="arrow_ipc")
+    shm_name: str = Field(..., description="Shared-memory region or mmap path")
+    schema_digest: str = Field(..., description="Arrow schema digest")
+    byte_length: int = Field(..., ge=0)
+    row_count: Optional[int] = Field(default=None, ge=0)
+    producer: Optional[str] = Field(default=None)
+    lease_expires_at: Optional[datetime] = Field(default=None)
+    media_type: str = Field(default="application/vnd.apache.arrow.stream")
+
+    def is_expired(self, *, now: Optional[datetime] = None) -> bool:
+        if self.lease_expires_at is None:
+            return False
+        check_time = now or datetime.now(timezone.utc)
+        if check_time.tzinfo is None:
+            check_time = check_time.replace(tzinfo=timezone.utc)
+        expires_at = self.lease_expires_at
+        if expires_at.tzinfo is None:
+            expires_at = expires_at.replace(tzinfo=timezone.utc)
+        return check_time > expires_at
 
 
 class ResultRef(BaseModel):
@@ -134,6 +161,10 @@ class ResultRef(BaseModel):
         default=None,
         description="Loop/pagination/retry tracking keys"
     )
+    ipc: Optional[IpcHint] = Field(
+        default=None,
+        description="Optional Tier 1.5 same-node IPC hint; durable ref remains authoritative"
+    )
     # Accumulation fields
     is_accumulated: bool = Field(default=False, description="Is part of accumulation")
     accumulation_index: Optional[int] = Field(default=None, description="Index in accumulation")
@@ -163,7 +194,8 @@ class ResultRef(BaseModel):
         ttl_seconds: Optional[int] = None,
         meta: Optional[ResultRefMeta] = None,
         correlation: Optional[Dict[str, Any]] = None,
-        extracted: Optional[Dict[str, Any]] = None
+        extracted: Optional[Dict[str, Any]] = None,
+        ipc: Optional[IpcHint] = None,
     ) -> "ResultRef":
         """Factory method to create a new ResultRef."""
         ref_id = str(uuid.uuid4())[:8]
@@ -181,7 +213,8 @@ class ResultRef(BaseModel):
             expires_at=expires_at,
             meta=meta or ResultRefMeta(),
             correlation=correlation,
-            extracted=extracted
+            extracted=extracted,
+            ipc=ipc,
         )
 
     def is_expired(self) -> bool:
@@ -311,6 +344,7 @@ __all__ = [
     "StoreTier",
     "Scope",
     "ResultRefMeta",
+    "IpcHint",
     "ResultRef",
     "ManifestPart",
     "Manifest",
