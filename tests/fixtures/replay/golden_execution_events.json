@@ -1,0 +1,85 @@
+[
+  {
+    "event_id": 1,
+    "event_type": "playbook.initialized",
+    "status": "RUNNING",
+    "node_name": "start",
+    "schema_name": "noetl.event",
+    "schema_version": 1
+  },
+  {
+    "event_id": 2,
+    "event_type": "stage.opened",
+    "aggregate_type": "stage",
+    "aggregate_id": "stage/10",
+    "node_name": "fetch_patients",
+    "schema_name": "noetl.stage.opened",
+    "schema_version": 1,
+    "meta": {
+      "kind": "loop",
+      "step_name": "fetch_patients"
+    }
+  },
+  {
+    "event_id": 3,
+    "event_type": "frame.dispatched",
+    "aggregate_type": "frame",
+    "aggregate_id": "frame/100",
+    "schema_name": "noetl.frame.dispatched",
+    "schema_version": 1,
+    "meta": {
+      "stage_id": "10",
+      "attempt": 1
+    }
+  },
+  {
+    "event_id": 4,
+    "event_type": "frame.started",
+    "aggregate_type": "frame",
+    "aggregate_id": "frame/100",
+    "status": "RUNNING",
+    "schema_name": "noetl.frame.started",
+    "schema_version": 1,
+    "meta": {
+      "stage_id": "10"
+    }
+  },
+  {
+    "event_id": 5,
+    "event_type": "frame.committed",
+    "aggregate_type": "frame",
+    "aggregate_id": "frame/100",
+    "status": "COMPLETED",
+    "payload_ref": {
+      "uri": "noetl://tenant/default/org/default/payloads/sha256/golden",
+      "sha256": "golden",
+      "media_type": "application/vnd.apache.arrow.stream"
+    },
+    "schema_name": "noetl.frame.committed",
+    "schema_version": 1,
+    "meta": {
+      "stage_id": "10",
+      "row_count": 50
+    }
+  },
+  {
+    "event_id": 6,
+    "event_type": "stage.closed",
+    "aggregate_type": "stage",
+    "aggregate_id": "stage/10",
+    "status": "COMPLETED",
+    "schema_name": "noetl.stage.closed",
+    "schema_version": 1,
+    "meta": {
+      "stage_id": "10"
+    }
+  },
+  {
+    "event_id": 7,
+    "event_type": "playbook.completed",
+    "status": "COMPLETED",
+    "node_name": "end",
+    "schema_name": "noetl.event",
+    "schema_version": 1
+  }
+]
