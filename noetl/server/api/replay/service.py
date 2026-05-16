@@ -1,8 +1,8 @@
 """Replay service for event-sourced runtime projections.
 
 Phase 0 intentionally folds only lightweight state from canonical event
-metadata. Payload refs are surfaced as lineage, but large payload resolution and
-schema upcasting land in later phases.
+metadata. Payload refs are surfaced as lineage; durable payload resolution lands
+in a later phase.
 """
 
 from __future__ import annotations
@@ -16,6 +16,7 @@ from typing import Any, Iterable, Mapping, Optional
 from psycopg.rows import dict_row
 
 from noetl.core.db.pool import get_pool_connection
+from noetl.core.replay import default_upcaster_registry
 
 
 @dataclass(frozen=True)
@@ -346,12 +347,14 @@ class ReplayService:
         projection: str,
         limit: int,
     ) -> dict[str, Any]:
-        events = await ReplayService.load_events(
-            tenant_id=tenant_id,
-            organization_id=organization_id,
-            execution_id=execution_id,
-            cutoff=cutoff,
-            limit=limit,
+        events = default_upcaster_registry.upcast_events(
+            await ReplayService.load_events(
+                tenant_id=tenant_id,
+                organization_id=organization_id,
+                execution_id=execution_id,
+                cutoff=cutoff,
+                limit=limit,
+            )
         )
         return fold_replay_state(
             events,
