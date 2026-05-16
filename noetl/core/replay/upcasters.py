@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 from collections.abc import Callable, Iterable, Mapping
 from typing import Any
 
@@ -50,6 +52,15 @@ class EventUpcasterRegistry:
 
     def upcast_events(self, events: Iterable[Mapping[str, Any]]) -> list[dict[str, Any]]:
         return [self.upcast_event(event) for event in events]
+
+    def digest(self) -> str:
+        """Stable digest of registered schema/version transitions."""
+        entries = [
+            {"schema_name": schema_name, "from_version": from_version}
+            for schema_name, from_version in sorted(self._upcasters)
+        ]
+        payload = json.dumps(entries, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        return hashlib.sha256(payload).hexdigest()
 
 
 def _schema_version(value: Any) -> int:

@@ -73,6 +73,7 @@ def test_fold_replay_state_tracks_execution_frames_loops_and_checksum():
         tenant_id="tenant-a",
         organization_id="org-a",
         execution_id=123,
+        upcaster_registry_digest="abc123",
     )
 
     assert state["event_count"] == 6
@@ -82,5 +83,6 @@ def test_fold_replay_state_tracks_execution_frames_loops_and_checksum():
     assert state["frames"]["42"]["row_count"] == 50
     assert state["loops"]["loop-1"]["done"] == 1
     assert state["loops"]["loop-1"]["completed"] is True
+    assert state["upcaster_registry_digest"] == "abc123"
     assert state["checksum_algorithm"] == "sha256"
     assert len(state["checksum"]) == 64

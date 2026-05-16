@@ -106,6 +106,7 @@ def fold_replay_state(
     organization_id: str,
     execution_id: int,
     projection: str = "all",
+    upcaster_registry_digest: Optional[str] = None,
 ) -> dict[str, Any]:
     """Fold canonical events into a deterministic lightweight state snapshot."""
 
@@ -115,6 +116,7 @@ def fold_replay_state(
         "organization_id": organization_id,
         "execution_id": execution_id,
         "projection": projection,
+        "upcaster_registry_digest": upcaster_registry_digest,
         "event_count": 0,
         "last_event_id": None,
         "last_event_type": None,
@@ -362,4 +364,5 @@ class ReplayService:
             organization_id=organization_id,
             execution_id=execution_id,
             projection=projection,
+            upcaster_registry_digest=default_upcaster_registry.digest(),
         )

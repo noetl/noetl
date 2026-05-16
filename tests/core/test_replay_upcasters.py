@@ -50,3 +50,21 @@ def test_upcaster_registry_defaults_legacy_schema_fields():
 
     assert event["schema_name"] == "noetl.event"
     assert event["schema_version"] == 1
+
+
+def test_upcaster_registry_digest_is_stable_for_registered_transitions():
+    from noetl.core.replay import EventUpcasterRegistry
+
+    def _advance(event):
+        return {**event, "schema_version": int(event["schema_version"]) + 1}
+
+    left = EventUpcasterRegistry()
+    left.register("noetl.frame.committed", 2, _advance)
+    left.register("noetl.event", 1, _advance)
+
+    right = EventUpcasterRegistry()
+    right.register("noetl.event", 1, _advance)
+    right.register("noetl.frame.committed", 2, _advance)
+
+    assert left.digest() == right.digest()
+    assert len(left.digest()) == 64
