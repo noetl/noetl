@@ -130,6 +130,7 @@ class TransitionMixin:
 
         # Cursor spec — serialize so the worker receives a plain dict.
         cursor_spec = step_def.loop.cursor.model_dump()
+        frame_policy = step_def.loop.frame_policy.model_dump()
 
         # Pre-render the claim SQL against the engine's full render
         # context so any execution-scoped values (e.g. a facility id
@@ -210,6 +211,7 @@ class TransitionMixin:
                 "worker_slot_index": slot,
                 "worker_count": worker_count,
                 "loop_event_id": loop_event_id,
+                "frame_policy": frame_policy,
             }
             command_metadata = {
                 "task_sequence": True,
@@ -220,6 +222,7 @@ class TransitionMixin:
                 "loop_event_id": loop_event_id,
                 "__loop_epoch_id": loop_event_id,
                 "loop_worker_count": worker_count,
+                "frame_policy": frame_policy,
                 # Each worker slot counts as one loop iteration for
                 # aggregation purposes: one terminal call.done per slot
                 # advances completed_count by 1; loop.done fires when
