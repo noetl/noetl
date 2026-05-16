@@ -752,6 +752,46 @@ CREATE INDEX IF NOT EXISTS idx_frame_execution_status
 CREATE INDEX IF NOT EXISTS idx_frame_tenant_org_execution
     ON noetl.frame (tenant_id, organization_id, execution_id, frame_id);
 
+-- Replayable projection store reference tables. These are derived state and
+-- can be rebuilt from noetl.event plus immutable payloads.
+CREATE TABLE IF NOT EXISTS noetl.projection (
+    projection_id   TEXT PRIMARY KEY,
+    projection_type TEXT NOT NULL,
+    tenant_id       TEXT NOT NULL DEFAULT 'default',
+    organization_id TEXT NOT NULL DEFAULT 'default',
+    execution_id    BIGINT,
+    version         BIGINT NOT NULL,
+    source_event_id BIGINT,
+    state           JSONB NOT NULL,
+    checksum        TEXT NOT NULL,
+    meta            JSONB NOT NULL DEFAULT '{}'::jsonb,
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at      TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_projection_tenant_type
+    ON noetl.projection (tenant_id, organization_id, projection_type);
+CREATE INDEX IF NOT EXISTS idx_projection_execution
+    ON noetl.projection (execution_id, projection_type)
+    WHERE execution_id IS NOT NULL;
+
+CREATE TABLE IF NOT EXISTS noetl.projection_snapshot (
+    aggregate_id    TEXT NOT NULL,
+    aggregate_type  TEXT NOT NULL,
+    tenant_id       TEXT NOT NULL DEFAULT 'default',
+    organization_id TEXT NOT NULL DEFAULT 'default',
+    version         BIGINT NOT NULL,
+    snapshot        JSONB NOT NULL,
+    checksum        TEXT NOT NULL,
+    meta            JSONB NOT NULL DEFAULT '{}'::jsonb,
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (tenant_id, organization_id, aggregate_type, aggregate_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_projection_snapshot_type
+    ON noetl.projection_snapshot (tenant_id, organization_id, aggregate_type, version DESC);
+
 CREATE INDEX IF NOT EXISTS idx_event_loop_event_id
     ON noetl.event (execution_id, node_name, ((meta->>'loop_event_id')))
     WHERE meta ? 'loop_event_id';
