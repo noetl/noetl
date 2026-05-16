@@ -192,7 +192,7 @@ async def get_execution_status(execution_id: str, full: bool = False):
             completed, failed, inferred = False, False, False
             t_type = terminal["event_type"] if terminal else None
             if t_type in {"playbook.completed", "workflow.completed"}: completed = True
-            elif t_type in {"playbook.failed", "workflow.failed", "execution.cancelled"}:
+            elif t_type in {"playbook.failed", "workflow.failed", "execution.cancelled", "command.failed"}:
                 completed = t_type == "execution.cancelled"; failed = t_type != "execution.cancelled"
             elif latest["node_name"] == "end" and latest["status"] == "COMPLETED" and latest["event_type"] in {"command.completed", "call.done", "step.exit"}:
                 completed, inferred = True, True
@@ -237,7 +237,7 @@ async def get_execution_status(execution_id: str, full: bool = False):
             else:
                 t_type = terminal["event_type"] if terminal else None
                 if t_type in {"playbook.completed", "workflow.completed"}: completed = True
-                elif t_type in {"playbook.failed", "workflow.failed", "execution.cancelled"}:
+                elif t_type in {"playbook.failed", "workflow.failed", "execution.cancelled", "command.failed"}:
                     completed = t_type == "execution.cancelled"; failed = t_type != "execution.cancelled"
                 elif latest and latest["node_name"] == "end" and latest["status"] == "COMPLETED" and latest["event_type"] in {"command.completed", "call.done", "step.exit"}:
                     completed, inferred = True, True

@@ -21,7 +21,7 @@ from . import credential, catalog, database, keychain, playbook_tests
 from . import mcp
 
 # Query/monitoring APIs
-from . import execution, vars, dashboard, system, runtime
+from . import execution, vars, dashboard, system, runtime, replay
 
 # Context API (server-side template rendering)
 from . import context
@@ -57,6 +57,7 @@ router.include_router(vars.router)
 router.include_router(dashboard.router)
 router.include_router(system.router)
 router.include_router(runtime.router)
+router.include_router(replay.router)
 
 # Context API (server-side template rendering)
 router.include_router(context.router)
@@ -71,6 +72,6 @@ __all__ = [
     "router",
     "core",
     "catalog", "credential", "database", "keychain", "playbook_tests", "mcp",
-    "execution", "vars", "dashboard", "system", "runtime",
+    "execution", "vars", "dashboard", "system", "runtime", "replay",
     "context", "result", "temp"
 ]
