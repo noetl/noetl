@@ -273,11 +273,11 @@ async def _issue_commands_for_batch(job: _BatchAcceptJob, commands: list) -> Non
             # 4. Batch insert commands
             now = datetime.now(timezone.utc)
             insert_params = [
-                (p["evt_id"], p["execution_id"], cat_id, "command.issued", p["step"], p["step"], p["tool_kind"], "PENDING", Json(p["ctx"]), Json(p["meta"]), job.last_actionable_evt_id, p_exec, p["cmd_id"], now)
+                (p["evt_id"], p["execution_id"], cat_id, "command.issued", p["step"], p["step"], p["tool_kind"], "PENDING", Json(p["ctx"]), Json(p["meta"]), job.last_actionable_evt_id, p_exec, p["cmd_id"], p["meta"].get("stage_id"), p["meta"].get("frame_id"), now)
                 for p in prepared_commands
             ]
             command_table_params = [
-                (p["cmd_id"], p["evt_id"], p["execution_id"], cat_id, p_exec, p["step"], p["tool_kind"], "PENDING", Json(p["ctx"]), p["meta"].get("__loop_epoch_id") or p["meta"].get("loop_event_id"), p["meta"].get("__loop_claimed_index") or p["meta"].get("iter_index"), Json(p["meta"]), now)
+                (p["cmd_id"], p["evt_id"], p["execution_id"], cat_id, p_exec, p["step"], p["tool_kind"], "PENDING", Json(p["ctx"]), p["meta"].get("__loop_epoch_id") or p["meta"].get("loop_event_id"), p["meta"].get("__loop_claimed_index") or p["meta"].get("iter_index"), Json(p["meta"]), p["meta"].get("stage_id"), p["meta"].get("frame_id"), now)
                 for p in prepared_commands
             ]
             # Chunk the inserts to prevent massive database payload crashes
@@ -285,15 +285,15 @@ async def _issue_commands_for_batch(job: _BatchAcceptJob, commands: list) -> Non
             for j in range(0, len(insert_params), chunk_size):
                 chunk = insert_params[j:j + chunk_size]
                 await cur.executemany("""
-                    INSERT INTO noetl.event (event_id, execution_id, catalog_id, event_type, node_id, node_name, node_type, status, context, meta, parent_event_id, parent_execution_id, command_id, created_at)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    INSERT INTO noetl.event (event_id, execution_id, catalog_id, event_type, node_id, node_name, node_type, status, context, meta, parent_event_id, parent_execution_id, command_id, stage_id, frame_id, created_at)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 """, chunk)
                 await cur.executemany("""
                     INSERT INTO noetl.command (
                         command_id, event_id, execution_id, catalog_id, parent_execution_id,
-                        step_name, tool_kind, status, context, loop_event_id, iter_index, meta, created_at
+                        step_name, tool_kind, status, context, loop_event_id, iter_index, meta, stage_id, frame_id, created_at
                     )
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                     ON CONFLICT (execution_id, command_id) DO NOTHING
                 """, command_table_params[j:j + chunk_size])
                 await conn.commit()

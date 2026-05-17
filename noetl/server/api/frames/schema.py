@@ -9,6 +9,7 @@ class FrameClaimRequest(BaseModel):
     """Request to claim or lazily mint frame leases for a stage."""
 
     worker_id: str = Field(..., min_length=1)
+    command_id: Optional[int] = None
     requested_count: int = Field(1, ge=1, le=100)
     lease_seconds: int = Field(60, ge=5, le=3600)
     cursor: dict[str, Any] = Field(default_factory=dict)

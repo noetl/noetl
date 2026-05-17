@@ -304,15 +304,16 @@ class TransitionMixin:
                 await cur.execute(
                     """
                     INSERT INTO noetl.stage (
-                        stage_id, execution_id, parent_event_id, kind, step_name,
+                        stage_id, execution_id, parent_event_id, loop_event_id, kind, step_name,
                         dsl_ref, status, frame_policy, tenant_id, organization_id
                     )
-                    VALUES (%s, %s, %s, 'loop', %s, %s, 'OPEN', %s, %s, %s)
+                    VALUES (%s, %s, %s, %s, 'loop', %s, %s, 'OPEN', %s, %s, %s)
                     """,
                     (
                         stage_id,
                         int(state.execution_id),
                         parent_event_id,
+                        loop_event_id,
                         step_def.step,
                         dsl_ref,
                         Json(frame_policy or {}),
@@ -365,7 +366,7 @@ class TransitionMixin:
                             tenant_id, organization_id, stream_id, stream_version,
                             aggregate_id, aggregate_type, schema_name, schema_version,
                             event_time, producer, causation_id, correlation_id,
-                            idempotency_key, payload_ref, envelope_checksum
+                            idempotency_key, payload_ref, envelope_checksum, stage_id
                         )
                         VALUES (
                             %s, %s, %s, %s,
@@ -374,7 +375,7 @@ class TransitionMixin:
                             %s, %s, %s, 1,
                             %s, 'stage', 'noetl.stage.opened', 1,
                             %s, 'noetl-server', %s, %s,
-                            %s, NULL, %s
+                            %s, NULL, %s, %s
                         )
                         """,
                         (
@@ -397,7 +398,17 @@ class TransitionMixin:
                             envelope["correlation_id"],
                             envelope["idempotency_key"],
                             canonical_event_checksum(envelope),
+                            stage_id,
                         ),
+                    )
+                    await cur.execute(
+                        """
+                        UPDATE noetl.stage
+                        SET opened_event_id = %s,
+                            updated_at = now()
+                        WHERE stage_id = %s
+                        """,
+                        (event_id, stage_id),
                     )
                     if not owns_transaction:
                         await cur.execute(f"RELEASE SAVEPOINT {savepoint_name}")

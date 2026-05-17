@@ -59,6 +59,35 @@ async def _load_stage(cur: Any, stage_id: int) -> dict[str, Any]:
     return dict(stage)
 
 
+async def _resolve_claim_command_id(
+    cur: Any,
+    *,
+    execution_id: int,
+    stage_id: int,
+    worker_id: str,
+    requested_command_id: int | None,
+) -> int | None:
+    if requested_command_id is not None:
+        return int(requested_command_id)
+    await cur.execute(
+        """
+        SELECT command_id
+        FROM noetl.command
+        WHERE execution_id = %s
+          AND stage_id = %s
+          AND meta->>'worker_slot_id' = %s
+        ORDER BY command_id DESC
+        LIMIT 1
+        """,
+        (execution_id, stage_id, worker_id),
+    )
+    row = await cur.fetchone()
+    if not row:
+        return None
+    command_id = row.get("command_id")
+    return int(command_id) if command_id is not None else None
+
+
 async def _insert_frame_event(
     cur: Any,
     *,
@@ -129,7 +158,7 @@ async def _insert_frame_event(
             worker_id, tenant_id, organization_id, stream_id, aggregate_id,
             aggregate_type, schema_name, schema_version, event_time, ingest_time,
             producer, idempotency_key, payload_ref, stream_version,
-            envelope_checksum, created_at
+            envelope_checksum, stage_id, frame_id, created_at
         )
         VALUES (
             %(event_id)s, %(execution_id)s, %(catalog_id)s, %(event_type)s, %(node_name)s,
@@ -137,7 +166,7 @@ async def _insert_frame_event(
             %(organization_id)s, %(stream_id)s, %(aggregate_id)s, 'frame',
             %(schema_name)s, 1, %(now)s, %(now)s, %(producer)s,
             %(idempotency_key)s, %(payload_ref)s, %(stream_version)s,
-            %(envelope_checksum)s, %(now)s
+            %(envelope_checksum)s, %(stage_id)s, %(frame_id)s, %(now)s
         )
         """,
         {
@@ -163,6 +192,8 @@ async def _insert_frame_event(
             "payload_ref": Json(payload_ref) if payload_ref else None,
             "stream_version": stream_version,
             "envelope_checksum": envelope_checksum,
+            "stage_id": frame["stage_id"],
+            "frame_id": frame["frame_id"],
             "now": now,
         },
     )
@@ -258,6 +289,13 @@ async def claim_frames(stage_id: int, req: FrameClaimRequest) -> dict[str, Any]:
         async with get_pool_connection() as conn:
             async with conn.cursor(row_factory=dict_row) as cur:
                 stage = await _load_stage(cur, stage_id)
+                command_id = await _resolve_claim_command_id(
+                    cur,
+                    execution_id=stage["execution_id"],
+                    stage_id=stage_id,
+                    worker_id=req.worker_id,
+                    requested_command_id=req.command_id,
+                )
                 claimed: list[dict[str, Any]] = []
                 events_to_mirror: list[dict[str, Any]] = []
                 for _ in range(req.requested_count):
@@ -285,9 +323,9 @@ async def claim_frames(stage_id: int, req: FrameClaimRequest) -> dict[str, Any]:
                             """
                             INSERT INTO noetl.frame (
                                 frame_id, stage_id, execution_id, cursor, row_count,
-                                status, tenant_id, organization_id
+                                status, command_id, tenant_id, organization_id
                             )
-                            VALUES (%s, %s, %s, %s, 0, 'PENDING', %s, %s)
+                            VALUES (%s, %s, %s, %s, 0, 'PENDING', %s, %s, %s)
                             RETURNING *
                             """,
                             (
@@ -295,6 +333,7 @@ async def claim_frames(stage_id: int, req: FrameClaimRequest) -> dict[str, Any]:
                                 stage_id,
                                 stage["execution_id"],
                                 Json(req.cursor or {}),
+                                command_id,
                                 stage["tenant_id"],
                                 stage["organization_id"],
                             ),
@@ -310,13 +349,14 @@ async def claim_frames(stage_id: int, req: FrameClaimRequest) -> dict[str, Any]:
                         UPDATE noetl.frame
                         SET status = 'CLAIMED',
                             owner_worker = %s,
+                            command_id = COALESCE(command_id, %s),
                             lease_until = now() + (%s || ' seconds')::interval,
                             attempts = attempts + 1,
                             updated_at = now()
                         WHERE frame_id = %s
                         RETURNING *
                         """,
-                        (req.worker_id, req.lease_seconds, frame["frame_id"]),
+                        (req.worker_id, command_id, req.lease_seconds, frame["frame_id"]),
                     )
                     updated = dict(await cur.fetchone())
                     updated["step_name"] = stage["step_name"]
@@ -332,6 +372,16 @@ async def claim_frames(stage_id: int, req: FrameClaimRequest) -> dict[str, Any]:
                             "frame_policy": req.frame_policy or stage.get("frame_policy") or {},
                         },
                     )
+                    await cur.execute(
+                        """
+                        UPDATE noetl.frame
+                        SET claimed_event_id = %s,
+                            updated_at = now()
+                        WHERE frame_id = %s
+                        """,
+                        (event["event_id"], updated["frame_id"]),
+                    )
+                    updated["claimed_event_id"] = event["event_id"]
                     events_to_mirror.append(event)
                     claimed.append(_frame_response(updated, event["event_id"]))
 
@@ -447,6 +497,16 @@ async def commit_frame(frame_id: int, req: FrameCommitRequest) -> dict[str, Any]
                         "cursor": req.cursor or {},
                     },
                 )
+                await cur.execute(
+                    """
+                    UPDATE noetl.frame
+                    SET terminal_event_id = %s,
+                        updated_at = now()
+                    WHERE frame_id = %s
+                    """,
+                    (event["event_id"], frame_id),
+                )
+                frame["terminal_event_id"] = event["event_id"]
                 await conn.commit()
                 await _mirror_frame_events([event])
                 return {"status": "ok", "frame": _frame_response(frame, event["event_id"])}

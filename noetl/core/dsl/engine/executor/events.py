@@ -3,6 +3,7 @@ from __future__ import annotations
 from .common import *
 from .state import ExecutionState
 from .store import PlaybookRepo, StateStore
+from noetl.core.event_store.ports import canonical_event_checksum
 
 class EventHandlingMixin:
     async def _persist_event_compat(self, event: Event, state: ExecutionState, conn=None):
@@ -37,6 +38,196 @@ class EventHandlingMixin:
             logger.debug(
                 "[COMPLETION] Durable command pending-count lookup skipped for execution=%s: %s",
                 execution_id,
+                exc,
+            )
+            return None
+
+    async def _close_runtime_stage_for_loop(
+        self,
+        *,
+        state: ExecutionState,
+        step_name: str,
+        loop_event_id: Any,
+        status: str = "COMPLETED",
+        conn=None,
+    ) -> int | None:
+        """Close the stage projection for a completed cursor loop epoch.
+
+        The event log remains authoritative. This method updates the mutable
+        stage projection and appends the matching `stage.closed` event in the
+        same transaction used by the loop.done handler when possible.
+        """
+        if not loop_event_id:
+            return None
+
+        async def _close_with_conn(active_conn, *, owns_transaction: bool) -> int | None:
+            async with active_conn.cursor(row_factory=dict_row) as cur:
+                await cur.execute("SET LOCAL statement_timeout = 0")
+                await cur.execute(
+                    """
+                    UPDATE noetl.stage s
+                    SET status = %s,
+                        ended_at = COALESCE(ended_at, now()),
+                        updated_at = now()
+                    FROM noetl.execution e
+                    WHERE e.execution_id = s.execution_id
+                      AND s.execution_id = %s
+                      AND s.step_name = %s
+                      AND s.loop_event_id = %s
+                      AND s.status IN ('OPEN', 'RUNNING')
+                      AND s.closed_event_id IS NULL
+                    RETURNING s.*, e.catalog_id
+                    """,
+                    (status, int(state.execution_id), step_name, str(loop_event_id)),
+                )
+                stage = await cur.fetchone()
+                if not stage:
+                    return None
+                stage = dict(stage)
+                await cur.execute(
+                    """
+                    SELECT
+                        COUNT(*)::int AS frame_count,
+                        COALESCE(SUM(row_count), 0)::int AS row_count,
+                        COALESCE(SUM(events_emitted), 0)::int AS events_emitted,
+                        COUNT(*) FILTER (WHERE status = 'FAILED')::int AS failed_count
+                    FROM noetl.frame
+                    WHERE stage_id = %s
+                    """,
+                    (stage["stage_id"],),
+                )
+                frame_stats = dict(await cur.fetchone() or {})
+                await cur.execute("SELECT noetl.snowflake_id() AS id")
+                event_id = int((await cur.fetchone())["id"])
+                stream_id = f"execution/{state.execution_id}/stage/{stage['stage_id']}"
+                await cur.execute(
+                    """
+                    SELECT COALESCE(max(stream_version), 0) + 1 AS next_version
+                    FROM noetl.event
+                    WHERE stream_id = %s
+                    """,
+                    (stream_id,),
+                )
+                stream_version = int(((await cur.fetchone()) or {}).get("next_version") or 1)
+                now = datetime.now(timezone.utc)
+                parent_event_id = state.last_event_id
+                tenant_id = stage.get("tenant_id") or "default"
+                organization_id = stage.get("organization_id") or "default"
+                meta = {
+                    "stage_id": str(stage["stage_id"]),
+                    "loop_event_id": str(loop_event_id),
+                    "frame_count": int(frame_stats.get("frame_count") or 0),
+                    "row_count": int(frame_stats.get("row_count") or 0),
+                    "events_emitted": int(frame_stats.get("events_emitted") or 0),
+                    "failed_count": int(frame_stats.get("failed_count") or 0),
+                    "actionable": False,
+                    "informative": True,
+                }
+                result = {"status": status}
+                envelope = {
+                    "tenant_id": tenant_id,
+                    "organization_id": organization_id,
+                    "execution_id": int(state.execution_id),
+                    "stream_id": stream_id,
+                    "stream_version": stream_version,
+                    "aggregate_id": f"stage/{stage['stage_id']}",
+                    "aggregate_type": "stage",
+                    "event_type": "stage.closed",
+                    "schema_name": "noetl.stage.closed",
+                    "schema_version": 1,
+                    "event_time": now,
+                    "producer": "noetl-server",
+                    "causation_id": str(parent_event_id) if parent_event_id else None,
+                    "correlation_id": str(state.root_event_id or state.execution_id),
+                    "idempotency_key": (
+                        f"{tenant_id}/{organization_id}/{state.execution_id}/"
+                        f"stage/{stage['stage_id']}/closed"
+                    ),
+                    "payload_ref": None,
+                    "result": result,
+                    "meta": meta,
+                    "status": status,
+                    "node_name": step_name,
+                }
+                await cur.execute(
+                    """
+                    INSERT INTO noetl.event (
+                        execution_id, catalog_id, event_id, parent_event_id,
+                        created_at, event_type, node_id, node_name, status,
+                        context, result, meta, worker_id,
+                        tenant_id, organization_id, stream_id, stream_version,
+                        aggregate_id, aggregate_type, schema_name, schema_version,
+                        event_time, ingest_time, producer, causation_id, correlation_id,
+                        idempotency_key, payload_ref, envelope_checksum, stage_id
+                    )
+                    VALUES (
+                        %s, %s, %s, %s,
+                        %s, 'stage.closed', %s, %s, %s,
+                        %s, %s, %s, 'noetl-server',
+                        %s, %s, %s, %s,
+                        %s, 'stage', 'noetl.stage.closed', 1,
+                        %s, %s, 'noetl-server', %s, %s,
+                        %s, NULL, %s, %s
+                    )
+                    """,
+                    (
+                        int(state.execution_id),
+                        stage.get("catalog_id") or state.catalog_id,
+                        event_id,
+                        parent_event_id,
+                        now,
+                        step_name,
+                        step_name,
+                        status,
+                        Json({"stage_id": str(stage["stage_id"]), "loop_event_id": str(loop_event_id)}),
+                        Json(result),
+                        Json(meta),
+                        tenant_id,
+                        organization_id,
+                        stream_id,
+                        stream_version,
+                        f"stage/{stage['stage_id']}",
+                        now,
+                        now,
+                        envelope["causation_id"],
+                        envelope["correlation_id"],
+                        envelope["idempotency_key"],
+                        canonical_event_checksum(envelope),
+                        stage["stage_id"],
+                    ),
+                )
+                await cur.execute(
+                    """
+                    UPDATE noetl.stage
+                    SET closed_event_id = %s,
+                        updated_at = now()
+                    WHERE stage_id = %s
+                    """,
+                    (event_id, stage["stage_id"]),
+                )
+                if owns_transaction:
+                    await active_conn.commit()
+                logger.info(
+                    "[CURSOR-LOOP] Closed runtime stage %s for step %s execution=%s frames=%s rows=%s",
+                    stage["stage_id"],
+                    step_name,
+                    state.execution_id,
+                    meta["frame_count"],
+                    meta["row_count"],
+                )
+                return int(stage["stage_id"])
+
+        try:
+            if conn is not None:
+                return await _close_with_conn(conn, owns_transaction=False)
+            async with get_pool_connection() as owned_conn:
+                return await _close_with_conn(owned_conn, owns_transaction=True)
+        except Exception as exc:
+            logger.warning(
+                "[CURSOR-LOOP] Failed to close runtime stage for step %s execution=%s loop_event_id=%s: %s",
+                step_name,
+                state.execution_id,
+                loop_event_id,
                 exc,
             )
             return None
@@ -871,6 +1062,12 @@ class EventHandlingMixin:
                                         parent_event_id=state.root_event_id
                                     )
                                     await self._persist_event_compat(loop_done_event, state, conn=conn)
+                                    await self._close_runtime_stage_for_loop(
+                                        state=state,
+                                        step_name=parent_step,
+                                        loop_event_id=resolved_loop_event_id,
+                                        conn=conn,
+                                    )
                                     state.add_emitted_loop_epoch(parent_step, "loop.done", str(resolved_loop_event_id))
                                     loop_done_commands = await self._evaluate_next_transitions(state, parent_step_def, loop_done_event)
                                     commands.extend(loop_done_commands)
@@ -1797,6 +1994,12 @@ class EventHandlingMixin:
                                 parent_event_id=state.root_event_id
                             )
                             await self._persist_event_compat(loop_done_event, state, conn=conn)
+                            await self._close_runtime_stage_for_loop(
+                                state=state,
+                                step_name=event.step,
+                                loop_event_id=resolved_loop_event_id,
+                                conn=conn,
+                            )
                             state.add_emitted_loop_epoch(event.step, "loop.done", str(resolved_loop_event_id))
                             loop_done_commands = await self._evaluate_next_transitions(state, step_def, loop_done_event)
                             commands.extend(loop_done_commands)

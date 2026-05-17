@@ -144,10 +144,17 @@ async def _claim_runtime_frame(
 ) -> Optional[dict[str, Any]]:
     if not stage_id:
         return None
+    command_id = None
+    if isinstance(context, dict):
+        command_id = context.get("command_id")
+        event_context = context.get("event")
+        if command_id is None and isinstance(event_context, dict):
+            command_id = event_context.get("command_id")
     try:
         lease_seconds = int(float(frame_policy.get("lease_seconds") or 120.0))
         payload = {
             "worker_id": worker_slot_id or os.getenv("HOSTNAME") or "cursor-worker",
+            "command_id": command_id,
             "requested_count": 1,
             "lease_seconds": lease_seconds,
             "frame_policy": frame_policy or {},
