@@ -17,9 +17,12 @@ router.include_router(batch_router)
 router.include_router(db_router)
 
 
-from .batch import ensure_batch_acceptor_started, shutdown_batch_acceptor
+from .batch import (
+    ensure_batch_acceptor_started,
+    shutdown_batch_acceptor,
+    get_batch_acceptor_metrics_snapshot as get_batch_metrics_snapshot,
+)
 from .recovery import shutdown_publish_recovery_tasks
-from .metrics import get_batch_metrics_snapshot
 
 __all__ = [
     "router", 

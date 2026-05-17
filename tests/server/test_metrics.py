@@ -24,3 +24,13 @@ def test_append_storage_ipc_metrics_exports_counters_and_hit_ratio():
     assert "noetl_storage_ipc_read_hits_total 3" in body
     assert "noetl_storage_ipc_fallback_reads_total 1" in body
     assert "noetl_storage_ipc_read_hit_ratio 0.75" in body
+
+
+def test_core_batch_metrics_export_is_callable_without_route_state():
+    from noetl.server.api.core import get_batch_metrics_snapshot
+
+    snapshot = get_batch_metrics_snapshot()
+
+    assert "accepted_total" in snapshot
+    assert "queue_depth" in snapshot
+    assert "worker_count" in snapshot

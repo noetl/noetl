@@ -31,6 +31,7 @@ from .db import (
     _record_db_unavailable_failure, _raise_if_db_short_circuit_enabled,
 )
 from .metrics import _inc_batch_metric, _observe_batch_metric
+from .metrics import get_batch_metrics_snapshot as _get_batch_metrics_snapshot
 from .cache import _active_claim_cache_invalidate
 from .recovery import _publish_commands_with_recovery
 
@@ -60,6 +61,12 @@ _batch_accept_workers_tasks: list[asyncio.Task] = []
 _batch_acceptor_lock: Optional[asyncio.Lock] = None
 _batch_execution_locks: dict[int, asyncio.Lock] = {}
 _batch_execution_locks_guard: Optional[asyncio.Lock] = None
+
+
+def get_batch_acceptor_metrics_snapshot() -> dict[str, float]:
+    """Return batch metrics with live queue depth and worker count."""
+    return _get_batch_metrics_snapshot(_batch_accept_queue, _batch_accept_workers_tasks)
+
 
 def _get_batch_acceptor_lock() -> asyncio.Lock:
     global _batch_acceptor_lock
