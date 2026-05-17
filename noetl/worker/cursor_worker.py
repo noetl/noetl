@@ -13,6 +13,8 @@ entirely — atomicity lives in the driver's claim statement.
 from __future__ import annotations
 
 import asyncio
+import json
+import os
 import time
 from typing import Any, Awaitable, Callable, Optional
 
@@ -20,6 +22,14 @@ from jinja2 import Environment
 
 from noetl.core.cursor_drivers import CursorDriverNotFoundError, get_driver
 from noetl.core.logger import setup_logger
+from noetl.core.storage import (
+    ARROW_STREAM_MEDIA_TYPE,
+    ArrowIpcSharedMemoryCache,
+    Scope,
+    StoreTier,
+    default_store,
+    rows_to_arrow_ipc,
+)
 from noetl.worker.secrets import fetch_credential_by_key_async
 from noetl.worker.task_sequence_executor import TaskSequenceExecutor
 
@@ -31,6 +41,86 @@ logger = setup_logger(__name__, include_location=True)
 # via cursor.options.max_iterations; the default is generous for the
 # PFT-style 10 000-row per-facility workloads.
 _DEFAULT_MAX_ITERATIONS = 100_000
+
+_FRAME_IPC_CACHE: Optional[ArrowIpcSharedMemoryCache] = None
+
+
+def _truthy_env(name: str, default: bool = False) -> bool:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _frame_ipc_cache() -> Optional[ArrowIpcSharedMemoryCache]:
+    if not _truthy_env("NOETL_CURSOR_FRAME_IPC_ENABLED", default=True):
+        return None
+    global _FRAME_IPC_CACHE
+    if _FRAME_IPC_CACHE is None:
+        _FRAME_IPC_CACHE = ArrowIpcSharedMemoryCache(
+            namespace=os.getenv("NOETL_CURSOR_FRAME_IPC_NAMESPACE", "noetl_frame"),
+            producer=os.getenv("HOSTNAME") or "cursor-worker",
+        )
+    return _FRAME_IPC_CACHE
+
+
+def _estimate_row_bytes(row: dict[str, Any]) -> int:
+    try:
+        return len(json.dumps(row, default=str).encode("utf-8"))
+    except Exception:
+        return 1024
+
+
+async def _store_claimed_frame(
+    *,
+    execution_id: Any,
+    worker_slot_id: Optional[str],
+    frame_index: int,
+    rows: list[dict[str, Any]],
+    frame_policy: dict[str, Any],
+) -> Optional[dict[str, Any]]:
+    if not rows:
+        return None
+
+    force_capture = _truthy_env("NOETL_CURSOR_FRAME_CAPTURE_ENABLED", default=False)
+    if not force_capture and int(frame_policy.get("max_rows") or 1) <= 1:
+        return None
+
+    try:
+        payload, schema_digest, row_count = await asyncio.to_thread(rows_to_arrow_ipc, rows)
+        ref = await default_store.put_ipc_bytes(
+            execution_id=str(execution_id or "unknown"),
+            name=f"cursor-frame-{worker_slot_id or 'slot'}-{frame_index}",
+            data_bytes=payload,
+            schema_digest=schema_digest,
+            row_count=row_count,
+            scope=Scope.EXECUTION,
+            store=StoreTier.KV,
+            source_step=str(worker_slot_id or "cursor_worker"),
+            ipc_cache=_frame_ipc_cache(),
+            ipc_lease_seconds=frame_policy.get("lease_seconds"),
+            media_type=ARROW_STREAM_MEDIA_TYPE,
+        )
+        return {
+            "frame_index": frame_index,
+            "row_count": row_count,
+            "rows_ref": ref.model_dump(mode="json"),
+            "schema_digest": schema_digest,
+            "media_type": ARROW_STREAM_MEDIA_TYPE,
+        }
+    except Exception as exc:
+        logger.debug(
+            "[CURSOR-WORKER] slot=%s frame=%s row capture skipped: %s",
+            worker_slot_id,
+            frame_index,
+            exc,
+        )
+        return {
+            "frame_index": frame_index,
+            "row_count": len(rows),
+            "capture_failed": True,
+            "capture_error": str(exc)[:300],
+        }
 
 
 async def execute_cursor_worker(
@@ -130,6 +220,10 @@ async def execute_cursor_worker(
         "claim": rendered_claim_sql,
         "options": options,
     }
+    frame_policy = dict(config.get("frame_policy") or {})
+    max_frame_rows = max(1, int(frame_policy.get("max_rows") or 1))
+    max_frame_seconds = max(0.001, float(frame_policy.get("max_seconds") or 30.0))
+    max_frame_bytes = max(1, int(frame_policy.get("max_bytes") or 64 * 1024 * 1024))
 
     # TaskSequenceExecutor is re-used across claims — it has no
     # per-invocation state that bleeds between rows because `execute`
@@ -146,61 +240,101 @@ async def execute_cursor_worker(
     processed = 0
     failed = 0
     breaks = 0
+    frame_count = 0
+    frames: list[dict[str, Any]] = []
     started_at = time.monotonic()
     try:
         while processed + failed < max_iterations:
-            claim_ctx = {
-                "execution_id": context.get("execution_id"),
-                "worker_slot_id": worker_slot_id,
-                "iteration": processed,
-            }
-            row = await driver.claim(handle, claim_ctx)
-            if row is None:
+            frame_rows: list[dict[str, Any]] = []
+            frame_bytes = 0
+            frame_started_at = time.monotonic()
+
+            while processed + failed + len(frame_rows) < max_iterations:
+                claim_ctx = {
+                    "execution_id": context.get("execution_id"),
+                    "worker_slot_id": worker_slot_id,
+                    "iteration": processed + failed + len(frame_rows),
+                    "frame_index": frame_count,
+                    "frame_row_index": len(frame_rows),
+                }
+                row = await driver.claim(handle, claim_ctx)
+                if row is None:
+                    break
+
+                row_dict = dict(row)
+                frame_rows.append(row_dict)
+                frame_bytes += _estimate_row_bytes(row_dict)
+                if len(frame_rows) >= max_frame_rows:
+                    break
+                if frame_bytes >= max_frame_bytes:
+                    break
+                if time.monotonic() - frame_started_at >= max_frame_seconds:
+                    break
+
+            if not frame_rows:
                 logger.info(
                     "[CURSOR-WORKER] slot=%s drained after %d processed / %d failed",
                     worker_slot_id, processed, failed,
                 )
                 break
 
-            # Per-claim base context: clone the command context so
-            # per-row iter values never leak into the next claim.
-            per_claim_ctx = dict(context or {})
-            iter_namespace = dict(per_claim_ctx.get("iter") or {})
-            iter_namespace[iterator_name] = row
-            iter_namespace["_index"] = processed
-            iter_namespace["_worker_slot_id"] = worker_slot_id
-            per_claim_ctx["iter"] = iter_namespace
+            frame_meta = await _store_claimed_frame(
+                execution_id=context.get("execution_id"),
+                worker_slot_id=worker_slot_id,
+                frame_index=frame_count,
+                rows=frame_rows,
+                frame_policy=frame_policy,
+            )
+            if frame_meta is not None:
+                frames.append(frame_meta)
 
-            try:
-                result = await seq_executor.execute(
-                    tasks=tasks,
-                    base_context=per_claim_ctx,
-                )
-            except Exception as exc:
-                failed += 1
-                logger.exception(
-                    "[CURSOR-WORKER] slot=%s iteration=%s: task sequence raised %s",
-                    worker_slot_id, processed, exc,
-                )
-                # Driver's claim is responsible for marking the row in
-                # a state that allows reclaim (e.g. leaving status in
-                # 'claimed' until a timeout prelude resets it).
-                continue
+            stop_after_frame = False
+            for row in frame_rows:
+                # Per-claim base context: clone the command context so
+                # per-row iter values never leak into the next claim.
+                per_claim_ctx = dict(context or {})
+                iter_namespace = dict(per_claim_ctx.get("iter") or {})
+                iter_namespace[iterator_name] = row
+                iter_namespace["_index"] = processed + failed
+                iter_namespace["_worker_slot_id"] = worker_slot_id
+                iter_namespace["_frame_index"] = frame_count
+                per_claim_ctx["iter"] = iter_namespace
 
-            if isinstance(result, dict):
-                status = str(result.get("status", "")).lower()
-                if status == "failed":
-                    failed += 1
-                elif status == "break":
-                    breaks += 1
-                    logger.info(
-                        "[CURSOR-WORKER] slot=%s: task sequence returned break; "
-                        "stopping this worker early",
-                        worker_slot_id,
+                try:
+                    result = await seq_executor.execute(
+                        tasks=tasks,
+                        base_context=per_claim_ctx,
                     )
-                    processed += 1
-                    break
-            processed += 1
+                except Exception as exc:
+                    failed += 1
+                    logger.exception(
+                        "[CURSOR-WORKER] slot=%s iteration=%s: task sequence raised %s",
+                        worker_slot_id, processed + failed, exc,
+                    )
+                    # Driver's claim is responsible for marking the row in
+                    # a state that allows reclaim (e.g. leaving status in
+                    # 'claimed' until a timeout prelude resets it).
+                    continue
+
+                if isinstance(result, dict):
+                    status = str(result.get("status", "")).lower()
+                    if status == "failed":
+                        failed += 1
+                    elif status == "break":
+                        breaks += 1
+                        logger.info(
+                            "[CURSOR-WORKER] slot=%s: task sequence returned break; "
+                            "stopping this worker early",
+                            worker_slot_id,
+                        )
+                        processed += 1
+                        stop_after_frame = True
+                        break
+                processed += 1
+
+            frame_count += 1
+            if stop_after_frame:
+                break
 
             # Yield to the event loop so heartbeats & shutdown signals
             # have a chance to fire between claims.
@@ -225,6 +359,8 @@ async def execute_cursor_worker(
         "processed": processed,
         "failed": failed,
         "breaks": breaks,
+        "frame_count": frame_count,
+        "frames": frames,
         "worker_slot_id": worker_slot_id,
         "duration_s": round(duration_s, 3),
     }

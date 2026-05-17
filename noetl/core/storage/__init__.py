@@ -60,6 +60,12 @@ from noetl.core.storage.ipc_cache import (
     IpcCacheEntry,
 )
 
+from noetl.core.storage.arrow_ipc import (
+    ARROW_STREAM_MEDIA_TYPE,
+    rows_to_arrow_ipc,
+    arrow_ipc_to_rows,
+)
+
 from noetl.core.storage.scope_tracker import (
     ScopeContext,
     ScopeTracker,
@@ -118,6 +124,9 @@ __all__ = [
     'default_result_store',
     'ArrowIpcSharedMemoryCache',
     'IpcCacheEntry',
+    'ARROW_STREAM_MEDIA_TYPE',
+    'rows_to_arrow_ipc',
+    'arrow_ipc_to_rows',
     # Scope Tracker
     'ScopeContext',
     'ScopeTracker',
