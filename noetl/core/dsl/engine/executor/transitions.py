@@ -316,6 +316,7 @@ class TransitionMixin:
                             organization_id,
                         ),
                     )
+                    await conn.commit()
                     stream_id = f"execution/{state.execution_id}/stage/{stage_id}"
                     event_time = datetime.now(timezone.utc)
                     meta = {
@@ -346,50 +347,59 @@ class TransitionMixin:
                         "result": result,
                         "meta": meta,
                     }
-                    await cur.execute(
-                        """
-                        INSERT INTO noetl.event (
-                            execution_id, catalog_id, event_id, parent_event_id,
-                            created_at, event_type, node_id, node_name, status,
-                            context, result, meta, worker_id,
-                            tenant_id, organization_id, stream_id, stream_version,
-                            aggregate_id, aggregate_type, schema_name, schema_version,
-                            event_time, producer, causation_id, correlation_id,
-                            idempotency_key, payload_ref, envelope_checksum
+                    try:
+                        await cur.execute(
+                            """
+                            INSERT INTO noetl.event (
+                                execution_id, catalog_id, event_id, parent_event_id,
+                                created_at, event_type, node_id, node_name, status,
+                                context, result, meta, worker_id,
+                                tenant_id, organization_id, stream_id, stream_version,
+                                aggregate_id, aggregate_type, schema_name, schema_version,
+                                event_time, producer, causation_id, correlation_id,
+                                idempotency_key, payload_ref, envelope_checksum
+                            )
+                            VALUES (
+                                %s, %s, %s, %s,
+                                %s, 'stage.opened', %s, %s, 'OPEN',
+                                %s, %s, %s, 'noetl-server',
+                                %s, %s, %s, 1,
+                                %s, 'stage', 'noetl.stage.opened', 1,
+                                %s, 'noetl-server', %s, %s,
+                                %s, NULL, %s
+                            )
+                            """,
+                            (
+                                int(state.execution_id),
+                                catalog_id,
+                                event_id,
+                                parent_event_id,
+                                event_time,
+                                step_def.step,
+                                step_def.step,
+                                Json({"stage_id": str(stage_id), "loop_event_id": loop_event_id}),
+                                Json(result),
+                                Json(meta),
+                                tenant_id,
+                                organization_id,
+                                stream_id,
+                                f"stage/{stage_id}",
+                                event_time,
+                                envelope["causation_id"],
+                                envelope["correlation_id"],
+                                envelope["idempotency_key"],
+                                canonical_event_checksum(envelope),
+                            ),
                         )
-                        VALUES (
-                            %s, %s, %s, %s,
-                            %s, 'stage.opened', %s, %s, 'OPEN',
-                            %s, %s, %s, 'noetl-server',
-                            %s, %s, %s, 1,
-                            %s, 'stage', 'noetl.stage.opened', 1,
-                            %s, 'noetl-server', %s, %s,
-                            %s, NULL, %s
+                        await conn.commit()
+                    except Exception as event_exc:
+                        await conn.rollback()
+                        logger.warning(
+                            "[CURSOR-LOOP] Opened stage %s for step %s but failed to emit stage.opened: %s",
+                            stage_id,
+                            step_def.step,
+                            event_exc,
                         )
-                        """,
-                        (
-                            int(state.execution_id),
-                            catalog_id,
-                            event_id,
-                            parent_event_id,
-                            event_time,
-                            step_def.step,
-                            step_def.step,
-                            Json({"stage_id": str(stage_id), "loop_event_id": loop_event_id}),
-                            Json(result),
-                            Json(meta),
-                            tenant_id,
-                            organization_id,
-                            stream_id,
-                            f"stage/{stage_id}",
-                            event_time,
-                            envelope["causation_id"],
-                            envelope["correlation_id"],
-                            envelope["idempotency_key"],
-                            canonical_event_checksum(envelope),
-                        ),
-                    )
-                    await conn.commit()
                     logger.info(
                         "[CURSOR-LOOP] Opened runtime stage %s for step %s execution=%s",
                         stage_id,
