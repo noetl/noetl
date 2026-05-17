@@ -139,6 +139,9 @@ class TransitionMixin:
             name="cursor_loop_init",
             payload={},
         ))
+        max_frame_rows = max(1, int((frame_policy or {}).get("max_rows") or 1))
+        base_context["__frame_max_rows"] = max_frame_rows
+        base_context["__frame_policy"] = frame_policy or {}
 
         # Cursor spec — serialize so the worker receives a plain dict.
         cursor_spec = step_def.loop.cursor.model_dump()
