@@ -10,6 +10,7 @@ from psycopg.rows import dict_row
 from psycopg.types.json import Json
 
 from noetl.core.db.pool import get_pool_connection
+from noetl.core.event_store.ports import canonical_event_checksum
 from noetl.core.logger import setup_logger
 
 from noetl.server.api.core.db import _next_snowflake_id
@@ -69,18 +70,60 @@ async def _insert_frame_event(
     now = datetime.now(timezone.utc)
     await cur.execute(
         """
+        SELECT COALESCE(max(stream_version), 0) + 1 AS next_version
+        FROM noetl.event
+        WHERE stream_id = %s
+        """,
+        (stream_id,),
+    )
+    version_row = await cur.fetchone()
+    stream_version = int((version_row or {}).get("next_version") or 1)
+    payload_ref = (result or {}).get("reference")
+    event_result = result or {"status": status}
+    event_meta = _event_meta(frame=frame, worker_id=worker_id, extra=meta_extra)
+    envelope_checksum = canonical_event_checksum(
+        {
+            "tenant_id": frame["tenant_id"],
+            "organization_id": frame["organization_id"],
+            "execution_id": frame["execution_id"],
+            "stream_id": stream_id,
+            "stream_version": stream_version,
+            "aggregate_id": f"frame/{frame['frame_id']}",
+            "aggregate_type": "frame",
+            "event_type": event_type,
+            "schema_name": f"noetl.{event_type}",
+            "schema_version": 1,
+            "event_time": now,
+            "producer": worker_id,
+            "causation_id": None,
+            "correlation_id": None,
+            "idempotency_key": (
+                f"{frame['tenant_id']}/{frame['organization_id']}/"
+                f"{frame['execution_id']}/frame/{frame['frame_id']}/{event_type}"
+            ),
+            "payload_ref": payload_ref,
+            "result": event_result,
+            "meta": event_meta,
+            "status": status,
+            "node_name": frame.get("step_name"),
+        }
+    )
+    await cur.execute(
+        """
         INSERT INTO noetl.event (
             event_id, execution_id, event_type, node_name, status, result, meta,
             worker_id, tenant_id, organization_id, stream_id, aggregate_id,
             aggregate_type, schema_name, schema_version, event_time, ingest_time,
-            producer, idempotency_key, payload_ref, created_at
+            producer, idempotency_key, payload_ref, stream_version,
+            envelope_checksum, created_at
         )
         VALUES (
             %(event_id)s, %(execution_id)s, %(event_type)s, %(node_name)s,
             %(status)s, %(result)s, %(meta)s, %(worker_id)s, %(tenant_id)s,
             %(organization_id)s, %(stream_id)s, %(aggregate_id)s, 'frame',
             %(schema_name)s, 1, %(now)s, %(now)s, %(producer)s,
-            %(idempotency_key)s, %(payload_ref)s, %(now)s
+            %(idempotency_key)s, %(payload_ref)s, %(stream_version)s,
+            %(envelope_checksum)s, %(now)s
         )
         """,
         {
@@ -89,8 +132,8 @@ async def _insert_frame_event(
             "event_type": event_type,
             "node_name": frame.get("step_name"),
             "status": status,
-            "result": Json(result or {"status": status}),
-            "meta": Json(_event_meta(frame=frame, worker_id=worker_id, extra=meta_extra)),
+            "result": Json(event_result),
+            "meta": Json(event_meta),
             "worker_id": worker_id,
             "tenant_id": frame["tenant_id"],
             "organization_id": frame["organization_id"],
@@ -102,7 +145,9 @@ async def _insert_frame_event(
                 f"{frame['tenant_id']}/{frame['organization_id']}/"
                 f"{frame['execution_id']}/frame/{frame['frame_id']}/{event_type}"
             ),
-            "payload_ref": Json((result or {}).get("reference")) if (result or {}).get("reference") else None,
+            "payload_ref": Json(payload_ref) if payload_ref else None,
+            "stream_version": stream_version,
+            "envelope_checksum": envelope_checksum,
             "now": now,
         },
     )
