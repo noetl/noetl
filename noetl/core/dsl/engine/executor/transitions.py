@@ -279,6 +279,7 @@ class TransitionMixin:
         try:
             async with get_pool_connection() as conn:
                 async with conn.cursor(row_factory=dict_row) as cur:
+                    await cur.execute("SET LOCAL statement_timeout = 0")
                     await cur.execute("SELECT noetl.snowflake_id() AS id")
                     stage_id = int((await cur.fetchone())["id"])
                     await cur.execute("SELECT noetl.snowflake_id() AS id")
