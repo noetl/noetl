@@ -22,6 +22,9 @@ spec:
         ports:
         - containerPort: 5555
           name: http
+        env:
+        - name: PFT_RATE_LIMIT
+          value: "100"
         livenessProbe:
           httpGet:
             path: /health
