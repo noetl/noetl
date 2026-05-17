@@ -33,6 +33,7 @@ from noetl.server.command_reaper import (
     run_command_reaper,
     is_reaper_enabled as is_command_reaper_enabled,
 )
+from noetl.server.metrics import append_storage_ipc_metrics
 from noetl.server.runtime_leases import RuntimeLease, load_control_lease_seconds
 
 logger = setup_logger(__name__, include_location=True)
@@ -551,6 +552,12 @@ def _create_app(settings: Settings) -> FastAPI:
             "noetl_auto_resume_recoveries_restarted_total "
             f"{auto_resume_metrics.get('recoveries_restarted_total', 0.0)}"
         )
+
+        try:
+            from noetl.core.storage import default_store
+            append_storage_ipc_metrics(lines, default_store.ipc_stats())
+        except Exception as exc:
+            logger.debug("Failed to append storage IPC metrics: %s", exc)
 
         body = "\n".join(lines) + "\n"
         return Response(content=body, media_type="text/plain; version=0.0.4; charset=utf-8")
