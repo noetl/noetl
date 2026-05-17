@@ -43,6 +43,23 @@ def test_frame_request_contracts_validate_bounds():
         raise AssertionError("requested_count=0 should fail validation")
 
 
+def test_frame_commit_result_keeps_event_result_shape():
+    from noetl.server.api.frames import endpoint
+
+    result = endpoint._frame_commit_result(
+        status="FAILED",
+        output_ref={"uri": "noetl://payloads/sha256/abc", "sha256": "abc"},
+        error="one or more frame rows failed",
+    )
+
+    assert result == {
+        "status": "FAILED",
+        "reference": {"uri": "noetl://payloads/sha256/abc", "sha256": "abc"},
+        "context": {"error": "one or more frame rows failed"},
+    }
+    assert set(result) <= {"status", "reference", "context"}
+
+
 @pytest.mark.asyncio
 async def test_insert_frame_event_sets_stream_version_and_checksum(monkeypatch):
     from noetl.server.api.frames import endpoint

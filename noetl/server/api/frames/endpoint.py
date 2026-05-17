@@ -196,6 +196,20 @@ async def _insert_frame_event(
     }
 
 
+def _frame_commit_result(
+    *,
+    status: str,
+    output_ref: dict[str, Any] | None = None,
+    error: str | None = None,
+) -> dict[str, Any]:
+    result: dict[str, Any] = {"status": status}
+    if output_ref:
+        result["reference"] = output_ref
+    if error:
+        result["context"] = {"error": error}
+    return result
+
+
 def _event_mirror_enabled() -> bool:
     return os.getenv("NOETL_EVENT_MIRROR_ENABLED", "").strip().lower() in {"1", "true", "yes", "on"}
 
@@ -415,9 +429,11 @@ async def commit_frame(frame_id: int, req: FrameCommitRequest) -> dict[str, Any]
                 if not frame:
                     raise HTTPException(status_code=404, detail=f"active frame not found: {frame_id}")
                 frame = dict(frame)
-                result = {"status": terminal_status, "reference": req.output_ref}
-                if req.error:
-                    result["error"] = req.error
+                result = _frame_commit_result(
+                    status=terminal_status,
+                    output_ref=req.output_ref,
+                    error=req.error,
+                )
                 event = await _insert_frame_event(
                     cur,
                     frame=frame,
