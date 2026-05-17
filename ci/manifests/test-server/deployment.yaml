@@ -6,7 +6,7 @@ metadata:
   labels:
     app: paginated-api
 spec:
-  replicas: 1
+  replicas: 3
   selector:
     matchLabels:
       app: paginated-api
@@ -34,6 +34,12 @@ spec:
             port: 5555
           initialDelaySeconds: 3
           periodSeconds: 5
+        resources:
+          requests:
+            cpu: 250m
+            memory: 512Mi
+          limits:
+            memory: 1Gi
 ---
 apiVersion: v1
 kind: Service
