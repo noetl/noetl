@@ -86,3 +86,62 @@ def test_fold_replay_state_tracks_execution_frames_loops_and_checksum():
     assert state["upcaster_registry_digest"] == "abc123"
     assert state["checksum_algorithm"] == "sha256"
     assert len(state["checksum"]) == 64
+
+
+def test_fold_replay_state_can_resume_from_snapshot_seed():
+    from noetl.server.api.replay.service import ReplaySnapshotSeed, fold_replay_state
+
+    snapshot_state = fold_replay_state(
+        [
+            {
+                "event_id": 1,
+                "event_type": "playbook.initialized",
+                "status": "RUNNING",
+                "node_name": "start",
+            },
+            {
+                "event_id": 2,
+                "event_type": "frame.committed",
+                "aggregate_type": "frame",
+                "aggregate_id": "frame/10",
+                "status": "COMPLETED",
+                "meta": {"row_count": 3},
+            },
+        ],
+        tenant_id="tenant-a",
+        organization_id="org-a",
+        execution_id=123,
+        upcaster_registry_digest="digest-a",
+    )
+    seed = ReplaySnapshotSeed(
+        aggregate_id="execution/123/all",
+        aggregate_type="replay_state",
+        version=2,
+        checksum=snapshot_state["checksum"],
+        state=snapshot_state,
+        meta={"projection_code_version": "test"},
+    )
+
+    resumed = fold_replay_state(
+        [
+            {
+                "event_id": 3,
+                "event_type": "playbook.completed",
+                "status": "COMPLETED",
+                "node_name": "end",
+            }
+        ],
+        tenant_id="tenant-a",
+        organization_id="org-a",
+        execution_id=123,
+        upcaster_registry_digest="digest-a",
+        base_state=snapshot_state,
+        snapshot_seed=seed,
+    )
+
+    assert resumed["event_count"] == 3
+    assert resumed["last_event_id"] == 3
+    assert resumed["execution"]["status"] == "COMPLETED"
+    assert resumed["frames"]["10"]["row_count"] == 3
+    assert resumed["replay_snapshot"]["version"] == 2
+    assert resumed["replay_snapshot"]["meta"] == {"projection_code_version": "test"}
