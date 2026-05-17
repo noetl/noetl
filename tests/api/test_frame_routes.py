@@ -51,6 +51,7 @@ async def test_insert_frame_event_sets_stream_version_and_checksum(monkeypatch):
         def __init__(self):
             self.calls = []
             self.insert_params = None
+            self.fetchone_rows = [{"catalog_id": 6}, {"next_version": 4}]
 
         async def execute(self, query, params=None):
             self.calls.append((query, params))
@@ -58,7 +59,7 @@ async def test_insert_frame_event_sets_stream_version_and_checksum(monkeypatch):
                 self.insert_params = params
 
         async def fetchone(self):
-            return {"next_version": 4}
+            return self.fetchone_rows.pop(0)
 
     async def next_event_id(cur):  # noqa: ARG001
         return 123
@@ -88,6 +89,7 @@ async def test_insert_frame_event_sets_stream_version_and_checksum(monkeypatch):
 
     assert event_id == 123
     assert cur.insert_params["stream_version"] == 4
+    assert cur.insert_params["catalog_id"] == 6
     assert cur.insert_params["stream_id"] == "execution/7/stage/8"
     assert cur.insert_params["aggregate_id"] == "frame/9"
     assert len(cur.insert_params["envelope_checksum"]) == 64

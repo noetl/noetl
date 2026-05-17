@@ -37,10 +37,11 @@ def _event_meta(*, frame: dict[str, Any], worker_id: str, extra: dict[str, Any] 
 async def _load_stage(cur: Any, stage_id: int) -> dict[str, Any]:
     await cur.execute(
         """
-        SELECT stage_id, execution_id, kind, step_name, dsl_ref, status,
-               frame_policy, tenant_id, organization_id
-        FROM noetl.stage
-        WHERE stage_id = %s
+        SELECT s.stage_id, s.execution_id, e.catalog_id, s.kind, s.step_name,
+               s.dsl_ref, s.status, s.frame_policy, s.tenant_id, s.organization_id
+        FROM noetl.stage s
+        JOIN noetl.execution e ON e.execution_id = s.execution_id
+        WHERE s.stage_id = %s
         """,
         (stage_id,),
     )
@@ -68,6 +69,16 @@ async def _insert_frame_event(
     event_id = await _next_snowflake_id(cur)
     stream_id = f"execution/{frame['execution_id']}/stage/{frame['stage_id']}"
     now = datetime.now(timezone.utc)
+    catalog_id = frame.get("catalog_id")
+    if catalog_id is None:
+        await cur.execute(
+            "SELECT catalog_id FROM noetl.execution WHERE execution_id = %s",
+            (frame["execution_id"],),
+        )
+        catalog_row = await cur.fetchone()
+        if not catalog_row:
+            raise RuntimeError(f"execution not found for frame event: {frame['execution_id']}")
+        catalog_id = catalog_row.get("catalog_id")
     await cur.execute(
         """
         SELECT COALESCE(max(stream_version), 0) + 1 AS next_version
@@ -111,14 +122,14 @@ async def _insert_frame_event(
     await cur.execute(
         """
         INSERT INTO noetl.event (
-            event_id, execution_id, event_type, node_name, status, result, meta,
+            event_id, execution_id, catalog_id, event_type, node_name, status, result, meta,
             worker_id, tenant_id, organization_id, stream_id, aggregate_id,
             aggregate_type, schema_name, schema_version, event_time, ingest_time,
             producer, idempotency_key, payload_ref, stream_version,
             envelope_checksum, created_at
         )
         VALUES (
-            %(event_id)s, %(execution_id)s, %(event_type)s, %(node_name)s,
+            %(event_id)s, %(execution_id)s, %(catalog_id)s, %(event_type)s, %(node_name)s,
             %(status)s, %(result)s, %(meta)s, %(worker_id)s, %(tenant_id)s,
             %(organization_id)s, %(stream_id)s, %(aggregate_id)s, 'frame',
             %(schema_name)s, 1, %(now)s, %(now)s, %(producer)s,
@@ -129,6 +140,7 @@ async def _insert_frame_event(
         {
             "event_id": event_id,
             "execution_id": frame["execution_id"],
+            "catalog_id": catalog_id,
             "event_type": event_type,
             "node_name": frame.get("step_name"),
             "status": status,
@@ -241,6 +253,7 @@ async def claim_frames(stage_id: int, req: FrameClaimRequest) -> dict[str, Any]:
                     )
                     updated = dict(await cur.fetchone())
                     updated["step_name"] = stage["step_name"]
+                    updated["catalog_id"] = stage["catalog_id"]
                     event_id = await _insert_frame_event(
                         cur,
                         frame=updated,
