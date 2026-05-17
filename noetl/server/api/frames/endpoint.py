@@ -32,6 +32,8 @@ def _event_meta(*, frame: dict[str, Any], worker_id: str, extra: dict[str, Any] 
         "actionable": False,
         "informative": True,
     }
+    if frame.get("command_id") is not None:
+        meta["command_id"] = str(frame["command_id"])
     if extra:
         meta.update(extra)
     return meta
@@ -301,7 +303,11 @@ async def claim_frames(stage_id: int, req: FrameClaimRequest) -> dict[str, Any]:
                 for _ in range(req.requested_count):
                     await cur.execute(
                         """
-                        SELECT f.*, s.step_name
+                        SELECT f.*, s.step_name,
+                               (
+                                   f.status IN ('CLAIMED','RUNNING')
+                                   AND (f.lease_until IS NULL OR f.lease_until < now())
+                               ) AS expired_lease
                         FROM noetl.frame f
                         JOIN noetl.stage s ON s.stage_id = f.stage_id
                         WHERE f.stage_id = %s
@@ -343,6 +349,22 @@ async def claim_frames(stage_id: int, req: FrameClaimRequest) -> dict[str, Any]:
                         frame["step_name"] = stage["step_name"]
                     else:
                         frame = dict(frame)
+
+                    if frame.get("expired_lease"):
+                        abandoned = await _insert_frame_event(
+                            cur,
+                            frame={**frame, "catalog_id": stage["catalog_id"]},
+                            event_type="frame.abandoned",
+                            status="ABANDONED",
+                            worker_id=str(frame.get("owner_worker") or req.worker_id),
+                            meta_extra={
+                                "previous_owner_worker": frame.get("owner_worker"),
+                                "reclaimer_worker": req.worker_id,
+                                "lease_until": str(frame.get("lease_until")),
+                                "reason": "lease_expired",
+                            },
+                        )
+                        events_to_mirror.append(abandoned)
 
                     await cur.execute(
                         """

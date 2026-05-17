@@ -20,6 +20,10 @@ def test_golden_replay_corpus_checksum_is_stable():
 
     assert state["execution"]["status"] == "COMPLETED"
     assert state["stages"]["10"]["status"] == "COMPLETED"
+    assert state["stages"]["10"]["opened_event_id"] == 2
+    assert state["stages"]["10"]["closed_event_id"] == 6
     assert state["frames"]["100"]["row_count"] == 50
+    assert state["frames"]["100"]["claimed_event_id"] == 3
+    assert state["frames"]["100"]["terminal_event_id"] == 5
     assert state["frames"]["100"]["output_ref"]["sha256"] == "golden"
-    assert state["checksum"] == "cb7a0ee1a70037623330e0348d081ebab1e70ecd11d53c018c87127193f30492"
+    assert state["checksum"] == "d1e5b748cd47106dcefd4b178acc80e94d071451be92a0c86da9512a7ae8c5f8"

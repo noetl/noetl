@@ -84,6 +84,9 @@ def _event_id(event: Mapping[str, Any]) -> Optional[int]:
 
 
 def _frame_id(event: Mapping[str, Any]) -> Optional[str]:
+    column_value = event.get("frame_id")
+    if column_value is not None:
+        return str(column_value)
     aggregate_type = event.get("aggregate_type")
     aggregate_id = event.get("aggregate_id")
     if aggregate_type == "frame" and aggregate_id:
@@ -94,6 +97,9 @@ def _frame_id(event: Mapping[str, Any]) -> Optional[str]:
 
 
 def _stage_id(event: Mapping[str, Any]) -> Optional[str]:
+    column_value = event.get("stage_id")
+    if column_value is not None:
+        return str(column_value)
     aggregate_type = event.get("aggregate_type")
     aggregate_id = event.get("aggregate_id")
     if aggregate_type == "stage" and aggregate_id:
@@ -110,6 +116,15 @@ def _loop_id(event: Mapping[str, Any]) -> Optional[str]:
         if value is not None:
             return str(value)
     return None
+
+
+def _command_id(event: Mapping[str, Any]) -> Optional[str]:
+    value = event.get("command_id")
+    if value is not None:
+        return str(value)
+    meta = _meta(event)
+    value = meta.get("command_id")
+    return str(value) if value is not None else None
 
 
 def fold_replay_state(
@@ -180,13 +195,11 @@ def fold_replay_state(
         state["last_event_id"] = event_id
         state["last_event_type"] = event_type
         state["execution"]["last_node_name"] = event.get("node_name")
-        if status:
-            state["execution"]["status"] = str(status)
-        if event_type in {"playbook.completed", "workflow.completed"}:
+        if event_type in {"playbook.completed", "workflow.completed", "execution.completed"}:
             state["execution"]["status"] = "COMPLETED"
-        elif event_type in {"playbook.failed", "workflow.failed", "command.failed"}:
+        elif event_type in {"playbook.failed", "workflow.failed", "execution.failed", "command.failed"}:
             state["execution"]["status"] = "FAILED"
-        elif event_type in {"playbook.initialized", "stage.opened", "frame.dispatched"}:
+        elif event_type in {"playbook.initialized", "execution.started", "stage.opened", "frame.dispatched"}:
             state["execution"]["status"] = "RUNNING"
 
         payload_ref = _payload_ref(event)
@@ -204,24 +217,48 @@ def fold_replay_state(
                     "status": "UNKNOWN",
                     "kind": meta.get("kind"),
                     "step_name": event.get("node_name") or meta.get("step_name"),
+                    "parent_stage_id": meta.get("parent_stage_id"),
+                    "loop_event_id": None,
+                    "opened_event_id": None,
+                    "closed_event_id": None,
+                    "frame_count": 0,
+                    "row_count": 0,
+                    "events_emitted": 0,
+                    "failed_count": 0,
                     "last_event_id": None,
                 },
             )
             stage["last_event_id"] = event_id
+            if meta.get("parent_stage_id") is not None:
+                stage["parent_stage_id"] = str(meta.get("parent_stage_id"))
+            loop_event_id = _loop_id(event)
+            if loop_event_id:
+                stage["loop_event_id"] = loop_event_id
             if event_type == "stage.opened":
                 stage["status"] = "OPEN"
+                stage["opened_event_id"] = event_id
             elif event_type == "stage.closed":
                 stage["status"] = status or "CLOSED"
+                stage["closed_event_id"] = event_id
+                stage["frame_count"] = int(meta.get("frame_count") or stage.get("frame_count") or 0)
+                stage["row_count"] = int(meta.get("row_count") or stage.get("row_count") or 0)
+                stage["events_emitted"] = int(meta.get("events_emitted") or stage.get("events_emitted") or 0)
+                stage["failed_count"] = int(meta.get("failed_count") or stage.get("failed_count") or 0)
             elif status:
                 stage["status"] = str(status)
 
         frame_id = _frame_id(event)
         if frame_id:
+            frame_stage_id = _stage_id(event)
             frame = state["frames"].setdefault(
                 frame_id,
                 {
                     "frame_id": frame_id,
-                    "stage_id": meta.get("stage_id"),
+                    "stage_id": frame_stage_id,
+                    "parent_frame_id": meta.get("parent_frame_id"),
+                    "command_id": None,
+                    "claimed_event_id": None,
+                    "terminal_event_id": None,
                     "status": "UNKNOWN",
                     "row_count": 0,
                     "attempts": 0,
@@ -230,17 +267,29 @@ def fold_replay_state(
                 },
             )
             frame["last_event_id"] = event_id
+            if frame_stage_id is not None:
+                frame["stage_id"] = str(frame_stage_id)
+            if meta.get("parent_frame_id") is not None:
+                frame["parent_frame_id"] = str(meta.get("parent_frame_id"))
+            command_id = _command_id(event)
+            if command_id:
+                frame["command_id"] = command_id
             if event_type == "frame.dispatched":
                 frame["status"] = "CLAIMED"
+                frame["claimed_event_id"] = event_id
                 frame["attempts"] = max(int(frame.get("attempts") or 0), int(meta.get("attempt", 1)))
             elif event_type == "frame.started":
                 frame["status"] = "RUNNING"
+            elif event_type == "frame.abandoned":
+                frame["status"] = status or "ABANDONED"
             elif event_type == "frame.committed":
                 frame["status"] = status or "COMPLETED"
                 frame["row_count"] = int(meta.get("row_count") or frame.get("row_count") or 0)
                 frame["output_ref"] = payload_ref
+                frame["terminal_event_id"] = event_id
             elif event_type == "frame.failed":
                 frame["status"] = status or "FAILED"
+                frame["terminal_event_id"] = event_id
             elif status:
                 frame["status"] = str(status)
 
@@ -324,6 +373,9 @@ class ReplayService:
                 "correlation_id",
                 "idempotency_key",
                 "payload_ref",
+                "stage_id",
+                "frame_id",
+                "command_id",
                 "envelope_checksum",
             )
 

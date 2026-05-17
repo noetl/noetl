@@ -40,31 +40,77 @@ def test_fold_replay_state_tracks_execution_frames_loops_and_checksum():
                 "event_type": "frame.dispatched",
                 "aggregate_type": "frame",
                 "aggregate_id": "frame/42",
-                "meta": {"stage_id": "7", "attempt": 1},
+                "stage_id": 7,
+                "command_id": 99,
+                "meta": {"attempt": 1},
             },
             {
                 "event_id": 3,
+                "event_type": "frame.abandoned",
+                "aggregate_type": "frame",
+                "aggregate_id": "frame/42",
+                "status": "ABANDONED",
+                "stage_id": 7,
+                "command_id": 99,
+                "meta": {"reason": "lease_expired"},
+            },
+            {
+                "event_id": 4,
+                "event_type": "frame.dispatched",
+                "aggregate_type": "frame",
+                "aggregate_id": "frame/42",
+                "stage_id": 7,
+                "command_id": 100,
+                "meta": {"attempt": 2},
+            },
+            {
+                "event_id": 5,
                 "event_type": "frame.committed",
                 "aggregate_type": "frame",
                 "aggregate_id": "frame/42",
                 "status": "COMPLETED",
                 "payload_ref": {"uri": "noetl://payloads/sha256/abc", "sha256": "abc"},
-                "meta": {"stage_id": "7", "row_count": 50},
+                "stage_id": 7,
+                "meta": {"row_count": 50},
             },
             {
-                "event_id": 4,
+                "event_id": 6,
+                "event_type": "stage.opened",
+                "aggregate_type": "stage",
+                "aggregate_id": "stage/7",
+                "status": "OPEN",
+                "node_name": "loop_step",
+                "meta": {"loop_event_id": "loop-1"},
+            },
+            {
+                "event_id": 7,
                 "event_type": "command.completed",
                 "node_name": "loop_step",
                 "meta": {"loop_id": "loop-1"},
             },
             {
-                "event_id": 5,
+                "event_id": 8,
                 "event_type": "loop.done",
                 "node_name": "loop_step",
                 "meta": {"loop_id": "loop-1"},
             },
             {
-                "event_id": 6,
+                "event_id": 9,
+                "event_type": "stage.closed",
+                "aggregate_type": "stage",
+                "aggregate_id": "stage/7",
+                "status": "COMPLETED",
+                "node_name": "loop_step",
+                "meta": {
+                    "loop_event_id": "loop-1",
+                    "frame_count": 1,
+                    "row_count": 50,
+                    "events_emitted": 3,
+                    "failed_count": 0,
+                },
+            },
+            {
+                "event_id": 10,
                 "event_type": "playbook.completed",
                 "status": "COMPLETED",
                 "node_name": "end",
@@ -76,10 +122,21 @@ def test_fold_replay_state_tracks_execution_frames_loops_and_checksum():
         upcaster_registry_digest="abc123",
     )
 
-    assert state["event_count"] == 6
-    assert state["last_event_id"] == 6
+    assert state["event_count"] == 10
+    assert state["last_event_id"] == 10
     assert state["execution"]["status"] == "COMPLETED"
+    assert state["stages"]["7"]["status"] == "COMPLETED"
+    assert state["stages"]["7"]["opened_event_id"] == 6
+    assert state["stages"]["7"]["closed_event_id"] == 9
+    assert state["stages"]["7"]["loop_event_id"] == "loop-1"
+    assert state["stages"]["7"]["frame_count"] == 1
+    assert state["stages"]["7"]["row_count"] == 50
     assert state["frames"]["42"]["status"] == "COMPLETED"
+    assert state["frames"]["42"]["stage_id"] == "7"
+    assert state["frames"]["42"]["command_id"] == "100"
+    assert state["frames"]["42"]["claimed_event_id"] == 4
+    assert state["frames"]["42"]["terminal_event_id"] == 5
+    assert state["frames"]["42"]["attempts"] == 2
     assert state["frames"]["42"]["row_count"] == 50
     assert state["loops"]["loop-1"]["done"] == 1
     assert state["loops"]["loop-1"]["completed"] is True

@@ -60,6 +60,19 @@ def test_frame_commit_result_keeps_event_result_shape():
     assert set(result) <= {"status", "reference", "context"}
 
 
+def test_frame_event_meta_includes_command_lineage():
+    from noetl.server.api.frames import endpoint
+
+    meta = endpoint._event_meta(
+        frame={"frame_id": 9, "stage_id": 8, "command_id": 7},
+        worker_id="worker-a",
+    )
+
+    assert meta["frame_id"] == "9"
+    assert meta["stage_id"] == "8"
+    assert meta["command_id"] == "7"
+
+
 @pytest.mark.asyncio
 async def test_insert_frame_event_sets_stream_version_and_checksum(monkeypatch):
     from noetl.server.api.frames import endpoint
