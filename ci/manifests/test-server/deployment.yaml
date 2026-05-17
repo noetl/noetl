@@ -17,14 +17,14 @@ spec:
     spec:
       containers:
       - name: api
-        image: local/test-server:latest
+        image: localhost/local/test-server:latest
         imagePullPolicy: IfNotPresent
         ports:
         - containerPort: 5555
           name: http
         env:
         - name: PFT_RATE_LIMIT
-          value: "100"
+          value: "500"
         livenessProbe:
           httpGet:
             path: /health
