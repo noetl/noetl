@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+import os
 from typing import Any
 
 from fastapi import APIRouter, HTTPException
@@ -12,6 +13,7 @@ from psycopg.types.json import Json
 from noetl.core.db.pool import get_pool_connection
 from noetl.core.event_store.ports import canonical_event_checksum
 from noetl.core.logger import setup_logger
+from noetl.core.messaging import NATSEventPublisher
 
 from noetl.server.api.core.db import _next_snowflake_id
 
@@ -19,6 +21,7 @@ from .schema import FrameClaimRequest, FrameCommitRequest, FrameHeartbeatRequest
 
 logger = setup_logger(__name__, include_location=True)
 router = APIRouter(tags=["frames"])
+_event_mirror_publisher: NATSEventPublisher | None = None
 
 
 def _event_meta(*, frame: dict[str, Any], worker_id: str, extra: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -65,7 +68,7 @@ async def _insert_frame_event(
     worker_id: str,
     result: dict[str, Any] | None = None,
     meta_extra: dict[str, Any] | None = None,
-) -> int:
+) -> dict[str, Any]:
     event_id = await _next_snowflake_id(cur)
     stream_id = f"execution/{frame['execution_id']}/stage/{frame['stage_id']}"
     now = datetime.now(timezone.utc)
@@ -163,7 +166,56 @@ async def _insert_frame_event(
             "now": now,
         },
     )
-    return int(event_id)
+    return {
+        "event_id": int(event_id),
+        "execution_id": frame["execution_id"],
+        "catalog_id": catalog_id,
+        "event_type": event_type,
+        "node_name": frame.get("step_name"),
+        "status": status,
+        "result": event_result,
+        "meta": event_meta,
+        "worker_id": worker_id,
+        "tenant_id": frame["tenant_id"],
+        "organization_id": frame["organization_id"],
+        "stream_id": stream_id,
+        "stream_version": stream_version,
+        "aggregate_id": f"frame/{frame['frame_id']}",
+        "aggregate_type": "frame",
+        "schema_name": f"noetl.{event_type}",
+        "schema_version": 1,
+        "event_time": now,
+        "ingest_time": now,
+        "producer": worker_id,
+        "idempotency_key": (
+            f"{frame['tenant_id']}/{frame['organization_id']}/"
+            f"{frame['execution_id']}/frame/{frame['frame_id']}/{event_type}"
+        ),
+        "payload_ref": payload_ref,
+        "envelope_checksum": envelope_checksum,
+    }
+
+
+def _event_mirror_enabled() -> bool:
+    return os.getenv("NOETL_EVENT_MIRROR_ENABLED", "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+async def _mirror_frame_events(events: list[dict[str, Any]]) -> None:
+    if not events or not _event_mirror_enabled():
+        return
+    global _event_mirror_publisher
+    if _event_mirror_publisher is None:
+        _event_mirror_publisher = NATSEventPublisher()
+    for event in events:
+        try:
+            await _event_mirror_publisher.publish_event(event)
+        except Exception as exc:
+            logger.warning(
+                "Frame event mirror failed event_id=%s event_type=%s: %s",
+                event.get("event_id"),
+                event.get("event_type"),
+                exc,
+            )
 
 
 def _frame_response(frame: dict[str, Any], event_id: int | None = None) -> dict[str, Any]:
@@ -193,6 +245,7 @@ async def claim_frames(stage_id: int, req: FrameClaimRequest) -> dict[str, Any]:
             async with conn.cursor(row_factory=dict_row) as cur:
                 stage = await _load_stage(cur, stage_id)
                 claimed: list[dict[str, Any]] = []
+                events_to_mirror: list[dict[str, Any]] = []
                 for _ in range(req.requested_count):
                     await cur.execute(
                         """
@@ -254,7 +307,7 @@ async def claim_frames(stage_id: int, req: FrameClaimRequest) -> dict[str, Any]:
                     updated = dict(await cur.fetchone())
                     updated["step_name"] = stage["step_name"]
                     updated["catalog_id"] = stage["catalog_id"]
-                    event_id = await _insert_frame_event(
+                    event = await _insert_frame_event(
                         cur,
                         frame=updated,
                         event_type="frame.dispatched",
@@ -265,9 +318,11 @@ async def claim_frames(stage_id: int, req: FrameClaimRequest) -> dict[str, Any]:
                             "frame_policy": req.frame_policy or stage.get("frame_policy") or {},
                         },
                     )
-                    claimed.append(_frame_response(updated, event_id))
+                    events_to_mirror.append(event)
+                    claimed.append(_frame_response(updated, event["event_id"]))
 
                 await conn.commit()
+                await _mirror_frame_events(events_to_mirror)
                 return {"status": "ok", "frames": claimed}
     except HTTPException:
         raise
@@ -302,7 +357,7 @@ async def heartbeat_frame(frame_id: int, req: FrameHeartbeatRequest) -> dict[str
                 if not frame:
                     raise HTTPException(status_code=404, detail=f"active frame not found: {frame_id}")
                 frame = dict(frame)
-                event_id = await _insert_frame_event(
+                event = await _insert_frame_event(
                     cur,
                     frame=frame,
                     event_type="frame.started",
@@ -311,7 +366,8 @@ async def heartbeat_frame(frame_id: int, req: FrameHeartbeatRequest) -> dict[str
                     meta_extra={"lease_until": str(frame.get("lease_until"))},
                 )
                 await conn.commit()
-                return {"status": "ok", "frame": _frame_response(frame, event_id)}
+                await _mirror_frame_events([event])
+                return {"status": "ok", "frame": _frame_response(frame, event["event_id"])}
     except HTTPException:
         raise
     except Exception as exc:
@@ -362,7 +418,7 @@ async def commit_frame(frame_id: int, req: FrameCommitRequest) -> dict[str, Any]
                 result = {"status": terminal_status, "reference": req.output_ref}
                 if req.error:
                     result["error"] = req.error
-                event_id = await _insert_frame_event(
+                event = await _insert_frame_event(
                     cur,
                     frame=frame,
                     event_type=event_type,
@@ -376,7 +432,8 @@ async def commit_frame(frame_id: int, req: FrameCommitRequest) -> dict[str, Any]
                     },
                 )
                 await conn.commit()
-                return {"status": "ok", "frame": _frame_response(frame, event_id)}
+                await _mirror_frame_events([event])
+                return {"status": "ok", "frame": _frame_response(frame, event["event_id"])}
     except HTTPException:
         raise
     except Exception as exc:

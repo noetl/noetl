@@ -67,7 +67,7 @@ async def test_insert_frame_event_sets_stream_version_and_checksum(monkeypatch):
     monkeypatch.setattr(endpoint, "_next_snowflake_id", next_event_id)
     cur = Cursor()
 
-    event_id = await endpoint._insert_frame_event(
+    event = await endpoint._insert_frame_event(
         cur,
         frame={
             "frame_id": 9,
@@ -87,7 +87,9 @@ async def test_insert_frame_event_sets_stream_version_and_checksum(monkeypatch):
         meta_extra={"row_count": 10},
     )
 
-    assert event_id == 123
+    assert event["event_id"] == 123
+    assert event["stream_version"] == 4
+    assert event["envelope_checksum"] == cur.insert_params["envelope_checksum"]
     assert cur.insert_params["stream_version"] == 4
     assert cur.insert_params["catalog_id"] == 6
     assert cur.insert_params["stream_id"] == "execution/7/stage/8"
@@ -95,3 +97,39 @@ async def test_insert_frame_event_sets_stream_version_and_checksum(monkeypatch):
     assert len(cur.insert_params["envelope_checksum"]) == 64
     assert "stream_version" in cur.calls[-1][0]
     assert "envelope_checksum" in cur.calls[-1][0]
+
+
+@pytest.mark.asyncio
+async def test_frame_event_mirror_is_opt_in(monkeypatch):
+    from noetl.server.api.frames import endpoint
+
+    calls = []
+
+    class _FakePublisher:
+        async def publish_event(self, event):
+            calls.append(event)
+
+    monkeypatch.setattr(endpoint, "_event_mirror_publisher", _FakePublisher())
+    monkeypatch.delenv("NOETL_EVENT_MIRROR_ENABLED", raising=False)
+
+    await endpoint._mirror_frame_events([{"event_id": 1, "event_type": "frame.dispatched"}])
+
+    assert calls == []
+
+
+@pytest.mark.asyncio
+async def test_frame_event_mirror_publishes_when_enabled(monkeypatch):
+    from noetl.server.api.frames import endpoint
+
+    calls = []
+
+    class _FakePublisher:
+        async def publish_event(self, event):
+            calls.append(event)
+
+    monkeypatch.setattr(endpoint, "_event_mirror_publisher", _FakePublisher())
+    monkeypatch.setenv("NOETL_EVENT_MIRROR_ENABLED", "true")
+
+    await endpoint._mirror_frame_events([{"event_id": 1, "event_type": "frame.dispatched"}])
+
+    assert calls == [{"event_id": 1, "event_type": "frame.dispatched"}]
