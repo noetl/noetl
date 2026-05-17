@@ -55,6 +55,11 @@ from noetl.core.storage.result_store import (
     default_store,
 )
 
+from noetl.core.storage.ipc_cache import (
+    ArrowIpcSharedMemoryCache,
+    IpcCacheEntry,
+)
+
 from noetl.core.storage.scope_tracker import (
     ScopeContext,
     ScopeTracker,
@@ -111,6 +116,8 @@ __all__ = [
     'ResultStore',
     'default_store',
     'default_result_store',
+    'ArrowIpcSharedMemoryCache',
+    'IpcCacheEntry',
     # Scope Tracker
     'ScopeContext',
     'ScopeTracker',
