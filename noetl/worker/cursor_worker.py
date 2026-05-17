@@ -224,6 +224,52 @@ async def _commit_runtime_frame(
         )
 
 
+async def _claim_frame_rows(
+    *,
+    driver: Any,
+    handle: Any,
+    base_context: dict[str, Any],
+    worker_slot_id: Optional[str],
+    frame_index: int,
+    max_rows: int,
+    max_iterations_remaining: int,
+) -> list[dict[str, Any]]:
+    """Claim a frame worth of rows using a batched driver path when present."""
+
+    if max_iterations_remaining <= 0:
+        return []
+
+    target_rows = max(1, min(int(max_rows or 1), int(max_iterations_remaining)))
+    claim_ctx = {
+        "execution_id": base_context.get("execution_id"),
+        "worker_slot_id": worker_slot_id,
+        "iteration": 0,
+        "frame_index": frame_index,
+        "frame_row_index": 0,
+        "max_rows": target_rows,
+    }
+    claim_many = getattr(driver, "claim_many", None)
+    if callable(claim_many):
+        claimed = await claim_many(handle, claim_ctx, target_rows)
+        return [dict(row) for row in (claimed or [])[:target_rows]]
+
+    rows: list[dict[str, Any]] = []
+    for frame_row_index in range(target_rows):
+        claim_ctx = {
+            "execution_id": base_context.get("execution_id"),
+            "worker_slot_id": worker_slot_id,
+            "iteration": frame_row_index,
+            "frame_index": frame_index,
+            "frame_row_index": frame_row_index,
+            "max_rows": target_rows,
+        }
+        row = await driver.claim(handle, claim_ctx)
+        if row is None:
+            break
+        rows.append(dict(row))
+    return rows
+
+
 async def execute_cursor_worker(
     *,
     config: dict[str, Any],
@@ -273,6 +319,11 @@ async def execute_cursor_worker(
             f"claim_present={bool(claim_template)})"
         )
 
+    frame_policy = dict(config.get("frame_policy") or {})
+    max_frame_rows = max(1, int(frame_policy.get("max_rows") or 1))
+    max_frame_seconds = max(0.001, float(frame_policy.get("max_seconds") or 30.0))
+    max_frame_bytes = max(1, int(frame_policy.get("max_bytes") or 64 * 1024 * 1024))
+
     # Render the claim SQL once at open-time.  execution_id /
     # facility / etc. are stable for the lifetime of this worker; the
     # only per-claim substitution lives in the claim SQL itself
@@ -282,6 +333,8 @@ async def execute_cursor_worker(
     claim_context = dict(context or {})
     if worker_slot_id and "__worker_slot_id" not in claim_context:
         claim_context["__worker_slot_id"] = worker_slot_id
+    claim_context["__frame_max_rows"] = max_frame_rows
+    claim_context["__frame_policy"] = frame_policy
     rendered_claim_sql = render_template(claim_template, claim_context)
     if not isinstance(rendered_claim_sql, str) or not rendered_claim_sql.strip():
         raise ValueError(
@@ -321,11 +374,7 @@ async def execute_cursor_worker(
         "claim": rendered_claim_sql,
         "options": options,
     }
-    frame_policy = dict(config.get("frame_policy") or {})
     stage_id = config.get("stage_id")
-    max_frame_rows = max(1, int(frame_policy.get("max_rows") or 1))
-    max_frame_seconds = max(0.001, float(frame_policy.get("max_seconds") or 30.0))
-    max_frame_bytes = max(1, int(frame_policy.get("max_bytes") or 64 * 1024 * 1024))
 
     # TaskSequenceExecutor is re-used across claims — it has no
     # per-invocation state that bleeds between rows because `execute`
@@ -347,31 +396,32 @@ async def execute_cursor_worker(
     started_at = time.monotonic()
     try:
         while processed + failed < max_iterations:
-            frame_rows: list[dict[str, Any]] = []
-            frame_bytes = 0
             frame_started_at = time.monotonic()
-
-            while processed + failed + len(frame_rows) < max_iterations:
-                claim_ctx = {
-                    "execution_id": context.get("execution_id"),
-                    "worker_slot_id": worker_slot_id,
-                    "iteration": processed + failed + len(frame_rows),
-                    "frame_index": frame_count,
-                    "frame_row_index": len(frame_rows),
-                }
-                row = await driver.claim(handle, claim_ctx)
-                if row is None:
-                    break
-
-                row_dict = dict(row)
-                frame_rows.append(row_dict)
-                frame_bytes += _estimate_row_bytes(row_dict)
-                if len(frame_rows) >= max_frame_rows:
-                    break
-                if frame_bytes >= max_frame_bytes:
-                    break
-                if time.monotonic() - frame_started_at >= max_frame_seconds:
-                    break
+            frame_rows = await _claim_frame_rows(
+                driver=driver,
+                handle=handle,
+                base_context=context,
+                worker_slot_id=worker_slot_id,
+                frame_index=frame_count,
+                max_rows=max_frame_rows,
+                max_iterations_remaining=max_iterations - (processed + failed),
+            )
+            frame_bytes = sum(_estimate_row_bytes(row_dict) for row_dict in frame_rows)
+            if frame_bytes >= max_frame_bytes:
+                logger.debug(
+                    "[CURSOR-WORKER] slot=%s frame=%s claimed %d bytes, above frame max_bytes=%d",
+                    worker_slot_id,
+                    frame_count,
+                    frame_bytes,
+                    max_frame_bytes,
+                )
+            if time.monotonic() - frame_started_at >= max_frame_seconds:
+                logger.debug(
+                    "[CURSOR-WORKER] slot=%s frame=%s claim took longer than max_seconds=%s",
+                    worker_slot_id,
+                    frame_count,
+                    max_frame_seconds,
+                )
 
             if not frame_rows:
                 logger.info(
@@ -404,7 +454,7 @@ async def execute_cursor_worker(
 
             stop_after_frame = False
             frame_failed_before = failed
-            for row in frame_rows:
+            for frame_row_index, row in enumerate(frame_rows):
                 # Per-claim base context: clone the command context so
                 # per-row iter values never leak into the next claim.
                 per_claim_ctx = dict(context or {})
@@ -413,6 +463,7 @@ async def execute_cursor_worker(
                 iter_namespace["_index"] = processed + failed
                 iter_namespace["_worker_slot_id"] = worker_slot_id
                 iter_namespace["_frame_index"] = frame_count
+                iter_namespace["_frame_row_index"] = frame_row_index
                 per_claim_ctx["iter"] = iter_namespace
 
                 try:

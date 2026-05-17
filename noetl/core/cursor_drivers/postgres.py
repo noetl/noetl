@@ -1,7 +1,7 @@
 """Postgres cursor driver.
 
-Uses ``UPDATE ... FROM (SELECT ... FOR UPDATE SKIP LOCKED LIMIT 1)
-RETURNING`` patterns to atomically claim one work row per call.  The
+Uses ``UPDATE ... FROM (SELECT ... FOR UPDATE SKIP LOCKED LIMIT N)
+RETURNING`` patterns to atomically claim one or more work rows per call.  The
 caller supplies the full claim statement (flexible enough to support
 re-queueing, retry counters, partitioning columns, etc.).
 
@@ -133,6 +133,16 @@ class PostgresCursorDriver:
         context: dict[str, Any],
     ) -> Optional[dict[str, Any]]:
         """Execute the claim statement and return one row or None."""
+        rows = await self.claim_many(handle, context, 1)
+        return rows[0] if rows else None
+
+    async def claim_many(
+        self,
+        handle: _Handle,
+        context: dict[str, Any],
+        max_rows: int,
+    ) -> list[dict[str, Any]]:
+        """Execute the claim statement and return all rows it claimed."""
         async with handle.pool.connection() as conn:
             # Autocommit per claim so the row lock is released immediately
             # once the claim-and-return round-trip finishes; the worker
@@ -144,8 +154,8 @@ class PostgresCursorDriver:
                 # facility_mapping_id, worker_slot_id).  Pass no params;
                 # any templating belongs upstream.
                 await cur.execute(handle.claim_sql)
-                row = await cur.fetchone()
-                return dict(row) if row else None
+                rows = await cur.fetchmany(max(1, int(max_rows or 1)))
+                return [dict(row) for row in rows]
 
     async def close(self, handle: _Handle) -> None:
         # Pool is shared across workers; do NOT close it here.  The pool

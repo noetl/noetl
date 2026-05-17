@@ -48,6 +48,20 @@ class _FakeStore:
         )
 
 
+class _FakeBatchCursorDriver(_FakeCursorDriver):
+    kind = "frame_batch_test"
+
+    def __init__(self, rows):
+        super().__init__(rows)
+        self.claim_many_contexts = []
+
+    async def claim_many(self, handle, context, max_rows):
+        self.claim_many_contexts.append({"context": dict(context), "max_rows": max_rows})
+        claimed = self.rows[:max_rows]
+        self.rows = self.rows[max_rows:]
+        return claimed
+
+
 @pytest.mark.asyncio
 async def test_cursor_worker_claims_and_serializes_bounded_frames(monkeypatch):
     from noetl.core.cursor_drivers import register_driver
@@ -115,3 +129,60 @@ async def test_cursor_worker_claims_and_serializes_bounded_frames(monkeypatch):
     assert fake_store.puts[0]["media_type"] == "application/vnd.apache.arrow.stream"
     assert driver.claim_contexts[0]["frame_index"] == 0
     assert driver.claim_contexts[1]["frame_row_index"] == 1
+
+
+@pytest.mark.asyncio
+async def test_cursor_worker_uses_batched_claim_path(monkeypatch):
+    from noetl.core.cursor_drivers import register_driver
+    from noetl.worker import cursor_worker
+
+    driver = _FakeBatchCursorDriver(
+        [
+            {"id": 1, "status": "pending"},
+            {"id": 2, "status": "pending"},
+            {"id": 3, "status": "pending"},
+        ]
+    )
+    register_driver(driver.kind, driver)
+    fake_store = _FakeStore()
+    monkeypatch.setattr(cursor_worker, "default_store", fake_store)
+    monkeypatch.setattr(cursor_worker, "_frame_ipc_cache", lambda: None)
+
+    async def fetch_credential(auth_key):
+        return {"dsn": "memory"}
+
+    monkeypatch.setattr(cursor_worker, "fetch_credential_by_key_async", fetch_credential)
+
+    seen_indexes = []
+
+    async def tool_executor(kind, cfg, ctx):
+        seen_indexes.append(ctx["iter"]["item"]["id"])
+        return {"status": "ok"}
+
+    result = await cursor_worker.execute_cursor_worker(
+        config={
+            "cursor": {
+                "kind": driver.kind,
+                "auth": "pg",
+                "claim": "select next limit {{ __frame_max_rows }}",
+                "options": {"max_iterations": 10},
+            },
+            "iterator": "item",
+            "tasks": [{"name": "process_item", "kind": "noop"}],
+            "frame_policy": {"max_rows": 2, "max_seconds": 30, "max_bytes": 4096},
+        },
+        context={"execution_id": 42},
+        jinja_env=Environment(),
+        tool_executor=tool_executor,
+        render_template=lambda template, ctx: template.replace("{{ __frame_max_rows }}", str(ctx["__frame_max_rows"])),
+        render_dict=lambda data, ctx: data,
+        worker_slot_id="slot-1",
+    )
+
+    assert result["status"] == "ok"
+    assert result["processed"] == 3
+    assert result["frame_count"] == 2
+    assert seen_indexes == [1, 2, 3]
+    assert driver.claim_contexts == []
+    assert [call["max_rows"] for call in driver.claim_many_contexts] == [2, 2, 2]
+    assert driver.claim_many_contexts[0]["context"]["max_rows"] == 2
