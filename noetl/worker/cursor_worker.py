@@ -18,6 +18,7 @@ import os
 import time
 from typing import Any, Awaitable, Callable, Optional
 
+import httpx
 from jinja2 import Environment
 
 from noetl.core.cursor_drivers import CursorDriverNotFoundError, get_driver
@@ -123,6 +124,99 @@ async def _store_claimed_frame(
         }
 
 
+def _runtime_api_base(context: dict[str, Any]) -> str:
+    return str(
+        context.get("server_url")
+        or os.getenv("NOETL_SERVER_URL")
+        or os.getenv("NOETL_API_URL")
+        or "http://noetl.noetl.svc.cluster.local:8082"
+    ).rstrip("/")
+
+
+async def _claim_runtime_frame(
+    *,
+    context: dict[str, Any],
+    stage_id: Any,
+    worker_slot_id: Optional[str],
+    frame_index: int,
+    frame_policy: dict[str, Any],
+    cursor: dict[str, Any],
+) -> Optional[dict[str, Any]]:
+    if not stage_id:
+        return None
+    try:
+        lease_seconds = int(float(frame_policy.get("lease_seconds") or 120.0))
+        payload = {
+            "worker_id": worker_slot_id or os.getenv("HOSTNAME") or "cursor-worker",
+            "requested_count": 1,
+            "lease_seconds": lease_seconds,
+            "frame_policy": frame_policy or {},
+            "cursor": {
+                **(cursor or {}),
+                "frame_index": frame_index,
+                "worker_slot_id": worker_slot_id,
+            },
+        }
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            response = await client.post(
+                f"{_runtime_api_base(context)}/api/stages/{stage_id}/frames/claim",
+                json=payload,
+            )
+            response.raise_for_status()
+            frames = (response.json() or {}).get("frames") or []
+            return dict(frames[0]) if frames else None
+    except Exception as exc:
+        logger.warning(
+            "[CURSOR-WORKER] slot=%s frame=%s stage=%s claim failed; continuing legacy path: %s",
+            worker_slot_id,
+            frame_index,
+            stage_id,
+            exc,
+        )
+        return None
+
+
+async def _commit_runtime_frame(
+    *,
+    context: dict[str, Any],
+    runtime_frame: Optional[dict[str, Any]],
+    worker_slot_id: Optional[str],
+    row_count: int,
+    output_ref: Optional[dict[str, Any]],
+    events_emitted: int,
+    failed: bool,
+    error: Optional[str] = None,
+) -> None:
+    if not runtime_frame:
+        return
+    frame_id = runtime_frame.get("frame_id")
+    if not frame_id:
+        return
+    try:
+        payload = {
+            "worker_id": worker_slot_id or os.getenv("HOSTNAME") or "cursor-worker",
+            "status": "FAILED" if failed else "COMPLETED",
+            "row_count": row_count,
+            "output_ref": output_ref,
+            "events_emitted": events_emitted,
+            "cursor": runtime_frame.get("cursor") or {},
+            "error": error,
+        }
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            response = await client.post(
+                f"{_runtime_api_base(context)}/api/frames/{frame_id}/commit",
+                json=payload,
+            )
+            response.raise_for_status()
+    except Exception as exc:
+        logger.warning(
+            "[CURSOR-WORKER] slot=%s frame_id=%s commit failed; frame table may lag: %s",
+            worker_slot_id,
+            frame_id,
+            exc,
+        )
+
+
 async def execute_cursor_worker(
     *,
     config: dict[str, Any],
@@ -221,6 +315,7 @@ async def execute_cursor_worker(
         "options": options,
     }
     frame_policy = dict(config.get("frame_policy") or {})
+    stage_id = config.get("stage_id")
     max_frame_rows = max(1, int(frame_policy.get("max_rows") or 1))
     max_frame_seconds = max(0.001, float(frame_policy.get("max_seconds") or 30.0))
     max_frame_bytes = max(1, int(frame_policy.get("max_bytes") or 64 * 1024 * 1024))
@@ -278,6 +373,18 @@ async def execute_cursor_worker(
                 )
                 break
 
+            runtime_frame = await _claim_runtime_frame(
+                context=context,
+                stage_id=stage_id,
+                worker_slot_id=worker_slot_id,
+                frame_index=frame_count,
+                frame_policy=frame_policy,
+                cursor={
+                    "kind": kind,
+                    "iterator": iterator_name,
+                    "row_count": len(frame_rows),
+                },
+            )
             frame_meta = await _store_claimed_frame(
                 execution_id=context.get("execution_id"),
                 worker_slot_id=worker_slot_id,
@@ -289,6 +396,7 @@ async def execute_cursor_worker(
                 frames.append(frame_meta)
 
             stop_after_frame = False
+            frame_failed_before = failed
             for row in frame_rows:
                 # Per-claim base context: clone the command context so
                 # per-row iter values never leak into the next claim.
@@ -332,6 +440,17 @@ async def execute_cursor_worker(
                         break
                 processed += 1
 
+            frame_failed = failed > frame_failed_before
+            await _commit_runtime_frame(
+                context=context,
+                runtime_frame=runtime_frame,
+                worker_slot_id=worker_slot_id,
+                row_count=len(frame_rows),
+                output_ref=frame_meta,
+                events_emitted=len(frame_rows),
+                failed=frame_failed,
+                error="one or more frame rows failed" if frame_failed else None,
+            )
             frame_count += 1
             if stop_after_frame:
                 break

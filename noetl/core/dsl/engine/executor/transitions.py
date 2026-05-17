@@ -3,6 +3,7 @@ from __future__ import annotations
 from .common import *
 from .state import ExecutionState
 from .store import PlaybookRepo, StateStore
+from noetl.core.event_store.ports import canonical_event_checksum
 
 class TransitionMixin:
     def _get_loop_max_in_flight(self, step: Step) -> int:
@@ -102,6 +103,14 @@ class TransitionMixin:
             event_id=loop_event_id,
         )
 
+        frame_policy = step_def.loop.frame_policy.model_dump()
+        stage_id = await self._open_cursor_runtime_stage(
+            state=state,
+            step_def=step_def,
+            loop_event_id=loop_event_id,
+            frame_policy=frame_policy,
+        )
+
         # Render context built once at dispatch time; the worker renders
         # `iter.<iterator>` per-claim against its own row.  ctx/workload
         # come from the engine snapshot, same as a normal step.
@@ -130,8 +139,6 @@ class TransitionMixin:
 
         # Cursor spec — serialize so the worker receives a plain dict.
         cursor_spec = step_def.loop.cursor.model_dump()
-        frame_policy = step_def.loop.frame_policy.model_dump()
-
         # Pre-render the claim SQL against the engine's full render
         # context so any execution-scoped values (e.g. a facility id
         # resolved from a prior step's result) are baked into the
@@ -211,6 +218,7 @@ class TransitionMixin:
                 "worker_slot_index": slot,
                 "worker_count": worker_count,
                 "loop_event_id": loop_event_id,
+                "stage_id": stage_id,
                 "frame_policy": frame_policy,
             }
             command_metadata = {
@@ -221,6 +229,7 @@ class TransitionMixin:
                 "loop_step": step_def.step,
                 "loop_event_id": loop_event_id,
                 "__loop_epoch_id": loop_event_id,
+                "stage_id": stage_id,
                 "loop_worker_count": worker_count,
                 "frame_policy": frame_policy,
                 # Each worker slot counts as one loop iteration for
@@ -257,6 +266,145 @@ class TransitionMixin:
             len(commands), step_def.step, cursor_spec.get("kind"), loop_event_id,
         )
         return commands
+
+    async def _open_cursor_runtime_stage(
+        self,
+        *,
+        state: "ExecutionState",
+        step_def: Step,
+        loop_event_id: str,
+        frame_policy: dict[str, Any],
+    ) -> int | None:
+        """Open a runtime stage for a cursor loop and emit a replayable event."""
+        try:
+            async with get_pool_connection() as conn:
+                async with conn.cursor(row_factory=dict_row) as cur:
+                    await cur.execute("SELECT noetl.snowflake_id() AS id")
+                    stage_id = int((await cur.fetchone())["id"])
+                    await cur.execute("SELECT noetl.snowflake_id() AS id")
+                    event_id = int((await cur.fetchone())["id"])
+                    await cur.execute(
+                        """
+                        SELECT catalog_id
+                        FROM noetl.execution
+                        WHERE execution_id = %s
+                        """,
+                        (int(state.execution_id),),
+                    )
+                    execution_row = await cur.fetchone()
+                    catalog_id = (execution_row or {}).get("catalog_id") or state.catalog_id
+                    tenant_id = "default"
+                    organization_id = "default"
+                    dsl_ref = f"workflow.{step_def.step}"
+                    parent_event_id = state.last_event_id
+                    await cur.execute(
+                        """
+                        INSERT INTO noetl.stage (
+                            stage_id, execution_id, parent_event_id, kind, step_name,
+                            dsl_ref, status, frame_policy, tenant_id, organization_id
+                        )
+                        VALUES (%s, %s, %s, 'loop', %s, %s, 'OPEN', %s, %s, %s)
+                        """,
+                        (
+                            stage_id,
+                            int(state.execution_id),
+                            parent_event_id,
+                            step_def.step,
+                            dsl_ref,
+                            Json(frame_policy or {}),
+                            tenant_id,
+                            organization_id,
+                        ),
+                    )
+                    stream_id = f"execution/{state.execution_id}/stage/{stage_id}"
+                    event_time = datetime.now(timezone.utc)
+                    meta = {
+                        "stage_id": str(stage_id),
+                        "loop_event_id": loop_event_id,
+                        "frame_policy": frame_policy or {},
+                        "actionable": False,
+                        "informative": True,
+                    }
+                    result = {"status": "OPEN"}
+                    envelope = {
+                        "tenant_id": tenant_id,
+                        "organization_id": organization_id,
+                        "execution_id": int(state.execution_id),
+                        "stream_id": stream_id,
+                        "stream_version": 1,
+                        "aggregate_id": f"stage/{stage_id}",
+                        "aggregate_type": "stage",
+                        "event_type": "stage.opened",
+                        "schema_name": "noetl.stage.opened",
+                        "schema_version": 1,
+                        "event_time": event_time,
+                        "producer": "noetl-server",
+                        "causation_id": str(parent_event_id) if parent_event_id else None,
+                        "correlation_id": str(state.root_event_id or state.execution_id),
+                        "idempotency_key": f"{tenant_id}/{organization_id}/{state.execution_id}/stage/{stage_id}/opened",
+                        "payload_ref": None,
+                        "result": result,
+                        "meta": meta,
+                    }
+                    await cur.execute(
+                        """
+                        INSERT INTO noetl.event (
+                            execution_id, catalog_id, event_id, parent_event_id,
+                            created_at, event_type, node_id, node_name, status,
+                            context, result, meta, worker_id,
+                            tenant_id, organization_id, stream_id, stream_version,
+                            aggregate_id, aggregate_type, schema_name, schema_version,
+                            event_time, producer, causation_id, correlation_id,
+                            idempotency_key, payload_ref, envelope_checksum
+                        )
+                        VALUES (
+                            %s, %s, %s, %s,
+                            %s, 'stage.opened', %s, %s, 'OPEN',
+                            %s, %s, %s, 'noetl-server',
+                            %s, %s, %s, 1,
+                            %s, 'stage', 'noetl.stage.opened', 1,
+                            %s, 'noetl-server', %s, %s,
+                            %s, NULL, %s
+                        )
+                        """,
+                        (
+                            int(state.execution_id),
+                            catalog_id,
+                            event_id,
+                            parent_event_id,
+                            event_time,
+                            step_def.step,
+                            step_def.step,
+                            Json({"stage_id": str(stage_id), "loop_event_id": loop_event_id}),
+                            Json(result),
+                            Json(meta),
+                            tenant_id,
+                            organization_id,
+                            stream_id,
+                            f"stage/{stage_id}",
+                            event_time,
+                            envelope["causation_id"],
+                            envelope["correlation_id"],
+                            envelope["idempotency_key"],
+                            canonical_event_checksum(envelope),
+                        ),
+                    )
+                    await conn.commit()
+                    logger.info(
+                        "[CURSOR-LOOP] Opened runtime stage %s for step %s execution=%s",
+                        stage_id,
+                        step_def.step,
+                        state.execution_id,
+                    )
+                    return stage_id
+        except Exception as exc:
+            logger.warning(
+                "[CURSOR-LOOP] Failed to open runtime stage for step %s execution=%s: %s",
+                step_def.step,
+                state.execution_id,
+                exc,
+            )
+            return None
 
     async def _issue_loop_commands(
         self,
