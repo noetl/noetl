@@ -1059,6 +1059,7 @@ class EventHandlingMixin:
                 state,
                 step_def,
                 event,
+                conn=conn,
             )
 
         # Handle loop iteration counting for non-task_sequence loop steps on call.done.
