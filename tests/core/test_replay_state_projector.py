@@ -115,3 +115,64 @@ async def test_replay_state_projector_respects_version_monotonic_store_writes():
     record = store.records["execution/7/all"]
     assert record.version == 3
     assert record.state["execution"]["status"] == "COMPLETED"
+
+
+@pytest.mark.asyncio
+async def test_nats_projector_worker_projects_owned_event_batch():
+    from noetl.core.projector.nats_worker import NATSProjectorWorker, ProjectorWorkerSettings
+
+    store = _MemoryProjectionStore()
+    worker = NATSProjectorWorker(
+        projection_store=store,
+        settings=ProjectorWorkerSettings(
+            shard_id="noetl-projector-1",
+            consumer_name="noetl-projector-1",
+            shard_count=2,
+        ),
+    )
+
+    action = await worker.handle_notification(
+        {
+            "events": [
+                {
+                    "event_id": 20,
+                    "stream_version": 1,
+                    "tenant_id": "tenant-a",
+                    "organization_id": "org-a",
+                    "execution_id": 7,
+                    "event_type": "workflow.completed",
+                },
+                {
+                    "event_id": 21,
+                    "stream_version": 1,
+                    "tenant_id": "tenant-a",
+                    "organization_id": "org-a",
+                    "execution_id": 8,
+                    "event_type": "workflow.completed",
+                },
+            ]
+        }
+    )
+
+    assert action == "ack"
+    assert set(store.records) == {"execution/7/all"}
+    assert store.records["execution/7/all"].state["execution"]["status"] == "COMPLETED"
+
+
+@pytest.mark.asyncio
+async def test_nats_projector_worker_acks_empty_or_unowned_notifications():
+    from noetl.core.projector.nats_worker import NATSProjectorWorker, ProjectorWorkerSettings
+
+    store = _MemoryProjectionStore()
+    worker = NATSProjectorWorker(
+        projection_store=store,
+        settings=ProjectorWorkerSettings(
+            shard_id="noetl-projector-0",
+            consumer_name="noetl-projector-0",
+            shard_count=2,
+        ),
+    )
+
+    assert await worker.handle_notification({"event": {"execution_id": 7, "event_type": "workflow.completed"}}) == "ack"
+    assert await worker.handle_notification({"event_id": 99}) == "ack"
+    assert store.records == {}
