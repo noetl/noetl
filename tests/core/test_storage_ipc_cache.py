@@ -73,8 +73,40 @@ async def test_tempstore_put_ipc_bytes_uses_ipc_hint_and_durable_fallback():
         assert ref.meta.schema_digest == "schema-1"
         assert ref.meta.row_count == 10
         assert await store.get_ipc_bytes(ref, ipc_cache=cache) == b"arrow-frame"
+        assert store.ipc_stats()["admit_success"] == 1
+        assert store.ipc_stats()["read_hits"] == 1
 
         cache.delete(ref.ipc)
         assert await store.get_ipc_bytes(ref, ipc_cache=cache) == b"arrow-frame"
+        stats = store.ipc_stats()
+        assert stats["read_misses"] == 1
+        assert stats["fallback_reads"] == 1
+    finally:
+        await store.delete(ref)
+
+
+@pytest.mark.asyncio
+async def test_tempstore_ipc_stats_track_admission_failure():
+    from noetl.core.storage import ArrowIpcSharedMemoryCache, Scope, StoreTier, TempStore
+
+    store = TempStore()
+    cache = ArrowIpcSharedMemoryCache(namespace="noetl-test", budget_bytes=4)
+    ref = await store.put_ipc_bytes(
+        execution_id="exec-1",
+        name="frame-1",
+        data_bytes=b"too-large",
+        schema_digest="schema-1",
+        row_count=1,
+        scope=Scope.EXECUTION,
+        store=StoreTier.MEMORY,
+        ipc_cache=cache,
+    )
+    try:
+        assert ref.ipc is None
+        stats = store.ipc_stats()
+        assert stats["admit_attempts"] == 1
+        assert stats["admit_failures"] == 1
+        assert await store.get_ipc_bytes(ref, ipc_cache=cache) == b"too-large"
+        assert store.ipc_stats()["fallback_reads"] == 1
     finally:
         await store.delete(ref)

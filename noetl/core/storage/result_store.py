@@ -108,6 +108,15 @@ class TempStore:
 
         self._memory_cache: "OrderedDict[str, bytes]" = OrderedDict()
         self._ref_cache: "OrderedDict[str, TempRef]" = OrderedDict()
+        self._ipc_stats: Dict[str, int] = {
+            "admit_attempts": 0,
+            "admit_success": 0,
+            "admit_failures": 0,
+            "read_attempts": 0,
+            "read_hits": 0,
+            "read_misses": 0,
+            "fallback_reads": 0,
+        }
 
         if scope_tracker is not None:
             self._scope_tracker = scope_tracker
@@ -117,6 +126,10 @@ class TempStore:
                 self._scope_tracker = default_tracker
             except (ImportError, ModuleNotFoundError):
                 self._scope_tracker = None
+
+    def ipc_stats(self) -> Dict[str, int]:
+        """Return a point-in-time snapshot of IPC fast-path counters."""
+        return dict(self._ipc_stats)
 
     @staticmethod
     def _resolve_cache_limit(value: Optional[int], env_name: str, default: int) -> int:
@@ -388,6 +401,7 @@ class TempStore:
         )
 
         if ipc_cache is not None:
+            self._ipc_stats["admit_attempts"] += 1
             try:
                 temp_ref.ipc = ipc_cache.put_arrow_ipc(
                     payload,
@@ -396,7 +410,9 @@ class TempStore:
                     lease_seconds=ipc_lease_seconds,
                     media_type=media_type,
                 )
+                self._ipc_stats["admit_success"] += 1
             except Exception as exc:
+                self._ipc_stats["admit_failures"] += 1
                 logger.debug("TEMP: IPC cache admission skipped for %s: %s", temp_ref.ref, exc)
 
         await self._store_data(temp_ref, payload)
@@ -424,10 +440,15 @@ class TempStore:
             await self.delete(ref_str)
             raise KeyError(f"TempRef expired: {ref_str}")
         if allow_ipc and ipc_cache is not None and temp_ref.ipc is not None:
+            self._ipc_stats["read_attempts"] += 1
             try:
-                return ipc_cache.get(temp_ref.ipc)
+                data = ipc_cache.get(temp_ref.ipc)
+                self._ipc_stats["read_hits"] += 1
+                return data
             except Exception as exc:
+                self._ipc_stats["read_misses"] += 1
                 logger.debug("TEMP: IPC cache miss for %s: %s", ref_str, exc)
+        self._ipc_stats["fallback_reads"] += 1
         return await self._retrieve_data_bytes(temp_ref)
 
     async def get(self, ref: Union[str, TempRef]) -> Any:
