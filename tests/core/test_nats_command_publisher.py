@@ -1,6 +1,8 @@
+import json
+
 import pytest
 
-from noetl.core.messaging.nats_client import NATSCommandPublisher
+from noetl.core.messaging.nats_client import NATSCommandPublisher, NATSEventPublisher
 
 
 class _FakeJetStream:
@@ -92,3 +94,66 @@ async def test_ensure_connected_resets_stale_client_before_reconnect(monkeypatch
 
     assert reset_calls == [True]
     assert connect_calls == [True]
+
+
+@pytest.mark.asyncio
+async def test_publish_event_uses_tenant_execution_shard_subject(monkeypatch):
+    publisher = NATSEventPublisher(
+        nats_url="nats://example",
+        subject_prefix="noetl.events",
+        stream_name="NOETL_EVENTS",
+        shard_count=4,
+    )
+    publisher._nc = _FakeNC()
+    publisher._js = _FakeJetStream(fail=False)
+
+    ensure_calls = []
+
+    async def _fake_ensure_connected(force=False):
+        ensure_calls.append(force)
+
+    monkeypatch.setattr(publisher, "ensure_connected", _fake_ensure_connected)
+
+    await publisher.publish_event(
+        {
+            "event_id": 99,
+            "tenant_id": "tenant/a",
+            "organization_id": "org a",
+            "execution_id": 10,
+            "event_type": "workflow.completed",
+        }
+    )
+
+    assert ensure_calls == [False]
+    assert len(publisher._js.published) == 1
+    subject, payload = publisher._js.published[0]
+    assert subject == "noetl.events.tenant-a.org-a.10.2"
+    assert json.loads(payload.decode())["event_id"] == 99
+
+
+@pytest.mark.asyncio
+async def test_publish_event_reconnects_and_retries_after_failure(monkeypatch):
+    publisher = NATSEventPublisher(
+        nats_url="nats://example",
+        subject_prefix="noetl.events",
+        stream_name="NOETL_EVENTS",
+    )
+    first_js = _FakeJetStream(fail=True)
+    second_js = _FakeJetStream(fail=False)
+    publisher._nc = _FakeNC()
+    publisher._js = first_js
+
+    ensure_calls = []
+
+    async def _fake_ensure_connected(force=False):
+        ensure_calls.append(force)
+        if force:
+            publisher._nc = _FakeNC()
+            publisher._js = second_js
+
+    monkeypatch.setattr(publisher, "ensure_connected", _fake_ensure_connected)
+
+    await publisher.publish_event({"event_id": 100, "execution_id": 1, "event_type": "workflow.completed"})
+
+    assert ensure_calls == [False, True]
+    assert len(second_js.published) == 1

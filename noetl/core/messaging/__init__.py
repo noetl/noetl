@@ -2,10 +2,12 @@
 
 from noetl.core.messaging.nats_client import (
     NATSCommandPublisher,
-    NATSCommandSubscriber
+    NATSCommandSubscriber,
+    NATSEventPublisher,
 )
 
 __all__ = [
     "NATSCommandPublisher",
-    "NATSCommandSubscriber"
+    "NATSCommandSubscriber",
+    "NATSEventPublisher",
 ]
