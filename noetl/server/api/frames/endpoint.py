@@ -92,32 +92,135 @@ async def _resolve_claim_command_id(
     return int(command_id) if command_id is not None else None
 
 
+async def _load_idempotent_claimed_frame(
+    cur: Any,
+    *,
+    stage_id: int,
+    command_id: int | None,
+    worker_id: str,
+    cursor: dict[str, Any] | None,
+) -> dict[str, Any] | None:
+    if not isinstance(cursor, dict):
+        return None
+    worker_slot_id = cursor.get("worker_slot_id")
+    frame_index = cursor.get("frame_index")
+    if worker_slot_id is None or frame_index is None:
+        return None
+
+    await cur.execute(
+        """
+        SELECT *
+        FROM noetl.frame
+        WHERE stage_id = %s
+          AND command_id IS NOT DISTINCT FROM %s
+          AND owner_worker = %s
+          AND status IN ('CLAIMED','RUNNING')
+          AND cursor->>'worker_slot_id' = %s
+          AND cursor->>'frame_index' = %s
+        ORDER BY frame_id DESC
+        FOR UPDATE
+        LIMIT 1
+        """,
+        (stage_id, command_id, worker_id, str(worker_slot_id), str(frame_index)),
+    )
+    frame = await cur.fetchone()
+    return dict(frame) if frame else None
+
+
 def _frame_stream_id(*, execution_id: int, stage_id: int) -> str:
     return f"execution/{execution_id}/stage/{stage_id}"
 
 
-async def _lock_frame_stream(cur: Any, *, execution_id: int, stage_id: int) -> str:
-    stream_id = _frame_stream_id(execution_id=execution_id, stage_id=stage_id)
+def _frame_event_stream_id(*, execution_id: int, stage_id: int, frame_id: int) -> str:
+    return f"{_frame_stream_id(execution_id=execution_id, stage_id=stage_id)}/frame/{frame_id}"
+
+
+def _frame_mint_stream_id(*, execution_id: int, stage_id: int, cursor: dict[str, Any] | None) -> str:
+    if isinstance(cursor, dict):
+        worker_slot_id = cursor.get("worker_slot_id")
+        frame_index = cursor.get("frame_index")
+        if worker_slot_id is not None and frame_index is not None:
+            return (
+                f"{_frame_stream_id(execution_id=execution_id, stage_id=stage_id)}"
+                f"/slot/{worker_slot_id}/frame-index/{frame_index}"
+            )
+    return f"{_frame_stream_id(execution_id=execution_id, stage_id=stage_id)}/mint"
+
+
+async def _lock_frame_mint_stream(
+    cur: Any,
+    *,
+    execution_id: int,
+    stage_id: int,
+    cursor: dict[str, Any] | None,
+) -> str:
+    stream_id = _frame_mint_stream_id(execution_id=execution_id, stage_id=stage_id, cursor=cursor)
     await cur.execute("SELECT pg_advisory_xact_lock(hashtext(%s)::bigint)", (stream_id,))
     return stream_id
 
 
-async def _lock_frame_stream_for_frame(cur: Any, *, frame_id: int) -> None:
+async def _resolve_parent_frame_id(cur: Any, *, stage_id: int, cursor: dict[str, Any] | None) -> int | None:
+    if isinstance(cursor, dict):
+        worker_slot_id = cursor.get("worker_slot_id")
+        frame_index = cursor.get("frame_index")
+        try:
+            previous_index = int(frame_index) - 1
+        except (TypeError, ValueError):
+            previous_index = -1
+        if worker_slot_id is not None and previous_index >= 0:
+            await cur.execute(
+                """
+                SELECT frame_id
+                FROM noetl.frame
+                WHERE stage_id = %s
+                  AND cursor->>'worker_slot_id' = %s
+                  AND cursor->>'frame_index' = %s
+                ORDER BY frame_id DESC
+                LIMIT 1
+                """,
+                (stage_id, str(worker_slot_id), str(previous_index)),
+            )
+            row = await cur.fetchone()
+            if row:
+                return row.get("frame_id")
+
     await cur.execute(
         """
-        SELECT execution_id, stage_id
+        SELECT frame_id
         FROM noetl.frame
-        WHERE frame_id = %s
+        WHERE stage_id = %s
+        ORDER BY frame_id DESC
+        LIMIT 1
         """,
-        (frame_id,),
+        (stage_id,),
+    )
+    row = await cur.fetchone()
+    return (row or {}).get("frame_id")
+
+
+async def _load_claimable_frame(cur: Any, *, stage_id: int) -> dict[str, Any] | None:
+    await cur.execute(
+        """
+        SELECT f.*,
+               (
+                   f.status IN ('CLAIMED','RUNNING')
+                   AND (f.lease_until IS NULL OR f.lease_until < now())
+               ) AS expired_lease
+        FROM noetl.frame f
+        WHERE f.stage_id = %s
+          AND (
+            f.status = 'PENDING'
+            OR (f.status IN ('CLAIMED','RUNNING')
+                AND (f.lease_until IS NULL OR f.lease_until < now()))
+          )
+        ORDER BY f.frame_id
+        FOR UPDATE SKIP LOCKED
+        LIMIT 1
+        """,
+        (stage_id,),
     )
     frame = await cur.fetchone()
-    if frame:
-        await _lock_frame_stream(
-            cur,
-            execution_id=int(frame["execution_id"]),
-            stage_id=int(frame["stage_id"]),
-        )
+    return dict(frame) if frame else None
 
 
 async def _insert_frame_event(
@@ -129,9 +232,14 @@ async def _insert_frame_event(
     worker_id: str,
     result: dict[str, Any] | None = None,
     meta_extra: dict[str, Any] | None = None,
+    event_id: int | None = None,
 ) -> dict[str, Any]:
-    event_id = await _next_snowflake_id(cur)
-    stream_id = _frame_stream_id(execution_id=int(frame["execution_id"]), stage_id=int(frame["stage_id"]))
+    event_id = int(event_id) if event_id is not None else await _next_snowflake_id(cur)
+    stream_id = _frame_event_stream_id(
+        execution_id=int(frame["execution_id"]),
+        stage_id=int(frame["stage_id"]),
+        frame_id=int(frame["frame_id"]),
+    )
     now = datetime.now(timezone.utc)
     catalog_id = frame.get("catalog_id")
     if catalog_id is None:
@@ -143,17 +251,10 @@ async def _insert_frame_event(
         if not catalog_row:
             raise RuntimeError(f"execution not found for frame event: {frame['execution_id']}")
         catalog_id = catalog_row.get("catalog_id")
-    await cur.execute("SELECT pg_advisory_xact_lock(hashtext(%s)::bigint)", (stream_id,))
-    await cur.execute(
-        """
-        SELECT COALESCE(max(stream_version), 0) + 1 AS next_version
-        FROM noetl.event
-        WHERE stream_id = %s
-        """,
-        (stream_id,),
-    )
-    version_row = await cur.fetchone()
-    stream_version = int((version_row or {}).get("next_version") or 1)
+    # Frame events are high-frequency runtime telemetry. Use the Snowflake event
+    # id as a sparse per-stream version so consumers retain deterministic order
+    # without serializing every heartbeat through an advisory lock and max scan.
+    stream_version = int(event_id)
     payload_ref = (result or {}).get("reference")
     event_result = result or {"status": status}
     event_meta = _event_meta(frame=frame, worker_id=worker_id, extra=meta_extra)
@@ -383,48 +484,77 @@ async def claim_frames(stage_id: int, req: FrameClaimRequest) -> dict[str, Any]:
                     worker_id=req.worker_id,
                     requested_command_id=req.command_id,
                 )
-                await _lock_frame_stream(cur, execution_id=int(stage["execution_id"]), stage_id=stage_id)
                 claimed: list[dict[str, Any]] = []
                 events_to_mirror: list[dict[str, Any]] = []
                 for _ in range(req.requested_count):
-                    await cur.execute(
-                        """
-                        SELECT f.*,
-                               (
-                                   f.status IN ('CLAIMED','RUNNING')
-                                   AND (f.lease_until IS NULL OR f.lease_until < now())
-                               ) AS expired_lease
-                        FROM noetl.frame f
-                        WHERE f.stage_id = %s
-                          AND (
-                            f.status = 'PENDING'
-                            OR (f.status IN ('CLAIMED','RUNNING')
-                                AND (f.lease_until IS NULL OR f.lease_until < now()))
-                          )
-                        ORDER BY f.frame_id
-                        FOR UPDATE SKIP LOCKED
-                        LIMIT 1
-                        """,
-                        (stage_id,),
+                    frame = await _load_idempotent_claimed_frame(
+                        cur,
+                        stage_id=stage_id,
+                        command_id=command_id,
+                        worker_id=req.worker_id,
+                        cursor=req.cursor,
                     )
-                    frame = await cur.fetchone()
-                    if not frame:
-                        # Frame rows are minted lazily after the cursor driver has
-                        # claimed external work. Serialize this tiny section so
-                        # parent_frame_id forms a deterministic per-stage chain.
+                    if frame:
                         await cur.execute(
                             """
-                            SELECT frame_id
-                            FROM noetl.frame
-                            WHERE stage_id = %s
-                            ORDER BY frame_id DESC
-                            LIMIT 1
+                            UPDATE noetl.frame
+                            SET lease_until = now() + (%s || ' seconds')::interval,
+                                updated_at = now()
+                            WHERE frame_id = %s
+                            RETURNING *
                             """,
-                            (stage_id,),
+                            (req.lease_seconds, frame["frame_id"]),
                         )
-                        parent_frame_row = await cur.fetchone()
-                        parent_frame_id = (parent_frame_row or {}).get("frame_id")
+                        updated = dict(await cur.fetchone())
+                        updated["step_name"] = stage["step_name"]
+                        updated["catalog_id"] = stage["catalog_id"]
+                        claimed.append(_frame_response(updated, updated.get("claimed_event_id")))
+                        continue
+
+                    frame = await _load_claimable_frame(cur, stage_id=stage_id)
+                    frame_id: int | None = None
+                    if not frame:
+                        # Frame rows are minted lazily after the cursor driver has
+                        # claimed external work. Mint locks are scoped to the cursor
+                        # shard so duplicate retries converge without serializing the
+                        # whole stage.
                         frame_id = await _next_snowflake_id(cur)
+                        await _lock_frame_mint_stream(
+                            cur,
+                            execution_id=int(stage["execution_id"]),
+                            stage_id=stage_id,
+                            cursor=req.cursor,
+                        )
+                        frame = await _load_idempotent_claimed_frame(
+                            cur,
+                            stage_id=stage_id,
+                            command_id=command_id,
+                            worker_id=req.worker_id,
+                            cursor=req.cursor,
+                        )
+                        if frame:
+                            await cur.execute(
+                                """
+                                UPDATE noetl.frame
+                                SET lease_until = now() + (%s || ' seconds')::interval,
+                                    updated_at = now()
+                                WHERE frame_id = %s
+                                RETURNING *
+                                """,
+                                (req.lease_seconds, frame["frame_id"]),
+                            )
+                            updated = dict(await cur.fetchone())
+                            updated["step_name"] = stage["step_name"]
+                            updated["catalog_id"] = stage["catalog_id"]
+                            claimed.append(_frame_response(updated, updated.get("claimed_event_id")))
+                            continue
+                        frame = await _load_claimable_frame(cur, stage_id=stage_id)
+                    if not frame:
+                        parent_frame_id = await _resolve_parent_frame_id(
+                            cur,
+                            stage_id=stage_id,
+                            cursor=req.cursor,
+                        )
                         await cur.execute(
                             """
                             INSERT INTO noetl.frame (
@@ -450,7 +580,6 @@ async def claim_frames(stage_id: int, req: FrameClaimRequest) -> dict[str, Any]:
                         frame = dict(frame)
                         frame["step_name"] = stage["step_name"]
                     else:
-                        frame = dict(frame)
                         frame["step_name"] = stage["step_name"]
 
                     if frame.get("expired_lease"):
@@ -479,13 +608,19 @@ async def claim_frames(stage_id: int, req: FrameClaimRequest) -> dict[str, Any]:
                         SET status = 'CLAIMED',
                             owner_worker = %s,
                             command_id = COALESCE(command_id, %s),
+                            claimed_event_id = noetl.snowflake_id(),
                             lease_until = now() + (%s || ' seconds')::interval,
                             attempts = attempts + 1,
                             updated_at = now()
                         WHERE frame_id = %s
                         RETURNING *
                         """,
-                        (req.worker_id, command_id, req.lease_seconds, frame["frame_id"]),
+                        (
+                            req.worker_id,
+                            command_id,
+                            req.lease_seconds,
+                            frame["frame_id"],
+                        ),
                     )
                     updated = dict(await cur.fetchone())
                     updated["step_name"] = stage["step_name"]
@@ -503,15 +638,7 @@ async def claim_frames(stage_id: int, req: FrameClaimRequest) -> dict[str, Any]:
                                 req.frame_policy or stage.get("frame_policy") or {}
                             ),
                         },
-                    )
-                    await cur.execute(
-                        """
-                        UPDATE noetl.frame
-                        SET claimed_event_id = %s,
-                            updated_at = now()
-                        WHERE frame_id = %s
-                        """,
-                        (event["event_id"], updated["frame_id"]),
+                        event_id=updated.get("claimed_event_id"),
                     )
                     updated["claimed_event_id"] = event["event_id"]
                     events_to_mirror.append(event)
@@ -534,7 +661,6 @@ async def heartbeat_frame(frame_id: int, req: FrameHeartbeatRequest) -> dict[str
     try:
         async with get_pool_connection() as conn:
             async with conn.cursor(row_factory=dict_row) as cur:
-                await _lock_frame_stream_for_frame(cur, frame_id=frame_id)
                 await cur.execute(
                     """
                     WITH active AS (
@@ -595,7 +721,6 @@ async def commit_frame(frame_id: int, req: FrameCommitRequest) -> dict[str, Any]
     try:
         async with get_pool_connection() as conn:
             async with conn.cursor(row_factory=dict_row) as cur:
-                await _lock_frame_stream_for_frame(cur, frame_id=frame_id)
                 await cur.execute(
                     """
                     UPDATE noetl.frame f
@@ -604,6 +729,7 @@ async def commit_frame(frame_id: int, req: FrameCommitRequest) -> dict[str, Any]
                         row_count = %s,
                         output_ref = %s,
                         events_emitted = %s,
+                        terminal_event_id = noetl.snowflake_id(),
                         completed_at = now(),
                         updated_at = now()
                     WHERE f.frame_id = %s
@@ -649,15 +775,7 @@ async def commit_frame(frame_id: int, req: FrameCommitRequest) -> dict[str, Any]
                             (frame.get("cursor") or {}).get("frame_policy") or {}
                         ),
                     },
-                )
-                await cur.execute(
-                    """
-                    UPDATE noetl.frame
-                    SET terminal_event_id = %s,
-                        updated_at = now()
-                    WHERE frame_id = %s
-                    """,
-                    (event["event_id"], frame_id),
+                    event_id=frame.get("terminal_event_id"),
                 )
                 frame["terminal_event_id"] = event["event_id"]
                 await conn.commit()

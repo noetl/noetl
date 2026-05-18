@@ -200,11 +200,11 @@ class Worker:
         )
         self._command_heartbeat_timeout_seconds = max(
             1.0,
-            float(os.getenv("NOETL_COMMAND_HEARTBEAT_TIMEOUT_SECONDS", "3")),
+            float(os.getenv("NOETL_COMMAND_HEARTBEAT_TIMEOUT_SECONDS", "10")),
         )
         self._command_heartbeat_max_retries = max(
             1,
-            int(os.getenv("NOETL_COMMAND_HEARTBEAT_MAX_RETRIES", "1")),
+            int(os.getenv("NOETL_COMMAND_HEARTBEAT_MAX_RETRIES", "2")),
         )
         # Adaptive AIMD concurrency controller: limits simultaneous claim/event
         # requests from this worker process, backing off when the server pool

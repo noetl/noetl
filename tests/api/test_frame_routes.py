@@ -119,14 +119,14 @@ def test_frame_response_includes_lineage_columns():
 
 
 @pytest.mark.asyncio
-async def test_insert_frame_event_sets_stream_version_and_checksum(monkeypatch):
+async def test_insert_frame_event_sets_sparse_stream_version_and_checksum(monkeypatch):
     from noetl.server.api.frames import endpoint
 
     class Cursor:
         def __init__(self):
             self.calls = []
             self.insert_params = None
-            self.fetchone_rows = [{"catalog_id": 6}, {"next_version": 4}]
+            self.fetchone_rows = [{"catalog_id": 6}]
 
         async def execute(self, query, params=None):
             self.calls.append((query, params))
@@ -163,11 +163,11 @@ async def test_insert_frame_event_sets_stream_version_and_checksum(monkeypatch):
     )
 
     assert event["event_id"] == 123
-    assert event["stream_version"] == 4
+    assert event["stream_version"] == 123
     assert event["envelope_checksum"] == cur.insert_params["envelope_checksum"]
-    assert cur.insert_params["stream_version"] == 4
+    assert cur.insert_params["stream_version"] == 123
     assert cur.insert_params["catalog_id"] == 6
-    assert cur.insert_params["stream_id"] == "execution/7/stage/8"
+    assert cur.insert_params["stream_id"] == "execution/7/stage/8/frame/9"
     assert cur.insert_params["aggregate_id"] == "frame/9"
     assert len(cur.insert_params["envelope_checksum"]) == 64
     assert "stream_version" in cur.calls[-1][0]
@@ -190,6 +190,37 @@ async def test_frame_event_mirror_is_opt_in(monkeypatch):
     await endpoint._mirror_frame_events([{"event_id": 1, "event_type": "frame.dispatched"}])
 
     assert calls == []
+
+
+@pytest.mark.asyncio
+async def test_load_idempotent_claimed_frame_matches_worker_slot_and_frame_index():
+    from noetl.server.api.frames import endpoint
+
+    class Cursor:
+        def __init__(self):
+            self.calls = []
+
+        async def execute(self, query, params=None):
+            self.calls.append((query, params))
+
+        async def fetchone(self):
+            return {"frame_id": 9, "status": "CLAIMED"}
+
+    cur = Cursor()
+
+    frame = await endpoint._load_idempotent_claimed_frame(
+        cur,
+        stage_id=8,
+        command_id=7,
+        worker_id="slot-1",
+        cursor={"worker_slot_id": "slot-1", "frame_index": 3},
+    )
+
+    assert frame == {"frame_id": 9, "status": "CLAIMED"}
+    query, params = cur.calls[0]
+    assert "cursor->>'worker_slot_id'" in query
+    assert "cursor->>'frame_index'" in query
+    assert params == (8, 7, "slot-1", "slot-1", "3")
 
 
 @pytest.mark.asyncio
@@ -464,6 +495,9 @@ async def test_claim_frames_reclaims_expired_frame_with_abandoned_event(monkeypa
         emitted.append(kwargs)
         return {"event_id": 100 + len(emitted), "event_type": kwargs["event_type"]}
 
+    async def fail_mint_lock(*_args, **_kwargs):
+        raise AssertionError("existing claimable frames must not take the mint lock")
+
     async def mirror_frame_events(_events):
         return None
 
@@ -471,6 +505,7 @@ async def test_claim_frames_reclaims_expired_frame_with_abandoned_event(monkeypa
     monkeypatch.setattr(endpoint, "_load_stage", load_stage)
     monkeypatch.setattr(endpoint, "_resolve_claim_command_id", resolve_command_id)
     monkeypatch.setattr(endpoint, "_insert_frame_event", insert_frame_event)
+    monkeypatch.setattr(endpoint, "_lock_frame_mint_stream", fail_mint_lock)
     monkeypatch.setattr(endpoint, "_mirror_frame_events", mirror_frame_events)
 
     response = await endpoint.claim_frames(

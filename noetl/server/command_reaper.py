@@ -66,7 +66,7 @@ from typing import Optional
 
 from psycopg.rows import dict_row
 
-from noetl.core.db.pool import get_pool_connection
+from noetl.core.db.pool import get_bg_pool_connection
 from noetl.core.logger import setup_logger
 from noetl.core.urls import normalize_server_base_url
 
@@ -144,7 +144,7 @@ async def _find_stale_active_commands(
     Each returned row carries the fields needed to republish via NATS:
     ``event_id``, ``execution_id``, ``command_id`` (string), ``step``.
     """
-    async with get_pool_connection(timeout=5.0) as conn:
+    async with get_bg_pool_connection(timeout=5.0) as conn:
         async with conn.cursor(row_factory=dict_row) as cur:
             await cur.execute(
                 """
@@ -200,7 +200,7 @@ async def _find_stranded_pending_commands(
     Rows for executions that have already terminated are excluded so we
     do not republish work that the playbook has moved past.
     """
-    async with get_pool_connection(timeout=5.0) as conn:
+    async with get_bg_pool_connection(timeout=5.0) as conn:
         async with conn.cursor(row_factory=dict_row) as cur:
             await cur.execute(
                 """

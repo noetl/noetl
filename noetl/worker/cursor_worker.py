@@ -15,6 +15,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import threading
 import time
 from typing import Any, Awaitable, Callable, Optional
 
@@ -44,6 +45,58 @@ logger = setup_logger(__name__, include_location=True)
 _DEFAULT_MAX_ITERATIONS = 100_000
 
 _FRAME_IPC_CACHE: Optional[ArrowIpcSharedMemoryCache] = None
+_FRAME_EVENT_TIMEOUT_SECONDS = max(
+    1.0,
+    float(os.getenv("NOETL_CURSOR_FRAME_EVENT_TIMEOUT_SECONDS", "30")),
+)
+_FRAME_EVENT_MAX_RETRIES = max(
+    1,
+    int(os.getenv("NOETL_CURSOR_FRAME_EVENT_MAX_RETRIES", "3")),
+)
+
+
+async def _post_frame_event(
+    *,
+    url: str,
+    payload: dict[str, Any],
+    attempts: int | None = None,
+) -> None:
+    retry_count = max(1, int(attempts or _FRAME_EVENT_MAX_RETRIES))
+    last_exc: Exception | None = None
+    async with httpx.AsyncClient(timeout=_FRAME_EVENT_TIMEOUT_SECONDS) as client:
+        for attempt in range(retry_count):
+            try:
+                response = await client.post(url, json=payload)
+                response.raise_for_status()
+                return
+            except Exception as exc:
+                last_exc = exc
+                if attempt < retry_count - 1:
+                    await asyncio.sleep(min(0.25 * (2**attempt), 2.0))
+    if last_exc is not None:
+        raise last_exc
+
+
+def _post_frame_event_sync(
+    *,
+    url: str,
+    payload: dict[str, Any],
+    attempts: int | None = None,
+) -> None:
+    retry_count = max(1, int(attempts or _FRAME_EVENT_MAX_RETRIES))
+    last_exc: Exception | None = None
+    with httpx.Client(timeout=_FRAME_EVENT_TIMEOUT_SECONDS) as client:
+        for attempt in range(retry_count):
+            try:
+                response = client.post(url, json=payload)
+                response.raise_for_status()
+                return
+            except Exception as exc:
+                last_exc = exc
+                if attempt < retry_count - 1:
+                    time.sleep(min(0.25 * (2**attempt), 2.0))
+    if last_exc is not None:
+        raise last_exc
 
 
 def _truthy_env(name: str, default: bool = False) -> bool:
@@ -150,37 +203,42 @@ async def _claim_runtime_frame(
         event_context = context.get("event")
         if command_id is None and isinstance(event_context, dict):
             command_id = event_context.get("command_id")
-    try:
-        lease_seconds = int(float(frame_policy.get("lease_seconds") or 120.0))
-        payload = {
-            "worker_id": worker_slot_id or os.getenv("HOSTNAME") or "cursor-worker",
-            "command_id": command_id,
-            "requested_count": 1,
-            "lease_seconds": lease_seconds,
-            "frame_policy": frame_policy or {},
-            "cursor": {
-                **(cursor or {}),
-                "frame_index": frame_index,
-                "worker_slot_id": worker_slot_id,
-            },
-        }
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            response = await client.post(
-                f"{_runtime_api_base(context)}/api/stages/{stage_id}/frames/claim",
-                json=payload,
+    lease_seconds = int(float(frame_policy.get("lease_seconds") or 120.0))
+    payload = {
+        "worker_id": worker_slot_id or os.getenv("HOSTNAME") or "cursor-worker",
+        "command_id": command_id,
+        "requested_count": 1,
+        "lease_seconds": lease_seconds,
+        "frame_policy": frame_policy or {},
+        "cursor": {
+            **(cursor or {}),
+            "frame_index": frame_index,
+            "worker_slot_id": worker_slot_id,
+        },
+    }
+    for attempt in range(1, 4):
+        try:
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                response = await client.post(
+                    f"{_runtime_api_base(context)}/api/stages/{stage_id}/frames/claim",
+                    json=payload,
+                )
+                response.raise_for_status()
+                frames = (response.json() or {}).get("frames") or []
+                return dict(frames[0]) if frames else None
+        except Exception as exc:
+            if attempt < 3:
+                await asyncio.sleep(0.25 * attempt)
+                continue
+            logger.warning(
+                "[CURSOR-WORKER] slot=%s frame=%s stage=%s claim failed after %d attempts; continuing legacy path: %s",
+                worker_slot_id,
+                frame_index,
+                stage_id,
+                attempt,
+                exc,
             )
-            response.raise_for_status()
-            frames = (response.json() or {}).get("frames") or []
-            return dict(frames[0]) if frames else None
-    except Exception as exc:
-        logger.warning(
-            "[CURSOR-WORKER] slot=%s frame=%s stage=%s claim failed; continuing legacy path: %s",
-            worker_slot_id,
-            frame_index,
-            stage_id,
-            exc,
-        )
-        return None
+    return None
 
 
 async def _start_runtime_frame(
@@ -201,12 +259,10 @@ async def _start_runtime_frame(
             "status": "RUNNING",
             "lease_seconds": lease_seconds,
         }
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            response = await client.post(
-                f"{_runtime_api_base(context)}/api/frames/{frame_id}/heartbeat",
-                json=payload,
-            )
-            response.raise_for_status()
+        await _post_frame_event(
+            url=f"{_runtime_api_base(context)}/api/frames/{frame_id}/heartbeat",
+            payload=payload,
+        )
     except Exception as exc:
         logger.warning(
             "[CURSOR-WORKER] slot=%s frame_id=%s start heartbeat failed; continuing: %s",
@@ -214,6 +270,85 @@ async def _start_runtime_frame(
             frame_id,
             exc,
         )
+
+
+async def _runtime_frame_heartbeat_loop(
+    *,
+    context: dict[str, Any],
+    runtime_frame: Optional[dict[str, Any]],
+    worker_slot_id: Optional[str],
+    lease_seconds: int,
+    heartbeat_seconds: float,
+    stop_event: asyncio.Event,
+) -> None:
+    """Extend a running frame lease while a long frame task is executing."""
+    if not runtime_frame:
+        return
+    frame_id = runtime_frame.get("frame_id")
+    if not frame_id:
+        return
+
+    interval_seconds = max(0.1, float(heartbeat_seconds or 30.0))
+    while not stop_event.is_set():
+        try:
+            await asyncio.wait_for(stop_event.wait(), timeout=interval_seconds)
+            break
+        except asyncio.TimeoutError:
+            pass
+
+        try:
+            payload = {
+                "worker_id": worker_slot_id or os.getenv("HOSTNAME") or "cursor-worker",
+                "status": "RUNNING",
+                "lease_seconds": lease_seconds,
+            }
+            await _post_frame_event(
+                url=f"{_runtime_api_base(context)}/api/frames/{frame_id}/heartbeat",
+                payload=payload,
+                attempts=2,
+            )
+        except Exception as exc:
+            logger.warning(
+                "[CURSOR-WORKER] slot=%s frame_id=%s lease heartbeat failed; continuing: %s",
+                worker_slot_id,
+                frame_id,
+                exc,
+            )
+
+
+def _runtime_frame_heartbeat_thread(
+    *,
+    context: dict[str, Any],
+    runtime_frame: Optional[dict[str, Any]],
+    worker_slot_id: Optional[str],
+    lease_seconds: int,
+    heartbeat_seconds: float,
+    stop_event: threading.Event,
+) -> None:
+    """Extend a frame lease even when frame task execution blocks the event loop."""
+    if not runtime_frame:
+        return
+    frame_id = runtime_frame.get("frame_id")
+    if not frame_id:
+        return
+
+    interval_seconds = max(0.1, float(heartbeat_seconds or 30.0))
+    payload = {
+        "worker_id": worker_slot_id or os.getenv("HOSTNAME") or "cursor-worker",
+        "status": "RUNNING",
+        "lease_seconds": lease_seconds,
+    }
+    url = f"{_runtime_api_base(context)}/api/frames/{frame_id}/heartbeat"
+    while not stop_event.wait(interval_seconds):
+        try:
+            _post_frame_event_sync(url=url, payload=payload, attempts=2)
+        except Exception as exc:
+            logger.warning(
+                "[CURSOR-WORKER] slot=%s frame_id=%s lease heartbeat failed; continuing: %s",
+                worker_slot_id,
+                frame_id,
+                exc,
+            )
 
 
 async def _commit_runtime_frame(
@@ -246,12 +381,10 @@ async def _commit_runtime_frame(
             "cursor": cursor_payload,
             "error": error,
         }
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            response = await client.post(
-                f"{_runtime_api_base(context)}/api/frames/{frame_id}/commit",
-                json=payload,
-            )
-            response.raise_for_status()
+        await _post_frame_event(
+            url=f"{_runtime_api_base(context)}/api/frames/{frame_id}/commit",
+            payload=payload,
+        )
     except Exception as exc:
         logger.warning(
             "[CURSOR-WORKER] slot=%s frame_id=%s commit failed; frame table may lag: %s",
@@ -646,7 +779,26 @@ async def execute_cursor_worker(
                 return {"status": "ok"}
 
             if frame_process == "frame":
-                frame_status = await _execute_whole_frame()
+                heartbeat_stop_event = threading.Event()
+                heartbeat_thread = threading.Thread(
+                    target=_runtime_frame_heartbeat_thread,
+                    kwargs={
+                        "context": context,
+                        "runtime_frame": runtime_frame,
+                        "worker_slot_id": worker_slot_id,
+                        "lease_seconds": int(float(frame_policy.get("lease_seconds") or 120.0)),
+                        "heartbeat_seconds": float(frame_policy.get("heartbeat_seconds") or 30.0),
+                        "stop_event": heartbeat_stop_event,
+                    },
+                    name=f"frame-heartbeat:{runtime_frame.get('frame_id') if runtime_frame else 'none'}",
+                    daemon=True,
+                )
+                heartbeat_thread.start()
+                try:
+                    frame_status = await _execute_whole_frame()
+                finally:
+                    heartbeat_stop_event.set()
+                    heartbeat_thread.join(timeout=2.0)
                 row_status = frame_status.get("status")
                 frame_metrics = _aggregate_frame_metrics(
                     [frame_status],

@@ -783,6 +783,18 @@ CREATE INDEX IF NOT EXISTS idx_frame_tenant_org_execution
     ON noetl.frame (tenant_id, organization_id, execution_id, frame_id);
 CREATE INDEX IF NOT EXISTS idx_frame_stage_frame
     ON noetl.frame (stage_id, frame_id);
+CREATE INDEX IF NOT EXISTS idx_frame_stage_cursor_slot_index
+    ON noetl.frame (stage_id, (cursor->>'worker_slot_id'), (cursor->>'frame_index'), frame_id);
+CREATE INDEX IF NOT EXISTS idx_frame_idempotent_claim
+    ON noetl.frame (
+        stage_id,
+        command_id,
+        owner_worker,
+        (cursor->>'worker_slot_id'),
+        (cursor->>'frame_index'),
+        frame_id
+    )
+    WHERE status IN ('CLAIMED','RUNNING');
 CREATE INDEX IF NOT EXISTS idx_frame_parent_frame
     ON noetl.frame (parent_frame_id)
     WHERE parent_frame_id IS NOT NULL;
