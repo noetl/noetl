@@ -115,6 +115,7 @@ async def _insert_frame_event(
         if not catalog_row:
             raise RuntimeError(f"execution not found for frame event: {frame['execution_id']}")
         catalog_id = catalog_row.get("catalog_id")
+    await cur.execute("SELECT pg_advisory_xact_lock(hashtext(%s)::bigint)", (stream_id,))
     await cur.execute(
         """
         SELECT COALESCE(max(stream_version), 0) + 1 AS next_version
