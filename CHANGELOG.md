@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.39.3](https://github.com/noetl/noetl/compare/v2.39.2...v2.39.3) (2026-05-18)
+
+### Bug Fixes
+
+* **api:** keep terminal execution status stable ([bd65962](https://github.com/noetl/noetl/commit/bd659628347bb3af558379ede0fed9ffeaba7440))
+
 ## [2.39.2](https://github.com/noetl/noetl/compare/v2.39.1...v2.39.2) (2026-05-18)
 
 ### Bug Fixes
