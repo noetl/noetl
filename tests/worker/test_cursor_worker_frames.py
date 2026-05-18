@@ -117,6 +117,9 @@ async def test_cursor_worker_claims_and_serializes_bounded_frames(monkeypatch):
     assert result["processed"] == 3
     assert result["frame_count"] == 2
     assert [frame["row_count"] for frame in result["frames"]] == [2, 1]
+    assert result["frames"][0]["metrics"]["row_count"] == 2
+    assert result["frames"][0]["metrics"]["rows"]["ok"] == 2
+    assert result["frames"][0]["metrics"]["tasks"]["by_kind"]["noop"]["count"] == 2
     assert seen_iter == [
         {"id": 1, "status": "pending"},
         {"id": 2, "status": "pending"},
@@ -252,4 +255,6 @@ async def test_cursor_worker_processes_frame_rows_concurrently(monkeypatch):
     assert result["processed"] == 4
     assert result["frame_count"] == 1
     assert sorted(seen_indexes) == [1, 2, 3, 4]
+    assert result["frames"][0]["metrics"]["row_concurrency"] == 4
+    assert result["frames"][0]["metrics"]["tasks"]["by_kind"]["noop"]["count"] == 4
     assert elapsed < 0.18

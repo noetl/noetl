@@ -192,6 +192,7 @@ async def _commit_runtime_frame(
     output_ref: Optional[dict[str, Any]],
     events_emitted: int,
     failed: bool,
+    metrics: Optional[dict[str, Any]] = None,
     error: Optional[str] = None,
 ) -> None:
     if not runtime_frame:
@@ -200,13 +201,16 @@ async def _commit_runtime_frame(
     if not frame_id:
         return
     try:
+        cursor_payload = dict(runtime_frame.get("cursor") or {})
+        if metrics:
+            cursor_payload["metrics"] = metrics
         payload = {
             "worker_id": worker_slot_id or os.getenv("HOSTNAME") or "cursor-worker",
             "status": "FAILED" if failed else "COMPLETED",
             "row_count": row_count,
             "output_ref": output_ref,
             "events_emitted": events_emitted,
-            "cursor": runtime_frame.get("cursor") or {},
+            "cursor": cursor_payload,
             "error": error,
         }
         async with httpx.AsyncClient(timeout=10.0) as client:
@@ -268,6 +272,61 @@ async def _claim_frame_rows(
             break
         rows.append(dict(row))
     return rows
+
+
+def _empty_frame_metrics(*, row_count: int, row_concurrency: int) -> dict[str, Any]:
+    return {
+        "row_count": row_count,
+        "row_concurrency": row_concurrency,
+        "rows": {
+            "ok": 0,
+            "failed": 0,
+            "break": 0,
+        },
+        "tasks": {
+            "count": 0,
+            "duration_ms": 0,
+            "render_ms": 0,
+            "tool_ms": 0,
+            "by_kind": {},
+            "by_name": {},
+        },
+    }
+
+
+def _merge_metric_bucket(target: dict[str, Any], source: dict[str, Any]) -> None:
+    for key, value in (source or {}).items():
+        slot = target.setdefault(
+            str(key),
+            {
+                "count": 0,
+                "error_count": 0,
+                "duration_ms": 0,
+                "render_ms": 0,
+                "tool_ms": 0,
+            },
+        )
+        for metric_key in ("count", "error_count", "duration_ms", "render_ms", "tool_ms"):
+            slot[metric_key] = int(slot.get(metric_key) or 0) + int(value.get(metric_key) or 0)
+
+
+def _aggregate_frame_metrics(row_results: list[dict[str, Any]], *, row_count: int, row_concurrency: int) -> dict[str, Any]:
+    metrics = _empty_frame_metrics(row_count=row_count, row_concurrency=row_concurrency)
+    for row_result in row_results:
+        status = str(row_result.get("status") or "unknown")
+        if status in metrics["rows"]:
+            metrics["rows"][status] += 1
+        sequence_metrics = row_result.get("metrics") if isinstance(row_result, dict) else None
+        if not isinstance(sequence_metrics, dict):
+            continue
+        tasks = metrics["tasks"]
+        tasks["count"] += int(sequence_metrics.get("task_count") or 0)
+        tasks["duration_ms"] += int(sequence_metrics.get("duration_ms") or 0)
+        tasks["render_ms"] += int(sequence_metrics.get("render_ms") or 0)
+        tasks["tool_ms"] += int(sequence_metrics.get("tool_ms") or 0)
+        _merge_metric_bucket(tasks["by_kind"], sequence_metrics.get("by_kind") or {})
+        _merge_metric_bucket(tasks["by_name"], sequence_metrics.get("by_name") or {})
+    return metrics
 
 
 async def execute_cursor_worker(
@@ -457,7 +516,7 @@ async def execute_cursor_worker(
             frame_failed_before = failed
             frame_base_index = processed + failed
 
-            async def _execute_frame_row(frame_row_index: int, row: dict[str, Any]) -> str:
+            async def _execute_frame_row(frame_row_index: int, row: dict[str, Any]) -> dict[str, Any]:
                 per_claim_ctx = dict(context or {})
                 iter_namespace = dict(per_claim_ctx.get("iter") or {})
                 iter_namespace[iterator_name] = row
@@ -482,22 +541,23 @@ async def execute_cursor_worker(
                     # Driver's claim is responsible for marking the row in
                     # a state that allows reclaim (e.g. leaving status in
                     # 'claimed' until a timeout prelude resets it).
-                    return "failed"
+                    return {"status": "failed"}
 
                 if isinstance(result, dict):
                     status = str(result.get("status", "")).lower()
                     if status == "failed":
-                        return "failed"
+                        return {"status": "failed", "metrics": result.get("metrics")}
                     if status == "break":
-                        return "break"
-                return "ok"
+                        return {"status": "break", "metrics": result.get("metrics")}
+                    return {"status": "ok", "metrics": result.get("metrics")}
+                return {"status": "ok"}
 
             if row_concurrency <= 1 or len(frame_rows) <= 1:
                 row_statuses = []
                 for frame_row_index, row in enumerate(frame_rows):
                     row_status = await _execute_frame_row(frame_row_index, row)
                     row_statuses.append(row_status)
-                    if row_status == "break":
+                    if row_status.get("status") == "break":
                         logger.info(
                             "[CURSOR-WORKER] slot=%s: task sequence returned break; "
                             "stopping this worker early",
@@ -514,19 +574,26 @@ async def execute_cursor_worker(
                 row_statuses = await asyncio.gather(
                     *[_bounded_execute(frame_row_index, row) for frame_row_index, row in enumerate(frame_rows)]
                 )
-                if "break" in row_statuses:
+                if any(item.get("status") == "break" for item in row_statuses):
                     logger.info(
                         "[CURSOR-WORKER] slot=%s: task sequence returned break inside concurrent frame; "
                         "stopping this worker after committed frame",
                         worker_slot_id,
                     )
 
-            failed += sum(1 for status in row_statuses if status == "failed")
-            breaks += sum(1 for status in row_statuses if status == "break")
-            processed += sum(1 for status in row_statuses if status in {"ok", "break"})
-            stop_after_frame = "break" in row_statuses
+            frame_metrics = _aggregate_frame_metrics(
+                row_statuses,
+                row_count=len(frame_rows),
+                row_concurrency=row_concurrency,
+            )
+            failed += int(frame_metrics["rows"].get("failed") or 0)
+            breaks += int(frame_metrics["rows"].get("break") or 0)
+            processed += int(frame_metrics["rows"].get("ok") or 0) + int(frame_metrics["rows"].get("break") or 0)
+            stop_after_frame = int(frame_metrics["rows"].get("break") or 0) > 0
 
             frame_failed = failed > frame_failed_before
+            if frame_meta is not None:
+                frame_meta["metrics"] = frame_metrics
             await _commit_runtime_frame(
                 context=context,
                 runtime_frame=runtime_frame,
@@ -535,6 +602,7 @@ async def execute_cursor_worker(
                 output_ref=frame_meta,
                 events_emitted=len(frame_rows),
                 failed=frame_failed,
+                metrics=frame_metrics,
                 error="one or more frame rows failed" if frame_failed else None,
             )
             frame_count += 1
