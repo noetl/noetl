@@ -276,10 +276,15 @@ def _frame_commit_result(
 
 def _frame_recovery_policy(frame_policy: dict[str, Any] | None) -> dict[str, Any]:
     policy = frame_policy if isinstance(frame_policy, dict) else {}
+    raw_max_attempts = policy.get("max_attempts")
+    try:
+        max_attempts = int(raw_max_attempts if raw_max_attempts is not None else 3)
+    except (TypeError, ValueError):
+        max_attempts = 3
     return {
         "retry_mode": "whole_frame",
         "row_split_retry": False,
-        "max_attempts": max(1, int(policy.get("max_attempts") or 3)),
+        "max_attempts": max(1, max_attempts),
     }
 
 

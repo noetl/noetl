@@ -75,6 +75,13 @@ def test_frame_recovery_policy_is_whole_frame_only():
     }
 
 
+def test_frame_recovery_policy_clamps_invalid_attempts():
+    from noetl.server.api.frames import endpoint
+
+    assert endpoint._frame_recovery_policy({"max_attempts": 0})["max_attempts"] == 1
+    assert endpoint._frame_recovery_policy({"max_attempts": "bad"})["max_attempts"] == 3
+
+
 def test_frame_event_meta_includes_command_lineage():
     from noetl.server.api.frames import endpoint
 
