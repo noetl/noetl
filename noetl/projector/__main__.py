@@ -19,6 +19,8 @@ def main() -> None:
     parser.add_argument("--consumer", default=None, help="Durable consumer name")
     parser.add_argument("--shard-id", default=None, help="Stable projector shard id")
     parser.add_argument("--shard-count", type=int, default=None, help="Total projector shard count")
+    parser.add_argument("--metrics-host", default=None, help="Metrics bind host")
+    parser.add_argument("--metrics-port", type=int, default=None, help="Metrics bind port; disabled when omitted")
     args = parser.parse_args()
 
     try:
@@ -36,6 +38,8 @@ def main() -> None:
             max_ack_pending=base.max_ack_pending,
             fetch_timeout_seconds=base.fetch_timeout_seconds,
             fetch_heartbeat_seconds=base.fetch_heartbeat_seconds,
+            metrics_host=args.metrics_host or base.metrics_host,
+            metrics_port=args.metrics_port if args.metrics_port is not None else base.metrics_port,
         )
         run_projector_worker_sync(settings=settings)
     except KeyboardInterrupt:

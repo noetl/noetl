@@ -1,0 +1,154 @@
+"""Metrics helpers for standalone projector workers."""
+
+from __future__ import annotations
+
+import time
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from threading import Lock, Thread
+from typing import Mapping, Optional
+
+
+class ProjectorMetrics:
+    """Thread-safe counters for projector worker scrape output."""
+
+    def __init__(self) -> None:
+        self._lock = Lock()
+        self._values: dict[str, float] = {
+            "notifications_total": 0.0,
+            "events_extracted_total": 0.0,
+            "events_owned_total": 0.0,
+            "projection_records_total": 0.0,
+            "empty_or_unowned_notifications_total": 0.0,
+            "errors_total": 0.0,
+            "last_success_unixtime": 0.0,
+            "last_error_unixtime": 0.0,
+            "last_batch_events": 0.0,
+            "last_batch_projection_records": 0.0,
+        }
+
+    def record_notification(
+        self,
+        *,
+        extracted_events: int,
+        owned_events: int,
+        projection_records: int,
+    ) -> None:
+        now = time.time()
+        with self._lock:
+            self._values["notifications_total"] += 1.0
+            self._values["events_extracted_total"] += float(max(0, extracted_events))
+            self._values["events_owned_total"] += float(max(0, owned_events))
+            self._values["projection_records_total"] += float(max(0, projection_records))
+            self._values["last_success_unixtime"] = now
+            self._values["last_batch_events"] = float(max(0, owned_events))
+            self._values["last_batch_projection_records"] = float(max(0, projection_records))
+            if owned_events <= 0:
+                self._values["empty_or_unowned_notifications_total"] += 1.0
+
+    def record_error(self) -> None:
+        with self._lock:
+            self._values["errors_total"] += 1.0
+            self._values["last_error_unixtime"] = time.time()
+
+    def snapshot(self) -> dict[str, float]:
+        with self._lock:
+            return dict(self._values)
+
+
+def render_projector_metrics(metrics: ProjectorMetrics, *, labels: Optional[Mapping[str, str]] = None) -> str:
+    """Render projector metrics using Prometheus text exposition."""
+
+    label_text = _format_labels(labels or {})
+    snapshot = metrics.snapshot()
+    lines = [
+        "# HELP noetl_projector_notifications_total NATS notifications handled by this projector.",
+        "# TYPE noetl_projector_notifications_total counter",
+        f"noetl_projector_notifications_total{label_text} {snapshot['notifications_total']}",
+        "# HELP noetl_projector_events_extracted_total Events extracted from projector notifications.",
+        "# TYPE noetl_projector_events_extracted_total counter",
+        f"noetl_projector_events_extracted_total{label_text} {snapshot['events_extracted_total']}",
+        "# HELP noetl_projector_events_owned_total Events owned by this projector shard.",
+        "# TYPE noetl_projector_events_owned_total counter",
+        f"noetl_projector_events_owned_total{label_text} {snapshot['events_owned_total']}",
+        "# HELP noetl_projector_projection_records_total Projection records written by this projector.",
+        "# TYPE noetl_projector_projection_records_total counter",
+        f"noetl_projector_projection_records_total{label_text} {snapshot['projection_records_total']}",
+        "# HELP noetl_projector_empty_or_unowned_notifications_total Notifications with no owned events.",
+        "# TYPE noetl_projector_empty_or_unowned_notifications_total counter",
+        (
+            "noetl_projector_empty_or_unowned_notifications_total"
+            f"{label_text} {snapshot['empty_or_unowned_notifications_total']}"
+        ),
+        "# HELP noetl_projector_errors_total Projector notification handling failures.",
+        "# TYPE noetl_projector_errors_total counter",
+        f"noetl_projector_errors_total{label_text} {snapshot['errors_total']}",
+        "# HELP noetl_projector_last_success_unixtime Last successful notification handling time.",
+        "# TYPE noetl_projector_last_success_unixtime gauge",
+        f"noetl_projector_last_success_unixtime{label_text} {snapshot['last_success_unixtime']}",
+        "# HELP noetl_projector_last_error_unixtime Last failed notification handling time.",
+        "# TYPE noetl_projector_last_error_unixtime gauge",
+        f"noetl_projector_last_error_unixtime{label_text} {snapshot['last_error_unixtime']}",
+        "# HELP noetl_projector_last_batch_events Owned events in the last handled notification.",
+        "# TYPE noetl_projector_last_batch_events gauge",
+        f"noetl_projector_last_batch_events{label_text} {snapshot['last_batch_events']}",
+        "# HELP noetl_projector_last_batch_projection_records Projection records from the last handled notification.",
+        "# TYPE noetl_projector_last_batch_projection_records gauge",
+        f"noetl_projector_last_batch_projection_records{label_text} {snapshot['last_batch_projection_records']}",
+    ]
+    return "\n".join(lines) + "\n"
+
+
+def start_projector_metrics_server(
+    metrics: ProjectorMetrics,
+    *,
+    host: str,
+    port: int,
+    labels: Optional[Mapping[str, str]] = None,
+) -> ThreadingHTTPServer:
+    """Start a lightweight `/metrics` HTTP server in a daemon thread."""
+
+    class _Handler(BaseHTTPRequestHandler):
+        def do_GET(self) -> None:  # noqa: N802 - stdlib handler API
+            if self.path == "/health":
+                self.send_response(200)
+                self.send_header("Content-Type", "text/plain; charset=utf-8")
+                self.end_headers()
+                self.wfile.write(b"ok\n")
+                return
+            if self.path != "/metrics":
+                self.send_response(404)
+                self.end_headers()
+                return
+            body = render_projector_metrics(metrics, labels=labels).encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "text/plain; version=0.0.4; charset=utf-8")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, _format: str, *args: object) -> None:
+            return
+
+    server = ThreadingHTTPServer((host, port), _Handler)
+    thread = Thread(target=server.serve_forever, name="noetl-projector-metrics", daemon=True)
+    thread.start()
+    return server
+
+
+def _format_labels(labels: Mapping[str, str]) -> str:
+    filtered = {key: value for key, value in labels.items() if value}
+    if not filtered:
+        return ""
+    body = ",".join(f'{key}="{_escape_label(value)}"' for key, value in sorted(filtered.items()))
+    return "{" + body + "}"
+
+
+def _escape_label(value: str) -> str:
+    return str(value).replace("\\", "\\\\").replace("\n", "\\n").replace('"', '\\"')
+
+
+__all__ = [
+    "ProjectorMetrics",
+    "render_projector_metrics",
+    "start_projector_metrics_server",
+]

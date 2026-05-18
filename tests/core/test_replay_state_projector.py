@@ -119,8 +119,10 @@ async def test_replay_state_projector_respects_version_monotonic_store_writes():
 
 @pytest.mark.asyncio
 async def test_nats_projector_worker_projects_owned_event_batch():
+    from noetl.core.projector.metrics import ProjectorMetrics
     from noetl.core.projector.nats_worker import NATSProjectorWorker, ProjectorWorkerSettings
 
+    metrics = ProjectorMetrics()
     store = _MemoryProjectionStore()
     worker = NATSProjectorWorker(
         projection_store=store,
@@ -129,6 +131,7 @@ async def test_nats_projector_worker_projects_owned_event_batch():
             consumer_name="noetl-projector-1",
             shard_count=2,
         ),
+        metrics=metrics,
     )
 
     action = await worker.handle_notification(
@@ -157,12 +160,19 @@ async def test_nats_projector_worker_projects_owned_event_batch():
     assert action == "ack"
     assert set(store.records) == {"execution/7/all"}
     assert store.records["execution/7/all"].state["execution"]["status"] == "COMPLETED"
+    snapshot = metrics.snapshot()
+    assert snapshot["notifications_total"] == 1
+    assert snapshot["events_extracted_total"] == 2
+    assert snapshot["events_owned_total"] == 1
+    assert snapshot["projection_records_total"] == 1
 
 
 @pytest.mark.asyncio
 async def test_nats_projector_worker_acks_empty_or_unowned_notifications():
+    from noetl.core.projector.metrics import ProjectorMetrics
     from noetl.core.projector.nats_worker import NATSProjectorWorker, ProjectorWorkerSettings
 
+    metrics = ProjectorMetrics()
     store = _MemoryProjectionStore()
     worker = NATSProjectorWorker(
         projection_store=store,
@@ -171,8 +181,12 @@ async def test_nats_projector_worker_acks_empty_or_unowned_notifications():
             consumer_name="noetl-projector-0",
             shard_count=2,
         ),
+        metrics=metrics,
     )
 
     assert await worker.handle_notification({"event": {"execution_id": 7, "event_type": "workflow.completed"}}) == "ack"
     assert await worker.handle_notification({"event_id": 99}) == "ack"
     assert store.records == {}
+    snapshot = metrics.snapshot()
+    assert snapshot["notifications_total"] == 2
+    assert snapshot["empty_or_unowned_notifications_total"] == 2
