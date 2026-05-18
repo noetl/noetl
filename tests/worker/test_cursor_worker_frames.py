@@ -65,6 +65,55 @@ class _FakeBatchCursorDriver(_FakeCursorDriver):
         return claimed
 
 
+class _FakeResponse:
+    def raise_for_status(self):
+        return None
+
+
+class _FakeAsyncClient:
+    calls = []
+
+    def __init__(self, timeout):
+        self.timeout = timeout
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb):
+        return None
+
+    async def post(self, url, json):
+        self.calls.append({"url": url, "json": json, "timeout": self.timeout})
+        return _FakeResponse()
+
+
+@pytest.mark.asyncio
+async def test_start_runtime_frame_emits_running_heartbeat(monkeypatch):
+    from noetl.worker import cursor_worker
+
+    _FakeAsyncClient.calls = []
+    monkeypatch.setattr(cursor_worker.httpx, "AsyncClient", _FakeAsyncClient)
+
+    await cursor_worker._start_runtime_frame(
+        context={"server_url": "http://runtime"},
+        runtime_frame={"frame_id": 9},
+        worker_slot_id="slot-1",
+        lease_seconds=45,
+    )
+
+    assert _FakeAsyncClient.calls == [
+        {
+            "url": "http://runtime/api/frames/9/heartbeat",
+            "json": {
+                "worker_id": "slot-1",
+                "status": "RUNNING",
+                "lease_seconds": 45,
+            },
+            "timeout": 10.0,
+        }
+    ]
+
+
 @pytest.mark.asyncio
 async def test_cursor_worker_claims_and_serializes_bounded_frames(monkeypatch):
     from noetl.core.cursor_drivers import register_driver

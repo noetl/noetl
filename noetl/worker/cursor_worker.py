@@ -183,6 +183,39 @@ async def _claim_runtime_frame(
         return None
 
 
+async def _start_runtime_frame(
+    *,
+    context: dict[str, Any],
+    runtime_frame: Optional[dict[str, Any]],
+    worker_slot_id: Optional[str],
+    lease_seconds: int,
+) -> None:
+    if not runtime_frame:
+        return
+    frame_id = runtime_frame.get("frame_id")
+    if not frame_id:
+        return
+    try:
+        payload = {
+            "worker_id": worker_slot_id or os.getenv("HOSTNAME") or "cursor-worker",
+            "status": "RUNNING",
+            "lease_seconds": lease_seconds,
+        }
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            response = await client.post(
+                f"{_runtime_api_base(context)}/api/frames/{frame_id}/heartbeat",
+                json=payload,
+            )
+            response.raise_for_status()
+    except Exception as exc:
+        logger.warning(
+            "[CURSOR-WORKER] slot=%s frame_id=%s start heartbeat failed; continuing: %s",
+            worker_slot_id,
+            frame_id,
+            exc,
+        )
+
+
 async def _commit_runtime_frame(
     *,
     context: dict[str, Any],
@@ -515,6 +548,12 @@ async def execute_cursor_worker(
                     "iterator": iterator_name,
                     "row_count": len(frame_rows),
                 },
+            )
+            await _start_runtime_frame(
+                context=context,
+                runtime_frame=runtime_frame,
+                worker_slot_id=worker_slot_id,
+                lease_seconds=int(float(frame_policy.get("lease_seconds") or 120.0)),
             )
             frame_meta = await _store_claimed_frame(
                 execution_id=context.get("execution_id"),
