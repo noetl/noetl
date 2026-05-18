@@ -869,8 +869,7 @@ async def get_executions(
                                 'workflow.completed'
                             )
                             THEN e.last_event_type
-                            WHEN e.last_event_type IS NULL
-                             AND e.status IN ('COMPLETED', 'FAILED', 'CANCELLED')
+                            WHEN e.status IN ('COMPLETED', 'FAILED', 'CANCELLED')
                             THEN 'execution.' || lower(e.status)
                             ELSE NULL
                         END AS terminal_event_type,
@@ -883,7 +882,7 @@ async def get_executions(
                                 'playbook.completed',
                                 'workflow.completed'
                             )
-                             OR (e.last_event_type IS NULL AND e.status IN ('COMPLETED', 'FAILED', 'CANCELLED'))
+                             OR e.status IN ('COMPLETED', 'FAILED', 'CANCELLED')
                             THEN e.status
                             ELSE NULL
                         END AS terminal_status,
@@ -896,7 +895,7 @@ async def get_executions(
                                 'playbook.completed',
                                 'workflow.completed'
                             )
-                             OR (e.last_event_type IS NULL AND e.status IN ('COMPLETED', 'FAILED', 'CANCELLED'))
+                             OR e.status IN ('COMPLETED', 'FAILED', 'CANCELLED')
                             THEN COALESCE(e.end_time, e.updated_at)
                             ELSE NULL
                         END AS terminal_end_time,

@@ -141,7 +141,7 @@ async def test_get_executions_normalizes_non_terminal_completed_to_running(monke
             "result": None,
             "error": None,
             "parent_execution_id": None,
-            "path": "bhs/state_report_generation_prod_v10",
+            "path": "tests/state_report_generation_prod_v10",
             "version": 1,
         }
     ]
@@ -186,7 +186,7 @@ async def test_get_executions_keeps_terminal_completed(monkeypatch):
             "terminal_event_type": "playbook.completed",
             "terminal_status": "COMPLETED",
             "terminal_end_time": now,
-            "path": "bhs/state_report_generation_prod_v10",
+            "path": "tests/state_report_generation_prod_v10",
             "version": 1,
         }
     ]
@@ -225,7 +225,7 @@ async def test_get_executions_prefers_terminal_event_even_if_latest_is_non_termi
             "terminal_event_type": "execution.cancelled",
             "terminal_status": "CANCELLED",
             "terminal_end_time": terminal,
-            "path": "bhs/state_report_generation_prod_v10",
+            "path": "tests/state_report_generation_prod_v10",
             "version": 1,
         }
     ]
@@ -258,7 +258,7 @@ async def test_get_executions_infers_completed_from_batch_done_without_pending(m
             "result": None,
             "error": None,
             "parent_execution_id": None,
-            "path": "bhs/state_report_generation_prod_v10",
+            "path": "tests/state_report_generation_prod_v10",
             "version": 1,
         }
     ]
@@ -281,6 +281,49 @@ async def test_get_executions_infers_completed_from_batch_done_without_pending(m
     assert len(result) == 1
     assert result[0].status == "COMPLETED"
     assert result[0].end_time == now
+
+
+@pytest.mark.asyncio
+async def test_get_executions_keeps_terminal_status_when_latest_projection_event_is_non_terminal(monkeypatch):
+    start = datetime(2026, 5, 18, 7, 0, 0, tzinfo=timezone.utc)
+    terminal = datetime(2026, 5, 18, 7, 30, 0, tzinfo=timezone.utc)
+    latest = datetime(2026, 5, 18, 7, 31, 0, tzinfo=timezone.utc)
+    rows = [
+        {
+            "execution_id": "123",
+            "catalog_id": "321",
+            "event_type": "call.done",
+            "node_name": "fetch_facility",
+            "status": "COMPLETED",
+            "event_status": "COMPLETED",
+            "derived_event_type": "call.done",
+            "start_time": start,
+            "end_time": latest,
+            "result": None,
+            "error": None,
+            "parent_execution_id": None,
+            "terminal_event_type": "execution.completed",
+            "terminal_status": "COMPLETED",
+            "terminal_end_time": terminal,
+            "path": "tests/state_report_generation_prod_v10",
+            "version": 1,
+        }
+    ]
+    cursor = _FakeCursor(rows)
+
+    monkeypatch.setattr(
+        execution_api,
+        "get_pool_connection",
+        lambda: _ConnCtx(_FakeConn(cursor)),
+    )
+
+    result = await execution_api.get_executions()
+
+    assert len(result) == 1
+    assert result[0].status == "COMPLETED"
+    assert result[0].end_time == terminal
+    assert "WHEN e.status IN ('COMPLETED', 'FAILED', 'CANCELLED')" in cursor._query
+    assert "e.last_event_type IS NULL\n                             AND e.status" not in cursor._query
 
 
 @pytest.mark.asyncio
@@ -370,7 +413,7 @@ async def test_get_execution_infers_completed_from_batch_done_without_pending_co
         "created_at": latest,
         "status": "COMPLETED",
     }
-    catalog_row = {"path": "bhs/state_report_generation_prod_v10", "version": 7}
+    catalog_row = {"path": "tests/state_report_generation_prod_v10", "version": 7}
 
     monkeypatch.setattr(
         execution_api,
@@ -437,7 +480,7 @@ async def test_get_execution_keeps_running_when_batch_done_still_has_pending_com
         "created_at": latest,
         "status": "COMPLETED",
     }
-    catalog_row = {"path": "bhs/state_report_generation_prod_v10", "version": 7}
+    catalog_row = {"path": "tests/state_report_generation_prod_v10", "version": 7}
 
     monkeypatch.setattr(
         execution_api,
@@ -486,7 +529,7 @@ async def test_get_execution_can_omit_events_payload(monkeypatch):
         "created_at": latest,
         "status": "COMPLETED",
     }
-    catalog_row = {"path": "bhs/state_report_generation_prod_v10", "version": 7}
+    catalog_row = {"path": "tests/state_report_generation_prod_v10", "version": 7}
 
     monkeypatch.setattr(
         execution_api,
@@ -561,7 +604,7 @@ async def test_get_execution_prefers_terminal_failure_over_batch_completion_infe
         "status": "FAILED",
         "created_at": terminal,
     }
-    catalog_row = {"path": "bhs/state_report_generation_prod_v10", "version": 7}
+    catalog_row = {"path": "tests/state_report_generation_prod_v10", "version": 7}
 
     monkeypatch.setattr(
         execution_api,
