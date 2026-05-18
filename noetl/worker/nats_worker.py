@@ -1891,6 +1891,13 @@ class Worker:
         if catalog_id and "catalog_id" not in render_context:
             render_context["catalog_id"] = catalog_id
             logger.debug(f"[KEYCHAIN] Added catalog_id to render_context for step {step}")
+        if command_id:
+            render_context["command_id"] = command_id
+            event_context = render_context.get("event")
+            if not isinstance(event_context, dict):
+                event_context = {}
+                render_context["event"] = event_context
+            event_context.setdefault("command_id", command_id)
         
         try:
             import time

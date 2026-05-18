@@ -3,6 +3,7 @@ from __future__ import annotations
 from .common import *
 from .state import ExecutionState
 from .store import PlaybookRepo, StateStore
+from noetl.core.event_store.ports import canonical_event_checksum
 
 class TransitionMixin:
     def _get_loop_max_in_flight(self, step: Step) -> int:
@@ -26,6 +27,8 @@ class TransitionMixin:
         state: "ExecutionState",
         step_def: Step,
         step_input: dict[str, Any],
+        *,
+        conn=None,
     ) -> list[Command]:
         """Dispatch N persistent worker commands for a cursor-driven loop.
 
@@ -102,6 +105,15 @@ class TransitionMixin:
             event_id=loop_event_id,
         )
 
+        frame_policy = step_def.loop.frame_policy.model_dump()
+        stage_id = await self._open_cursor_runtime_stage(
+            state=state,
+            step_def=step_def,
+            loop_event_id=loop_event_id,
+            frame_policy=frame_policy,
+            conn=conn,
+        )
+
         # Render context built once at dispatch time; the worker renders
         # `iter.<iterator>` per-claim against its own row.  ctx/workload
         # come from the engine snapshot, same as a normal step.
@@ -127,10 +139,12 @@ class TransitionMixin:
             name="cursor_loop_init",
             payload={},
         ))
+        max_frame_rows = max(1, int((frame_policy or {}).get("max_rows") or 1))
+        base_context["__frame_max_rows"] = max_frame_rows
+        base_context["__frame_policy"] = frame_policy or {}
 
         # Cursor spec — serialize so the worker receives a plain dict.
         cursor_spec = step_def.loop.cursor.model_dump()
-
         # Pre-render the claim SQL against the engine's full render
         # context so any execution-scoped values (e.g. a facility id
         # resolved from a prior step's result) are baked into the
@@ -210,6 +224,8 @@ class TransitionMixin:
                 "worker_slot_index": slot,
                 "worker_count": worker_count,
                 "loop_event_id": loop_event_id,
+                "stage_id": stage_id,
+                "frame_policy": frame_policy,
             }
             command_metadata = {
                 "task_sequence": True,
@@ -219,7 +235,9 @@ class TransitionMixin:
                 "loop_step": step_def.step,
                 "loop_event_id": loop_event_id,
                 "__loop_epoch_id": loop_event_id,
+                "stage_id": stage_id,
                 "loop_worker_count": worker_count,
+                "frame_policy": frame_policy,
                 # Each worker slot counts as one loop iteration for
                 # aggregation purposes: one terminal call.done per slot
                 # advances completed_count by 1; loop.done fires when
@@ -255,11 +273,191 @@ class TransitionMixin:
         )
         return commands
 
+    async def _open_cursor_runtime_stage(
+        self,
+        *,
+        state: "ExecutionState",
+        step_def: Step,
+        loop_event_id: str,
+        frame_policy: dict[str, Any],
+        conn=None,
+    ) -> int | None:
+        """Open a runtime stage for a cursor loop and emit a replayable event."""
+        async def _open_with_conn(active_conn, *, owns_transaction: bool) -> int | None:
+            async with active_conn.cursor(row_factory=dict_row) as cur:
+                await cur.execute("SET LOCAL statement_timeout = 0")
+                await cur.execute("SELECT noetl.snowflake_id() AS id")
+                stage_id = int((await cur.fetchone())["id"])
+                await cur.execute("SELECT noetl.snowflake_id() AS id")
+                event_id = int((await cur.fetchone())["id"])
+                await cur.execute(
+                    """
+                    SELECT catalog_id
+                    FROM noetl.execution
+                    WHERE execution_id = %s
+                    """,
+                    (int(state.execution_id),),
+                )
+                execution_row = await cur.fetchone()
+                catalog_id = (execution_row or {}).get("catalog_id") or state.catalog_id
+                tenant_id = "default"
+                organization_id = "default"
+                dsl_ref = f"workflow.{step_def.step}"
+                parent_event_id = state.last_event_id
+                await cur.execute(
+                    """
+                    INSERT INTO noetl.stage (
+                        stage_id, execution_id, parent_event_id, loop_event_id, kind, step_name,
+                        dsl_ref, status, frame_policy, tenant_id, organization_id
+                    )
+                    VALUES (%s, %s, %s, %s, 'loop', %s, %s, 'OPEN', %s, %s, %s)
+                    """,
+                    (
+                        stage_id,
+                        int(state.execution_id),
+                        parent_event_id,
+                        loop_event_id,
+                        step_def.step,
+                        dsl_ref,
+                        Json(frame_policy or {}),
+                        tenant_id,
+                        organization_id,
+                    ),
+                )
+                if owns_transaction:
+                    await active_conn.commit()
+                stream_id = f"execution/{state.execution_id}/stage/{stage_id}"
+                event_time = datetime.now(timezone.utc)
+                meta = {
+                    "stage_id": str(stage_id),
+                    "loop_event_id": loop_event_id,
+                    "frame_policy": frame_policy or {},
+                    "actionable": False,
+                    "informative": True,
+                }
+                result = {"status": "OPEN"}
+                envelope = {
+                    "tenant_id": tenant_id,
+                    "organization_id": organization_id,
+                    "execution_id": int(state.execution_id),
+                    "stream_id": stream_id,
+                    "stream_version": 1,
+                    "aggregate_id": f"stage/{stage_id}",
+                    "aggregate_type": "stage",
+                    "event_type": "stage.opened",
+                    "schema_name": "noetl.stage.opened",
+                    "schema_version": 1,
+                    "event_time": event_time,
+                    "producer": "noetl-server",
+                    "causation_id": str(parent_event_id) if parent_event_id else None,
+                    "correlation_id": str(state.root_event_id or state.execution_id),
+                    "idempotency_key": f"{tenant_id}/{organization_id}/{state.execution_id}/stage/{stage_id}/opened",
+                    "payload_ref": None,
+                    "result": result,
+                    "meta": meta,
+                }
+                savepoint_name = f"stage_opened_{stage_id}"
+                if not owns_transaction:
+                    await cur.execute(f"SAVEPOINT {savepoint_name}")
+                try:
+                    await cur.execute(
+                        """
+                        INSERT INTO noetl.event (
+                            execution_id, catalog_id, event_id, parent_event_id,
+                            created_at, event_type, node_id, node_name, status,
+                            context, result, meta, worker_id,
+                            tenant_id, organization_id, stream_id, stream_version,
+                            aggregate_id, aggregate_type, schema_name, schema_version,
+                            event_time, producer, causation_id, correlation_id,
+                            idempotency_key, payload_ref, envelope_checksum, stage_id
+                        )
+                        VALUES (
+                            %s, %s, %s, %s,
+                            %s, 'stage.opened', %s, %s, 'OPEN',
+                            %s, %s, %s, 'noetl-server',
+                            %s, %s, %s, 1,
+                            %s, 'stage', 'noetl.stage.opened', 1,
+                            %s, 'noetl-server', %s, %s,
+                            %s, NULL, %s, %s
+                        )
+                        """,
+                        (
+                            int(state.execution_id),
+                            catalog_id,
+                            event_id,
+                            parent_event_id,
+                            event_time,
+                            step_def.step,
+                            step_def.step,
+                            Json({"stage_id": str(stage_id), "loop_event_id": loop_event_id}),
+                            Json(result),
+                            Json(meta),
+                            tenant_id,
+                            organization_id,
+                            stream_id,
+                            f"stage/{stage_id}",
+                            event_time,
+                            envelope["causation_id"],
+                            envelope["correlation_id"],
+                            envelope["idempotency_key"],
+                            canonical_event_checksum(envelope),
+                            stage_id,
+                        ),
+                    )
+                    await cur.execute(
+                        """
+                        UPDATE noetl.stage
+                        SET opened_event_id = %s,
+                            updated_at = now()
+                        WHERE stage_id = %s
+                        """,
+                        (event_id, stage_id),
+                    )
+                    if not owns_transaction:
+                        await cur.execute(f"RELEASE SAVEPOINT {savepoint_name}")
+                    if owns_transaction:
+                        await active_conn.commit()
+                except Exception as event_exc:
+                    if owns_transaction:
+                        await active_conn.rollback()
+                    else:
+                        await cur.execute(f"ROLLBACK TO SAVEPOINT {savepoint_name}")
+                        await cur.execute(f"RELEASE SAVEPOINT {savepoint_name}")
+                    logger.warning(
+                        "[CURSOR-LOOP] Opened stage %s for step %s but failed to emit stage.opened: %s",
+                        stage_id,
+                        step_def.step,
+                        event_exc,
+                    )
+                logger.info(
+                    "[CURSOR-LOOP] Opened runtime stage %s for step %s execution=%s",
+                    stage_id,
+                    step_def.step,
+                    state.execution_id,
+                )
+                return stage_id
+
+        try:
+            if conn is not None:
+                return await _open_with_conn(conn, owns_transaction=False)
+            async with get_pool_connection() as owned_conn:
+                return await _open_with_conn(owned_conn, owns_transaction=True)
+        except Exception as exc:
+            logger.warning(
+                "[CURSOR-LOOP] Failed to open runtime stage for step %s execution=%s: %s",
+                step_def.step,
+                state.execution_id,
+                exc,
+            )
+            return None
+
     async def _issue_loop_commands(
         self,
         state: "ExecutionState",
         step_def: Step,
         step_input: dict[str, Any],
+        *,
+        conn=None,
     ) -> list[Command]:
         """Issue one or more loop commands based on loop mode and max_in_flight."""
         if not step_def.loop:
@@ -269,7 +467,7 @@ class TransitionMixin:
         # Cursor loops take a different dispatch shape — N worker commands
         # up-front, each running its own claim-process-release loop.
         if step_def.loop.is_cursor:
-            return await self._issue_cursor_loop_commands(state, step_def, step_input)
+            return await self._issue_cursor_loop_commands(state, step_def, step_input, conn=conn)
 
         # Optimization: Fetch loop collection once for the entire batch
         nats_cache = await get_nats_cache()
@@ -441,6 +639,8 @@ class TransitionMixin:
         state: ExecutionState,
         step_def: Step,
         event: Event,
+        *,
+        conn=None,
     ) -> tuple[list[Command], bool, bool]:
         """
         Evaluate next.arcs[].when conditions and return commands plus matched-arc status.
@@ -529,7 +729,7 @@ class TransitionMixin:
 
             # Create command(s) for target step. Loop steps may issue multiple commands
             # immediately up to max_in_flight when parallel mode is configured.
-            issued_cmds = await self._issue_loop_commands(state, target_step_def, {})
+            issued_cmds = await self._issue_loop_commands(state, target_step_def, {}, conn=conn)
             if issued_cmds:
                 commands.extend(issued_cmds)
                 # Steps can be revisited in loopback workflows; clear old completion marker

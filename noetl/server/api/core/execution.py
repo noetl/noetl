@@ -116,18 +116,20 @@ async def execute(req: ExecuteRequest) -> ExecuteResponse:
                     meta = {"command_id": cmd_id, "step": cmd.step, "tool_kind": cmd.tool.kind, "max_attempts": cmd.max_attempts or 3, "attempt": 1, "execution_id": str(execution_id), "catalog_id": str(catalog_id), "actionable": True, **(cmd.metadata or {})}
                     ctx = await _store_command_context_if_needed(execution_id=int(execution_id), step=cmd.step, command_id=cmd_id, context=ctx)
                     now = datetime.now(timezone.utc)
+                    stage_id = meta.get("stage_id")
+                    frame_id = meta.get("frame_id")
                     await cur.execute("""
-                        INSERT INTO noetl.event (event_id, execution_id, catalog_id, event_type, node_id, node_name, node_type, status, context, meta, parent_event_id, parent_execution_id, command_id, created_at)
-                        VALUES (%(event_id)s, %(execution_id)s, %(catalog_id)s, 'command.issued', %(node_id)s, %(node_name)s, %(node_type)s, 'PENDING', %(context)s, %(meta)s, %(parent_event_id)s, %(parent_execution_id)s, %(command_id)s, %(created_at)s)
-                    """, {"event_id": evt_id, "execution_id": int(execution_id), "catalog_id": catalog_id, "node_id": cmd.step, "node_name": cmd.step, "node_type": cmd.tool.kind, "context": Json(ctx), "meta": Json(meta), "parent_event_id": root_evt_id, "parent_execution_id": req.parent_execution_id, "command_id": cmd_id, "created_at": now})
+                        INSERT INTO noetl.event (event_id, execution_id, catalog_id, event_type, node_id, node_name, node_type, status, context, meta, parent_event_id, parent_execution_id, command_id, stage_id, frame_id, created_at)
+                        VALUES (%(event_id)s, %(execution_id)s, %(catalog_id)s, 'command.issued', %(node_id)s, %(node_name)s, %(node_type)s, 'PENDING', %(context)s, %(meta)s, %(parent_event_id)s, %(parent_execution_id)s, %(command_id)s, %(stage_id)s, %(frame_id)s, %(created_at)s)
+                    """, {"event_id": evt_id, "execution_id": int(execution_id), "catalog_id": catalog_id, "node_id": cmd.step, "node_name": cmd.step, "node_type": cmd.tool.kind, "context": Json(ctx), "meta": Json(meta), "parent_event_id": root_evt_id, "parent_execution_id": req.parent_execution_id, "command_id": cmd_id, "stage_id": stage_id, "frame_id": frame_id, "created_at": now})
                     await cur.execute("""
                         INSERT INTO noetl.command (
                             command_id, event_id, execution_id, catalog_id, parent_execution_id,
-                            step_name, tool_kind, status, context, loop_event_id, iter_index, meta, created_at
+                            step_name, tool_kind, status, context, loop_event_id, iter_index, meta, stage_id, frame_id, created_at
                         )
                         VALUES (
                             %(command_id)s, %(event_id)s, %(execution_id)s, %(catalog_id)s, %(parent_execution_id)s,
-                            %(step_name)s, %(tool_kind)s, 'PENDING', %(context)s, %(loop_event_id)s, %(iter_index)s, %(meta)s, %(created_at)s
+                            %(step_name)s, %(tool_kind)s, 'PENDING', %(context)s, %(loop_event_id)s, %(iter_index)s, %(meta)s, %(stage_id)s, %(frame_id)s, %(created_at)s
                         )
                         ON CONFLICT (execution_id, command_id) DO NOTHING
                     """, {
@@ -142,6 +144,8 @@ async def execute(req: ExecuteRequest) -> ExecuteResponse:
                         "loop_event_id": meta.get("__loop_epoch_id") or meta.get("loop_event_id"),
                         "iter_index": meta.get("__loop_claimed_index") or meta.get("iter_index"),
                         "meta": Json(meta),
+                        "stage_id": stage_id,
+                        "frame_id": frame_id,
                         "created_at": now,
                     })
                     command_events.append((int(execution_id), evt_id, cmd_id, cmd.step))
@@ -192,7 +196,7 @@ async def get_execution_status(execution_id: str, full: bool = False):
             completed, failed, inferred = False, False, False
             t_type = terminal["event_type"] if terminal else None
             if t_type in {"playbook.completed", "workflow.completed"}: completed = True
-            elif t_type in {"playbook.failed", "workflow.failed", "execution.cancelled"}:
+            elif t_type in {"playbook.failed", "workflow.failed", "execution.cancelled", "command.failed"}:
                 completed = t_type == "execution.cancelled"; failed = t_type != "execution.cancelled"
             elif latest["node_name"] == "end" and latest["status"] == "COMPLETED" and latest["event_type"] in {"command.completed", "call.done", "step.exit"}:
                 completed, inferred = True, True
@@ -237,7 +241,7 @@ async def get_execution_status(execution_id: str, full: bool = False):
             else:
                 t_type = terminal["event_type"] if terminal else None
                 if t_type in {"playbook.completed", "workflow.completed"}: completed = True
-                elif t_type in {"playbook.failed", "workflow.failed", "execution.cancelled"}:
+                elif t_type in {"playbook.failed", "workflow.failed", "execution.cancelled", "command.failed"}:
                     completed = t_type == "execution.cancelled"; failed = t_type != "execution.cancelled"
                 elif latest and latest["node_name"] == "end" and latest["status"] == "COMPLETED" and latest["event_type"] in {"command.completed", "call.done", "step.exit"}:
                     completed, inferred = True, True

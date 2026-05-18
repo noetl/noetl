@@ -35,6 +35,7 @@ from noetl.core.storage.models import (
     StoreTier,
     Scope,
     ResultRefMeta,
+    IpcHint,
     ResultRef,
     ManifestPart,
     Manifest,
@@ -52,6 +53,17 @@ from noetl.core.storage.router import (
 from noetl.core.storage.result_store import (
     TempStore,
     default_store,
+)
+
+from noetl.core.storage.ipc_cache import (
+    ArrowIpcSharedMemoryCache,
+    IpcCacheEntry,
+)
+
+from noetl.core.storage.arrow_ipc import (
+    ARROW_STREAM_MEDIA_TYPE,
+    rows_to_arrow_ipc,
+    arrow_ipc_to_rows,
 )
 
 from noetl.core.storage.scope_tracker import (
@@ -94,6 +106,7 @@ __all__ = [
     'StoreTier',
     'Scope',
     'ResultRefMeta',
+    'IpcHint',
     'ResultRef',
     'ManifestPart',
     'Manifest',
@@ -109,6 +122,11 @@ __all__ = [
     'ResultStore',
     'default_store',
     'default_result_store',
+    'ArrowIpcSharedMemoryCache',
+    'IpcCacheEntry',
+    'ARROW_STREAM_MEDIA_TYPE',
+    'rows_to_arrow_ipc',
+    'arrow_ipc_to_rows',
     # Scope Tracker
     'ScopeContext',
     'ScopeTracker',

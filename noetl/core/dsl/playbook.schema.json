@@ -317,6 +317,65 @@
       "title": "ExecutorSpecFull",
       "type": "object"
     },
+    "FramePolicy": {
+      "description": "Worker-side frame sizing policy for cursor loops.\n\nA frame is the bounded batch a cursor worker may claim/process before\ncommitting progress.  Defaults are intentionally conservative so existing\ncursor loops keep one-row semantics until an author or runtime explicitly\nopts into batching.",
+      "properties": {
+        "max_rows": {
+          "default": 1,
+          "description": "Maximum cursor rows in one worker frame",
+          "minimum": 1,
+          "title": "Max Rows",
+          "type": "integer"
+        },
+        "max_seconds": {
+          "default": 30.0,
+          "description": "Maximum wall-clock seconds a worker should hold a frame before committing",
+          "exclusiveMinimum": 0,
+          "title": "Max Seconds",
+          "type": "number"
+        },
+        "max_bytes": {
+          "default": 67108864,
+          "description": "Maximum serialized output bytes before a worker commits the frame",
+          "minimum": 1,
+          "title": "Max Bytes",
+          "type": "integer"
+        },
+        "lease_seconds": {
+          "default": 120.0,
+          "description": "Initial frame lease duration in seconds",
+          "exclusiveMinimum": 0,
+          "title": "Lease Seconds",
+          "type": "number"
+        },
+        "heartbeat_seconds": {
+          "default": 30.0,
+          "description": "Expected heartbeat interval while a frame is running",
+          "exclusiveMinimum": 0,
+          "title": "Heartbeat Seconds",
+          "type": "number"
+        },
+        "row_concurrency": {
+          "default": 1,
+          "description": "Maximum rows within one claimed frame to process concurrently",
+          "minimum": 1,
+          "title": "Row Concurrency",
+          "type": "integer"
+        },
+        "process": {
+          "default": "row",
+          "description": "How a cursor frame is processed: row runs the task pipeline once per claimed row; frame runs it once per claimed frame with frame.rows",
+          "enum": [
+            "row",
+            "frame"
+          ],
+          "title": "Process",
+          "type": "string"
+        }
+      },
+      "title": "FramePolicy",
+      "type": "object"
+    },
     "Loop": {
       "description": "Step-level loop configuration (canonical v10).\n\nLoop is a step MODIFIER, not a tool kind.\n\nTwo sources are supported, and exactly one must be set:\n\n1. Collection source (`in`): the legacy push-model loop.  A Jinja\n   expression produces a list; the engine dispatches one iteration\n   per list element.\n\n2. Cursor source (`cursor`): the pull-model loop.  The engine\n   dispatches `spec.max_in_flight` worker commands; each worker polls\n   the cursor for the next row until the cursor is drained.\n\nCanonical collection format:\n    loop:\n      in: \"{{ workload.items }}\"\n      iterator: item\n      spec:\n        mode: parallel\n        max_in_flight: 10\n\nCanonical cursor format:\n    loop:\n      cursor:\n        kind: postgres\n        auth: pg_k8s\n        claim: |\n          UPDATE tasks SET status='claimed'\n          WHERE id = (\n            SELECT id FROM tasks WHERE status='pending'\n            FOR UPDATE SKIP LOCKED LIMIT 1\n          )\n          RETURNING id, payload;\n      iterator: task\n      spec:\n        mode: cursor\n        max_in_flight: 100",
       "properties": {
@@ -424,6 +483,18 @@
           ],
           "default": null,
           "description": "Loop scheduling policy"
+        },
+        "frame": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/FramePolicy"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Worker-side frame sizing policy for cursor loops"
         }
       },
       "title": "LoopSpec",

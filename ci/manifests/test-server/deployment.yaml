@@ -6,7 +6,7 @@ metadata:
   labels:
     app: paginated-api
 spec:
-  replicas: 1
+  replicas: 3
   selector:
     matchLabels:
       app: paginated-api
@@ -17,11 +17,14 @@ spec:
     spec:
       containers:
       - name: api
-        image: local/test-server:latest
+        image: localhost/local/test-server:latest
         imagePullPolicy: IfNotPresent
         ports:
         - containerPort: 5555
           name: http
+        env:
+        - name: PFT_RATE_LIMIT
+          value: "500"
         livenessProbe:
           httpGet:
             path: /health
@@ -34,6 +37,12 @@ spec:
             port: 5555
           initialDelaySeconds: 3
           periodSeconds: 5
+        resources:
+          requests:
+            cpu: 250m
+            memory: 512Mi
+          limits:
+            memory: 1Gi
 ---
 apiVersion: v1
 kind: Service

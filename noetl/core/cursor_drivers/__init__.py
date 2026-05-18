@@ -11,6 +11,9 @@ Contract (see ``CursorDriver``):
   when the cursor is drained).  The driver is responsible for the
   atomicity guarantee (e.g. ``UPDATE ... FOR UPDATE SKIP LOCKED
   RETURNING`` for postgres, ``XREADGROUP`` for Redis streams, etc.).
+- ``claim_many(handle, context, max_rows)`` — optional fast path that claims
+  up to ``max_rows`` in one driver round-trip.  Drivers that do not implement
+  it continue to work through repeated ``claim`` calls.
 - ``close(handle)`` — release the connection/handle.
 
 Drivers register themselves via ``register_driver(kind, driver)``; the
@@ -62,6 +65,21 @@ class CursorDriver(Protocol):
         slot id, etc.) that the driver may interpolate into its claim
         statement.  Returns a dict of column/key values, or ``None`` when
         the cursor is drained.
+        """
+        ...
+
+    async def claim_many(
+        self,
+        handle: Any,
+        context: dict[str, Any],
+        max_rows: int,
+    ) -> list[dict[str, Any]]:
+        """Atomically claim and return up to ``max_rows`` items.
+
+        The default contract remains single-row ``claim`` for compatibility.
+        Implementations that provide this method should return an empty list
+        when drained and must preserve the same atomic claim semantics as
+        ``claim``.
         """
         ...
 

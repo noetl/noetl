@@ -304,7 +304,42 @@ CREATE INDEX IF NOT EXISTS idx_event_playbook_init_event_id_desc
     INCLUDE (execution_id, catalog_id, parent_execution_id, created_at)
     WHERE event_type = 'playbook.initialized';
 
--- Legacy compatibility view for event_log
+-- Event-sourced distributed runtime envelope fields (additive).
+-- Existing writers can continue using legacy columns/meta; new writers should
+-- populate these canonical fields directly so replay does not depend on
+-- backend-specific transport metadata.
+ALTER TABLE noetl.event
+    ADD COLUMN IF NOT EXISTS tenant_id TEXT NOT NULL DEFAULT 'default',
+    ADD COLUMN IF NOT EXISTS organization_id TEXT NOT NULL DEFAULT 'default',
+    ADD COLUMN IF NOT EXISTS stream_id TEXT,
+    ADD COLUMN IF NOT EXISTS stream_version BIGINT,
+    ADD COLUMN IF NOT EXISTS aggregate_id TEXT,
+    ADD COLUMN IF NOT EXISTS aggregate_type TEXT,
+    ADD COLUMN IF NOT EXISTS schema_name TEXT,
+    ADD COLUMN IF NOT EXISTS schema_version INTEGER NOT NULL DEFAULT 1,
+    ADD COLUMN IF NOT EXISTS event_time TIMESTAMPTZ NOT NULL DEFAULT now(),
+    ADD COLUMN IF NOT EXISTS ingest_time TIMESTAMPTZ NOT NULL DEFAULT now(),
+    ADD COLUMN IF NOT EXISTS producer TEXT,
+    ADD COLUMN IF NOT EXISTS causation_id TEXT,
+    ADD COLUMN IF NOT EXISTS correlation_id TEXT,
+    ADD COLUMN IF NOT EXISTS idempotency_key TEXT,
+    ADD COLUMN IF NOT EXISTS payload_ref JSONB,
+    ADD COLUMN IF NOT EXISTS envelope_checksum TEXT;
+
+CREATE INDEX IF NOT EXISTS idx_event_tenant_org_execution_event_id
+    ON noetl.event (tenant_id, organization_id, execution_id, event_id DESC);
+CREATE INDEX IF NOT EXISTS idx_event_stream_version
+    ON noetl.event (tenant_id, organization_id, stream_id, stream_version)
+    WHERE stream_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_event_aggregate_event_id
+    ON noetl.event (tenant_id, organization_id, aggregate_type, aggregate_id, event_id DESC)
+    WHERE aggregate_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_event_idempotency_key_column
+    ON noetl.event (tenant_id, organization_id, idempotency_key)
+    WHERE idempotency_key IS NOT NULL;
+
+-- Legacy compatibility view for event_log. Keep this after additive event
+-- columns so SELECT * expands to the migrated event envelope.
 CREATE OR REPLACE VIEW noetl.event_log AS SELECT * FROM noetl.event;
 
 -- Credential
@@ -661,6 +696,146 @@ DROP FUNCTION IF EXISTS noetl.trg_execution_state_upsert();
 
 ALTER TABLE noetl.execution ADD COLUMN IF NOT EXISTS state JSONB;
 
+-- ============================================================================
+-- noetl.stage / noetl.frame — additive distributed runtime control plane
+-- ============================================================================
+-- These tables introduce stage-shaped scheduling without migrating existing
+-- command rows. The event log remains the replay authority; stage/frame rows
+-- are operational projections for fast claim, heartbeat, and commit paths.
+
+CREATE TABLE IF NOT EXISTS noetl.stage (
+    stage_id        BIGINT PRIMARY KEY,
+    execution_id    BIGINT NOT NULL REFERENCES noetl.execution(execution_id),
+    parent_event_id BIGINT,
+    parent_stage_id BIGINT REFERENCES noetl.stage(stage_id),
+    loop_event_id   TEXT,
+    opened_event_id BIGINT,
+    closed_event_id BIGINT,
+    kind            TEXT NOT NULL CHECK (kind IN ('loop','fanout','reduce')),
+    step_name       TEXT NOT NULL,
+    dsl_ref         TEXT NOT NULL,
+    status          TEXT NOT NULL DEFAULT 'OPEN',
+    frame_policy    JSONB NOT NULL DEFAULT '{}'::jsonb,
+    tenant_id       TEXT NOT NULL DEFAULT 'default',
+    organization_id TEXT NOT NULL DEFAULT 'default',
+    started_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+    ended_at        TIMESTAMPTZ,
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at      TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+ALTER TABLE noetl.stage ADD COLUMN IF NOT EXISTS parent_stage_id BIGINT REFERENCES noetl.stage(stage_id);
+ALTER TABLE noetl.stage ADD COLUMN IF NOT EXISTS loop_event_id TEXT;
+ALTER TABLE noetl.stage ADD COLUMN IF NOT EXISTS opened_event_id BIGINT;
+ALTER TABLE noetl.stage ADD COLUMN IF NOT EXISTS closed_event_id BIGINT;
+
+CREATE INDEX IF NOT EXISTS idx_stage_execution_status
+    ON noetl.stage (execution_id, status, stage_id);
+CREATE INDEX IF NOT EXISTS idx_stage_tenant_org_execution
+    ON noetl.stage (tenant_id, organization_id, execution_id, stage_id);
+CREATE INDEX IF NOT EXISTS idx_stage_execution_step_loop
+    ON noetl.stage (execution_id, step_name, loop_event_id)
+    WHERE loop_event_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_stage_parent_stage
+    ON noetl.stage (parent_stage_id)
+    WHERE parent_stage_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_stage_opened_event
+    ON noetl.stage (opened_event_id)
+    WHERE opened_event_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_stage_closed_event
+    ON noetl.stage (closed_event_id)
+    WHERE closed_event_id IS NOT NULL;
+
+CREATE TABLE IF NOT EXISTS noetl.frame (
+    frame_id        BIGINT PRIMARY KEY,
+    stage_id        BIGINT NOT NULL REFERENCES noetl.stage(stage_id),
+    execution_id    BIGINT NOT NULL REFERENCES noetl.execution(execution_id),
+    parent_frame_id BIGINT REFERENCES noetl.frame(frame_id),
+    command_id      BIGINT,
+    claimed_event_id BIGINT,
+    terminal_event_id BIGINT,
+    cursor          JSONB NOT NULL DEFAULT '{}'::jsonb,
+    row_count       INTEGER NOT NULL DEFAULT 0,
+    status          TEXT NOT NULL DEFAULT 'PENDING',
+    owner_worker    TEXT,
+    lease_until     TIMESTAMPTZ,
+    output_ref      JSONB,
+    events_emitted  INTEGER NOT NULL DEFAULT 0,
+    attempts        INTEGER NOT NULL DEFAULT 0,
+    tenant_id       TEXT NOT NULL DEFAULT 'default',
+    organization_id TEXT NOT NULL DEFAULT 'default',
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+    completed_at    TIMESTAMPTZ
+);
+
+ALTER TABLE noetl.frame ADD COLUMN IF NOT EXISTS parent_frame_id BIGINT REFERENCES noetl.frame(frame_id);
+ALTER TABLE noetl.frame ADD COLUMN IF NOT EXISTS command_id BIGINT;
+ALTER TABLE noetl.frame ADD COLUMN IF NOT EXISTS claimed_event_id BIGINT;
+ALTER TABLE noetl.frame ADD COLUMN IF NOT EXISTS terminal_event_id BIGINT;
+
+CREATE INDEX IF NOT EXISTS frame_open_idx
+    ON noetl.frame (stage_id, status, lease_until)
+    WHERE status IN ('PENDING','CLAIMED','RUNNING');
+CREATE INDEX IF NOT EXISTS idx_frame_execution_status
+    ON noetl.frame (execution_id, status, frame_id);
+CREATE INDEX IF NOT EXISTS idx_frame_tenant_org_execution
+    ON noetl.frame (tenant_id, organization_id, execution_id, frame_id);
+CREATE INDEX IF NOT EXISTS idx_frame_stage_frame
+    ON noetl.frame (stage_id, frame_id);
+CREATE INDEX IF NOT EXISTS idx_frame_parent_frame
+    ON noetl.frame (parent_frame_id)
+    WHERE parent_frame_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_frame_command
+    ON noetl.frame (command_id)
+    WHERE command_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_frame_claimed_event
+    ON noetl.frame (claimed_event_id)
+    WHERE claimed_event_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_frame_terminal_event
+    ON noetl.frame (terminal_event_id)
+    WHERE terminal_event_id IS NOT NULL;
+
+-- Replayable projection store reference tables. These are derived state and
+-- can be rebuilt from noetl.event plus immutable payloads.
+CREATE TABLE IF NOT EXISTS noetl.projection (
+    projection_id   TEXT PRIMARY KEY,
+    projection_type TEXT NOT NULL,
+    tenant_id       TEXT NOT NULL DEFAULT 'default',
+    organization_id TEXT NOT NULL DEFAULT 'default',
+    execution_id    BIGINT,
+    version         BIGINT NOT NULL,
+    source_event_id BIGINT,
+    state           JSONB NOT NULL,
+    checksum        TEXT NOT NULL,
+    meta            JSONB NOT NULL DEFAULT '{}'::jsonb,
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at      TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_projection_tenant_type
+    ON noetl.projection (tenant_id, organization_id, projection_type);
+CREATE INDEX IF NOT EXISTS idx_projection_execution
+    ON noetl.projection (execution_id, projection_type)
+    WHERE execution_id IS NOT NULL;
+
+CREATE TABLE IF NOT EXISTS noetl.projection_snapshot (
+    aggregate_id    TEXT NOT NULL,
+    aggregate_type  TEXT NOT NULL,
+    tenant_id       TEXT NOT NULL DEFAULT 'default',
+    organization_id TEXT NOT NULL DEFAULT 'default',
+    version         BIGINT NOT NULL,
+    snapshot        JSONB NOT NULL,
+    checksum        TEXT NOT NULL,
+    meta            JSONB NOT NULL DEFAULT '{}'::jsonb,
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (tenant_id, organization_id, aggregate_type, aggregate_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_projection_snapshot_type
+    ON noetl.projection_snapshot (tenant_id, organization_id, aggregate_type, version DESC);
+
 CREATE INDEX IF NOT EXISTS idx_event_loop_event_id
     ON noetl.event (execution_id, node_name, ((meta->>'loop_event_id')))
     WHERE meta ? 'loop_event_id';
@@ -777,10 +952,32 @@ CREATE INDEX IF NOT EXISTS idx_command_pending_loop_step_created
 CREATE INDEX IF NOT EXISTS idx_command_command_id
     ON noetl.command (command_id);
 
+ALTER TABLE noetl.command ADD COLUMN IF NOT EXISTS stage_id BIGINT;
+ALTER TABLE noetl.command ADD COLUMN IF NOT EXISTS frame_id BIGINT;
+CREATE INDEX IF NOT EXISTS idx_command_stage
+    ON noetl.command (execution_id, stage_id, status)
+    WHERE stage_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_command_stage_worker_slot
+    ON noetl.command (execution_id, stage_id, ((meta->>'worker_slot_id')))
+    WHERE stage_id IS NOT NULL AND meta ? 'worker_slot_id';
+CREATE INDEX IF NOT EXISTS idx_command_frame
+    ON noetl.command (execution_id, frame_id)
+    WHERE frame_id IS NOT NULL;
+
 -- Linkage: event → command (BIGINT to match noetl.command.command_id)
 ALTER TABLE noetl.event ADD COLUMN IF NOT EXISTS command_id BIGINT;
+ALTER TABLE noetl.event ADD COLUMN IF NOT EXISTS stage_id BIGINT;
+ALTER TABLE noetl.event ADD COLUMN IF NOT EXISTS frame_id BIGINT;
 CREATE INDEX IF NOT EXISTS idx_event_command_id
     ON noetl.event (command_id) WHERE command_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_event_exec_type_command_id_event_id_desc
     ON noetl.event (execution_id, event_type, command_id, event_id DESC)
     WHERE command_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_event_stage_id
+    ON noetl.event (stage_id, event_id DESC) WHERE stage_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_event_exec_stage_event_id_desc
+    ON noetl.event (execution_id, stage_id, event_id DESC) WHERE stage_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_event_frame_id
+    ON noetl.event (frame_id, event_id DESC) WHERE frame_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_event_exec_frame_event_id_desc
+    ON noetl.event (execution_id, frame_id, event_id DESC) WHERE frame_id IS NOT NULL;

@@ -79,6 +79,7 @@ class TaskSequenceContext:
     results: dict[str, Any] = field(default_factory=dict)
     ctx: dict[str, Any] = field(default_factory=dict)
     iter: dict[str, Any] = field(default_factory=dict)
+    task_timings: list[dict[str, Any]] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dict for template rendering."""
@@ -122,6 +123,10 @@ class TaskSequenceContext:
     def apply_iter_set(self, vars_dict: dict[str, Any]):
         """Update iteration-scoped variables."""
         self.iter.update(vars_dict)
+
+    def record_task_timing(self, timing: dict[str, Any]):
+        """Append one task attempt timing record."""
+        self.task_timings.append(timing)
 
 
 @dataclass
@@ -335,6 +340,53 @@ class TaskSequenceExecutor:
         has_fetch_or_save = bool({"fetch_page", "save_page"} & normalized)
         return has_paginate and has_fetch_or_save
 
+    @staticmethod
+    def _build_metrics(ctx: TaskSequenceContext) -> dict[str, Any]:
+        timings = list(ctx.task_timings)
+        by_kind: dict[str, dict[str, int]] = {}
+        by_name: dict[str, dict[str, int]] = {}
+        total_duration_ms = 0
+        total_render_ms = 0
+        total_tool_ms = 0
+
+        for item in timings:
+            duration_ms = int(item.get("duration_ms") or 0)
+            render_ms = int(item.get("render_ms") or 0)
+            tool_ms = int(item.get("tool_ms") or 0)
+            total_duration_ms += duration_ms
+            total_render_ms += render_ms
+            total_tool_ms += tool_ms
+            status = str(item.get("status") or "unknown")
+            kind = str(item.get("kind") or "unknown")
+            name = str(item.get("name") or "unknown")
+            for bucket, key in ((by_kind, kind), (by_name, name)):
+                slot = bucket.setdefault(
+                    key,
+                    {
+                        "count": 0,
+                        "error_count": 0,
+                        "duration_ms": 0,
+                        "render_ms": 0,
+                        "tool_ms": 0,
+                    },
+                )
+                slot["count"] += 1
+                slot["duration_ms"] += duration_ms
+                slot["render_ms"] += render_ms
+                slot["tool_ms"] += tool_ms
+                if status == "error":
+                    slot["error_count"] += 1
+
+        return {
+            "task_count": len(timings),
+            "duration_ms": total_duration_ms,
+            "render_ms": total_render_ms,
+            "tool_ms": total_tool_ms,
+            "by_kind": by_kind,
+            "by_name": by_name,
+            "tasks": timings,
+        }
+
     def _build_no_progress_error(
         self,
         *,
@@ -397,7 +449,7 @@ class TaskSequenceExecutor:
         """
         if not tasks:
             logger.warning("[TASK_SEQ] Empty task sequence - no tasks to execute")
-            return {"status": "ok", "_prev": None, "results": {}}
+            return {"status": "ok", "_prev": None, "results": {}, "metrics": {"task_count": 0}}
 
         # Parse task list (strict v10)
         parsed_tasks = self._parse_tasks(tasks)
@@ -457,13 +509,17 @@ class TaskSequenceExecutor:
 
             # Execute tool and build output envelope
             start_time = time.monotonic()
+            render_ms = 0
+            tool_ms = 0
+            tool_kind = tool_config.get("kind")
             try:
-                tool_kind = tool_config.get("kind")
                 config_to_render = {k: v for k, v in tool_config.items() if k not in ("kind", "spec", "output")}
+                render_start = time.monotonic()
                 if tool_kind == "noop" or not config_to_render:
                     rendered_config = config_to_render
                 else:
                     rendered_config = self.render_dict(config_to_render, render_ctx)
+                render_ms = int((time.monotonic() - render_start) * 1000)
 
                 logger.debug(
                     "[TASK_SEQ] Executing task '%s' (kind=%s, attempt=%s)",
@@ -472,7 +528,9 @@ class TaskSequenceExecutor:
                     ctx._attempt,
                 )
 
+                tool_start = time.monotonic()
                 result = await self.tool_executor(tool_kind, rendered_config, render_ctx)
+                tool_ms = int((time.monotonic() - tool_start) * 1000)
                 duration_ms = int((time.monotonic() - start_time) * 1000)
 
                 # Check for error in result
@@ -525,6 +583,15 @@ class TaskSequenceExecutor:
                         attempt=ctx._attempt,
                     )
                     ctx.update_error(task_name, output)
+                    ctx.record_task_timing({
+                        "name": task_name,
+                        "kind": str(tool_kind or "unknown"),
+                        "attempt": ctx._attempt,
+                        "status": "error",
+                        "duration_ms": duration_ms,
+                        "render_ms": render_ms,
+                        "tool_ms": tool_ms,
+                    })
                 else:
                     output = build_outcome(
                         status="ok",
@@ -534,6 +601,15 @@ class TaskSequenceExecutor:
                         attempt=ctx._attempt,
                     )
                     ctx.update_success(task_name, result, output)
+                    ctx.record_task_timing({
+                        "name": task_name,
+                        "kind": str(tool_kind or "unknown"),
+                        "attempt": ctx._attempt,
+                        "status": "ok",
+                        "duration_ms": duration_ms,
+                        "render_ms": render_ms,
+                        "tool_ms": tool_ms,
+                    })
                     logger.debug(f"[TASK_SEQ] Task '{task_name}' completed successfully")
 
             except Exception as e:
@@ -552,6 +628,15 @@ class TaskSequenceExecutor:
                     attempt=ctx._attempt,
                 )
                 ctx.update_error(task_name, output)
+                ctx.record_task_timing({
+                    "name": task_name,
+                    "kind": str(tool_config.get("kind", "unknown")),
+                    "attempt": ctx._attempt,
+                    "status": "error",
+                    "duration_ms": duration_ms,
+                    "render_ms": render_ms,
+                    "tool_ms": tool_ms,
+                })
                 logger.warning(f"[TASK_SEQ] Task '{task_name}' failed: {error_info.message}")
 
             # Evaluate policy rules (strict v10)
@@ -605,6 +690,7 @@ class TaskSequenceExecutor:
                         "ctx": ctx.ctx,
                         "error": ctx.output.get("error") if ctx.output else None,
                         "failed_task": task_name,
+                        "metrics": self._build_metrics(ctx),
                     }
 
                 delay = self._calculate_delay(action, retry_counts[task_name])
@@ -625,6 +711,7 @@ class TaskSequenceExecutor:
                         "ctx": ctx.ctx,
                         "error": {"kind": "config", "message": "Jump action missing 'to' target"},
                         "failed_task": task_name,
+                        "metrics": self._build_metrics(ctx),
                     }
 
                 target_idx: Optional[int]
@@ -638,6 +725,7 @@ class TaskSequenceExecutor:
                             "ctx": ctx.ctx,
                             "error": {"kind": "config", "message": "Jump target 'previous' invalid for first task"},
                             "failed_task": task_name,
+                            "metrics": self._build_metrics(ctx),
                         }
                     target_idx = current_idx - 1
                     target = parsed_tasks[target_idx]["name"]
@@ -652,6 +740,7 @@ class TaskSequenceExecutor:
                         "ctx": ctx.ctx,
                         "error": {"kind": "config", "message": f"Jump target '{target}' not found"},
                         "failed_task": task_name,
+                        "metrics": self._build_metrics(ctx),
                     }
 
                 logger.info(f"[TASK_SEQ] Jumping to task '{target}'")
@@ -678,6 +767,7 @@ class TaskSequenceExecutor:
                         "ctx": ctx.ctx,
                         "error": no_progress_error,
                         "failed_task": task_name,
+                        "metrics": self._build_metrics(ctx),
                     }
                 logger.info(f"[TASK_SEQ] Breaking from task sequence at '{task_name}'")
                 return {
@@ -686,6 +776,7 @@ class TaskSequenceExecutor:
                     "results": ctx.results,
                     "ctx": ctx.ctx,
                     "remaining_actions": remaining,
+                    "metrics": self._build_metrics(ctx),
                 }
 
             else:  # fail
@@ -697,6 +788,7 @@ class TaskSequenceExecutor:
                     "ctx": ctx.ctx,
                     "error": ctx.output.get("error") if ctx.output else None,
                     "failed_task": task_name,
+                    "metrics": self._build_metrics(ctx),
                 }
 
         logger.info(f"[TASK_SEQ] Task sequence completed successfully, {len(ctx.results)} tasks executed")
@@ -705,6 +797,7 @@ class TaskSequenceExecutor:
             "_prev": ctx._prev,
             "results": ctx.results,
             "ctx": ctx.ctx,
+            "metrics": self._build_metrics(ctx),
         }
 
     def _parse_tasks(self, tasks: list[dict]) -> list[dict]:

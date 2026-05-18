@@ -146,9 +146,13 @@ class QueryMixin:
         self,
         execution_id: str,
         step_name: str,
-        loop_event_id: Optional[str],
+        loop_event_id: Optional[str] = None,
+        *,
+        event_id: Optional[str] = None,
     ) -> int:
         """Count observed terminal loop items from supervisor state for an epoch."""
+        if event_id is not None:
+            loop_event_id = event_id
         if not loop_event_id:
             return -1
 

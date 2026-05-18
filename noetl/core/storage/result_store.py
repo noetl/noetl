@@ -37,6 +37,7 @@ from noetl.core.storage.models import (
     StoreTier,
     Scope,
     TempRefMeta,
+    IpcHint,
 )
 from noetl.core.storage.router import StorageRouter, default_router
 from noetl.core.storage.extractor import create_preview
@@ -107,6 +108,15 @@ class TempStore:
 
         self._memory_cache: "OrderedDict[str, bytes]" = OrderedDict()
         self._ref_cache: "OrderedDict[str, TempRef]" = OrderedDict()
+        self._ipc_stats: Dict[str, int] = {
+            "admit_attempts": 0,
+            "admit_success": 0,
+            "admit_failures": 0,
+            "read_attempts": 0,
+            "read_hits": 0,
+            "read_misses": 0,
+            "fallback_reads": 0,
+        }
 
         if scope_tracker is not None:
             self._scope_tracker = scope_tracker
@@ -116,6 +126,10 @@ class TempStore:
                 self._scope_tracker = default_tracker
             except (ImportError, ModuleNotFoundError):
                 self._scope_tracker = None
+
+    def ipc_stats(self) -> Dict[str, int]:
+        """Return a point-in-time snapshot of IPC fast-path counters."""
+        return dict(self._ipc_stats)
 
     @staticmethod
     def _resolve_cache_limit(value: Optional[int], env_name: str, default: int) -> int:
@@ -329,6 +343,113 @@ class TempStore:
             f"(store={store.value}, bytes={meta.bytes}, scope={scope.value})"
         )
         return temp_ref
+
+    async def put_ipc_bytes(
+        self,
+        execution_id: str,
+        name: str,
+        data_bytes: bytes,
+        *,
+        schema_digest: str,
+        row_count: Optional[int] = None,
+        scope: Scope = Scope.EXECUTION,
+        store: Optional[StoreTier] = None,
+        ttl_seconds: Optional[int] = None,
+        source_step: Optional[str] = None,
+        parent_execution_id: Optional[str] = None,
+        correlation: Optional[Dict[str, Any]] = None,
+        ipc_cache: Any = None,
+        ipc_lease_seconds: Optional[float] = None,
+        media_type: str = "application/vnd.apache.arrow.stream",
+    ) -> TempRef:
+        """Store serialized Arrow IPC bytes with optional same-node IPC hint.
+
+        The durable storage write always happens. The IPC cache write is a
+        best-effort accelerator and is represented as `TempRef.ipc`.
+        """
+        if not isinstance(data_bytes, (bytes, bytearray, memoryview)):
+            raise TypeError("data_bytes must be bytes-like")
+        payload = bytes(data_bytes)
+        if not schema_digest:
+            raise ValueError("schema_digest is required")
+
+        meta = TempRefMeta(
+            content_type=media_type,
+            media_type=media_type,
+            bytes=len(payload),
+            sha256=hashlib.sha256(payload).hexdigest(),
+            schema_digest=schema_digest,
+            row_count=row_count,
+            compression="none",
+            encoding="binary",
+        )
+        if store is None:
+            store = self.router.select_tier(
+                size_bytes=len(payload),
+                scope=scope,
+                access_pattern="read_multi",
+            )
+        ttl = ttl_seconds or self.default_ttl_seconds
+        temp_ref = TempRef.create(
+            execution_id=execution_id,
+            name=name,
+            store=store,
+            scope=scope,
+            ttl_seconds=ttl,
+            meta=meta,
+            correlation=correlation,
+        )
+
+        if ipc_cache is not None:
+            self._ipc_stats["admit_attempts"] += 1
+            try:
+                temp_ref.ipc = ipc_cache.put_arrow_ipc(
+                    payload,
+                    schema_digest=schema_digest,
+                    row_count=row_count,
+                    lease_seconds=ipc_lease_seconds,
+                    media_type=media_type,
+                )
+                self._ipc_stats["admit_success"] += 1
+            except Exception as exc:
+                self._ipc_stats["admit_failures"] += 1
+                logger.debug("TEMP: IPC cache admission skipped for %s: %s", temp_ref.ref, exc)
+
+        await self._store_data(temp_ref, payload)
+        self._set_ref_cache(
+            temp_ref=temp_ref,
+            execution_id=execution_id,
+            source_step=source_step,
+            parent_execution_id=parent_execution_id,
+        )
+        return temp_ref
+
+    async def get_ipc_bytes(
+        self,
+        ref: Union[str, TempRef],
+        *,
+        ipc_cache: Any = None,
+        allow_ipc: bool = True,
+    ) -> bytes:
+        """Retrieve serialized Arrow IPC bytes, using IPC hint when valid."""
+        ref_str = ref if isinstance(ref, str) else ref.ref
+        temp_ref = ref if isinstance(ref, TempRef) else await self._lookup_ref(ref_str)
+        if not temp_ref:
+            raise KeyError(f"TempRef not found: {ref_str}")
+        if temp_ref.is_expired():
+            await self.delete(ref_str)
+            raise KeyError(f"TempRef expired: {ref_str}")
+        if allow_ipc and ipc_cache is not None and temp_ref.ipc is not None:
+            self._ipc_stats["read_attempts"] += 1
+            try:
+                data = ipc_cache.get(temp_ref.ipc)
+                self._ipc_stats["read_hits"] += 1
+                return data
+            except Exception as exc:
+                self._ipc_stats["read_misses"] += 1
+                logger.debug("TEMP: IPC cache miss for %s: %s", ref_str, exc)
+        self._ipc_stats["fallback_reads"] += 1
+        return await self._retrieve_data_bytes(temp_ref)
 
     async def get(self, ref: Union[str, TempRef]) -> Any:
         """
@@ -704,6 +825,11 @@ class TempStore:
 
     async def _retrieve_data(self, temp_ref: TempRef) -> Any:
         """Retrieve data from storage backend."""
+        data_bytes = await self._retrieve_data_bytes(temp_ref)
+        return json.loads(data_bytes.decode('utf-8'))
+
+    async def _retrieve_data_bytes(self, temp_ref: TempRef) -> bytes:
+        """Retrieve raw bytes from storage backend."""
         store = temp_ref.store
         key = temp_ref.to_key()
 
@@ -769,7 +895,7 @@ class TempStore:
         if temp_ref.meta.compression == "gzip":
             data_bytes = gzip.decompress(data_bytes)
 
-        return json.loads(data_bytes.decode('utf-8'))
+        return data_bytes
 
     async def _delete_data(self, temp_ref: TempRef):
         """Delete data from storage backend."""

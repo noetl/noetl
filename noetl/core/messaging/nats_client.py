@@ -15,8 +15,9 @@ Performance tuning:
 import asyncio
 import json
 import math
+import re
 from contextlib import suppress
-from typing import Optional, Callable, Awaitable
+from typing import Any, Optional, Callable, Awaitable
 import nats
 from nats.js import JetStreamContext
 from nats.js.api import StreamConfig, ConsumerConfig
@@ -26,6 +27,12 @@ from noetl.core.logger import setup_logger
 
 logger = setup_logger(__name__, include_location=True)
 _MAX_CALLBACK_NAK_DELAY_SECONDS = 3600.0
+_EVENT_SUBJECT_TOKEN_RE = re.compile(r"[^a-zA-Z0-9_-]+")
+
+
+def _subject_token(value: Any, default: str = "default") -> str:
+    token = _EVENT_SUBJECT_TOKEN_RE.sub("-", str(value or default).strip()).strip("-")
+    return token or default
 
 
 class NATSCommandPublisher:
@@ -172,6 +179,88 @@ class NATSCommandPublisher:
         if self._nc:
             await self._nc.close()
             logger.info("NATS connection closed")
+
+
+class NATSEventPublisher(NATSCommandPublisher):
+    """Publisher for canonical event envelopes mirrored to JetStream."""
+
+    def __init__(
+        self,
+        nats_url: Optional[str] = None,
+        subject_prefix: Optional[str] = None,
+        stream_name: Optional[str] = None,
+        shard_count: int = 1,
+    ):
+        import os
+
+        super().__init__(
+            nats_url=nats_url or os.getenv("NOETL_EVENT_NATS_URL") or os.getenv("NATS_URL"),
+            subject=subject_prefix or os.getenv("NOETL_EVENT_NATS_SUBJECT_PREFIX") or "noetl.events",
+            stream_name=stream_name or os.getenv("NOETL_EVENT_NATS_STREAM") or "NOETL_EVENTS",
+        )
+        self.subject_prefix = self.subject.rstrip(".>")
+        self.shard_count = max(1, int(shard_count or os.getenv("NOETL_EVENT_NATS_SHARD_COUNT", "1")))
+
+    async def connect(self):
+        """Connect to NATS and ensure the event mirror stream exists."""
+
+        try:
+            self._nc = await nats.connect(self.nats_url)
+            self._js = self._nc.jetstream()
+            try:
+                await self._js.stream_info(self.stream_name)
+                logger.debug("Using existing %s stream", self.stream_name)
+            except Exception:
+                await self._js.add_stream(
+                    name=self.stream_name,
+                    subjects=[f"{self.subject_prefix}.>"],
+                    max_age=86400,
+                    storage="file",
+                )
+                logger.info("Created event stream %s for %s.>", self.stream_name, self.subject_prefix)
+        except Exception as exc:
+            logger.error("Failed to connect event publisher to NATS: %s", exc)
+            raise
+
+    def subject_for_event(self, event: dict[str, Any]) -> str:
+        execution_id = event.get("execution_id") or "none"
+        shard = 0
+        try:
+            shard = int(execution_id) % self.shard_count
+        except (TypeError, ValueError):
+            shard = 0
+        return ".".join(
+            [
+                self.subject_prefix,
+                _subject_token(event.get("tenant_id")),
+                _subject_token(event.get("organization_id")),
+                _subject_token(execution_id, "none"),
+                str(shard),
+            ]
+        )
+
+    async def _publish_event_payload(self, subject: str, payload: bytes) -> None:
+        if not self._js:
+            raise RuntimeError("Not connected to NATS")
+        await self._js.publish(subject, payload)
+
+    async def publish_event(self, event: dict[str, Any]) -> None:
+        """Publish a canonical event envelope for projector fan-out."""
+
+        await self.ensure_connected()
+        subject = self.subject_for_event(event)
+        payload = json.dumps(event, default=str, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        try:
+            await self._publish_event_payload(subject, payload)
+            logger.debug("Published event mirror: subject=%s event_id=%s", subject, event.get("event_id"))
+        except Exception as exc:
+            logger.warning(
+                "Failed to publish event mirror event_id=%s on first attempt: %s. Retrying after reconnect.",
+                event.get("event_id"),
+                exc,
+            )
+            await self.ensure_connected(force=True)
+            await self._publish_event_payload(subject, payload)
 
 
 class NATSCommandSubscriber:

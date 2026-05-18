@@ -16,6 +16,66 @@ class LoopPolicy(BaseModel):
     )
 
 
+class FramePolicy(BaseModel):
+    """
+    Worker-side frame sizing policy for cursor loops.
+
+    A frame is the bounded batch a cursor worker may claim/process before
+    committing progress.  Defaults are intentionally conservative so existing
+    cursor loops keep one-row semantics until an author or runtime explicitly
+    opts into batching.
+    """
+    max_rows: int = Field(
+        default=1,
+        ge=1,
+        description="Maximum cursor rows in one worker frame"
+    )
+    max_seconds: float = Field(
+        default=30.0,
+        gt=0,
+        description="Maximum wall-clock seconds a worker should hold a frame before committing"
+    )
+    max_bytes: int = Field(
+        default=64 * 1024 * 1024,
+        ge=1,
+        description="Maximum serialized output bytes before a worker commits the frame"
+    )
+    lease_seconds: float = Field(
+        default=120.0,
+        gt=0,
+        description="Initial frame lease duration in seconds"
+    )
+    heartbeat_seconds: float = Field(
+        default=30.0,
+        gt=0,
+        description="Expected heartbeat interval while a frame is running"
+    )
+    row_concurrency: int = Field(
+        default=1,
+        ge=1,
+        description="Maximum rows within one claimed frame to process concurrently"
+    )
+    process: Literal["row", "frame"] = Field(
+        default="row",
+        description=(
+            "How a cursor frame is processed: row runs the task pipeline once per "
+            "claimed row; frame runs it once per claimed frame with frame.rows"
+        )
+    )
+    retry_mode: Literal["whole_frame"] = Field(
+        default="whole_frame",
+        description=(
+            "Frame recovery mode. Phase 1 only retries the whole frame boundary; "
+            "row-split retry requires a later subframe model."
+        )
+    )
+    max_attempts: int = Field(
+        default=3,
+        ge=1,
+        description="Maximum frame claim attempts before operator intervention is expected"
+    )
+
+
 class LoopSpec(BaseModel):
     """
     Loop runtime specification (canonical v10).
@@ -41,6 +101,14 @@ class LoopSpec(BaseModel):
         None,
         description="Loop scheduling policy"
     )
+    frame_policy: Optional[FramePolicy] = Field(
+        None,
+        alias="frame",
+        description="Worker-side frame sizing policy for cursor loops"
+    )
+
+    class Config:
+        populate_by_name = True
 
 
 class CursorSpec(BaseModel):
@@ -174,6 +242,13 @@ class Loop(BaseModel):
     def is_cursor(self) -> bool:
         """True when this loop is driven by a cursor source."""
         return self.cursor is not None
+
+    @property
+    def frame_policy(self) -> FramePolicy:
+        """Resolved worker-side frame policy."""
+        if self.spec and self.spec.frame_policy:
+            return self.spec.frame_policy
+        return FramePolicy()
 
 
 # ============================================================================
