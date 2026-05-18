@@ -2,6 +2,57 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.39.0](https://github.com/noetl/noetl/compare/v2.38.1...v2.39.0) (2026-05-18)
+
+### Features
+
+* **cursor:** claim frame rows in batches ([86fda7c](https://github.com/noetl/noetl/commit/86fda7cde6a2d241e9f0f2cd9bec268c73d4e7d3))
+* **cursor:** emit frame started heartbeat ([1bab2c2](https://github.com/noetl/noetl/commit/1bab2c2f3d617e7bb7b4145bd888dc4cac8e9eab))
+* **cursor:** process frame rows concurrently ([125b288](https://github.com/noetl/noetl/commit/125b288783dc10d3c9d3fc957c0baac87077415d))
+* **cursor:** record frame task timing metrics ([9f1148b](https://github.com/noetl/noetl/commit/9f1148ba11506eba1747396083fe2b2209b0d15c))
+* **cursor:** support frame-scoped task execution ([abf5623](https://github.com/noetl/noetl/commit/abf5623bbcce46a78b260c812ca8c7ce72f1bea5))
+* **events:** add nats event mirror publisher ([da32f73](https://github.com/noetl/noetl/commit/da32f73ab60bb0991b8836fbc85863c5f9490638))
+* **frames:** checksum lifecycle events ([6799938](https://github.com/noetl/noetl/commit/67999388441233fb8317929393933388064bed7f))
+* **frames:** mirror lifecycle events to nats ([20fe50f](https://github.com/noetl/noetl/commit/20fe50f7e8465a930b498ddf5b394b125be453ad))
+* **frames:** wire cursor loops to stage frame runtime ([9c26d03](https://github.com/noetl/noetl/commit/9c26d03fd550be560066334fca45ee2f20124369))
+* **metrics:** expose storage ipc counters ([8acaf60](https://github.com/noetl/noetl/commit/8acaf609111a7965de88dc2ea189ffed020571a0))
+* **projector:** add nats projector worker ([227c98e](https://github.com/noetl/noetl/commit/227c98e1d67ad3d834727d1e536685fe2691828c))
+* **projector:** add replay state reducer ([05a8495](https://github.com/noetl/noetl/commit/05a849577c755cec4bafb06737827f9d2cbd2d95))
+* **replay:** add event upcaster registry ([0433408](https://github.com/noetl/noetl/commit/04334087f270b00b989e5e410f6033bde6ef04fa))
+* **replay:** checksum frame payload projections ([acbe7c6](https://github.com/noetl/noetl/commit/acbe7c6a00f86b605c857ee184893c3380468dd4))
+* **replay:** expose upcaster registry digest ([46af61f](https://github.com/noetl/noetl/commit/46af61fe362b81ebf2a7a139f8c3aa97fad4ad19))
+* **replay:** fold frame lineage anchors ([bc398b3](https://github.com/noetl/noetl/commit/bc398b397ef12639933920a3b51d9d4cb436c00d))
+* **replay:** seed state from projection snapshots ([cc4353f](https://github.com/noetl/noetl/commit/cc4353fd0c3b04ec57ef5ce69050940608cc268d))
+* **runtime:** add event replay scaffolding ([79cd7d0](https://github.com/noetl/noetl/commit/79cd7d063e6dca6d9fd40b97c811ea84ccf1cfb8))
+* **runtime:** add event store port ([518135b](https://github.com/noetl/noetl/commit/518135b684f3b541abb2a2199dfe8eb269bbb0de))
+* **runtime:** add frame lease endpoints ([ba9f9cd](https://github.com/noetl/noetl/commit/ba9f9cdbc5e9014492a34368ade0ae3cb74bbaaa))
+* **runtime:** add projection store port ([ada38da](https://github.com/noetl/noetl/commit/ada38dac3ee846269fde0554b8e5dc514686699f))
+* **runtime:** capture cursor frames as arrow ipc ([2d27911](https://github.com/noetl/noetl/commit/2d27911effe7b9571488c0d1279644a318022e73))
+* **runtime:** carry frame policy on cursor workers ([6d33417](https://github.com/noetl/noetl/commit/6d3341718678c02684104c10727c5895536da961))
+* **runtime:** document whole-frame recovery policy ([541a332](https://github.com/noetl/noetl/commit/541a332788a7811416b4084984e26b82fbb2041f))
+* **runtime:** harden frame heartbeat conflicts ([7dc2868](https://github.com/noetl/noetl/commit/7dc28686a842940294a4693ca228b6f075c51a3c))
+* **runtime:** link frame lineage in events ([9f03491](https://github.com/noetl/noetl/commit/9f034917bc51c5f82fe84f64b6cd3e214be450a2))
+* **runtime:** link stage frame lineage ([d53b498](https://github.com/noetl/noetl/commit/d53b498ec686654d10c9e10e91d418897385d8a7))
+* **storage:** add Arrow IPC shared memory cache ([4ddf011](https://github.com/noetl/noetl/commit/4ddf0118e5090880ec6eee40f5c25429eb26a0e5))
+* **storage:** add ipc payload hint metadata ([db9a04c](https://github.com/noetl/noetl/commit/db9a04cd0d9c7343f8b741121cb747a6bee0e648))
+* **storage:** track TempStore IPC counters ([9e50b1d](https://github.com/noetl/noetl/commit/9e50b1dbfa2b0343583afa77e05a8202c3fcadd1))
+* **storage:** wire IPC bytes through TempStore ([e9af04c](https://github.com/noetl/noetl/commit/e9af04c6dee641720e433bc94ab02029883a7443))
+
+### Bug Fixes
+
+* **cursor:** render frame claim size on server ([8de0d10](https://github.com/noetl/noetl/commit/8de0d1084f7f4372f1ef522d73d46cf84042dd36))
+* **engine:** accept loop supervisor event id alias ([ff200b9](https://github.com/noetl/noetl/commit/ff200b9995be38f348d910fc4fccc184e6f79a89))
+* **frames:** disable statement timeout for stage open ([6efc579](https://github.com/noetl/noetl/commit/6efc579c018f2f1ae8d2f7232099bb7f392ea1f8))
+* **frames:** include catalog on lifecycle events ([5895c57](https://github.com/noetl/noetl/commit/5895c578e6672988d6e9c8c3fe3b1b718f06c4e5))
+* **frames:** keep stage row when event insert is contended ([b9d209a](https://github.com/noetl/noetl/commit/b9d209a45195f73acc9df62b5fad8440cd8acac3))
+* **frames:** open cursor stages in event transaction ([ae4fccd](https://github.com/noetl/noetl/commit/ae4fccdd75dfe90136b0e3f26173a1bc39d6db99))
+* **frames:** preserve event result envelope on failure ([9999a43](https://github.com/noetl/noetl/commit/9999a43eeb1c943131154d674a283d572c7dd8ec))
+* **metrics:** use live batch acceptor snapshot ([cd5384e](https://github.com/noetl/noetl/commit/cd5384e11889b9f38fd5938e8458c79cfd2a24cd))
+* **projector:** keep server app import lazy ([3798a69](https://github.com/noetl/noetl/commit/3798a69075c83c84e99a89ed8b76a31bd873517f))
+* **runtime:** harden frame recovery policy parsing ([dc6d9a5](https://github.com/noetl/noetl/commit/dc6d9a52df7d9ba4a4aa6c53cfa544a008cb0230))
+* **runtime:** lock frame streams before mutations ([329658b](https://github.com/noetl/noetl/commit/329658bdc9b3519c6f23c62216a2147db792feb9))
+* **runtime:** serialize frame event stream versions ([7bb4f4a](https://github.com/noetl/noetl/commit/7bb4f4a27dcb59a603e58c0cc103b2846aafa330))
+
 ## [2.38.1](https://github.com/noetl/noetl/compare/v2.38.0...v2.38.1) (2026-05-15)
 
 ### Bug Fixes
