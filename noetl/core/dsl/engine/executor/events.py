@@ -1662,17 +1662,20 @@ class EventHandlingMixin:
                     # Results are stored in event table and fetched via aggregate service
                     try:
                         nats_cache = await get_nats_cache()
-                        # Get event_id from loop state to identify this loop instance
-                        loop_event_id = loop_state.get("event_id")
-                        new_count = await nats_cache.increment_loop_completed(
-                            str(state.execution_id),
-                            event.step,
-                            event_id=str(loop_event_id) if loop_event_id else None
-                        )
-                        if new_count >= 0:
-                            logger.debug(f"[LOOP-NATS] Incremented completion count in NATS K/V for {event.step}: {new_count}, event_id={loop_event_id}")
+                        if hasattr(nats_cache, "increment_loop_completed"):
+                            # Get event_id from loop state to identify this loop instance
+                            loop_event_id = loop_state.get("event_id")
+                            new_count = await nats_cache.increment_loop_completed(
+                                str(state.execution_id),
+                                event.step,
+                                event_id=str(loop_event_id) if loop_event_id else None
+                            )
+                            if new_count >= 0:
+                                logger.debug(f"[LOOP-NATS] Incremented completion count in NATS K/V for {event.step}: {new_count}, event_id={loop_event_id}")
+                            else:
+                                logger.error(f"[LOOP-NATS] Failed to increment completion count in NATS K/V for {event.step}, event_id={loop_event_id}")
                         else:
-                            logger.error(f"[LOOP-NATS] Failed to increment completion count in NATS K/V for {event.step}, event_id={loop_event_id}")
+                            logger.debug("[LOOP-NATS] Cache does not support completion increments for %s", event.step)
                     except Exception as e:
                         logger.error(f"[LOOP-NATS] Error syncing to NATS K/V: {e}", exc_info=True)
                 else:
