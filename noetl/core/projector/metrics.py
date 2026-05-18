@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import time
+from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from threading import Lock, Thread
-from typing import Mapping, Optional
+from typing import Any, Iterable, Mapping, Optional
 
 
 class ProjectorMetrics:
@@ -24,6 +25,11 @@ class ProjectorMetrics:
             "last_error_unixtime": 0.0,
             "last_batch_events": 0.0,
             "last_batch_projection_records": 0.0,
+            "last_projection_source_event_id": 0.0,
+            "last_projection_event_time_watermark_unixtime": 0.0,
+            "last_projection_projected_at_unixtime": 0.0,
+            "last_projection_lag_milliseconds": 0.0,
+            "max_projection_lag_milliseconds": 0.0,
         }
 
     def record_notification(
@@ -49,6 +55,31 @@ class ProjectorMetrics:
         with self._lock:
             self._values["errors_total"] += 1.0
             self._values["last_error_unixtime"] = time.time()
+
+    def record_projection_checkpoints(self, records: Iterable[Any]) -> None:
+        with self._lock:
+            for record in records:
+                meta = getattr(record, "meta", None)
+                meta = meta if isinstance(meta, Mapping) else {}
+                source_event_id = _coerce_float(
+                    meta.get("source_event_id") or getattr(record, "source_event_id", None)
+                )
+                event_watermark = _coerce_datetime_unixtime(meta.get("event_time_watermark"))
+                projected_at = _coerce_datetime_unixtime(meta.get("projected_at"))
+                lag_ms = _coerce_float(meta.get("projection_lag_ms"))
+
+                if source_event_id is not None:
+                    self._values["last_projection_source_event_id"] = source_event_id
+                if event_watermark is not None:
+                    self._values["last_projection_event_time_watermark_unixtime"] = event_watermark
+                if projected_at is not None:
+                    self._values["last_projection_projected_at_unixtime"] = projected_at
+                if lag_ms is not None:
+                    self._values["last_projection_lag_milliseconds"] = lag_ms
+                    self._values["max_projection_lag_milliseconds"] = max(
+                        self._values["max_projection_lag_milliseconds"],
+                        lag_ms,
+                    )
 
     def snapshot(self) -> dict[str, float]:
         with self._lock:
@@ -94,6 +125,27 @@ def render_projector_metrics(metrics: ProjectorMetrics, *, labels: Optional[Mapp
         "# HELP noetl_projector_last_batch_projection_records Projection records from the last handled notification.",
         "# TYPE noetl_projector_last_batch_projection_records gauge",
         f"noetl_projector_last_batch_projection_records{label_text} {snapshot['last_batch_projection_records']}",
+        "# HELP noetl_projector_last_projection_source_event_id Last projected source event id.",
+        "# TYPE noetl_projector_last_projection_source_event_id gauge",
+        f"noetl_projector_last_projection_source_event_id{label_text} {snapshot['last_projection_source_event_id']}",
+        "# HELP noetl_projector_last_projection_event_time_watermark_unixtime Last projected event-time watermark.",
+        "# TYPE noetl_projector_last_projection_event_time_watermark_unixtime gauge",
+        (
+            "noetl_projector_last_projection_event_time_watermark_unixtime"
+            f"{label_text} {snapshot['last_projection_event_time_watermark_unixtime']}"
+        ),
+        "# HELP noetl_projector_last_projection_projected_at_unixtime Last projector write timestamp.",
+        "# TYPE noetl_projector_last_projection_projected_at_unixtime gauge",
+        (
+            "noetl_projector_last_projection_projected_at_unixtime"
+            f"{label_text} {snapshot['last_projection_projected_at_unixtime']}"
+        ),
+        "# HELP noetl_projector_last_projection_lag_milliseconds Latest projection lag from event watermark to write time.",
+        "# TYPE noetl_projector_last_projection_lag_milliseconds gauge",
+        f"noetl_projector_last_projection_lag_milliseconds{label_text} {snapshot['last_projection_lag_milliseconds']}",
+        "# HELP noetl_projector_max_projection_lag_milliseconds Max observed projection lag since process start.",
+        "# TYPE noetl_projector_max_projection_lag_milliseconds gauge",
+        f"noetl_projector_max_projection_lag_milliseconds{label_text} {snapshot['max_projection_lag_milliseconds']}",
     ]
     return "\n".join(lines) + "\n"
 
@@ -145,6 +197,35 @@ def _format_labels(labels: Mapping[str, str]) -> str:
 
 def _escape_label(value: str) -> str:
     return str(value).replace("\\", "\\\\").replace("\n", "\\n").replace('"', '\\"')
+
+
+def _coerce_float(value: Any) -> Optional[float]:
+    if value is None or value == "":
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _coerce_datetime_unixtime(value: Any) -> Optional[float]:
+    if value is None or value == "":
+        return None
+    if isinstance(value, datetime):
+        dt = value
+    elif isinstance(value, str):
+        raw = value.strip()
+        if raw.endswith("Z"):
+            raw = raw[:-1] + "+00:00"
+        try:
+            dt = datetime.fromisoformat(raw)
+        except ValueError:
+            return None
+    else:
+        return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.timestamp()
 
 
 __all__ = [

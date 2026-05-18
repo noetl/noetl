@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from types import SimpleNamespace
 from urllib.request import urlopen
 
 
@@ -21,6 +22,34 @@ def test_projector_metrics_render_prometheus_labels():
     assert "noetl_projector_events_owned_total" in body
     assert "noetl_projector_projection_records_total" in body
     assert " 1.0" in body
+
+
+def test_projector_metrics_export_projection_checkpoint_gauges():
+    from noetl.core.projector.metrics import ProjectorMetrics, render_projector_metrics
+
+    metrics = ProjectorMetrics()
+    metrics.record_projection_checkpoints(
+        [
+            SimpleNamespace(
+                source_event_id=31,
+                meta={
+                    "event_time_watermark": "2026-05-18T17:00:00Z",
+                    "projected_at": "2026-05-18T17:00:02Z",
+                    "projection_lag_ms": 2000,
+                },
+            )
+        ]
+    )
+
+    snapshot = metrics.snapshot()
+    assert snapshot["last_projection_source_event_id"] == 31
+    assert snapshot["last_projection_lag_milliseconds"] == 2000
+    assert snapshot["max_projection_lag_milliseconds"] == 2000
+
+    body = render_projector_metrics(metrics)
+    assert "noetl_projector_last_projection_source_event_id 31.0" in body
+    assert "noetl_projector_last_projection_lag_milliseconds 2000.0" in body
+    assert "noetl_projector_max_projection_lag_milliseconds 2000.0" in body
 
 
 def test_projector_metrics_server_exposes_metrics_and_health():

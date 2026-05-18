@@ -147,6 +147,7 @@ class NATSProjectorWorker:
             owned_events=len(events),
             projection_records=len(written),
         )
+        self.metrics.record_projection_checkpoints(written)
         logger.debug(
             "Projector %s folded %s events into %s projection records",
             self.settings.shard_id,
