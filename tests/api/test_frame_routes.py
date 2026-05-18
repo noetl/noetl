@@ -167,7 +167,7 @@ async def test_insert_frame_event_sets_stream_version_and_checksum(monkeypatch):
     assert event["envelope_checksum"] == cur.insert_params["envelope_checksum"]
     assert cur.insert_params["stream_version"] == 4
     assert cur.insert_params["catalog_id"] == 6
-    assert cur.insert_params["stream_id"] == "execution/7/stage/8"
+    assert cur.insert_params["stream_id"] == "execution/7/stage/8/frame/9"
     assert cur.insert_params["aggregate_id"] == "frame/9"
     assert len(cur.insert_params["envelope_checksum"]) == 64
     assert "stream_version" in cur.calls[-1][0]

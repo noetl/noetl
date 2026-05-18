@@ -96,6 +96,10 @@ def _frame_stream_id(*, execution_id: int, stage_id: int) -> str:
     return f"execution/{execution_id}/stage/{stage_id}"
 
 
+def _frame_event_stream_id(*, execution_id: int, stage_id: int, frame_id: int) -> str:
+    return f"{_frame_stream_id(execution_id=execution_id, stage_id=stage_id)}/frame/{frame_id}"
+
+
 async def _lock_frame_stream(cur: Any, *, execution_id: int, stage_id: int) -> str:
     stream_id = _frame_stream_id(execution_id=execution_id, stage_id=stage_id)
     await cur.execute("SELECT pg_advisory_xact_lock(hashtext(%s)::bigint)", (stream_id,))
@@ -131,7 +135,11 @@ async def _insert_frame_event(
     meta_extra: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     event_id = await _next_snowflake_id(cur)
-    stream_id = _frame_stream_id(execution_id=int(frame["execution_id"]), stage_id=int(frame["stage_id"]))
+    stream_id = _frame_event_stream_id(
+        execution_id=int(frame["execution_id"]),
+        stage_id=int(frame["stage_id"]),
+        frame_id=int(frame["frame_id"]),
+    )
     now = datetime.now(timezone.utc)
     catalog_id = frame.get("catalog_id")
     if catalog_id is None:
@@ -534,7 +542,6 @@ async def heartbeat_frame(frame_id: int, req: FrameHeartbeatRequest) -> dict[str
     try:
         async with get_pool_connection() as conn:
             async with conn.cursor(row_factory=dict_row) as cur:
-                await _lock_frame_stream_for_frame(cur, frame_id=frame_id)
                 await cur.execute(
                     """
                     WITH active AS (
@@ -595,7 +602,6 @@ async def commit_frame(frame_id: int, req: FrameCommitRequest) -> dict[str, Any]
     try:
         async with get_pool_connection() as conn:
             async with conn.cursor(row_factory=dict_row) as cur:
-                await _lock_frame_stream_for_frame(cur, frame_id=frame_id)
                 await cur.execute(
                     """
                     UPDATE noetl.frame f
