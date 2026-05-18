@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
+
 import pytest
 
 
@@ -74,6 +76,7 @@ async def test_replay_state_projector_writes_grouped_projection_records():
     assert first.state["frames"]["1"]["status"] == "COMPLETED"
     assert first.checksum == first.state["checksum"]
     assert first.meta["projector"] == "replay_state"
+    assert first.meta["source_event_id"] == 10
 
 
 @pytest.mark.asyncio
@@ -115,6 +118,47 @@ async def test_replay_state_projector_respects_version_monotonic_store_writes():
     record = store.records["execution/7/all"]
     assert record.version == 3
     assert record.state["execution"]["status"] == "COMPLETED"
+
+
+@pytest.mark.asyncio
+async def test_replay_state_projector_records_lag_checkpoint_metadata():
+    from noetl.core.projector import ReplayStateProjector
+
+    now = datetime.now(timezone.utc)
+    store = _MemoryProjectionStore()
+    projector = ReplayStateProjector(store)
+
+    written = await projector.project(
+        [
+            {
+                "event_id": 31,
+                "stream_version": 4,
+                "tenant_id": "tenant-a",
+                "organization_id": "org-a",
+                "execution_id": 9,
+                "event_type": "workflow.completed",
+                "event_time": (now - timedelta(seconds=2)).isoformat().replace("+00:00", "Z"),
+            },
+            {
+                "event_id": 30,
+                "stream_version": 3,
+                "tenant_id": "tenant-a",
+                "organization_id": "org-a",
+                "execution_id": 9,
+                "event_type": "execution.started",
+                "event_time": now - timedelta(seconds=5),
+            },
+        ]
+    )
+
+    assert len(written) == 1
+    meta = store.records["execution/9/all"].meta
+    assert meta["event_count"] == 2
+    assert meta["source_event_id"] == 31
+    assert meta["event_time_watermark"].endswith("Z")
+    assert meta["projected_at"].endswith("Z")
+    assert isinstance(meta["projection_lag_ms"], int)
+    assert meta["projection_lag_ms"] >= 0
 
 
 @pytest.mark.asyncio
