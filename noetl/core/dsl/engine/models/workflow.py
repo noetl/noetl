@@ -62,6 +62,18 @@ class FramePolicy(BaseModel):
             "claimed row; frame runs it once per claimed frame with frame.rows"
         )
     )
+    retry_mode: Literal["whole_frame"] = Field(
+        default="whole_frame",
+        description=(
+            "Frame recovery mode. Phase 1 only retries the whole frame boundary; "
+            "row-split retry requires a later subframe model."
+        )
+    )
+    max_attempts: int = Field(
+        default=3,
+        ge=1,
+        description="Maximum frame claim attempts before operator intervention is expected"
+    )
 
 
 class LoopSpec(BaseModel):

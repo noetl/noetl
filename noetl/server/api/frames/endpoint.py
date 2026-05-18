@@ -274,6 +274,15 @@ def _frame_commit_result(
     return result
 
 
+def _frame_recovery_policy(frame_policy: dict[str, Any] | None) -> dict[str, Any]:
+    policy = frame_policy if isinstance(frame_policy, dict) else {}
+    return {
+        "retry_mode": "whole_frame",
+        "row_split_retry": False,
+        "max_attempts": max(1, int(policy.get("max_attempts") or 3)),
+    }
+
+
 async def _frame_conflict_detail(cur: Any, *, frame_id: int, worker_id: str) -> dict[str, Any] | None:
     await cur.execute(
         """
@@ -451,6 +460,10 @@ async def claim_frames(stage_id: int, req: FrameClaimRequest) -> dict[str, Any]:
                                 "reclaimer_worker": req.worker_id,
                                 "lease_until": str(frame.get("lease_until")),
                                 "reason": "lease_expired",
+                                "previous_attempt": frame.get("attempts"),
+                                "recovery": _frame_recovery_policy(
+                                    req.frame_policy or stage.get("frame_policy") or {}
+                                ),
                             },
                         )
                         events_to_mirror.append(abandoned)
@@ -481,6 +494,9 @@ async def claim_frames(stage_id: int, req: FrameClaimRequest) -> dict[str, Any]:
                         meta_extra={
                             "attempt": updated.get("attempts"),
                             "frame_policy": req.frame_policy or stage.get("frame_policy") or {},
+                            "recovery": _frame_recovery_policy(
+                                req.frame_policy or stage.get("frame_policy") or {}
+                            ),
                         },
                     )
                     await cur.execute(
@@ -624,6 +640,9 @@ async def commit_frame(frame_id: int, req: FrameCommitRequest) -> dict[str, Any]
                         "row_count": req.row_count,
                         "events_emitted": req.events_emitted,
                         "cursor": req.cursor or {},
+                        "recovery": _frame_recovery_policy(
+                            (frame.get("cursor") or {}).get("frame_policy") or {}
+                        ),
                     },
                 )
                 await cur.execute(

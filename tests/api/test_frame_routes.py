@@ -61,6 +61,20 @@ def test_frame_commit_result_keeps_event_result_shape():
     assert set(result) <= {"status", "reference", "context"}
 
 
+def test_frame_recovery_policy_is_whole_frame_only():
+    from noetl.core.dsl.engine.models.workflow import FramePolicy
+    from noetl.server.api.frames import endpoint
+
+    policy = FramePolicy(process="frame", max_rows=50, max_attempts=4)
+
+    assert policy.retry_mode == "whole_frame"
+    assert endpoint._frame_recovery_policy(policy.model_dump()) == {
+        "retry_mode": "whole_frame",
+        "row_split_retry": False,
+        "max_attempts": 4,
+    }
+
+
 def test_frame_event_meta_includes_command_lineage():
     from noetl.server.api.frames import endpoint
 
@@ -243,6 +257,50 @@ class _FrameEndpointCursor:
         raise AssertionError(f"Unexpected fetchone query: {query}")
 
 
+class _ClaimEndpointCursor:
+    def __init__(self):
+        self.queries = []
+        self.expired_frame = {
+            "frame_id": 9,
+            "stage_id": 8,
+            "execution_id": 7,
+            "parent_frame_id": None,
+            "command_id": 5,
+            "claimed_event_id": 4,
+            "terminal_event_id": None,
+            "cursor": {"kind": "postgres", "row_count": 50},
+            "row_count": 0,
+            "status": "RUNNING",
+            "owner_worker": "worker-old",
+            "lease_until": "expired",
+            "output_ref": None,
+            "events_emitted": 0,
+            "attempts": 1,
+            "tenant_id": "tenant-a",
+            "organization_id": "org-a",
+            "expired_lease": True,
+            "step_name": "fetch_rows",
+        }
+        self.claimed_frame = {
+            **self.expired_frame,
+            "status": "CLAIMED",
+            "owner_worker": "worker-new",
+            "lease_until": "later",
+            "attempts": 2,
+        }
+
+    async def execute(self, query, params=None):
+        self.queries.append((query, params))
+
+    async def fetchone(self):
+        query = self.queries[-1][0]
+        if "SELECT f.*" in query:
+            return self.expired_frame
+        if "UPDATE noetl.frame" in query and "RETURNING *" in query:
+            return self.claimed_frame
+        raise AssertionError(f"Unexpected fetchone query: {query}")
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("previous_status", "expected_event_type"),
@@ -366,3 +424,71 @@ async def test_heartbeat_frame_rejects_terminal_frame_without_event(monkeypatch)
     assert exc.value.status_code == 409
     assert exc.value.detail["code"] == "frame_already_terminal"
     assert exc.value.detail["terminal_event_id"] == 78
+
+
+@pytest.mark.asyncio
+async def test_claim_frames_reclaims_expired_frame_with_abandoned_event(monkeypatch):
+    from noetl.server.api.frames import endpoint
+    from noetl.server.api.frames.schema import FrameClaimRequest
+
+    cursor = _ClaimEndpointCursor()
+    conn = _FrameEndpointConn(cursor)
+    emitted = []
+
+    async def load_stage(_cur, stage_id):
+        assert stage_id == 8
+        return {
+            "stage_id": 8,
+            "execution_id": 7,
+            "catalog_id": 6,
+            "kind": "loop",
+            "step_name": "fetch_rows",
+            "dsl_ref": "steps.fetch_rows",
+            "status": "RUNNING",
+            "frame_policy": {"process": "frame", "max_rows": 50, "max_attempts": 4},
+            "tenant_id": "tenant-a",
+            "organization_id": "org-a",
+        }
+
+    async def resolve_command_id(_cur, **_kwargs):
+        return 5
+
+    async def insert_frame_event(_cur, **kwargs):  # noqa: ARG001
+        emitted.append(kwargs)
+        return {"event_id": 100 + len(emitted), "event_type": kwargs["event_type"]}
+
+    async def mirror_frame_events(_events):
+        return None
+
+    monkeypatch.setattr(endpoint, "get_pool_connection", lambda: _ConnCtx(conn))
+    monkeypatch.setattr(endpoint, "_load_stage", load_stage)
+    monkeypatch.setattr(endpoint, "_resolve_claim_command_id", resolve_command_id)
+    monkeypatch.setattr(endpoint, "_insert_frame_event", insert_frame_event)
+    monkeypatch.setattr(endpoint, "_mirror_frame_events", mirror_frame_events)
+
+    response = await endpoint.claim_frames(
+        8,
+        FrameClaimRequest(
+            worker_id="worker-new",
+            command_id=5,
+            requested_count=1,
+            lease_seconds=60,
+            frame_policy={"process": "frame", "max_rows": 50, "max_attempts": 4},
+        ),
+    )
+
+    assert response["status"] == "ok"
+    assert response["frames"][0]["frame_id"] == 9
+    assert response["frames"][0]["claimed_event_id"] == 102
+    assert [item["event_type"] for item in emitted] == ["frame.abandoned", "frame.dispatched"]
+    assert emitted[0]["meta_extra"]["previous_owner_worker"] == "worker-old"
+    assert emitted[0]["meta_extra"]["reclaimer_worker"] == "worker-new"
+    assert emitted[0]["meta_extra"]["previous_attempt"] == 1
+    assert emitted[0]["meta_extra"]["recovery"] == {
+        "retry_mode": "whole_frame",
+        "row_split_retry": False,
+        "max_attempts": 4,
+    }
+    assert emitted[1]["meta_extra"]["attempt"] == 2
+    assert emitted[1]["meta_extra"]["recovery"]["retry_mode"] == "whole_frame"
+    assert conn.commits == 1
