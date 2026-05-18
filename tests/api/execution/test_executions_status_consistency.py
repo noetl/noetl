@@ -141,7 +141,7 @@ async def test_get_executions_normalizes_non_terminal_completed_to_running(monke
             "result": None,
             "error": None,
             "parent_execution_id": None,
-            "path": "bhs/state_report_generation_prod_v10",
+            "path": "tests/state_report_generation_prod_v10",
             "version": 1,
         }
     ]
@@ -186,7 +186,7 @@ async def test_get_executions_keeps_terminal_completed(monkeypatch):
             "terminal_event_type": "playbook.completed",
             "terminal_status": "COMPLETED",
             "terminal_end_time": now,
-            "path": "bhs/state_report_generation_prod_v10",
+            "path": "tests/state_report_generation_prod_v10",
             "version": 1,
         }
     ]
@@ -225,7 +225,7 @@ async def test_get_executions_prefers_terminal_event_even_if_latest_is_non_termi
             "terminal_event_type": "execution.cancelled",
             "terminal_status": "CANCELLED",
             "terminal_end_time": terminal,
-            "path": "bhs/state_report_generation_prod_v10",
+            "path": "tests/state_report_generation_prod_v10",
             "version": 1,
         }
     ]
@@ -258,7 +258,7 @@ async def test_get_executions_infers_completed_from_batch_done_without_pending(m
             "result": None,
             "error": None,
             "parent_execution_id": None,
-            "path": "bhs/state_report_generation_prod_v10",
+            "path": "tests/state_report_generation_prod_v10",
             "version": 1,
         }
     ]
@@ -305,7 +305,7 @@ async def test_get_executions_keeps_terminal_status_when_latest_projection_event
             "terminal_event_type": "execution.completed",
             "terminal_status": "COMPLETED",
             "terminal_end_time": terminal,
-            "path": "bhs/state_report_generation_prod_v10",
+            "path": "tests/state_report_generation_prod_v10",
             "version": 1,
         }
     ]
@@ -413,7 +413,7 @@ async def test_get_execution_infers_completed_from_batch_done_without_pending_co
         "created_at": latest,
         "status": "COMPLETED",
     }
-    catalog_row = {"path": "bhs/state_report_generation_prod_v10", "version": 7}
+    catalog_row = {"path": "tests/state_report_generation_prod_v10", "version": 7}
 
     monkeypatch.setattr(
         execution_api,
@@ -480,7 +480,7 @@ async def test_get_execution_keeps_running_when_batch_done_still_has_pending_com
         "created_at": latest,
         "status": "COMPLETED",
     }
-    catalog_row = {"path": "bhs/state_report_generation_prod_v10", "version": 7}
+    catalog_row = {"path": "tests/state_report_generation_prod_v10", "version": 7}
 
     monkeypatch.setattr(
         execution_api,
@@ -529,7 +529,7 @@ async def test_get_execution_can_omit_events_payload(monkeypatch):
         "created_at": latest,
         "status": "COMPLETED",
     }
-    catalog_row = {"path": "bhs/state_report_generation_prod_v10", "version": 7}
+    catalog_row = {"path": "tests/state_report_generation_prod_v10", "version": 7}
 
     monkeypatch.setattr(
         execution_api,
@@ -604,7 +604,7 @@ async def test_get_execution_prefers_terminal_failure_over_batch_completion_infe
         "status": "FAILED",
         "created_at": terminal,
     }
-    catalog_row = {"path": "bhs/state_report_generation_prod_v10", "version": 7}
+    catalog_row = {"path": "tests/state_report_generation_prod_v10", "version": 7}
 
     monkeypatch.setattr(
         execution_api,
