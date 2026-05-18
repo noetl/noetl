@@ -138,6 +138,8 @@ def test_fold_replay_state_tracks_execution_frames_loops_and_checksum():
     assert state["frames"]["42"]["terminal_event_id"] == 5
     assert state["frames"]["42"]["attempts"] == 2
     assert state["frames"]["42"]["row_count"] == 50
+    assert state["frames"]["42"]["cursor"] == {}
+    assert state["frames"]["42"]["output_ref_summary"]["sha256"] == "abc"
     assert state["loops"]["loop-1"]["done"] == 1
     assert state["loops"]["loop-1"]["completed"] is True
     assert state["upcaster_registry_digest"] == "abc123"
@@ -202,3 +204,87 @@ def test_fold_replay_state_can_resume_from_snapshot_seed():
     assert resumed["frames"]["10"]["row_count"] == 3
     assert resumed["replay_snapshot"]["version"] == 2
     assert resumed["replay_snapshot"]["meta"] == {"projection_code_version": "test"}
+
+
+def test_frame_projection_checksum_matches_live_rows_and_replayed_state():
+    from noetl.server.api.replay import (
+        fold_replay_state,
+        frame_projection_checksum,
+        normalize_live_frame_projection,
+        normalize_replayed_frame_projection,
+    )
+
+    output_ref = {
+        "rows_ref": {
+            "ref": "noetl://execution/123/result/frame/abc",
+            "meta": {
+                "sha256": "payload-sha",
+                "schema_digest": "schema-sha",
+                "row_count": 50,
+                "media_type": "application/vnd.apache.arrow.stream",
+            },
+        },
+        "row_count": 50,
+        "schema_digest": "schema-sha",
+        "media_type": "application/vnd.apache.arrow.stream",
+    }
+    events = [
+        {
+            "event_id": 10,
+            "event_type": "frame.dispatched",
+            "aggregate_type": "frame",
+            "aggregate_id": "frame/42",
+            "stage_id": 7,
+            "command_id": 99,
+            "meta": {"attempt": 1, "parent_frame_id": "41"},
+        },
+        {
+            "event_id": 11,
+            "event_type": "frame.committed",
+            "aggregate_type": "frame",
+            "aggregate_id": "frame/42",
+            "status": "COMPLETED",
+            "payload_ref": output_ref,
+            "stage_id": 7,
+            "command_id": 99,
+            "meta": {
+                "row_count": 50,
+                "events_emitted": 2,
+                "cursor": {"last_id": "p-50"},
+            },
+        },
+    ]
+    state = fold_replay_state(
+        events,
+        tenant_id="tenant-a",
+        organization_id="org-a",
+        execution_id=123,
+    )
+    live_rows = normalize_live_frame_projection(
+        [
+            {
+                "frame_id": 42,
+                "stage_id": 7,
+                "parent_frame_id": 41,
+                "command_id": 99,
+                "claimed_event_id": 10,
+                "terminal_event_id": 11,
+                "status": "COMPLETED",
+                "row_count": 50,
+                "cursor": {"last_id": "p-50"},
+                "events_emitted": 2,
+                "output_ref": output_ref,
+            }
+        ]
+    )
+    replayed_rows = normalize_replayed_frame_projection(state)
+
+    assert replayed_rows == live_rows
+    assert frame_projection_checksum(replayed_rows) == frame_projection_checksum(live_rows)
+    assert replayed_rows[0]["output_ref_summary"] == {
+        "sha256": "payload-sha",
+        "schema_digest": "schema-sha",
+        "row_count": 50,
+        "media_type": "application/vnd.apache.arrow.stream",
+        "ref": "noetl://execution/123/result/frame/abc",
+    }

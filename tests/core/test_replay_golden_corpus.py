@@ -26,4 +26,4 @@ def test_golden_replay_corpus_checksum_is_stable():
     assert state["frames"]["100"]["claimed_event_id"] == 3
     assert state["frames"]["100"]["terminal_event_id"] == 5
     assert state["frames"]["100"]["output_ref"]["sha256"] == "golden"
-    assert state["checksum"] == "d1e5b748cd47106dcefd4b178acc80e94d071451be92a0c86da9512a7ae8c5f8"
+    assert state["checksum"] == "c2b423fdebfb189911bc7c9d875a98e9d9a9f9227033d80650551682117f32ee"

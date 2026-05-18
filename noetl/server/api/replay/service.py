@@ -73,6 +73,47 @@ def _payload_ref(event: Mapping[str, Any]) -> Any:
     return None
 
 
+def _payload_summary(reference: Any) -> dict[str, Any]:
+    if not isinstance(reference, Mapping):
+        return {
+            "sha256": None,
+            "schema_digest": None,
+            "row_count": None,
+            "media_type": None,
+            "ref": None,
+        }
+    rows_ref = reference.get("rows_ref")
+    rows_ref = rows_ref if isinstance(rows_ref, Mapping) else {}
+    rows_meta = rows_ref.get("meta")
+    rows_meta = rows_meta if isinstance(rows_meta, Mapping) else {}
+    rows_ipc = rows_ref.get("ipc")
+    rows_ipc = rows_ipc if isinstance(rows_ipc, Mapping) else {}
+    return {
+        "sha256": (
+            reference.get("sha256")
+            or rows_meta.get("sha256")
+            or rows_ipc.get("sha256")
+            or reference.get("digest")
+        ),
+        "schema_digest": (
+            reference.get("schema_digest")
+            or rows_meta.get("schema_digest")
+            or rows_ipc.get("schema_digest")
+        ),
+        "row_count": (
+            reference.get("row_count")
+            or rows_meta.get("row_count")
+            or rows_ipc.get("row_count")
+        ),
+        "media_type": (
+            reference.get("media_type")
+            or rows_meta.get("media_type")
+            or rows_ipc.get("media_type")
+        ),
+        "ref": reference.get("ref") or rows_ref.get("ref") or reference.get("uri"),
+    }
+
+
 def _event_id(event: Mapping[str, Any]) -> Optional[int]:
     value = event.get("event_id")
     if value is None:
@@ -264,6 +305,9 @@ def fold_replay_state(
                     "attempts": 0,
                     "last_event_id": None,
                     "output_ref": None,
+                    "output_ref_summary": _payload_summary(None),
+                    "cursor": {},
+                    "events_emitted": 0,
                 },
             )
             frame["last_event_id"] = event_id
@@ -286,9 +330,16 @@ def fold_replay_state(
                 frame["status"] = status or "COMPLETED"
                 frame["row_count"] = int(meta.get("row_count") or frame.get("row_count") or 0)
                 frame["output_ref"] = payload_ref
+                frame["output_ref_summary"] = _payload_summary(payload_ref)
+                frame["cursor"] = meta.get("cursor") or frame.get("cursor") or {}
+                frame["events_emitted"] = int(meta.get("events_emitted") or frame.get("events_emitted") or 0)
                 frame["terminal_event_id"] = event_id
             elif event_type == "frame.failed":
                 frame["status"] = status or "FAILED"
+                frame["output_ref"] = payload_ref
+                frame["output_ref_summary"] = _payload_summary(payload_ref)
+                frame["cursor"] = meta.get("cursor") or frame.get("cursor") or {}
+                frame["events_emitted"] = int(meta.get("events_emitted") or frame.get("events_emitted") or 0)
                 frame["terminal_event_id"] = event_id
             elif status:
                 frame["status"] = str(status)
@@ -323,6 +374,72 @@ def fold_replay_state(
     state["checksum_algorithm"] = "sha256"
     state["checksum"] = _canonical_checksum(checksum_input)
     return state
+
+
+def _normalized_frame_projection_row(row: Mapping[str, Any]) -> dict[str, Any]:
+    output_ref = row.get("output_ref")
+    return {
+        "frame_id": str(row.get("frame_id")),
+        "stage_id": str(row.get("stage_id")) if row.get("stage_id") is not None else None,
+        "parent_frame_id": (
+            str(row.get("parent_frame_id")) if row.get("parent_frame_id") is not None else None
+        ),
+        "command_id": str(row.get("command_id")) if row.get("command_id") is not None else None,
+        "claimed_event_id": (
+            int(row.get("claimed_event_id")) if row.get("claimed_event_id") is not None else None
+        ),
+        "terminal_event_id": (
+            int(row.get("terminal_event_id")) if row.get("terminal_event_id") is not None else None
+        ),
+        "status": row.get("status"),
+        "row_count": int(row.get("row_count") or 0),
+        "cursor": row.get("cursor") or {},
+        "events_emitted": int(row.get("events_emitted") or 0),
+        "output_ref_summary": _payload_summary(output_ref),
+    }
+
+
+def normalize_live_frame_projection(rows: Iterable[Mapping[str, Any]]) -> list[dict[str, Any]]:
+    return sorted(
+        (_normalized_frame_projection_row(row) for row in rows),
+        key=lambda row: int(row["frame_id"]),
+    )
+
+
+def normalize_replayed_frame_projection(state: Mapping[str, Any]) -> list[dict[str, Any]]:
+    frames = state.get("frames")
+    if not isinstance(frames, Mapping):
+        return []
+    return sorted(
+        (
+            {
+                "frame_id": str(frame.get("frame_id") or frame_id),
+                "stage_id": str(frame.get("stage_id")) if frame.get("stage_id") is not None else None,
+                "parent_frame_id": (
+                    str(frame.get("parent_frame_id")) if frame.get("parent_frame_id") is not None else None
+                ),
+                "command_id": str(frame.get("command_id")) if frame.get("command_id") is not None else None,
+                "claimed_event_id": (
+                    int(frame.get("claimed_event_id")) if frame.get("claimed_event_id") is not None else None
+                ),
+                "terminal_event_id": (
+                    int(frame.get("terminal_event_id")) if frame.get("terminal_event_id") is not None else None
+                ),
+                "status": frame.get("status"),
+                "row_count": int(frame.get("row_count") or 0),
+                "cursor": frame.get("cursor") or {},
+                "events_emitted": int(frame.get("events_emitted") or 0),
+                "output_ref_summary": frame.get("output_ref_summary") or _payload_summary(frame.get("output_ref")),
+            }
+            for frame_id, frame in frames.items()
+            if isinstance(frame, Mapping)
+        ),
+        key=lambda row: int(row["frame_id"]),
+    )
+
+
+def frame_projection_checksum(rows: Iterable[Mapping[str, Any]]) -> str:
+    return _canonical_checksum({"frames": list(rows)})
 
 
 class ReplayService:
