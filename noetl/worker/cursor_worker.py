@@ -15,6 +15,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import threading
 import time
 from typing import Any, Awaitable, Callable, Optional
 
@@ -251,6 +252,43 @@ async def _runtime_frame_heartbeat_loop(
                     f"{_runtime_api_base(context)}/api/frames/{frame_id}/heartbeat",
                     json=payload,
                 )
+                response.raise_for_status()
+        except Exception as exc:
+            logger.warning(
+                "[CURSOR-WORKER] slot=%s frame_id=%s lease heartbeat failed; continuing: %s",
+                worker_slot_id,
+                frame_id,
+                exc,
+            )
+
+
+def _runtime_frame_heartbeat_thread(
+    *,
+    context: dict[str, Any],
+    runtime_frame: Optional[dict[str, Any]],
+    worker_slot_id: Optional[str],
+    lease_seconds: int,
+    heartbeat_seconds: float,
+    stop_event: threading.Event,
+) -> None:
+    """Extend a frame lease even when frame task execution blocks the event loop."""
+    if not runtime_frame:
+        return
+    frame_id = runtime_frame.get("frame_id")
+    if not frame_id:
+        return
+
+    interval_seconds = max(0.1, float(heartbeat_seconds or 30.0))
+    payload = {
+        "worker_id": worker_slot_id or os.getenv("HOSTNAME") or "cursor-worker",
+        "status": "RUNNING",
+        "lease_seconds": lease_seconds,
+    }
+    url = f"{_runtime_api_base(context)}/api/frames/{frame_id}/heartbeat"
+    while not stop_event.wait(interval_seconds):
+        try:
+            with httpx.Client(timeout=10.0) as client:
+                response = client.post(url, json=payload)
                 response.raise_for_status()
         except Exception as exc:
             logger.warning(
@@ -691,30 +729,26 @@ async def execute_cursor_worker(
                 return {"status": "ok"}
 
             if frame_process == "frame":
-                heartbeat_stop_event = asyncio.Event()
-                heartbeat_task = asyncio.create_task(
-                    _runtime_frame_heartbeat_loop(
-                        context=context,
-                        runtime_frame=runtime_frame,
-                        worker_slot_id=worker_slot_id,
-                        lease_seconds=int(float(frame_policy.get("lease_seconds") or 120.0)),
-                        heartbeat_seconds=float(frame_policy.get("heartbeat_seconds") or 30.0),
-                        stop_event=heartbeat_stop_event,
-                    ),
+                heartbeat_stop_event = threading.Event()
+                heartbeat_thread = threading.Thread(
+                    target=_runtime_frame_heartbeat_thread,
+                    kwargs={
+                        "context": context,
+                        "runtime_frame": runtime_frame,
+                        "worker_slot_id": worker_slot_id,
+                        "lease_seconds": int(float(frame_policy.get("lease_seconds") or 120.0)),
+                        "heartbeat_seconds": float(frame_policy.get("heartbeat_seconds") or 30.0),
+                        "stop_event": heartbeat_stop_event,
+                    },
                     name=f"frame-heartbeat:{runtime_frame.get('frame_id') if runtime_frame else 'none'}",
+                    daemon=True,
                 )
+                heartbeat_thread.start()
                 try:
                     frame_status = await _execute_whole_frame()
                 finally:
                     heartbeat_stop_event.set()
-                    try:
-                        await asyncio.wait_for(heartbeat_task, timeout=2.0)
-                    except asyncio.TimeoutError:
-                        heartbeat_task.cancel()
-                        try:
-                            await heartbeat_task
-                        except asyncio.CancelledError:
-                            pass
+                    heartbeat_thread.join(timeout=2.0)
                 row_status = frame_status.get("status")
                 frame_metrics = _aggregate_frame_metrics(
                     [frame_status],

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import threading
 import time
 
 import pytest
@@ -87,6 +88,23 @@ class _FakeAsyncClient:
         return _FakeResponse()
 
 
+class _FakeSyncClient:
+    calls = []
+
+    def __init__(self, timeout):
+        self.timeout = timeout
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        return None
+
+    def post(self, url, json):
+        self.calls.append({"url": url, "json": json, "timeout": self.timeout})
+        return _FakeResponse()
+
+
 @pytest.mark.asyncio
 async def test_start_runtime_frame_emits_running_heartbeat(monkeypatch):
     from noetl.worker import cursor_worker
@@ -140,6 +158,38 @@ async def test_runtime_frame_heartbeat_loop_extends_lease_until_stopped(monkeypa
     assert all(call["url"] == "http://runtime/api/frames/12/heartbeat" for call in _FakeAsyncClient.calls)
     assert all(call["json"]["status"] == "RUNNING" for call in _FakeAsyncClient.calls)
     assert all(call["json"]["lease_seconds"] == 60 for call in _FakeAsyncClient.calls)
+
+
+def test_runtime_frame_heartbeat_thread_extends_lease_until_stopped(monkeypatch):
+    from noetl.worker import cursor_worker
+
+    _FakeSyncClient.calls = []
+    monkeypatch.setattr(cursor_worker.httpx, "Client", _FakeSyncClient)
+
+    stop_event = threading.Event()
+    thread = threading.Thread(
+        target=cursor_worker._runtime_frame_heartbeat_thread,
+        kwargs={
+            "context": {"server_url": "http://runtime"},
+            "runtime_frame": {"frame_id": 14},
+            "worker_slot_id": "slot-4",
+            "lease_seconds": 90,
+            "heartbeat_seconds": 0.001,
+            "stop_event": stop_event,
+        },
+    )
+    thread.start()
+    deadline = time.monotonic() + 1.0
+    while len(_FakeSyncClient.calls) < 2 and time.monotonic() < deadline:
+        time.sleep(0.01)
+    stop_event.set()
+    thread.join(timeout=1.0)
+
+    assert not thread.is_alive()
+    assert len(_FakeSyncClient.calls) >= 2
+    assert all(call["url"] == "http://runtime/api/frames/14/heartbeat" for call in _FakeSyncClient.calls)
+    assert all(call["json"]["status"] == "RUNNING" for call in _FakeSyncClient.calls)
+    assert all(call["json"]["lease_seconds"] == 90 for call in _FakeSyncClient.calls)
 
 
 @pytest.mark.asyncio
