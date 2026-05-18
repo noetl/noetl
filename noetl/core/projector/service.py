@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
+from datetime import datetime, timezone
 from typing import Any, Iterable
 
 from noetl.core.projection_store import ProjectionRecord, ProjectionStore
@@ -34,6 +35,7 @@ class ReplayStateProjector:
 
         written: list[ProjectionRecord] = []
         for (tenant_id, organization_id, execution_id), group in grouped.items():
+            projected_at = datetime.now(timezone.utc)
             ordered = sorted(
                 group,
                 key=lambda item: (
@@ -51,6 +53,7 @@ class ReplayStateProjector:
             )
             version = _projection_version(ordered)
             source_event_id = _last_event_id(ordered)
+            event_watermark = _event_time_watermark(ordered)
             record = ProjectionRecord(
                 projection_id=f"execution/{execution_id}/{self.projection}",
                 projection_type=f"replay_state:{self.projection}",
@@ -63,8 +66,12 @@ class ReplayStateProjector:
                 checksum=state.get("checksum"),
                 meta={
                     "event_count": len(ordered),
+                    "event_time_watermark": _format_dt(event_watermark),
+                    "projected_at": _format_dt(projected_at),
+                    "projection_lag_ms": _projection_lag_ms(event_watermark, projected_at),
                     "projector": "replay_state",
                     "projection": self.projection,
+                    "source_event_id": source_event_id,
                     "upcaster_registry_digest": state.get("upcaster_registry_digest"),
                 },
             )
@@ -86,3 +93,53 @@ def _last_event_id(events: list[dict[str, Any]]) -> int | None:
         if event_id is not None:
             return int(event_id)
     return None
+
+
+def _event_time_watermark(events: list[dict[str, Any]]) -> datetime | None:
+    watermarks = [
+        parsed
+        for event in events
+        for parsed in [_parse_event_time(event)]
+        if parsed is not None
+    ]
+    return max(watermarks) if watermarks else None
+
+
+def _parse_event_time(event: dict[str, Any]) -> datetime | None:
+    for key in ("event_time", "ingest_time", "created_at"):
+        value = event.get(key)
+        if value is None:
+            continue
+        if isinstance(value, datetime):
+            dt = value
+        elif isinstance(value, str):
+            raw = value.strip()
+            if not raw:
+                continue
+            if raw.endswith("Z"):
+                raw = f"{raw[:-1]}+00:00"
+            try:
+                dt = datetime.fromisoformat(raw)
+            except ValueError:
+                continue
+        else:
+            continue
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt.astimezone(timezone.utc)
+    return None
+
+
+def _projection_lag_ms(event_watermark: datetime | None, projected_at: datetime) -> int | None:
+    if event_watermark is None:
+        return None
+    lag = projected_at - event_watermark
+    return max(0, int(lag.total_seconds() * 1000))
+
+
+def _format_dt(value: datetime | None) -> str | None:
+    if value is None:
+        return None
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
