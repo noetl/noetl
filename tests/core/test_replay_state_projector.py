@@ -216,6 +216,7 @@ async def test_nats_projector_worker_projects_owned_event_batch():
     assert snapshot["events_extracted_total"] == 2
     assert snapshot["events_owned_total"] == 1
     assert snapshot["projection_records_total"] == 1
+    assert snapshot["last_projection_source_event_id"] == 20
 
 
 @pytest.mark.asyncio
