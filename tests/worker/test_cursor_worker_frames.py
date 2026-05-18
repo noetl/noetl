@@ -258,3 +258,74 @@ async def test_cursor_worker_processes_frame_rows_concurrently(monkeypatch):
     assert result["frames"][0]["metrics"]["row_concurrency"] == 4
     assert result["frames"][0]["metrics"]["tasks"]["by_kind"]["noop"]["count"] == 4
     assert elapsed < 0.18
+
+
+@pytest.mark.asyncio
+async def test_cursor_worker_can_process_whole_frame_once(monkeypatch):
+    from noetl.core.cursor_drivers import register_driver
+    from noetl.worker import cursor_worker
+
+    driver = _FakeBatchCursorDriver(
+        [
+            {"id": 1, "status": "pending"},
+            {"id": 2, "status": "pending"},
+            {"id": 3, "status": "pending"},
+        ]
+    )
+    register_driver(driver.kind, driver)
+    fake_store = _FakeStore()
+    monkeypatch.setattr(cursor_worker, "default_store", fake_store)
+    monkeypatch.setattr(cursor_worker, "_frame_ipc_cache", lambda: None)
+
+    async def fetch_credential(auth_key):
+        return {"dsn": "memory"}
+
+    monkeypatch.setattr(cursor_worker, "fetch_credential_by_key_async", fetch_credential)
+
+    seen_frames = []
+
+    async def tool_executor(kind, cfg, ctx):
+        seen_frames.append(
+            {
+                "frame_rows": list(ctx["frame"]["rows"]),
+                "iter_rows": list(ctx["iter"]["item_rows"]),
+                "iter_item": list(ctx["iter"]["item"]),
+            }
+        )
+        return {"status": "ok"}
+
+    result = await cursor_worker.execute_cursor_worker(
+        config={
+            "cursor": {
+                "kind": driver.kind,
+                "auth": "pg",
+                "claim": "select next limit {{ __frame_max_rows }}",
+                "options": {"max_iterations": 10},
+            },
+            "iterator": "item",
+            "tasks": [{"name": "process_frame", "kind": "noop"}],
+            "frame_policy": {
+                "max_rows": 3,
+                "max_seconds": 30,
+                "max_bytes": 4096,
+                "process": "frame",
+            },
+        },
+        context={"execution_id": 42},
+        jinja_env=Environment(),
+        tool_executor=tool_executor,
+        render_template=lambda template, ctx: template.replace("{{ __frame_max_rows }}", str(ctx["__frame_max_rows"])),
+        render_dict=lambda data, ctx: data,
+        worker_slot_id="slot-1",
+    )
+
+    assert result["status"] == "ok"
+    assert result["processed"] == 3
+    assert result["frame_count"] == 1
+    assert len(seen_frames) == 1
+    assert [row["id"] for row in seen_frames[0]["frame_rows"]] == [1, 2, 3]
+    assert seen_frames[0]["iter_rows"] == seen_frames[0]["frame_rows"]
+    assert seen_frames[0]["iter_item"] == seen_frames[0]["frame_rows"]
+    assert result["frames"][0]["metrics"]["process"] == "frame"
+    assert result["frames"][0]["metrics"]["rows"]["ok"] == 3
+    assert result["frames"][0]["metrics"]["tasks"]["by_kind"]["noop"]["count"] == 1

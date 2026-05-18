@@ -278,6 +278,7 @@ def _empty_frame_metrics(*, row_count: int, row_concurrency: int) -> dict[str, A
     return {
         "row_count": row_count,
         "row_concurrency": row_concurrency,
+        "process": "row",
         "rows": {
             "ok": 0,
             "failed": 0,
@@ -327,6 +328,16 @@ def _aggregate_frame_metrics(row_results: list[dict[str, Any]], *, row_count: in
         _merge_metric_bucket(tasks["by_kind"], sequence_metrics.get("by_kind") or {})
         _merge_metric_bucket(tasks["by_name"], sequence_metrics.get("by_name") or {})
     return metrics
+
+
+def _frame_sequence_status(result: Any) -> str:
+    if isinstance(result, dict):
+        status = str(result.get("status", "")).lower()
+        if status == "failed":
+            return "failed"
+        if status == "break":
+            return "break"
+    return "ok"
 
 
 async def execute_cursor_worker(
@@ -383,6 +394,9 @@ async def execute_cursor_worker(
     max_frame_seconds = max(0.001, float(frame_policy.get("max_seconds") or 30.0))
     max_frame_bytes = max(1, int(frame_policy.get("max_bytes") or 64 * 1024 * 1024))
     row_concurrency = max(1, int(frame_policy.get("row_concurrency") or 1))
+    frame_process = str(frame_policy.get("process") or "row").strip().lower()
+    if frame_process not in {"row", "frame"}:
+        raise ValueError(f"cursor_worker: unsupported frame.process={frame_process!r}")
 
     # Render the claim SQL once at open-time.  execution_id /
     # facility / etc. are stable for the lifetime of this worker; the
@@ -516,6 +530,46 @@ async def execute_cursor_worker(
             frame_failed_before = failed
             frame_base_index = processed + failed
 
+            async def _execute_whole_frame() -> dict[str, Any]:
+                per_frame_ctx = dict(context or {})
+                iter_namespace = dict(per_frame_ctx.get("iter") or {})
+                iter_namespace[f"{iterator_name}_rows"] = frame_rows
+                iter_namespace[iterator_name] = frame_rows
+                iter_namespace["_index"] = frame_base_index
+                iter_namespace["_worker_slot_id"] = worker_slot_id
+                iter_namespace["_frame_index"] = frame_count
+                iter_namespace["_frame_row_count"] = len(frame_rows)
+                per_frame_ctx["iter"] = iter_namespace
+                per_frame_ctx["frame"] = {
+                    "index": frame_count,
+                    "base_index": frame_base_index,
+                    "row_count": len(frame_rows),
+                    "rows": frame_rows,
+                    "worker_slot_id": worker_slot_id,
+                    "policy": frame_policy,
+                }
+
+                try:
+                    result = await seq_executor.execute(
+                        tasks=tasks,
+                        base_context=per_frame_ctx,
+                    )
+                except Exception as exc:
+                    logger.exception(
+                        "[CURSOR-WORKER] slot=%s frame=%s: frame task sequence raised %s",
+                        worker_slot_id,
+                        frame_count,
+                        exc,
+                    )
+                    return {"status": "failed"}
+
+                if isinstance(result, dict):
+                    return {
+                        "status": _frame_sequence_status(result),
+                        "metrics": result.get("metrics"),
+                    }
+                return {"status": "ok"}
+
             async def _execute_frame_row(frame_row_index: int, row: dict[str, Any]) -> dict[str, Any]:
                 per_claim_ctx = dict(context or {})
                 iter_namespace = dict(per_claim_ctx.get("iter") or {})
@@ -552,7 +606,19 @@ async def execute_cursor_worker(
                     return {"status": "ok", "metrics": result.get("metrics")}
                 return {"status": "ok"}
 
-            if row_concurrency <= 1 or len(frame_rows) <= 1:
+            if frame_process == "frame":
+                frame_status = await _execute_whole_frame()
+                row_status = frame_status.get("status")
+                frame_metrics = _aggregate_frame_metrics(
+                    [frame_status],
+                    row_count=len(frame_rows),
+                    row_concurrency=1,
+                )
+                frame_metrics["process"] = "frame"
+                frame_metrics["rows"]["ok"] = len(frame_rows) if row_status == "ok" else 0
+                frame_metrics["rows"]["failed"] = len(frame_rows) if row_status == "failed" else 0
+                frame_metrics["rows"]["break"] = len(frame_rows) if row_status == "break" else 0
+            elif row_concurrency <= 1 or len(frame_rows) <= 1:
                 row_statuses = []
                 for frame_row_index, row in enumerate(frame_rows):
                     row_status = await _execute_frame_row(frame_row_index, row)
@@ -564,6 +630,11 @@ async def execute_cursor_worker(
                             worker_slot_id,
                         )
                         break
+                frame_metrics = _aggregate_frame_metrics(
+                    row_statuses,
+                    row_count=len(frame_rows),
+                    row_concurrency=row_concurrency,
+                )
             else:
                 semaphore = asyncio.Semaphore(row_concurrency)
 
@@ -580,12 +651,11 @@ async def execute_cursor_worker(
                         "stopping this worker after committed frame",
                         worker_slot_id,
                     )
-
-            frame_metrics = _aggregate_frame_metrics(
-                row_statuses,
-                row_count=len(frame_rows),
-                row_concurrency=row_concurrency,
-            )
+                frame_metrics = _aggregate_frame_metrics(
+                    row_statuses,
+                    row_count=len(frame_rows),
+                    row_concurrency=row_concurrency,
+                )
             failed += int(frame_metrics["rows"].get("failed") or 0)
             breaks += int(frame_metrics["rows"].get("break") or 0)
             processed += int(frame_metrics["rows"].get("ok") or 0) + int(frame_metrics["rows"].get("break") or 0)

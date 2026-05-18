@@ -55,6 +55,13 @@ class FramePolicy(BaseModel):
         ge=1,
         description="Maximum rows within one claimed frame to process concurrently"
     )
+    process: Literal["row", "frame"] = Field(
+        default="row",
+        description=(
+            "How a cursor frame is processed: row runs the task pipeline once per "
+            "claimed row; frame runs it once per claimed frame with frame.rows"
+        )
+    )
 
 
 class LoopSpec(BaseModel):
