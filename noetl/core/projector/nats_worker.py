@@ -8,10 +8,15 @@ import re
 from dataclasses import dataclass
 from typing import Any, Iterable, Optional
 
+from psycopg import errors as pg_errors
+
+from noetl.core.common import get_pgdb_connection
+from noetl.core.db.pool import close_pool, init_pool
 from noetl.core.logger import setup_logger
 from noetl.core.messaging import NATSCommandSubscriber
 from noetl.core.projection_store import PostgresProjectionStore, ProjectionStore
 
+from .metrics import ProjectorMetrics, start_projector_metrics_server
 from .service import ReplayStateProjector
 
 logger = setup_logger(__name__, include_location=True)
@@ -31,6 +36,8 @@ class ProjectorWorkerSettings:
     max_ack_pending: int = 64
     fetch_timeout_seconds: float = 30.0
     fetch_heartbeat_seconds: float = 5.0
+    metrics_host: str = "0.0.0.0"
+    metrics_port: Optional[int] = None
 
     @property
     def shard_index(self) -> int:
@@ -58,6 +65,8 @@ def load_projector_worker_settings() -> ProjectorWorkerSettings:
         max_ack_pending=max(1, _int_env("NOETL_PROJECTOR_NATS_MAX_ACK_PENDING", 64)),
         fetch_timeout_seconds=max(0.1, _float_env("NOETL_PROJECTOR_NATS_FETCH_TIMEOUT_SECONDS", 30.0)),
         fetch_heartbeat_seconds=max(0.1, _float_env("NOETL_PROJECTOR_NATS_FETCH_HEARTBEAT_SECONDS", 5.0)),
+        metrics_host=os.getenv("NOETL_PROJECTOR_METRICS_HOST") or "0.0.0.0",
+        metrics_port=_optional_int_env("NOETL_PROJECTOR_METRICS_PORT"),
     )
 
 
@@ -70,10 +79,12 @@ class NATSProjectorWorker:
         projection_store: Optional[ProjectionStore] = None,
         settings: Optional[ProjectorWorkerSettings] = None,
         projection: str = "all",
+        metrics: Optional[ProjectorMetrics] = None,
     ) -> None:
         self.settings = settings or load_projector_worker_settings()
         self.projection_store = projection_store or PostgresProjectionStore()
         self.projector = ReplayStateProjector(self.projection_store, projection=projection)
+        self.metrics = metrics or ProjectorMetrics()
         self._subscriber: Optional[NATSCommandSubscriber] = None
 
     async def start(self) -> None:
@@ -81,7 +92,13 @@ class NATSProjectorWorker:
 
         ensure_schema = getattr(self.projection_store, "ensure_schema", None)
         if callable(ensure_schema):
-            await ensure_schema()
+            try:
+                await ensure_schema()
+            except pg_errors.InsufficientPrivilege:
+                logger.warning(
+                    "Projector %s cannot run projection DDL; continuing with existing schema",
+                    self.settings.shard_id,
+                )
 
         self._subscriber = NATSCommandSubscriber(
             nats_url=self.settings.nats_url,
@@ -110,15 +127,26 @@ class NATSProjectorWorker:
     async def handle_notification(self, notification: dict[str, Any]) -> str:
         """Project one NATS notification and return an ack action."""
 
-        events = [
-            event
-            for event in _extract_events(notification)
-            if self._owns_event(event)
-        ]
+        extracted_events = _extract_events(notification)
+        events = [event for event in extracted_events if self._owns_event(event)]
         if not events:
+            self.metrics.record_notification(
+                extracted_events=len(extracted_events),
+                owned_events=0,
+                projection_records=0,
+            )
             return "ack"
 
-        written = await self.projector.project(events)
+        try:
+            written = await self.projector.project(events)
+        except Exception:
+            self.metrics.record_error()
+            raise
+        self.metrics.record_notification(
+            extracted_events=len(extracted_events),
+            owned_events=len(events),
+            projection_records=len(written),
+        )
         logger.debug(
             "Projector %s folded %s events into %s projection records",
             self.settings.shard_id,
@@ -140,11 +168,34 @@ class NATSProjectorWorker:
 
 
 async def run_projector_worker(settings: Optional[ProjectorWorkerSettings] = None) -> None:
-    worker = NATSProjectorWorker(settings=settings)
+    effective_settings = settings or load_projector_worker_settings()
+    await init_pool(get_pgdb_connection())
+    worker = NATSProjectorWorker(settings=effective_settings)
+    metrics_server = None
+    if effective_settings.metrics_port:
+        metrics_server = start_projector_metrics_server(
+            worker.metrics,
+            host=effective_settings.metrics_host,
+            port=effective_settings.metrics_port,
+            labels={
+                "shard_id": effective_settings.shard_id,
+                "consumer": effective_settings.consumer_name,
+            },
+        )
+        logger.info(
+            "Projector %s exposing metrics on %s:%s",
+            effective_settings.shard_id,
+            effective_settings.metrics_host,
+            effective_settings.metrics_port,
+        )
     try:
         await worker.start()
     finally:
+        if metrics_server is not None:
+            metrics_server.shutdown()
+            metrics_server.server_close()
         await worker.close()
+        await close_pool()
 
 
 def run_projector_worker_sync(settings: Optional[ProjectorWorkerSettings] = None) -> None:
@@ -176,6 +227,14 @@ def _int_env(name: str, default: int) -> int:
     if value is None or value.strip() == "":
         return default
     return int(value)
+
+
+def _optional_int_env(name: str) -> Optional[int]:
+    value = os.getenv(name)
+    if value is None or value.strip() == "":
+        return None
+    parsed = int(value)
+    return parsed if parsed > 0 else None
 
 
 def _float_env(name: str, default: float) -> float:
