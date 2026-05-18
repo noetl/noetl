@@ -2,6 +2,22 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.39.1](https://github.com/noetl/noetl/compare/v2.39.0...v2.39.1) (2026-05-18)
+
+### Bug Fixes
+
+* **cursor:** heartbeat long-running frames ([2c7edfa](https://github.com/noetl/noetl/commit/2c7edfa0c8c221ad0c67898d4dfe31f7b7a0f30e))
+* **cursor:** keep frame heartbeat off worker event loop ([ba4cbd3](https://github.com/noetl/noetl/commit/ba4cbd3a9cf54197992863924c05cd3fb6528cb6))
+* **db:** index frame cursor lineage lookups ([e25fa76](https://github.com/noetl/noetl/commit/e25fa76ea936f048700112f4dc76120ad84adf3a))
+* **frames:** allocate frame ids outside stage lock ([c04419e](https://github.com/noetl/noetl/commit/c04419e3db4f3253a614d83888410c97b7dfaf17))
+* **frames:** collapse frame event linkage writes ([0f08538](https://github.com/noetl/noetl/commit/0f08538512bf00c25a90dc9e8901c8c1639e5983))
+* **frames:** make cursor frame claims idempotent ([e543a94](https://github.com/noetl/noetl/commit/e543a94ed42136efec2d04e602218d55b5de700a))
+* **frames:** narrow stage lock to lazy mint ([ced1702](https://github.com/noetl/noetl/commit/ced1702d0f4e34d88ca0c1b41dcce2b3746c15b4))
+* **frames:** remove heartbeat stream lock ([5f6a90c](https://github.com/noetl/noetl/commit/5f6a90c3326ed830ae3d9c291ba81a2b3489bfa8))
+* **frames:** shard frame event stream locks ([5d8fdc8](https://github.com/noetl/noetl/commit/5d8fdc8fce21df387d3839aa3021d1f8cb240510))
+* **frames:** shard lazy mint locks by cursor ([5295144](https://github.com/noetl/noetl/commit/529514406ed537e1dac7da9cf3387dac68bf453a))
+* **server:** isolate command reaper db scans ([d1be273](https://github.com/noetl/noetl/commit/d1be273d5f8926abb6db2941e84c895b13dbcc31))
+
 ## [2.39.0](https://github.com/noetl/noetl/compare/v2.38.1...v2.39.0) (2026-05-18)
 
 ### Features
