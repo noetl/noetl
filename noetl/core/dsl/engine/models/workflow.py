@@ -50,6 +50,11 @@ class FramePolicy(BaseModel):
         gt=0,
         description="Expected heartbeat interval while a frame is running"
     )
+    row_concurrency: int = Field(
+        default=1,
+        ge=1,
+        description="Maximum rows within one claimed frame to process concurrently"
+    )
 
 
 class LoopSpec(BaseModel):

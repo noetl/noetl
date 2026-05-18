@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import asyncio
+import time
+
 import pytest
 from jinja2 import Environment
 
@@ -186,3 +189,67 @@ async def test_cursor_worker_uses_batched_claim_path(monkeypatch):
     assert driver.claim_contexts == []
     assert [call["max_rows"] for call in driver.claim_many_contexts] == [2, 2, 2]
     assert driver.claim_many_contexts[0]["context"]["max_rows"] == 2
+
+
+@pytest.mark.asyncio
+async def test_cursor_worker_processes_frame_rows_concurrently(monkeypatch):
+    from noetl.core.cursor_drivers import register_driver
+    from noetl.worker import cursor_worker
+
+    driver = _FakeBatchCursorDriver(
+        [
+            {"id": 1, "status": "pending"},
+            {"id": 2, "status": "pending"},
+            {"id": 3, "status": "pending"},
+            {"id": 4, "status": "pending"},
+        ]
+    )
+    register_driver(driver.kind, driver)
+    fake_store = _FakeStore()
+    monkeypatch.setattr(cursor_worker, "default_store", fake_store)
+    monkeypatch.setattr(cursor_worker, "_frame_ipc_cache", lambda: None)
+
+    async def fetch_credential(auth_key):
+        return {"dsn": "memory"}
+
+    monkeypatch.setattr(cursor_worker, "fetch_credential_by_key_async", fetch_credential)
+
+    seen_indexes = []
+
+    async def tool_executor(kind, cfg, ctx):
+        seen_indexes.append(ctx["iter"]["item"]["id"])
+        await asyncio.sleep(0.05)
+        return {"status": "ok"}
+
+    started = time.monotonic()
+    result = await cursor_worker.execute_cursor_worker(
+        config={
+            "cursor": {
+                "kind": driver.kind,
+                "auth": "pg",
+                "claim": "select next limit {{ __frame_max_rows }}",
+                "options": {"max_iterations": 10},
+            },
+            "iterator": "item",
+            "tasks": [{"name": "process_item", "kind": "noop"}],
+            "frame_policy": {
+                "max_rows": 4,
+                "max_seconds": 30,
+                "max_bytes": 4096,
+                "row_concurrency": 4,
+            },
+        },
+        context={"execution_id": 42},
+        jinja_env=Environment(),
+        tool_executor=tool_executor,
+        render_template=lambda template, ctx: template.replace("{{ __frame_max_rows }}", str(ctx["__frame_max_rows"])),
+        render_dict=lambda data, ctx: data,
+        worker_slot_id="slot-1",
+    )
+    elapsed = time.monotonic() - started
+
+    assert result["status"] == "ok"
+    assert result["processed"] == 4
+    assert result["frame_count"] == 1
+    assert sorted(seen_indexes) == [1, 2, 3, 4]
+    assert elapsed < 0.18

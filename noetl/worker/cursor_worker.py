@@ -323,6 +323,7 @@ async def execute_cursor_worker(
     max_frame_rows = max(1, int(frame_policy.get("max_rows") or 1))
     max_frame_seconds = max(0.001, float(frame_policy.get("max_seconds") or 30.0))
     max_frame_bytes = max(1, int(frame_policy.get("max_bytes") or 64 * 1024 * 1024))
+    row_concurrency = max(1, int(frame_policy.get("row_concurrency") or 1))
 
     # Render the claim SQL once at open-time.  execution_id /
     # facility / etc. are stable for the lifetime of this worker; the
@@ -454,13 +455,13 @@ async def execute_cursor_worker(
 
             stop_after_frame = False
             frame_failed_before = failed
-            for frame_row_index, row in enumerate(frame_rows):
-                # Per-claim base context: clone the command context so
-                # per-row iter values never leak into the next claim.
+            frame_base_index = processed + failed
+
+            async def _execute_frame_row(frame_row_index: int, row: dict[str, Any]) -> str:
                 per_claim_ctx = dict(context or {})
                 iter_namespace = dict(per_claim_ctx.get("iter") or {})
                 iter_namespace[iterator_name] = row
-                iter_namespace["_index"] = processed + failed
+                iter_namespace["_index"] = frame_base_index + frame_row_index
                 iter_namespace["_worker_slot_id"] = worker_slot_id
                 iter_namespace["_frame_index"] = frame_count
                 iter_namespace["_frame_row_index"] = frame_row_index
@@ -472,31 +473,58 @@ async def execute_cursor_worker(
                         base_context=per_claim_ctx,
                     )
                 except Exception as exc:
-                    failed += 1
                     logger.exception(
                         "[CURSOR-WORKER] slot=%s iteration=%s: task sequence raised %s",
-                        worker_slot_id, processed + failed, exc,
+                        worker_slot_id,
+                        frame_base_index + frame_row_index,
+                        exc,
                     )
                     # Driver's claim is responsible for marking the row in
                     # a state that allows reclaim (e.g. leaving status in
                     # 'claimed' until a timeout prelude resets it).
-                    continue
+                    return "failed"
 
                 if isinstance(result, dict):
                     status = str(result.get("status", "")).lower()
                     if status == "failed":
-                        failed += 1
-                    elif status == "break":
-                        breaks += 1
+                        return "failed"
+                    if status == "break":
+                        return "break"
+                return "ok"
+
+            if row_concurrency <= 1 or len(frame_rows) <= 1:
+                row_statuses = []
+                for frame_row_index, row in enumerate(frame_rows):
+                    row_status = await _execute_frame_row(frame_row_index, row)
+                    row_statuses.append(row_status)
+                    if row_status == "break":
                         logger.info(
                             "[CURSOR-WORKER] slot=%s: task sequence returned break; "
                             "stopping this worker early",
                             worker_slot_id,
                         )
-                        processed += 1
-                        stop_after_frame = True
                         break
-                processed += 1
+            else:
+                semaphore = asyncio.Semaphore(row_concurrency)
+
+                async def _bounded_execute(frame_row_index: int, row: dict[str, Any]) -> str:
+                    async with semaphore:
+                        return await _execute_frame_row(frame_row_index, row)
+
+                row_statuses = await asyncio.gather(
+                    *[_bounded_execute(frame_row_index, row) for frame_row_index, row in enumerate(frame_rows)]
+                )
+                if "break" in row_statuses:
+                    logger.info(
+                        "[CURSOR-WORKER] slot=%s: task sequence returned break inside concurrent frame; "
+                        "stopping this worker after committed frame",
+                        worker_slot_id,
+                    )
+
+            failed += sum(1 for status in row_statuses if status == "failed")
+            breaks += sum(1 for status in row_statuses if status == "break")
+            processed += sum(1 for status in row_statuses if status in {"ok", "break"})
+            stop_after_frame = "break" in row_statuses
 
             frame_failed = failed > frame_failed_before
             await _commit_runtime_frame(

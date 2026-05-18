@@ -12,6 +12,7 @@ def test_cursor_loop_defaults_to_single_row_frame_policy():
 
     assert loop.frame_policy.max_rows == 1
     assert loop.frame_policy.lease_seconds == 120.0
+    assert loop.frame_policy.row_concurrency == 1
 
 
 def test_cursor_loop_accepts_frame_policy_alias():
@@ -26,10 +27,11 @@ def test_cursor_loop_accepts_frame_policy_alias():
             "frame": {
                 "max_rows": 50,
                 "max_seconds": 10,
-                "max_bytes": 1024,
-                "lease_seconds": 45,
-                "heartbeat_seconds": 5,
-            },
+            "max_bytes": 1024,
+            "lease_seconds": 45,
+            "heartbeat_seconds": 5,
+            "row_concurrency": 4,
+        },
         },
     )
 
@@ -38,6 +40,7 @@ def test_cursor_loop_accepts_frame_policy_alias():
     assert loop.frame_policy.max_bytes == 1024
     assert loop.frame_policy.lease_seconds == 45
     assert loop.frame_policy.heartbeat_seconds == 5
+    assert loop.frame_policy.row_concurrency == 4
 
 
 def test_frame_policy_rejects_non_positive_bounds():
