@@ -127,6 +127,38 @@ async def _load_idempotent_claimed_frame(
     return dict(frame) if frame else None
 
 
+async def _load_frame_by_claim_key(
+    cur: Any,
+    *,
+    stage_id: int,
+    cursor: dict[str, Any] | None,
+) -> dict[str, Any] | None:
+    claim_key = _frame_claim_key(stage_id=stage_id, cursor=cursor)
+    if claim_key is None:
+        return None
+    _, worker_slot_id, frame_index = claim_key
+    await cur.execute(
+        """
+        SELECT f.*,
+               (
+                   f.status IN ('CLAIMED','RUNNING')
+                   AND (f.lease_until IS NULL OR f.lease_until < now())
+               ) AS expired_lease
+        FROM noetl.frame f
+        WHERE f.stage_id = %s
+          AND f.cursor->>'worker_slot_id' = %s
+          AND f.cursor->>'frame_index' = %s
+          AND f.status IN ('PENDING','CLAIMED','RUNNING')
+        ORDER BY f.frame_id DESC
+        FOR UPDATE SKIP LOCKED
+        LIMIT 1
+        """,
+        (stage_id, worker_slot_id, frame_index),
+    )
+    frame = await cur.fetchone()
+    return dict(frame) if frame else None
+
+
 def _frame_stream_id(*, execution_id: int, stage_id: int) -> str:
     return f"execution/{execution_id}/stage/{stage_id}"
 
@@ -135,28 +167,13 @@ def _frame_event_stream_id(*, execution_id: int, stage_id: int, frame_id: int) -
     return f"{_frame_stream_id(execution_id=execution_id, stage_id=stage_id)}/frame/{frame_id}"
 
 
-def _frame_mint_stream_id(*, execution_id: int, stage_id: int, cursor: dict[str, Any] | None) -> str:
+def _frame_claim_key(*, stage_id: int, cursor: dict[str, Any] | None) -> tuple[int, str, str] | None:
     if isinstance(cursor, dict):
         worker_slot_id = cursor.get("worker_slot_id")
         frame_index = cursor.get("frame_index")
         if worker_slot_id is not None and frame_index is not None:
-            return (
-                f"{_frame_stream_id(execution_id=execution_id, stage_id=stage_id)}"
-                f"/slot/{worker_slot_id}/frame-index/{frame_index}"
-            )
-    return f"{_frame_stream_id(execution_id=execution_id, stage_id=stage_id)}/mint"
-
-
-async def _lock_frame_mint_stream(
-    cur: Any,
-    *,
-    execution_id: int,
-    stage_id: int,
-    cursor: dict[str, Any] | None,
-) -> str:
-    stream_id = _frame_mint_stream_id(execution_id=execution_id, stage_id=stage_id, cursor=cursor)
-    await cur.execute("SELECT pg_advisory_xact_lock(hashtext(%s)::bigint)", (stream_id,))
-    return stream_id
+            return (stage_id, str(worker_slot_id), str(frame_index))
+    return None
 
 
 async def _resolve_parent_frame_id(cur: Any, *, stage_id: int, cursor: dict[str, Any] | None) -> int | None:
@@ -515,16 +532,10 @@ async def claim_frames(stage_id: int, req: FrameClaimRequest) -> dict[str, Any]:
                     frame_id: int | None = None
                     if not frame:
                         # Frame rows are minted lazily after the cursor driver has
-                        # claimed external work. Mint locks are scoped to the cursor
-                        # shard so duplicate retries converge without serializing the
-                        # whole stage.
+                        # claimed external work. Duplicate retries converge on the
+                        # stage/worker-slot/frame-index key via the partial unique
+                        # index instead of a hot-path advisory transaction lock.
                         frame_id = await _next_snowflake_id(cur)
-                        await _lock_frame_mint_stream(
-                            cur,
-                            execution_id=int(stage["execution_id"]),
-                            stage_id=stage_id,
-                            cursor=req.cursor,
-                        )
                         frame = await _load_idempotent_claimed_frame(
                             cur,
                             stage_id=stage_id,
@@ -563,6 +574,7 @@ async def claim_frames(stage_id: int, req: FrameClaimRequest) -> dict[str, Any]:
                                 tenant_id, organization_id
                             )
                             VALUES (%s, %s, %s, %s, %s, 0, 'PENDING', %s, %s, %s)
+                            ON CONFLICT DO NOTHING
                             RETURNING *
                             """,
                             (
@@ -577,6 +589,24 @@ async def claim_frames(stage_id: int, req: FrameClaimRequest) -> dict[str, Any]:
                             ),
                         )
                         frame = await cur.fetchone()
+                        if not frame:
+                            claim_key = _frame_claim_key(stage_id=stage_id, cursor=req.cursor)
+                            frame = await _load_frame_by_claim_key(
+                                cur,
+                                stage_id=stage_id,
+                                cursor=req.cursor,
+                            )
+                        if not frame and claim_key is None:
+                            frame = await _load_claimable_frame(cur, stage_id=stage_id)
+                        if not frame:
+                            raise HTTPException(
+                                status_code=409,
+                                detail={
+                                    "code": "frame_claim_conflict",
+                                    "stage_id": stage_id,
+                                    "claim_key": claim_key,
+                                },
+                            )
                         frame = dict(frame)
                         frame["step_name"] = stage["step_name"]
                     else:
