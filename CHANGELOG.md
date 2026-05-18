@@ -2,6 +2,19 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.40.0](https://github.com/noetl/noetl/compare/v2.39.3...v2.40.0) (2026-05-18)
+
+### Features
+
+* **projector:** expose scrapeable worker metrics ([6193864](https://github.com/noetl/noetl/commit/61938640fca06e7bd4e34c6d2b541841be5acdc5))
+* **projector:** record projection lag checkpoints ([4b2fe34](https://github.com/noetl/noetl/commit/4b2fe34af6244dc76378f75c6e07a41102860814))
+
+### Bug Fixes
+
+* **frames:** require durable refs for ipc output ([57a3386](https://github.com/noetl/noetl/commit/57a338659f03a35c6d6c5731c9f5f0c0d4c77967))
+* **projector:** initialize db pool on startup ([dcc970c](https://github.com/noetl/noetl/commit/dcc970cb183d41bebf3599d2bba06c01b18d21b7))
+* **projector:** tolerate precreated projection schema ([6f88437](https://github.com/noetl/noetl/commit/6f88437fcf3047813919ed25b85a7ca08817109e))
+
 ## [2.39.3](https://github.com/noetl/noetl/compare/v2.39.2...v2.39.3) (2026-05-18)
 
 ### Bug Fixes
