@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.41.0](https://github.com/noetl/noetl/compare/v2.40.0...v2.41.0) (2026-05-18)
+
+### Features
+
+* **events:** mirror core lifecycle events ([fd4319f](https://github.com/noetl/noetl/commit/fd4319fb6eda83291bdc86bcdff9c97397ee7aa8))
+* **projector:** export checkpoint lag metrics ([0100331](https://github.com/noetl/noetl/commit/0100331202be9ae5bbdaf1180f52ed77778aa8aa))
+
 ## [2.40.0](https://github.com/noetl/noetl/compare/v2.39.3...v2.40.0) (2026-05-18)
 
 ### Features
