@@ -785,6 +785,9 @@ CREATE INDEX IF NOT EXISTS idx_frame_stage_frame
     ON noetl.frame (stage_id, frame_id);
 CREATE INDEX IF NOT EXISTS idx_frame_stage_cursor_slot_index
     ON noetl.frame (stage_id, (cursor->>'worker_slot_id'), (cursor->>'frame_index'), frame_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_frame_claim_key_unique
+    ON noetl.frame (stage_id, (cursor->>'worker_slot_id'), (cursor->>'frame_index'))
+    WHERE cursor ? 'worker_slot_id' AND cursor ? 'frame_index';
 CREATE INDEX IF NOT EXISTS idx_frame_idempotent_claim
     ON noetl.frame (
         stage_id,

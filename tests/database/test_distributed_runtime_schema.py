@@ -13,6 +13,7 @@ def test_distributed_runtime_schema_contract_is_present():
     assert "CREATE TABLE IF NOT EXISTS noetl.projection_snapshot" in ddl
     assert "CREATE INDEX IF NOT EXISTS frame_open_idx" in ddl
     assert "CREATE INDEX IF NOT EXISTS idx_frame_stage_cursor_slot_index" in ddl
+    assert "CREATE UNIQUE INDEX IF NOT EXISTS idx_frame_claim_key_unique" in ddl
     assert "CREATE INDEX IF NOT EXISTS idx_frame_idempotent_claim" in ddl
     assert "CREATE INDEX IF NOT EXISTS idx_projection_tenant_type" in ddl
 

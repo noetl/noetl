@@ -224,6 +224,36 @@ async def test_load_idempotent_claimed_frame_matches_worker_slot_and_frame_index
 
 
 @pytest.mark.asyncio
+async def test_load_frame_by_claim_key_matches_pending_frame():
+    from noetl.server.api.frames import endpoint
+
+    class Cursor:
+        def __init__(self):
+            self.calls = []
+
+        async def execute(self, query, params=None):
+            self.calls.append((query, params))
+
+        async def fetchone(self):
+            return {"frame_id": 9, "status": "PENDING"}
+
+    cur = Cursor()
+
+    frame = await endpoint._load_frame_by_claim_key(
+        cur,
+        stage_id=8,
+        cursor={"worker_slot_id": "slot-1", "frame_index": 3},
+    )
+
+    assert frame == {"frame_id": 9, "status": "PENDING"}
+    query, params = cur.calls[0]
+    assert "f.cursor->>'worker_slot_id'" in query
+    assert "f.cursor->>'frame_index'" in query
+    assert "PENDING" in query
+    assert params == (8, "slot-1", "3")
+
+
+@pytest.mark.asyncio
 async def test_frame_event_mirror_publishes_when_enabled(monkeypatch):
     from noetl.server.api.frames import endpoint
 
@@ -495,9 +525,6 @@ async def test_claim_frames_reclaims_expired_frame_with_abandoned_event(monkeypa
         emitted.append(kwargs)
         return {"event_id": 100 + len(emitted), "event_type": kwargs["event_type"]}
 
-    async def fail_mint_lock(*_args, **_kwargs):
-        raise AssertionError("existing claimable frames must not take the mint lock")
-
     async def mirror_frame_events(_events):
         return None
 
@@ -505,7 +532,6 @@ async def test_claim_frames_reclaims_expired_frame_with_abandoned_event(monkeypa
     monkeypatch.setattr(endpoint, "_load_stage", load_stage)
     monkeypatch.setattr(endpoint, "_resolve_claim_command_id", resolve_command_id)
     monkeypatch.setattr(endpoint, "_insert_frame_event", insert_frame_event)
-    monkeypatch.setattr(endpoint, "_lock_frame_mint_stream", fail_mint_lock)
     monkeypatch.setattr(endpoint, "_mirror_frame_events", mirror_frame_events)
 
     response = await endpoint.claim_frames(
@@ -533,4 +559,129 @@ async def test_claim_frames_reclaims_expired_frame_with_abandoned_event(monkeypa
     }
     assert emitted[1]["meta_extra"]["attempt"] == 2
     assert emitted[1]["meta_extra"]["recovery"]["retry_mode"] == "whole_frame"
+    assert conn.commits == 1
+
+
+@pytest.mark.asyncio
+async def test_claim_frames_mints_without_advisory_lock(monkeypatch):
+    from noetl.server.api.frames import endpoint
+    from noetl.server.api.frames.schema import FrameClaimRequest
+
+    class Cursor:
+        def __init__(self):
+            self.queries = []
+            self.fetchone_count = 0
+
+        async def execute(self, query, params=None):
+            assert "pg_advisory_xact_lock" not in query
+            self.queries.append((query, params))
+
+        async def fetchone(self):
+            self.fetchone_count += 1
+            query = self.queries[-1][0]
+            if "SELECT *" in query:
+                return None
+            if "SELECT f.*" in query:
+                return None
+            if "INSERT INTO noetl.frame" in query:
+                return {
+                    "frame_id": 9,
+                    "stage_id": 8,
+                    "execution_id": 7,
+                    "parent_frame_id": None,
+                    "command_id": 5,
+                    "claimed_event_id": None,
+                    "terminal_event_id": None,
+                    "cursor": {"worker_slot_id": "slot-1", "frame_index": 0},
+                    "row_count": 0,
+                    "status": "PENDING",
+                    "owner_worker": None,
+                    "lease_until": None,
+                    "output_ref": None,
+                    "events_emitted": 0,
+                    "attempts": 0,
+                    "tenant_id": "tenant-a",
+                    "organization_id": "org-a",
+                }
+            if "UPDATE noetl.frame" in query and "RETURNING *" in query:
+                return {
+                    "frame_id": 9,
+                    "stage_id": 8,
+                    "execution_id": 7,
+                    "parent_frame_id": None,
+                    "command_id": 5,
+                    "claimed_event_id": 102,
+                    "terminal_event_id": None,
+                    "cursor": {"worker_slot_id": "slot-1", "frame_index": 0},
+                    "row_count": 0,
+                    "status": "CLAIMED",
+                    "owner_worker": "worker-a",
+                    "lease_until": "later",
+                    "output_ref": None,
+                    "events_emitted": 0,
+                    "attempts": 1,
+                    "tenant_id": "tenant-a",
+                    "organization_id": "org-a",
+                    "step_name": "fetch_rows",
+                }
+            if "SELECT frame_id" in query:
+                return None
+            raise AssertionError(f"Unexpected fetchone query: {query}")
+
+    cursor = Cursor()
+    conn = _FrameEndpointConn(cursor)
+    emitted = []
+
+    async def load_stage(_cur, stage_id):
+        assert stage_id == 8
+        return {
+            "stage_id": 8,
+            "execution_id": 7,
+            "catalog_id": 6,
+            "kind": "loop",
+            "step_name": "fetch_rows",
+            "dsl_ref": "steps.fetch_rows",
+            "status": "RUNNING",
+            "frame_policy": {"process": "frame", "max_rows": 50},
+            "tenant_id": "tenant-a",
+            "organization_id": "org-a",
+        }
+
+    async def resolve_command_id(_cur, **_kwargs):
+        return 5
+
+    async def next_snowflake_id(_cur):
+        return 9
+
+    async def insert_frame_event(_cur, **kwargs):  # noqa: ARG001
+        emitted.append(kwargs)
+        return {"event_id": kwargs["event_id"], "event_type": kwargs["event_type"]}
+
+    async def mirror_frame_events(_events):
+        return None
+
+    monkeypatch.setattr(endpoint, "get_pool_connection", lambda: _ConnCtx(conn))
+    monkeypatch.setattr(endpoint, "_load_stage", load_stage)
+    monkeypatch.setattr(endpoint, "_resolve_claim_command_id", resolve_command_id)
+    monkeypatch.setattr(endpoint, "_next_snowflake_id", next_snowflake_id)
+    monkeypatch.setattr(endpoint, "_insert_frame_event", insert_frame_event)
+    monkeypatch.setattr(endpoint, "_mirror_frame_events", mirror_frame_events)
+
+    response = await endpoint.claim_frames(
+        8,
+        FrameClaimRequest(
+            worker_id="worker-a",
+            command_id=5,
+            requested_count=1,
+            lease_seconds=60,
+            cursor={"worker_slot_id": "slot-1", "frame_index": 0},
+            frame_policy={"process": "frame", "max_rows": 50},
+        ),
+    )
+
+    assert response["status"] == "ok"
+    assert response["frames"][0]["frame_id"] == 9
+    assert response["frames"][0]["claimed_event_id"] == 102
+    assert [item["event_type"] for item in emitted] == ["frame.dispatched"]
+    assert any("ON CONFLICT DO NOTHING" in query for query, _ in cursor.queries)
     assert conn.commits == 1
