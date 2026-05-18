@@ -190,3 +190,47 @@ async def test_nats_projector_worker_acks_empty_or_unowned_notifications():
     snapshot = metrics.snapshot()
     assert snapshot["notifications_total"] == 2
     assert snapshot["empty_or_unowned_notifications_total"] == 2
+
+
+@pytest.mark.asyncio
+async def test_run_projector_worker_initializes_and_closes_db_pool(monkeypatch):
+    import noetl.core.projector.nats_worker as module
+
+    calls = []
+
+    async def fake_init_pool(conninfo):
+        calls.append(("init", conninfo))
+
+    async def fake_close_pool():
+        calls.append(("close", None))
+
+    class FakeWorker:
+        def __init__(self, *, settings):
+            self.settings = settings
+            from noetl.core.projector.metrics import ProjectorMetrics
+
+            self.metrics = ProjectorMetrics()
+
+        async def start(self):
+            calls.append(("start", self.settings.shard_id))
+            raise RuntimeError("stop projector test")
+
+        async def close(self):
+            calls.append(("worker_close", None))
+
+    monkeypatch.setattr(module, "get_pgdb_connection", lambda: "dbname=noetl")
+    monkeypatch.setattr(module, "init_pool", fake_init_pool)
+    monkeypatch.setattr(module, "close_pool", fake_close_pool)
+    monkeypatch.setattr(module, "NATSProjectorWorker", FakeWorker)
+
+    with pytest.raises(RuntimeError, match="stop projector test"):
+        await module.run_projector_worker(
+            module.ProjectorWorkerSettings(shard_id="noetl-projector-0")
+        )
+
+    assert calls == [
+        ("init", "dbname=noetl"),
+        ("start", "noetl-projector-0"),
+        ("worker_close", None),
+        ("close", None),
+    ]

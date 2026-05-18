@@ -8,6 +8,8 @@ import re
 from dataclasses import dataclass
 from typing import Any, Iterable, Optional
 
+from noetl.core.common import get_pgdb_connection
+from noetl.core.db.pool import close_pool, init_pool
 from noetl.core.logger import setup_logger
 from noetl.core.messaging import NATSCommandSubscriber
 from noetl.core.projection_store import PostgresProjectionStore, ProjectionStore
@@ -159,6 +161,7 @@ class NATSProjectorWorker:
 
 async def run_projector_worker(settings: Optional[ProjectorWorkerSettings] = None) -> None:
     effective_settings = settings or load_projector_worker_settings()
+    await init_pool(get_pgdb_connection())
     worker = NATSProjectorWorker(settings=effective_settings)
     metrics_server = None
     if effective_settings.metrics_port:
@@ -184,6 +187,7 @@ async def run_projector_worker(settings: Optional[ProjectorWorkerSettings] = Non
             metrics_server.shutdown()
             metrics_server.server_close()
         await worker.close()
+        await close_pool()
 
 
 def run_projector_worker_sync(settings: Optional[ProjectorWorkerSettings] = None) -> None:
