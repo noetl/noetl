@@ -45,6 +45,12 @@ MAX_EXECUTIONS_PAGE_SIZE = 200
 MAX_EXECUTIONS_OFFSET = 5000
 
 
+async def _mirror_execution_route_events(events: list[dict[str, Any]]) -> None:
+    from noetl.server.api.core.events import _mirror_events
+
+    await _mirror_events(events)
+
+
 def _as_iso(value: Optional[datetime]) -> Optional[str]:
     if not value:
         return None
@@ -962,6 +968,7 @@ async def cancel_execution(execution_id: str, request: CancelExecutionRequest = 
         request = CancelExecutionRequest()
     
     cancelled_ids = []
+    mirrored_events = []
     
     async with get_pool_connection() as conn:
         async with conn.cursor(row_factory=dict_row) as cur:
@@ -1049,11 +1056,26 @@ async def cancel_execution(execution_id: str, request: CancelExecutionRequest = 
                     "cancel", "cancel", "CANCELLED",
                     Json(meta), now
                 ))
+                mirrored_events.append({
+                    "event_id": int(event_id),
+                    "execution_id": int(exec_id),
+                    "catalog_id": catalog_id,
+                    "event_type": "execution.cancelled",
+                    "node_id": "cancel",
+                    "node_name": "cancel",
+                    "status": "CANCELLED",
+                    "result": {"status": "CANCELLED"},
+                    "meta": meta,
+                    "event_time": now,
+                    "ingest_time": now,
+                    "created_at": now,
+                })
                 
                 cancelled_ids.append(str(exec_id))
                 logger.info(f"Cancelled execution {exec_id} - reason: {request.reason}")
             
             await conn.commit()
+    await _mirror_execution_route_events(mirrored_events)
     
     return CancelExecutionResponse(
         status="cancelled",
