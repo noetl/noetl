@@ -234,6 +234,8 @@ class _FrameEndpointCursor:
 
     async def fetchone(self):
         query = self.queries[-1][0]
+        if "SELECT execution_id, stage_id" in query:
+            return {"execution_id": 7, "stage_id": 8}
         if "UPDATE noetl.frame" in query:
             return self._active_row
         if "SELECT frame_id, status, owner_worker, terminal_event_id" in query:

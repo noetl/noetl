@@ -92,6 +92,34 @@ async def _resolve_claim_command_id(
     return int(command_id) if command_id is not None else None
 
 
+def _frame_stream_id(*, execution_id: int, stage_id: int) -> str:
+    return f"execution/{execution_id}/stage/{stage_id}"
+
+
+async def _lock_frame_stream(cur: Any, *, execution_id: int, stage_id: int) -> str:
+    stream_id = _frame_stream_id(execution_id=execution_id, stage_id=stage_id)
+    await cur.execute("SELECT pg_advisory_xact_lock(hashtext(%s)::bigint)", (stream_id,))
+    return stream_id
+
+
+async def _lock_frame_stream_for_frame(cur: Any, *, frame_id: int) -> None:
+    await cur.execute(
+        """
+        SELECT execution_id, stage_id
+        FROM noetl.frame
+        WHERE frame_id = %s
+        """,
+        (frame_id,),
+    )
+    frame = await cur.fetchone()
+    if frame:
+        await _lock_frame_stream(
+            cur,
+            execution_id=int(frame["execution_id"]),
+            stage_id=int(frame["stage_id"]),
+        )
+
+
 async def _insert_frame_event(
     cur: Any,
     *,
@@ -103,7 +131,7 @@ async def _insert_frame_event(
     meta_extra: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     event_id = await _next_snowflake_id(cur)
-    stream_id = f"execution/{frame['execution_id']}/stage/{frame['stage_id']}"
+    stream_id = _frame_stream_id(execution_id=int(frame["execution_id"]), stage_id=int(frame["stage_id"]))
     now = datetime.now(timezone.utc)
     catalog_id = frame.get("catalog_id")
     if catalog_id is None:
@@ -341,18 +369,18 @@ async def claim_frames(stage_id: int, req: FrameClaimRequest) -> dict[str, Any]:
                     worker_id=req.worker_id,
                     requested_command_id=req.command_id,
                 )
+                await _lock_frame_stream(cur, execution_id=int(stage["execution_id"]), stage_id=stage_id)
                 claimed: list[dict[str, Any]] = []
                 events_to_mirror: list[dict[str, Any]] = []
                 for _ in range(req.requested_count):
                     await cur.execute(
                         """
-                        SELECT f.*, s.step_name,
+                        SELECT f.*,
                                (
                                    f.status IN ('CLAIMED','RUNNING')
                                    AND (f.lease_until IS NULL OR f.lease_until < now())
                                ) AS expired_lease
                         FROM noetl.frame f
-                        JOIN noetl.stage s ON s.stage_id = f.stage_id
                         WHERE f.stage_id = %s
                           AND (
                             f.status = 'PENDING'
@@ -370,7 +398,6 @@ async def claim_frames(stage_id: int, req: FrameClaimRequest) -> dict[str, Any]:
                         # Frame rows are minted lazily after the cursor driver has
                         # claimed external work. Serialize this tiny section so
                         # parent_frame_id forms a deterministic per-stage chain.
-                        await cur.execute("SELECT pg_advisory_xact_lock(%s)", (stage_id,))
                         await cur.execute(
                             """
                             SELECT frame_id
@@ -410,6 +437,7 @@ async def claim_frames(stage_id: int, req: FrameClaimRequest) -> dict[str, Any]:
                         frame["step_name"] = stage["step_name"]
                     else:
                         frame = dict(frame)
+                        frame["step_name"] = stage["step_name"]
 
                     if frame.get("expired_lease"):
                         abandoned = await _insert_frame_event(
@@ -485,16 +513,15 @@ async def heartbeat_frame(frame_id: int, req: FrameHeartbeatRequest) -> dict[str
     try:
         async with get_pool_connection() as conn:
             async with conn.cursor(row_factory=dict_row) as cur:
+                await _lock_frame_stream_for_frame(cur, frame_id=frame_id)
                 await cur.execute(
                     """
                     WITH active AS (
-                        SELECT f.frame_id, f.status AS previous_status, s.step_name
+                        SELECT f.frame_id, f.status AS previous_status
                         FROM noetl.frame f
-                        JOIN noetl.stage s ON s.stage_id = f.stage_id
                         WHERE f.frame_id = %s
                           AND f.owner_worker = %s
                           AND f.status IN ('CLAIMED','RUNNING')
-                        FOR UPDATE
                     )
                     UPDATE noetl.frame f
                     SET status = %s,
@@ -502,7 +529,9 @@ async def heartbeat_frame(frame_id: int, req: FrameHeartbeatRequest) -> dict[str
                         updated_at = now()
                     FROM active
                     WHERE f.frame_id = active.frame_id
-                    RETURNING f.*, active.step_name, active.previous_status
+                    RETURNING f.*,
+                              (SELECT step_name FROM noetl.stage WHERE stage_id = f.stage_id) AS step_name,
+                              active.previous_status
                     """,
                     (frame_id, req.worker_id, req.status, req.lease_seconds),
                 )
@@ -545,6 +574,7 @@ async def commit_frame(frame_id: int, req: FrameCommitRequest) -> dict[str, Any]
     try:
         async with get_pool_connection() as conn:
             async with conn.cursor(row_factory=dict_row) as cur:
+                await _lock_frame_stream_for_frame(cur, frame_id=frame_id)
                 await cur.execute(
                     """
                     UPDATE noetl.frame f
@@ -555,12 +585,11 @@ async def commit_frame(frame_id: int, req: FrameCommitRequest) -> dict[str, Any]
                         events_emitted = %s,
                         completed_at = now(),
                         updated_at = now()
-                    FROM noetl.stage s
-                    WHERE f.stage_id = s.stage_id
-                      AND f.frame_id = %s
+                    WHERE f.frame_id = %s
                       AND f.owner_worker = %s
                       AND f.status IN ('CLAIMED','RUNNING')
-                    RETURNING f.*, s.step_name
+                    RETURNING f.*,
+                              (SELECT step_name FROM noetl.stage WHERE stage_id = f.stage_id) AS step_name
                     """,
                     (
                         terminal_status,
