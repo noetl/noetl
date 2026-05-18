@@ -495,6 +495,9 @@ async def test_claim_frames_reclaims_expired_frame_with_abandoned_event(monkeypa
         emitted.append(kwargs)
         return {"event_id": 100 + len(emitted), "event_type": kwargs["event_type"]}
 
+    async def fail_stage_lock(*_args, **_kwargs):
+        raise AssertionError("existing claimable frames must not take the stage-level mint lock")
+
     async def mirror_frame_events(_events):
         return None
 
@@ -502,6 +505,7 @@ async def test_claim_frames_reclaims_expired_frame_with_abandoned_event(monkeypa
     monkeypatch.setattr(endpoint, "_load_stage", load_stage)
     monkeypatch.setattr(endpoint, "_resolve_claim_command_id", resolve_command_id)
     monkeypatch.setattr(endpoint, "_insert_frame_event", insert_frame_event)
+    monkeypatch.setattr(endpoint, "_lock_frame_stream", fail_stage_lock)
     monkeypatch.setattr(endpoint, "_mirror_frame_events", mirror_frame_events)
 
     response = await endpoint.claim_frames(

@@ -159,6 +159,31 @@ async def _lock_frame_stream_for_frame(cur: Any, *, frame_id: int) -> None:
         )
 
 
+async def _load_claimable_frame(cur: Any, *, stage_id: int) -> dict[str, Any] | None:
+    await cur.execute(
+        """
+        SELECT f.*,
+               (
+                   f.status IN ('CLAIMED','RUNNING')
+                   AND (f.lease_until IS NULL OR f.lease_until < now())
+               ) AS expired_lease
+        FROM noetl.frame f
+        WHERE f.stage_id = %s
+          AND (
+            f.status = 'PENDING'
+            OR (f.status IN ('CLAIMED','RUNNING')
+                AND (f.lease_until IS NULL OR f.lease_until < now()))
+          )
+        ORDER BY f.frame_id
+        FOR UPDATE SKIP LOCKED
+        LIMIT 1
+        """,
+        (stage_id,),
+    )
+    frame = await cur.fetchone()
+    return dict(frame) if frame else None
+
+
 async def _insert_frame_event(
     cur: Any,
     *,
@@ -426,7 +451,6 @@ async def claim_frames(stage_id: int, req: FrameClaimRequest) -> dict[str, Any]:
                     worker_id=req.worker_id,
                     requested_command_id=req.command_id,
                 )
-                await _lock_frame_stream(cur, execution_id=int(stage["execution_id"]), stage_id=stage_id)
                 claimed: list[dict[str, Any]] = []
                 events_to_mirror: list[dict[str, Any]] = []
                 for _ in range(req.requested_count):
@@ -454,31 +478,15 @@ async def claim_frames(stage_id: int, req: FrameClaimRequest) -> dict[str, Any]:
                         claimed.append(_frame_response(updated, updated.get("claimed_event_id")))
                         continue
 
-                    await cur.execute(
-                        """
-                        SELECT f.*,
-                               (
-                                   f.status IN ('CLAIMED','RUNNING')
-                                   AND (f.lease_until IS NULL OR f.lease_until < now())
-                               ) AS expired_lease
-                        FROM noetl.frame f
-                        WHERE f.stage_id = %s
-                          AND (
-                            f.status = 'PENDING'
-                            OR (f.status IN ('CLAIMED','RUNNING')
-                                AND (f.lease_until IS NULL OR f.lease_until < now()))
-                          )
-                        ORDER BY f.frame_id
-                        FOR UPDATE SKIP LOCKED
-                        LIMIT 1
-                        """,
-                        (stage_id,),
-                    )
-                    frame = await cur.fetchone()
+                    frame = await _load_claimable_frame(cur, stage_id=stage_id)
                     if not frame:
                         # Frame rows are minted lazily after the cursor driver has
-                        # claimed external work. Serialize this tiny section so
-                        # parent_frame_id forms a deterministic per-stage chain.
+                        # claimed external work. Keep the stage-level advisory lock
+                        # scoped to minting only; existing frame claims are handled by
+                        # SKIP LOCKED and per-frame event streams.
+                        await _lock_frame_stream(cur, execution_id=int(stage["execution_id"]), stage_id=stage_id)
+                        frame = await _load_claimable_frame(cur, stage_id=stage_id)
+                    if not frame:
                         await cur.execute(
                             """
                             SELECT frame_id
@@ -517,7 +525,6 @@ async def claim_frames(stage_id: int, req: FrameClaimRequest) -> dict[str, Any]:
                         frame = dict(frame)
                         frame["step_name"] = stage["step_name"]
                     else:
-                        frame = dict(frame)
                         frame["step_name"] = stage["step_name"]
 
                     if frame.get("expired_lease"):
