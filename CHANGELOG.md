@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.39.2](https://github.com/noetl/noetl/compare/v2.39.1...v2.39.2) (2026-05-18)
+
+### Bug Fixes
+
+* **runtime:** remove frame claim advisory lock ([2b2c35d](https://github.com/noetl/noetl/commit/2b2c35dbc5788c1a75e96372b831309defeaf99c))
+
 ## [2.39.1](https://github.com/noetl/noetl/compare/v2.39.0...v2.39.1) (2026-05-18)
 
 ### Bug Fixes
