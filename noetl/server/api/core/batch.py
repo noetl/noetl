@@ -79,6 +79,12 @@ def _get_batch_execution_locks_guard() -> asyncio.Lock:
         _batch_execution_locks_guard = asyncio.Lock()
     return _batch_execution_locks_guard
 
+
+async def _mirror_batch_events(events: list[dict[str, Any]]) -> None:
+    from .events import _mirror_events
+
+    await _mirror_events(events)
+
 async def _get_batch_execution_lock(execution_id: int) -> asyncio.Lock:
     async with _get_batch_execution_locks_guard():
         lock = _batch_execution_locks.get(execution_id)
@@ -106,26 +112,43 @@ async def shutdown_batch_acceptor() -> None:
         await asyncio.gather(*tasks, return_exceptions=True)
 
 async def _persist_batch_status_event(execution_id: int, catalog_id: Optional[int], request_id: str, worker_id: Optional[str], idempotency_key: Optional[str], event_type: str, status: str, payload: dict[str, Any], error: Optional[str] = None) -> None:
+    from .events import _event_envelope
     from .commands import _build_reference_only_result
+    mirrored_events: list[dict[str, Any]] = []
     async with get_pool_connection() as conn:
         async with conn.cursor(row_factory=dict_row) as cur:
             evt_id = await _next_snowflake_id(cur)
             meta = {"batch_request_id": request_id, "actionable": False, "informative": True, "worker_id": worker_id, "idempotency_key": idempotency_key}
+            created_at = datetime.now(timezone.utc)
+            result_obj = _build_reference_only_result(payload=payload, status=status)
             await cur.execute("""
                 INSERT INTO noetl.event (event_id, execution_id, catalog_id, event_type, node_id, node_name, status, result, meta, worker_id, error, created_at)
                 VALUES (%s, %s, %s, %s, 'events.batch', 'events.batch', %s, %s, %s, %s, %s, %s)
-            """, (evt_id, execution_id, catalog_id, event_type, status, Json(_build_reference_only_result(payload=payload, status=status)), Json(meta), worker_id, error, datetime.now(timezone.utc)))
+            """, (evt_id, execution_id, catalog_id, event_type, status, Json(result_obj), Json(meta), worker_id, error, created_at))
             await conn.commit()
+            mirrored_events.append(_event_envelope(
+                event_id=evt_id,
+                execution_id=execution_id,
+                catalog_id=catalog_id,
+                event_type=event_type,
+                node_name="events.batch",
+                status=status,
+                result=result_obj,
+                meta=meta,
+                event_time=created_at,
+            ))
+    await _mirror_batch_events(mirrored_events)
 
 async def _persist_batch_failed_event(job: _BatchAcceptJob, code: str, message: str) -> None:
     try: await _persist_batch_status_event(job.execution_id, job.catalog_id, job.request_id, job.worker_id, job.idempotency_key, "batch.failed", "FAILED", {"request_id": job.request_id, "error_code": code, "message": message}, error=message)
     except Exception as e: logger.error("[BATCH-EVENTS] Failed to persist batch.failed request_id=%s: %s", job.request_id, e, exc_info=True)
 
 async def _persist_batch_acceptance(req: BatchEventRequest, idempotency_key: Optional[str]) -> _BatchAcceptanceResult:
-    from .events import _validate_reference_only_payload, _extract_command_id_from_payload, _extract_event_error
+    from .events import _event_envelope, _validate_reference_only_payload, _extract_command_id_from_payload, _extract_event_error
     from .commands import _build_reference_only_result
     skip_engine = {"command.claimed", "command.heartbeat", "command.started", "command.completed", "step.enter"}
     exec_id = int(req.execution_id)
+    mirrored_events: list[dict[str, Any]] = []
     async with get_pool_connection() as conn:
         async with conn.cursor(row_factory=dict_row) as cur:
             await cur.execute("SELECT catalog_id FROM noetl.event WHERE execution_id = %s LIMIT 1", (exec_id,))
@@ -148,7 +171,8 @@ async def _persist_batch_acceptance(req: BatchEventRequest, idempotency_key: Opt
                 _validate_reference_only_payload(item.payload)
                 evt_id = await _next_snowflake_id(cur); event_ids.append(evt_id)
                 meta = {"actionable": item.actionable, "informative": item.informative, "batch_request_id": request_id, "persisted_event_id": str(evt_id), "worker_id": req.worker_id, "idempotency_key": idempotency_key, **(item.meta or {})}
-                if cmd_id := _extract_command_id_from_payload(item.payload): meta["command_id"] = cmd_id
+                cmd_id = _extract_command_id_from_payload(item.payload)
+                if cmd_id: meta["command_id"] = cmd_id
                 status = _status_from_event_name(item.name)
                 result_obj = _build_reference_only_result(payload=item.payload, status=status)
                 
@@ -157,6 +181,20 @@ async def _persist_batch_acceptance(req: BatchEventRequest, idempotency_key: Opt
                     status,
                     Json(result_obj),
                     Json(meta), req.worker_id, _extract_event_error(item.payload), cmd_id, now
+                ))
+                mirrored_events.append(_event_envelope(
+                    event_id=evt_id,
+                    execution_id=exec_id,
+                    catalog_id=catalog_id,
+                    event_type=item.name,
+                    node_name=item.step,
+                    status=status,
+                    result=result_obj,
+                    meta=meta,
+                    command_id=cmd_id,
+                    stage_id=meta.get("stage_id"),
+                    frame_id=meta.get("frame_id"),
+                    event_time=now,
                 ))
 
                 if cmd_id and item.name in {
@@ -210,16 +248,31 @@ async def _persist_batch_acceptance(req: BatchEventRequest, idempotency_key: Opt
             
             acc_meta = {"batch_request_id": request_id, "actionable": False, "informative": True, "event_count": len(req.events), "worker_id": req.worker_id, "idempotency_key": idempotency_key}
             if last_act_evt_id: acc_meta["last_actionable_event_id"] = str(last_act_evt_id)
+            accepted_at = datetime.now(timezone.utc)
+            accepted_result = _build_reference_only_result(payload={"request_id": request_id, "event_ids": event_ids, "commands_generated": 0}, status="PENDING")
             await cur.execute("""
                 INSERT INTO noetl.event (event_id, execution_id, catalog_id, event_type, node_id, node_name, status, result, meta, worker_id, created_at)
                 VALUES (%s, %s, %s, %s, 'events.batch', 'events.batch', 'PENDING', %s, %s, %s, %s)
-            """, (accepted_evt_id, exec_id, catalog_id, "batch.accepted", Json(_build_reference_only_result(payload={"request_id": request_id, "event_ids": event_ids, "commands_generated": 0}, status="PENDING")), Json(acc_meta), req.worker_id, datetime.now(timezone.utc)))
+            """, (accepted_evt_id, exec_id, catalog_id, "batch.accepted", Json(accepted_result), Json(acc_meta), req.worker_id, accepted_at))
             await conn.commit()
+            mirrored_events.append(_event_envelope(
+                event_id=accepted_evt_id,
+                execution_id=exec_id,
+                catalog_id=catalog_id,
+                event_type="batch.accepted",
+                node_name="events.batch",
+                status="PENDING",
+                result=accepted_result,
+                meta=acc_meta,
+                event_time=accepted_at,
+            ))
             for cid in term_cmd_ids: _active_claim_cache_invalidate(command_id=cid)
+    await _mirror_batch_events(mirrored_events)
     return _BatchAcceptanceResult(job=_BatchAcceptJob(request_id, exec_id, catalog_id, req.worker_id, idempotency_key, req.events, last_act_evt, last_act_evt_id, accepted_evt_id, time.perf_counter()), event_ids=event_ids, duplicate=False)
 
 async def _issue_commands_for_batch(job: _BatchAcceptJob, commands: list) -> None:
     from .commands import _build_command_context, _validate_postgres_command_context_or_422, _store_command_context_if_needed
+    from .events import _command_issued_envelope
     if not commands: return
     server_url = os.getenv("NOETL_SERVER_URL", "http://noetl.noetl.svc.cluster.local:8082")
     
@@ -297,6 +350,25 @@ async def _issue_commands_for_batch(job: _BatchAcceptJob, commands: list) -> Non
                     ON CONFLICT (execution_id, command_id) DO NOTHING
                 """, command_table_params[j:j + chunk_size])
                 await conn.commit()
+
+    await _mirror_batch_events([
+        _command_issued_envelope(
+            event_id=p["evt_id"],
+            execution_id=p["execution_id"],
+            catalog_id=cat_id,
+            command_id=p["cmd_id"],
+            step=p["step"],
+            tool_kind=p["tool_kind"],
+            context=p["ctx"],
+            meta=p["meta"],
+            parent_event_id=job.last_actionable_evt_id,
+            parent_execution_id=p_exec,
+            stage_id=p["meta"].get("stage_id"),
+            frame_id=p["meta"].get("frame_id"),
+            created_at=now,
+        )
+        for p in prepared_commands
+    ])
 
     # 5. Parallel NATS publish
     publish_items = [(p["execution_id"], p["evt_id"], p["cmd_id"], p["step"]) for p in prepared_commands]

@@ -783,6 +783,8 @@ class Worker:
                 event_name=event_name,
                 payload=normalized,
             )
+            if isinstance(normalized["result"].get("reference"), dict):
+                normalized.pop("response", None)
         elif event_name in {"call.done", "step.exit", "call.error", "command.completed", "command.failed"}:
             normalized["result"] = self._build_strict_result_envelope(
                 value={},
