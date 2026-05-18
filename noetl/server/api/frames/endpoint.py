@@ -251,17 +251,10 @@ async def _insert_frame_event(
         if not catalog_row:
             raise RuntimeError(f"execution not found for frame event: {frame['execution_id']}")
         catalog_id = catalog_row.get("catalog_id")
-    await cur.execute("SELECT pg_advisory_xact_lock(hashtext(%s)::bigint)", (stream_id,))
-    await cur.execute(
-        """
-        SELECT COALESCE(max(stream_version), 0) + 1 AS next_version
-        FROM noetl.event
-        WHERE stream_id = %s
-        """,
-        (stream_id,),
-    )
-    version_row = await cur.fetchone()
-    stream_version = int((version_row or {}).get("next_version") or 1)
+    # Frame events are high-frequency runtime telemetry. Use the Snowflake event
+    # id as a sparse per-stream version so consumers retain deterministic order
+    # without serializing every heartbeat through an advisory lock and max scan.
+    stream_version = int(event_id)
     payload_ref = (result or {}).get("reference")
     event_result = result or {"status": status}
     event_meta = _event_meta(frame=frame, worker_id=worker_id, extra=meta_extra)

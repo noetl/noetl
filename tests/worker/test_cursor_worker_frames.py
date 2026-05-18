@@ -127,7 +127,7 @@ async def test_start_runtime_frame_emits_running_heartbeat(monkeypatch):
                 "status": "RUNNING",
                 "lease_seconds": 45,
             },
-            "timeout": 10.0,
+            "timeout": 30.0,
         }
     ]
 

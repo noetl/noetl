@@ -119,14 +119,14 @@ def test_frame_response_includes_lineage_columns():
 
 
 @pytest.mark.asyncio
-async def test_insert_frame_event_sets_stream_version_and_checksum(monkeypatch):
+async def test_insert_frame_event_sets_sparse_stream_version_and_checksum(monkeypatch):
     from noetl.server.api.frames import endpoint
 
     class Cursor:
         def __init__(self):
             self.calls = []
             self.insert_params = None
-            self.fetchone_rows = [{"catalog_id": 6}, {"next_version": 4}]
+            self.fetchone_rows = [{"catalog_id": 6}]
 
         async def execute(self, query, params=None):
             self.calls.append((query, params))
@@ -163,9 +163,9 @@ async def test_insert_frame_event_sets_stream_version_and_checksum(monkeypatch):
     )
 
     assert event["event_id"] == 123
-    assert event["stream_version"] == 4
+    assert event["stream_version"] == 123
     assert event["envelope_checksum"] == cur.insert_params["envelope_checksum"]
-    assert cur.insert_params["stream_version"] == 4
+    assert cur.insert_params["stream_version"] == 123
     assert cur.insert_params["catalog_id"] == 6
     assert cur.insert_params["stream_id"] == "execution/7/stage/8/frame/9"
     assert cur.insert_params["aggregate_id"] == "frame/9"

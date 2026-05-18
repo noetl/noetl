@@ -45,6 +45,58 @@ logger = setup_logger(__name__, include_location=True)
 _DEFAULT_MAX_ITERATIONS = 100_000
 
 _FRAME_IPC_CACHE: Optional[ArrowIpcSharedMemoryCache] = None
+_FRAME_EVENT_TIMEOUT_SECONDS = max(
+    1.0,
+    float(os.getenv("NOETL_CURSOR_FRAME_EVENT_TIMEOUT_SECONDS", "30")),
+)
+_FRAME_EVENT_MAX_RETRIES = max(
+    1,
+    int(os.getenv("NOETL_CURSOR_FRAME_EVENT_MAX_RETRIES", "3")),
+)
+
+
+async def _post_frame_event(
+    *,
+    url: str,
+    payload: dict[str, Any],
+    attempts: int | None = None,
+) -> None:
+    retry_count = max(1, int(attempts or _FRAME_EVENT_MAX_RETRIES))
+    last_exc: Exception | None = None
+    async with httpx.AsyncClient(timeout=_FRAME_EVENT_TIMEOUT_SECONDS) as client:
+        for attempt in range(retry_count):
+            try:
+                response = await client.post(url, json=payload)
+                response.raise_for_status()
+                return
+            except Exception as exc:
+                last_exc = exc
+                if attempt < retry_count - 1:
+                    await asyncio.sleep(min(0.25 * (2**attempt), 2.0))
+    if last_exc is not None:
+        raise last_exc
+
+
+def _post_frame_event_sync(
+    *,
+    url: str,
+    payload: dict[str, Any],
+    attempts: int | None = None,
+) -> None:
+    retry_count = max(1, int(attempts or _FRAME_EVENT_MAX_RETRIES))
+    last_exc: Exception | None = None
+    with httpx.Client(timeout=_FRAME_EVENT_TIMEOUT_SECONDS) as client:
+        for attempt in range(retry_count):
+            try:
+                response = client.post(url, json=payload)
+                response.raise_for_status()
+                return
+            except Exception as exc:
+                last_exc = exc
+                if attempt < retry_count - 1:
+                    time.sleep(min(0.25 * (2**attempt), 2.0))
+    if last_exc is not None:
+        raise last_exc
 
 
 def _truthy_env(name: str, default: bool = False) -> bool:
@@ -207,12 +259,10 @@ async def _start_runtime_frame(
             "status": "RUNNING",
             "lease_seconds": lease_seconds,
         }
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            response = await client.post(
-                f"{_runtime_api_base(context)}/api/frames/{frame_id}/heartbeat",
-                json=payload,
-            )
-            response.raise_for_status()
+        await _post_frame_event(
+            url=f"{_runtime_api_base(context)}/api/frames/{frame_id}/heartbeat",
+            payload=payload,
+        )
     except Exception as exc:
         logger.warning(
             "[CURSOR-WORKER] slot=%s frame_id=%s start heartbeat failed; continuing: %s",
@@ -252,12 +302,11 @@ async def _runtime_frame_heartbeat_loop(
                 "status": "RUNNING",
                 "lease_seconds": lease_seconds,
             }
-            async with httpx.AsyncClient(timeout=10.0) as client:
-                response = await client.post(
-                    f"{_runtime_api_base(context)}/api/frames/{frame_id}/heartbeat",
-                    json=payload,
-                )
-                response.raise_for_status()
+            await _post_frame_event(
+                url=f"{_runtime_api_base(context)}/api/frames/{frame_id}/heartbeat",
+                payload=payload,
+                attempts=2,
+            )
         except Exception as exc:
             logger.warning(
                 "[CURSOR-WORKER] slot=%s frame_id=%s lease heartbeat failed; continuing: %s",
@@ -292,9 +341,7 @@ def _runtime_frame_heartbeat_thread(
     url = f"{_runtime_api_base(context)}/api/frames/{frame_id}/heartbeat"
     while not stop_event.wait(interval_seconds):
         try:
-            with httpx.Client(timeout=10.0) as client:
-                response = client.post(url, json=payload)
-                response.raise_for_status()
+            _post_frame_event_sync(url=url, payload=payload, attempts=2)
         except Exception as exc:
             logger.warning(
                 "[CURSOR-WORKER] slot=%s frame_id=%s lease heartbeat failed; continuing: %s",
@@ -334,12 +381,10 @@ async def _commit_runtime_frame(
             "cursor": cursor_payload,
             "error": error,
         }
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            response = await client.post(
-                f"{_runtime_api_base(context)}/api/frames/{frame_id}/commit",
-                json=payload,
-            )
-            response.raise_for_status()
+        await _post_frame_event(
+            url=f"{_runtime_api_base(context)}/api/frames/{frame_id}/commit",
+            payload=payload,
+        )
     except Exception as exc:
         logger.warning(
             "[CURSOR-WORKER] slot=%s frame_id=%s commit failed; frame table may lag: %s",
