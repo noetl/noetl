@@ -479,11 +479,13 @@ async def claim_frames(stage_id: int, req: FrameClaimRequest) -> dict[str, Any]:
                         continue
 
                     frame = await _load_claimable_frame(cur, stage_id=stage_id)
+                    frame_id: int | None = None
                     if not frame:
                         # Frame rows are minted lazily after the cursor driver has
                         # claimed external work. Keep the stage-level advisory lock
                         # scoped to minting only; existing frame claims are handled by
                         # SKIP LOCKED and per-frame event streams.
+                        frame_id = await _next_snowflake_id(cur)
                         await _lock_frame_stream(cur, execution_id=int(stage["execution_id"]), stage_id=stage_id)
                         frame = await _load_claimable_frame(cur, stage_id=stage_id)
                     if not frame:
@@ -499,7 +501,6 @@ async def claim_frames(stage_id: int, req: FrameClaimRequest) -> dict[str, Any]:
                         )
                         parent_frame_row = await cur.fetchone()
                         parent_frame_id = (parent_frame_row or {}).get("frame_id")
-                        frame_id = await _next_snowflake_id(cur)
                         await cur.execute(
                             """
                             INSERT INTO noetl.frame (
