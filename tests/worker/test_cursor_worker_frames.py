@@ -115,6 +115,34 @@ async def test_start_runtime_frame_emits_running_heartbeat(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_runtime_frame_heartbeat_loop_extends_lease_until_stopped(monkeypatch):
+    from noetl.worker import cursor_worker
+
+    _FakeAsyncClient.calls = []
+    monkeypatch.setattr(cursor_worker.httpx, "AsyncClient", _FakeAsyncClient)
+
+    stop_event = asyncio.Event()
+    task = asyncio.create_task(
+        cursor_worker._runtime_frame_heartbeat_loop(
+            context={"server_url": "http://runtime"},
+            runtime_frame={"frame_id": 12},
+            worker_slot_id="slot-2",
+            lease_seconds=60,
+            heartbeat_seconds=0.01,
+            stop_event=stop_event,
+        )
+    )
+    await asyncio.sleep(0.25)
+    stop_event.set()
+    await asyncio.wait_for(task, timeout=1.0)
+
+    assert len(_FakeAsyncClient.calls) >= 2
+    assert all(call["url"] == "http://runtime/api/frames/12/heartbeat" for call in _FakeAsyncClient.calls)
+    assert all(call["json"]["status"] == "RUNNING" for call in _FakeAsyncClient.calls)
+    assert all(call["json"]["lease_seconds"] == 60 for call in _FakeAsyncClient.calls)
+
+
+@pytest.mark.asyncio
 async def test_cursor_worker_claims_and_serializes_bounded_frames(monkeypatch):
     from noetl.core.cursor_drivers import register_driver
     from noetl.core.storage import arrow_ipc_to_rows
