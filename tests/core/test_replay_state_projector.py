@@ -24,6 +24,13 @@ class _MemoryProjectionStore:
         return None
 
 
+class _SchemaLimitedProjectionStore(_MemoryProjectionStore):
+    async def ensure_schema(self):
+        from psycopg import errors as pg_errors
+
+        raise pg_errors.InsufficientPrivilege("must be owner of table projection")
+
+
 @pytest.mark.asyncio
 async def test_replay_state_projector_writes_grouped_projection_records():
     from noetl.core.projector import ReplayStateProjector
@@ -190,6 +197,37 @@ async def test_nats_projector_worker_acks_empty_or_unowned_notifications():
     snapshot = metrics.snapshot()
     assert snapshot["notifications_total"] == 2
     assert snapshot["empty_or_unowned_notifications_total"] == 2
+
+
+@pytest.mark.asyncio
+async def test_nats_projector_worker_tolerates_projection_schema_permission(monkeypatch):
+    from noetl.core.projector.nats_worker import NATSProjectorWorker, ProjectorWorkerSettings
+
+    calls = []
+
+    class FakeSubscriber:
+        def __init__(self, **kwargs):
+            calls.append(("init", kwargs["consumer_name"]))
+
+        async def connect(self):
+            calls.append(("connect", None))
+
+        async def subscribe(self, handler):
+            calls.append(("subscribe", handler.__name__))
+
+    monkeypatch.setattr("noetl.core.projector.nats_worker.NATSCommandSubscriber", FakeSubscriber)
+    worker = NATSProjectorWorker(
+        projection_store=_SchemaLimitedProjectionStore(),
+        settings=ProjectorWorkerSettings(consumer_name="noetl-projector-0"),
+    )
+
+    await worker.start()
+
+    assert calls == [
+        ("init", "noetl-projector-0"),
+        ("connect", None),
+        ("subscribe", "handle_notification"),
+    ]
 
 
 @pytest.mark.asyncio

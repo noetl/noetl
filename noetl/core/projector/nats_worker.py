@@ -8,6 +8,8 @@ import re
 from dataclasses import dataclass
 from typing import Any, Iterable, Optional
 
+from psycopg import errors as pg_errors
+
 from noetl.core.common import get_pgdb_connection
 from noetl.core.db.pool import close_pool, init_pool
 from noetl.core.logger import setup_logger
@@ -90,7 +92,13 @@ class NATSProjectorWorker:
 
         ensure_schema = getattr(self.projection_store, "ensure_schema", None)
         if callable(ensure_schema):
-            await ensure_schema()
+            try:
+                await ensure_schema()
+            except pg_errors.InsufficientPrivilege:
+                logger.warning(
+                    "Projector %s cannot run projection DDL; continuing with existing schema",
+                    self.settings.shard_id,
+                )
 
         self._subscriber = NATSCommandSubscriber(
             nats_url=self.settings.nats_url,
