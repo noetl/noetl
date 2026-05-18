@@ -44,6 +44,55 @@ def test_frame_request_contracts_validate_bounds():
         raise AssertionError("requested_count=0 should fail validation")
 
 
+def test_frame_commit_rejects_ipc_only_output_ref():
+    from pydantic import ValidationError
+
+    from noetl.server.api.frames import FrameCommitRequest
+
+    try:
+        FrameCommitRequest(
+            worker_id="worker-a",
+            row_count=10,
+            output_ref={
+                "rows_ref": {
+                    "ipc": {
+                        "kind": "arrow_ipc",
+                        "shm_name": "/noetl-frame-1",
+                        "schema_digest": "sha256:abc",
+                        "byte_length": 4096,
+                    }
+                }
+            },
+        )
+    except ValidationError as exc:
+        assert "durable ref, uri, or locator" in str(exc)
+    else:
+        raise AssertionError("ipc-only output_ref should fail validation")
+
+
+def test_frame_commit_allows_ipc_hint_with_nested_durable_ref():
+    from noetl.server.api.frames import FrameCommitRequest
+
+    commit = FrameCommitRequest(
+        worker_id="worker-a",
+        row_count=10,
+        output_ref={
+            "rows_ref": {
+                "ref": "noetl://execution/1/result/frame/abc",
+                "store": "kv",
+                "ipc": {
+                    "kind": "arrow_ipc",
+                    "shm_name": "/noetl-frame-1",
+                    "schema_digest": "sha256:abc",
+                    "byte_length": 4096,
+                },
+            }
+        },
+    )
+
+    assert commit.output_ref["rows_ref"]["ref"] == "noetl://execution/1/result/frame/abc"
+
+
 def test_frame_commit_result_keeps_event_result_shape():
     from noetl.server.api.frames import endpoint
 

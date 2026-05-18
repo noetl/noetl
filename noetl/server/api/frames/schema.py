@@ -2,7 +2,30 @@ from __future__ import annotations
 
 from typing import Any, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
+
+
+_DURABLE_REF_KEYS = ("ref", "uri", "locator")
+
+
+def _has_ipc_hint(value: Any) -> bool:
+    if isinstance(value, dict):
+        if isinstance(value.get("ipc"), dict):
+            return True
+        return any(_has_ipc_hint(item) for item in value.values())
+    if isinstance(value, list):
+        return any(_has_ipc_hint(item) for item in value)
+    return False
+
+
+def _has_durable_reference(value: Any) -> bool:
+    if isinstance(value, dict):
+        if any(str(value.get(key) or "").strip() for key in _DURABLE_REF_KEYS):
+            return True
+        return any(_has_durable_reference(item) for item in value.values())
+    if isinstance(value, list):
+        return any(_has_durable_reference(item) for item in value)
+    return False
 
 
 class FrameClaimRequest(BaseModel):
@@ -34,3 +57,12 @@ class FrameCommitRequest(BaseModel):
     output_ref: Optional[dict[str, Any]] = None
     events_emitted: int = Field(0, ge=0)
     error: Optional[str] = None
+
+    @model_validator(mode="after")
+    def validate_output_ref_replay_authority(self) -> "FrameCommitRequest":
+        # IPC is a same-node cache hint only. If a committed frame advertises
+        # shared-memory metadata, the event must still contain a durable
+        # reference so replay/projectors can reproduce state after cache GC.
+        if self.output_ref and _has_ipc_hint(self.output_ref) and not _has_durable_reference(self.output_ref):
+            raise ValueError("output_ref with ipc hint must include a durable ref, uri, or locator")
+        return self
