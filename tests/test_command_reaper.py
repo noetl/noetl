@@ -66,10 +66,10 @@ class _FakeConnCtx:
 def _patch_pool(monkeypatch, cursor):
     conn = _FakeConn(cursor)
 
-    def _fake_get_pool_connection(*_args, **_kwargs):
+    def _fake_get_bg_pool_connection(*_args, **_kwargs):
         return _FakeConnCtx(conn)
 
-    monkeypatch.setattr(command_reaper, "get_pool_connection", _fake_get_pool_connection)
+    monkeypatch.setattr(command_reaper, "get_bg_pool_connection", _fake_get_bg_pool_connection)
 
 
 @pytest.mark.asyncio

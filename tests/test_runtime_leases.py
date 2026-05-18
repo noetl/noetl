@@ -55,7 +55,7 @@ async def test_runtime_lease_try_acquire_returns_true(monkeypatch):
     cursor = _AcquireCursor({"runtime": {"owner_instance": "api-1"}})
     conn = _FakeConn(cursor)
 
-    monkeypatch.setattr(runtime_leases, "get_pool_connection", lambda timeout=3.0: _ConnCtx(conn))
+    monkeypatch.setattr(runtime_leases, "get_bg_pool_connection", lambda timeout=3.0: _ConnCtx(conn))
     monkeypatch.setattr(runtime_leases, "get_snowflake_id", lambda: 123)
 
     lease = RuntimeLease(
@@ -81,13 +81,13 @@ async def test_runtime_lease_try_acquire_reports_current_owner(monkeypatch):
     owner_cursor = _AcquireCursor({"runtime": {"owner_instance": "api-2"}})
     calls = {"count": 0}
 
-    def _fake_get_pool_connection(timeout=3.0):
+    def _fake_get_bg_pool_connection(timeout=3.0):
         calls["count"] += 1
         if calls["count"] == 1:
             return _ConnCtx(_FakeConn(acquire_cursor))
         return _ConnCtx(_FakeConn(owner_cursor))
 
-    monkeypatch.setattr(runtime_leases, "get_pool_connection", _fake_get_pool_connection)
+    monkeypatch.setattr(runtime_leases, "get_bg_pool_connection", _fake_get_bg_pool_connection)
     monkeypatch.setattr(runtime_leases, "get_snowflake_id", lambda: 123)
 
     lease = RuntimeLease(
