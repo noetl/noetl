@@ -232,8 +232,9 @@ async def _insert_frame_event(
     worker_id: str,
     result: dict[str, Any] | None = None,
     meta_extra: dict[str, Any] | None = None,
+    event_id: int | None = None,
 ) -> dict[str, Any]:
-    event_id = await _next_snowflake_id(cur)
+    event_id = int(event_id) if event_id is not None else await _next_snowflake_id(cur)
     stream_id = _frame_event_stream_id(
         execution_id=int(frame["execution_id"]),
         stage_id=int(frame["stage_id"]),
@@ -614,13 +615,19 @@ async def claim_frames(stage_id: int, req: FrameClaimRequest) -> dict[str, Any]:
                         SET status = 'CLAIMED',
                             owner_worker = %s,
                             command_id = COALESCE(command_id, %s),
+                            claimed_event_id = noetl.snowflake_id(),
                             lease_until = now() + (%s || ' seconds')::interval,
                             attempts = attempts + 1,
                             updated_at = now()
                         WHERE frame_id = %s
                         RETURNING *
                         """,
-                        (req.worker_id, command_id, req.lease_seconds, frame["frame_id"]),
+                        (
+                            req.worker_id,
+                            command_id,
+                            req.lease_seconds,
+                            frame["frame_id"],
+                        ),
                     )
                     updated = dict(await cur.fetchone())
                     updated["step_name"] = stage["step_name"]
@@ -638,15 +645,7 @@ async def claim_frames(stage_id: int, req: FrameClaimRequest) -> dict[str, Any]:
                                 req.frame_policy or stage.get("frame_policy") or {}
                             ),
                         },
-                    )
-                    await cur.execute(
-                        """
-                        UPDATE noetl.frame
-                        SET claimed_event_id = %s,
-                            updated_at = now()
-                        WHERE frame_id = %s
-                        """,
-                        (event["event_id"], updated["frame_id"]),
+                        event_id=updated.get("claimed_event_id"),
                     )
                     updated["claimed_event_id"] = event["event_id"]
                     events_to_mirror.append(event)
@@ -737,6 +736,7 @@ async def commit_frame(frame_id: int, req: FrameCommitRequest) -> dict[str, Any]
                         row_count = %s,
                         output_ref = %s,
                         events_emitted = %s,
+                        terminal_event_id = noetl.snowflake_id(),
                         completed_at = now(),
                         updated_at = now()
                     WHERE f.frame_id = %s
@@ -782,15 +782,7 @@ async def commit_frame(frame_id: int, req: FrameCommitRequest) -> dict[str, Any]
                             (frame.get("cursor") or {}).get("frame_policy") or {}
                         ),
                     },
-                )
-                await cur.execute(
-                    """
-                    UPDATE noetl.frame
-                    SET terminal_event_id = %s,
-                        updated_at = now()
-                    WHERE frame_id = %s
-                    """,
-                    (event["event_id"], frame_id),
+                    event_id=frame.get("terminal_event_id"),
                 )
                 frame["terminal_event_id"] = event["event_id"]
                 await conn.commit()
