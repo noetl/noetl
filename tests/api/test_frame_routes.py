@@ -64,13 +64,36 @@ def test_frame_event_meta_includes_command_lineage():
     from noetl.server.api.frames import endpoint
 
     meta = endpoint._event_meta(
-        frame={"frame_id": 9, "stage_id": 8, "command_id": 7},
+        frame={"frame_id": 9, "stage_id": 8, "parent_frame_id": 6, "command_id": 7},
         worker_id="worker-a",
     )
 
     assert meta["frame_id"] == "9"
     assert meta["stage_id"] == "8"
+    assert meta["parent_frame_id"] == "6"
     assert meta["command_id"] == "7"
+
+
+def test_frame_response_includes_lineage_columns():
+    from noetl.server.api.frames import endpoint
+
+    response = endpoint._frame_response(
+        {
+            "frame_id": 9,
+            "stage_id": 8,
+            "execution_id": 7,
+            "status": "COMPLETED",
+            "parent_frame_id": 6,
+            "command_id": 5,
+            "claimed_event_id": 4,
+            "terminal_event_id": 3,
+        }
+    )
+
+    assert response["parent_frame_id"] == 6
+    assert response["command_id"] == 5
+    assert response["claimed_event_id"] == 4
+    assert response["terminal_event_id"] == 3
 
 
 @pytest.mark.asyncio

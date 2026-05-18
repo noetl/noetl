@@ -32,6 +32,8 @@ def _event_meta(*, frame: dict[str, Any], worker_id: str, extra: dict[str, Any] 
         "actionable": False,
         "informative": True,
     }
+    if frame.get("parent_frame_id") is not None:
+        meta["parent_frame_id"] = str(frame["parent_frame_id"])
     if frame.get("command_id") is not None:
         meta["command_id"] = str(frame["command_id"])
     if extra:
@@ -274,6 +276,10 @@ def _frame_response(frame: dict[str, Any], event_id: int | None = None) -> dict[
         "cursor": frame.get("cursor") or {},
         "lease_until": frame.get("lease_until"),
         "owner_worker": frame.get("owner_worker"),
+        "parent_frame_id": frame.get("parent_frame_id"),
+        "command_id": frame.get("command_id"),
+        "claimed_event_id": frame.get("claimed_event_id"),
+        "terminal_event_id": frame.get("terminal_event_id"),
         "row_count": frame.get("row_count") or 0,
         "output_ref": frame.get("output_ref"),
         "events_emitted": frame.get("events_emitted") or 0,
@@ -324,20 +330,38 @@ async def claim_frames(stage_id: int, req: FrameClaimRequest) -> dict[str, Any]:
                     )
                     frame = await cur.fetchone()
                     if not frame:
+                        # Frame rows are minted lazily after the cursor driver has
+                        # claimed external work. Serialize this tiny section so
+                        # parent_frame_id forms a deterministic per-stage chain.
+                        await cur.execute("SELECT pg_advisory_xact_lock(%s)", (stage_id,))
+                        await cur.execute(
+                            """
+                            SELECT frame_id
+                            FROM noetl.frame
+                            WHERE stage_id = %s
+                            ORDER BY frame_id DESC
+                            LIMIT 1
+                            """,
+                            (stage_id,),
+                        )
+                        parent_frame_row = await cur.fetchone()
+                        parent_frame_id = (parent_frame_row or {}).get("frame_id")
                         frame_id = await _next_snowflake_id(cur)
                         await cur.execute(
                             """
                             INSERT INTO noetl.frame (
-                                frame_id, stage_id, execution_id, cursor, row_count,
-                                status, command_id, tenant_id, organization_id
+                                frame_id, stage_id, execution_id, parent_frame_id,
+                                cursor, row_count, status, command_id,
+                                tenant_id, organization_id
                             )
-                            VALUES (%s, %s, %s, %s, 0, 'PENDING', %s, %s, %s)
+                            VALUES (%s, %s, %s, %s, %s, 0, 'PENDING', %s, %s, %s)
                             RETURNING *
                             """,
                             (
                                 frame_id,
                                 stage_id,
                                 stage["execution_id"],
+                                parent_frame_id,
                                 Json(req.cursor or {}),
                                 command_id,
                                 stage["tenant_id"],
