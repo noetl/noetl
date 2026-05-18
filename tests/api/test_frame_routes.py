@@ -1,4 +1,5 @@
 from fastapi import FastAPI
+from fastapi import HTTPException
 from fastapi.testclient import TestClient
 import pytest
 
@@ -186,3 +187,180 @@ async def test_frame_event_mirror_publishes_when_enabled(monkeypatch):
     await endpoint._mirror_frame_events([{"event_id": 1, "event_type": "frame.dispatched"}])
 
     assert calls == [{"event_id": 1, "event_type": "frame.dispatched"}]
+
+
+class _CursorCtx:
+    def __init__(self, cursor):
+        self._cursor = cursor
+
+    async def __aenter__(self):
+        return self._cursor
+
+    async def __aexit__(self, exc_type, exc, tb):
+        return False
+
+
+class _ConnCtx:
+    def __init__(self, conn):
+        self._conn = conn
+
+    async def __aenter__(self):
+        return self._conn
+
+    async def __aexit__(self, exc_type, exc, tb):
+        return False
+
+
+class _FrameEndpointConn:
+    def __init__(self, cursor):
+        self._cursor = cursor
+        self.commits = 0
+
+    def cursor(self, row_factory=None):  # noqa: ARG002
+        return _CursorCtx(self._cursor)
+
+    async def commit(self):
+        self.commits += 1
+
+
+class _FrameEndpointCursor:
+    def __init__(self, *, active_row=None, conflict_row=None):
+        self._active_row = active_row
+        self._conflict_row = conflict_row
+        self.queries = []
+
+    async def execute(self, query, params=None):
+        self.queries.append((query, params))
+
+    async def fetchone(self):
+        query = self.queries[-1][0]
+        if "UPDATE noetl.frame" in query:
+            return self._active_row
+        if "SELECT frame_id, status, owner_worker, terminal_event_id" in query:
+            return self._conflict_row
+        raise AssertionError(f"Unexpected fetchone query: {query}")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("previous_status", "expected_event_type"),
+    [
+        ("CLAIMED", "frame.started"),
+        ("RUNNING", "frame.heartbeat"),
+    ],
+)
+async def test_heartbeat_frame_separates_start_from_lease_extension(
+    monkeypatch,
+    previous_status,
+    expected_event_type,
+):
+    from noetl.server.api.frames import endpoint
+    from noetl.server.api.frames.schema import FrameHeartbeatRequest
+
+    emitted = []
+    cursor = _FrameEndpointCursor(
+        active_row={
+            "frame_id": 9,
+            "stage_id": 8,
+            "execution_id": 7,
+            "status": "RUNNING",
+            "previous_status": previous_status,
+            "owner_worker": "worker-a",
+            "tenant_id": "tenant-a",
+            "organization_id": "org-a",
+            "step_name": "fetch_rows",
+            "lease_until": "later",
+        }
+    )
+    conn = _FrameEndpointConn(cursor)
+
+    async def insert_frame_event(_cur, **kwargs):  # noqa: ARG001
+        emitted.append(kwargs)
+        return {"event_id": 123, "event_type": kwargs["event_type"]}
+
+    async def mirror_frame_events(_events):
+        return None
+
+    monkeypatch.setattr(endpoint, "get_pool_connection", lambda: _ConnCtx(conn))
+    monkeypatch.setattr(endpoint, "_insert_frame_event", insert_frame_event)
+    monkeypatch.setattr(endpoint, "_mirror_frame_events", mirror_frame_events)
+
+    response = await endpoint.heartbeat_frame(
+        9,
+        FrameHeartbeatRequest(worker_id="worker-a", lease_seconds=30, status="RUNNING"),
+    )
+
+    assert response["status"] == "ok"
+    assert response["frame"]["event_id"] == 123
+    assert emitted[0]["event_type"] == expected_event_type
+    assert conn.commits == 1
+
+
+@pytest.mark.asyncio
+async def test_commit_frame_rejects_duplicate_terminal_commit_without_event(monkeypatch):
+    from noetl.server.api.frames import endpoint
+    from noetl.server.api.frames.schema import FrameCommitRequest
+
+    cursor = _FrameEndpointCursor(
+        active_row=None,
+        conflict_row={
+            "frame_id": 9,
+            "status": "COMPLETED",
+            "owner_worker": "worker-a",
+            "terminal_event_id": 77,
+        },
+    )
+    conn = _FrameEndpointConn(cursor)
+
+    async def unexpected_insert_frame_event(*_args, **_kwargs):
+        raise AssertionError("duplicate terminal commit must not emit a new event")
+
+    monkeypatch.setattr(endpoint, "get_pool_connection", lambda: _ConnCtx(conn))
+    monkeypatch.setattr(endpoint, "_insert_frame_event", unexpected_insert_frame_event)
+
+    with pytest.raises(HTTPException) as exc:
+        await endpoint.commit_frame(
+            9,
+            FrameCommitRequest(worker_id="worker-a", status="COMPLETED", row_count=1),
+        )
+
+    assert exc.value.status_code == 409
+    assert exc.value.detail == {
+        "code": "frame_already_terminal",
+        "frame_id": 9,
+        "status": "COMPLETED",
+        "terminal_event_id": 77,
+    }
+    assert conn.commits == 0
+
+
+@pytest.mark.asyncio
+async def test_heartbeat_frame_rejects_terminal_frame_without_event(monkeypatch):
+    from noetl.server.api.frames import endpoint
+    from noetl.server.api.frames.schema import FrameHeartbeatRequest
+
+    cursor = _FrameEndpointCursor(
+        active_row=None,
+        conflict_row={
+            "frame_id": 9,
+            "status": "FAILED",
+            "owner_worker": "worker-a",
+            "terminal_event_id": 78,
+        },
+    )
+
+    async def unexpected_insert_frame_event(*_args, **_kwargs):
+        raise AssertionError("terminal heartbeat must not emit a new event")
+
+    monkeypatch.setattr(endpoint, "get_pool_connection", lambda: _ConnCtx(_FrameEndpointConn(cursor)))
+    monkeypatch.setattr(endpoint, "_insert_frame_event", unexpected_insert_frame_event)
+
+    with pytest.raises(HTTPException) as exc:
+        await endpoint.heartbeat_frame(
+            9,
+            FrameHeartbeatRequest(worker_id="worker-a", lease_seconds=30, status="RUNNING"),
+        )
+
+    assert exc.value.status_code == 409
+    assert exc.value.detail["code"] == "frame_already_terminal"
+    assert exc.value.detail["terminal_event_id"] == 78

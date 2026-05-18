@@ -245,6 +245,42 @@ def _frame_commit_result(
     return result
 
 
+async def _frame_conflict_detail(cur: Any, *, frame_id: int, worker_id: str) -> dict[str, Any] | None:
+    await cur.execute(
+        """
+        SELECT frame_id, status, owner_worker, terminal_event_id
+        FROM noetl.frame
+        WHERE frame_id = %s
+        """,
+        (frame_id,),
+    )
+    frame = await cur.fetchone()
+    if not frame:
+        return None
+    status = frame.get("status")
+    owner_worker = frame.get("owner_worker")
+    if status in {"COMPLETED", "FAILED"}:
+        return {
+            "code": "frame_already_terminal",
+            "frame_id": frame_id,
+            "status": status,
+            "terminal_event_id": frame.get("terminal_event_id"),
+        }
+    if owner_worker and owner_worker != worker_id:
+        return {
+            "code": "frame_owner_mismatch",
+            "frame_id": frame_id,
+            "status": status,
+            "owner_worker": owner_worker,
+        }
+    return {
+        "code": "frame_not_active",
+        "frame_id": frame_id,
+        "status": status,
+        "owner_worker": owner_worker,
+    }
+
+
 def _event_mirror_enabled() -> bool:
     return os.getenv("NOETL_EVENT_MIRROR_ENABLED", "").strip().lower() in {"1", "true", "yes", "on"}
 
@@ -450,27 +486,41 @@ async def heartbeat_frame(frame_id: int, req: FrameHeartbeatRequest) -> dict[str
             async with conn.cursor(row_factory=dict_row) as cur:
                 await cur.execute(
                     """
+                    WITH active AS (
+                        SELECT f.frame_id, f.status AS previous_status, s.step_name
+                        FROM noetl.frame f
+                        JOIN noetl.stage s ON s.stage_id = f.stage_id
+                        WHERE f.frame_id = %s
+                          AND f.owner_worker = %s
+                          AND f.status IN ('CLAIMED','RUNNING')
+                        FOR UPDATE
+                    )
                     UPDATE noetl.frame f
                     SET status = %s,
                         lease_until = now() + (%s || ' seconds')::interval,
                         updated_at = now()
-                    FROM noetl.stage s
-                    WHERE f.stage_id = s.stage_id
-                      AND f.frame_id = %s
-                      AND f.owner_worker = %s
-                      AND f.status IN ('CLAIMED','RUNNING')
-                    RETURNING f.*, s.step_name
+                    FROM active
+                    WHERE f.frame_id = active.frame_id
+                    RETURNING f.*, active.step_name, active.previous_status
                     """,
-                    (req.status, req.lease_seconds, frame_id, req.worker_id),
+                    (frame_id, req.worker_id, req.status, req.lease_seconds),
                 )
                 frame = await cur.fetchone()
                 if not frame:
+                    detail = await _frame_conflict_detail(cur, frame_id=frame_id, worker_id=req.worker_id)
+                    if detail:
+                        raise HTTPException(status_code=409, detail=detail)
                     raise HTTPException(status_code=404, detail=f"active frame not found: {frame_id}")
                 frame = dict(frame)
+                event_type = (
+                    "frame.started"
+                    if frame.get("previous_status") != "RUNNING" and req.status.upper() == "RUNNING"
+                    else "frame.heartbeat"
+                )
                 event = await _insert_frame_event(
                     cur,
                     frame=frame,
-                    event_type="frame.started",
+                    event_type=event_type,
                     status=req.status,
                     worker_id=req.worker_id,
                     meta_extra={"lease_until": str(frame.get("lease_until"))},
@@ -523,6 +573,9 @@ async def commit_frame(frame_id: int, req: FrameCommitRequest) -> dict[str, Any]
                 )
                 frame = await cur.fetchone()
                 if not frame:
+                    detail = await _frame_conflict_detail(cur, frame_id=frame_id, worker_id=req.worker_id)
+                    if detail:
+                        raise HTTPException(status_code=409, detail=detail)
                     raise HTTPException(status_code=404, detail=f"active frame not found: {frame_id}")
                 frame = dict(frame)
                 result = _frame_commit_result(
