@@ -151,37 +151,42 @@ async def _claim_runtime_frame(
         event_context = context.get("event")
         if command_id is None and isinstance(event_context, dict):
             command_id = event_context.get("command_id")
-    try:
-        lease_seconds = int(float(frame_policy.get("lease_seconds") or 120.0))
-        payload = {
-            "worker_id": worker_slot_id or os.getenv("HOSTNAME") or "cursor-worker",
-            "command_id": command_id,
-            "requested_count": 1,
-            "lease_seconds": lease_seconds,
-            "frame_policy": frame_policy or {},
-            "cursor": {
-                **(cursor or {}),
-                "frame_index": frame_index,
-                "worker_slot_id": worker_slot_id,
-            },
-        }
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            response = await client.post(
-                f"{_runtime_api_base(context)}/api/stages/{stage_id}/frames/claim",
-                json=payload,
+    lease_seconds = int(float(frame_policy.get("lease_seconds") or 120.0))
+    payload = {
+        "worker_id": worker_slot_id or os.getenv("HOSTNAME") or "cursor-worker",
+        "command_id": command_id,
+        "requested_count": 1,
+        "lease_seconds": lease_seconds,
+        "frame_policy": frame_policy or {},
+        "cursor": {
+            **(cursor or {}),
+            "frame_index": frame_index,
+            "worker_slot_id": worker_slot_id,
+        },
+    }
+    for attempt in range(1, 4):
+        try:
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                response = await client.post(
+                    f"{_runtime_api_base(context)}/api/stages/{stage_id}/frames/claim",
+                    json=payload,
+                )
+                response.raise_for_status()
+                frames = (response.json() or {}).get("frames") or []
+                return dict(frames[0]) if frames else None
+        except Exception as exc:
+            if attempt < 3:
+                await asyncio.sleep(0.25 * attempt)
+                continue
+            logger.warning(
+                "[CURSOR-WORKER] slot=%s frame=%s stage=%s claim failed after %d attempts; continuing legacy path: %s",
+                worker_slot_id,
+                frame_index,
+                stage_id,
+                attempt,
+                exc,
             )
-            response.raise_for_status()
-            frames = (response.json() or {}).get("frames") or []
-            return dict(frames[0]) if frames else None
-    except Exception as exc:
-        logger.warning(
-            "[CURSOR-WORKER] slot=%s frame=%s stage=%s claim failed; continuing legacy path: %s",
-            worker_slot_id,
-            frame_index,
-            stage_id,
-            exc,
-        )
-        return None
+    return None
 
 
 async def _start_runtime_frame(

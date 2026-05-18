@@ -92,6 +92,41 @@ async def _resolve_claim_command_id(
     return int(command_id) if command_id is not None else None
 
 
+async def _load_idempotent_claimed_frame(
+    cur: Any,
+    *,
+    stage_id: int,
+    command_id: int | None,
+    worker_id: str,
+    cursor: dict[str, Any] | None,
+) -> dict[str, Any] | None:
+    if not isinstance(cursor, dict):
+        return None
+    worker_slot_id = cursor.get("worker_slot_id")
+    frame_index = cursor.get("frame_index")
+    if worker_slot_id is None or frame_index is None:
+        return None
+
+    await cur.execute(
+        """
+        SELECT *
+        FROM noetl.frame
+        WHERE stage_id = %s
+          AND command_id IS NOT DISTINCT FROM %s
+          AND owner_worker = %s
+          AND status IN ('CLAIMED','RUNNING')
+          AND cursor->>'worker_slot_id' = %s
+          AND cursor->>'frame_index' = %s
+        ORDER BY frame_id DESC
+        FOR UPDATE
+        LIMIT 1
+        """,
+        (stage_id, command_id, worker_id, str(worker_slot_id), str(frame_index)),
+    )
+    frame = await cur.fetchone()
+    return dict(frame) if frame else None
+
+
 def _frame_stream_id(*, execution_id: int, stage_id: int) -> str:
     return f"execution/{execution_id}/stage/{stage_id}"
 
@@ -395,6 +430,30 @@ async def claim_frames(stage_id: int, req: FrameClaimRequest) -> dict[str, Any]:
                 claimed: list[dict[str, Any]] = []
                 events_to_mirror: list[dict[str, Any]] = []
                 for _ in range(req.requested_count):
+                    frame = await _load_idempotent_claimed_frame(
+                        cur,
+                        stage_id=stage_id,
+                        command_id=command_id,
+                        worker_id=req.worker_id,
+                        cursor=req.cursor,
+                    )
+                    if frame:
+                        await cur.execute(
+                            """
+                            UPDATE noetl.frame
+                            SET lease_until = now() + (%s || ' seconds')::interval,
+                                updated_at = now()
+                            WHERE frame_id = %s
+                            RETURNING *
+                            """,
+                            (req.lease_seconds, frame["frame_id"]),
+                        )
+                        updated = dict(await cur.fetchone())
+                        updated["step_name"] = stage["step_name"]
+                        updated["catalog_id"] = stage["catalog_id"]
+                        claimed.append(_frame_response(updated, updated.get("claimed_event_id")))
+                        continue
+
                     await cur.execute(
                         """
                         SELECT f.*,

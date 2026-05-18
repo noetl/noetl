@@ -193,6 +193,37 @@ async def test_frame_event_mirror_is_opt_in(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_load_idempotent_claimed_frame_matches_worker_slot_and_frame_index():
+    from noetl.server.api.frames import endpoint
+
+    class Cursor:
+        def __init__(self):
+            self.calls = []
+
+        async def execute(self, query, params=None):
+            self.calls.append((query, params))
+
+        async def fetchone(self):
+            return {"frame_id": 9, "status": "CLAIMED"}
+
+    cur = Cursor()
+
+    frame = await endpoint._load_idempotent_claimed_frame(
+        cur,
+        stage_id=8,
+        command_id=7,
+        worker_id="slot-1",
+        cursor={"worker_slot_id": "slot-1", "frame_index": 3},
+    )
+
+    assert frame == {"frame_id": 9, "status": "CLAIMED"}
+    query, params = cur.calls[0]
+    assert "cursor->>'worker_slot_id'" in query
+    assert "cursor->>'frame_index'" in query
+    assert params == (8, 7, "slot-1", "slot-1", "3")
+
+
+@pytest.mark.asyncio
 async def test_frame_event_mirror_publishes_when_enabled(monkeypatch):
     from noetl.server.api.frames import endpoint
 
