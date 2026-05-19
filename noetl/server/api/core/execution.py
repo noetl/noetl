@@ -5,6 +5,8 @@ from fastapi import APIRouter, HTTPException
 from psycopg.rows import dict_row
 from psycopg.types.json import Json
 from noetl.core.db.pool import get_pool_connection
+from noetl.core.messaging import NATSEventPublisher
+from noetl.core.outbox import enqueue_outbox, publish_outbox_batch
 from noetl.server.api.supervision import supervise_command_issued
 from noetl.server.api.event_queries import PENDING_COMMAND_COUNT_SQL
 from .core import logger, get_engine
@@ -16,6 +18,7 @@ from .db import _next_snowflake_id
 from .recovery import _publish_commands_with_recovery
 
 router = APIRouter()
+_execution_event_subject_publisher: NATSEventPublisher | None = None
 _STATUS_TERMINAL_EVENT_TYPES = (
     "playbook.completed",
     "workflow.completed",
@@ -31,6 +34,33 @@ async def _mirror_execution_events(events: list[dict[str, Any]]) -> None:
     from .events import _mirror_events
 
     await _mirror_events(events)
+
+
+def _execution_event_mirror_enabled() -> bool:
+    return os.getenv("NOETL_EVENT_MIRROR_ENABLED", "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _execution_event_subject(event: dict[str, Any]) -> str:
+    global _execution_event_subject_publisher
+    if _execution_event_subject_publisher is None:
+        _execution_event_subject_publisher = NATSEventPublisher()
+    return _execution_event_subject_publisher.subject_for_event(event)
+
+
+async def _enqueue_execution_outbox(cur: Any, event: dict[str, Any]) -> None:
+    if not _execution_event_mirror_enabled():
+        return
+    await enqueue_outbox(cur, event, subject=_execution_event_subject(event))
+
+
+async def _drain_execution_outbox() -> None:
+    if not _execution_event_mirror_enabled():
+        return
+    try:
+        limit = int(os.getenv("NOETL_EXECUTION_OUTBOX_DRAIN_LIMIT", "100"))
+        await publish_outbox_batch(limit=limit)
+    except Exception as exc:
+        logger.warning("Execution outbox drain failed: %s", exc)
 
 
 def _normalize_catalog_kind(value: Optional[str]) -> Optional[str]:
@@ -110,7 +140,6 @@ async def execute(req: ExecuteRequest) -> ExecuteResponse:
                     catalog_id, path = row['catalog_id'], row['path']
         
         execution_id, commands = await engine.start_execution(path, req.payload, catalog_id, req.parent_execution_id)
-        mirrored_command_events = []
         async with get_pool_connection() as conn:
             async with conn.cursor(row_factory=dict_row) as cur:
                 await cur.execute("SELECT event_id FROM noetl.event WHERE execution_id = %s AND event_type = 'playbook.initialized' LIMIT 1", (int(execution_id),))
@@ -157,24 +186,27 @@ async def execute(req: ExecuteRequest) -> ExecuteResponse:
                         "created_at": now,
                     })
                     command_events.append((int(execution_id), evt_id, cmd_id, cmd.step))
-                    mirrored_command_events.append(_command_issued_envelope(
-                        event_id=evt_id,
-                        execution_id=int(execution_id),
-                        catalog_id=catalog_id,
-                        command_id=cmd_id,
-                        step=cmd.step,
-                        tool_kind=cmd.tool.kind,
-                        context=ctx,
-                        meta=meta,
-                        parent_event_id=root_evt_id,
-                        parent_execution_id=req.parent_execution_id,
-                        stage_id=stage_id,
-                        frame_id=frame_id,
-                        created_at=now,
-                    ))
+                    await _enqueue_execution_outbox(
+                        cur,
+                        _command_issued_envelope(
+                            event_id=evt_id,
+                            execution_id=int(execution_id),
+                            catalog_id=catalog_id,
+                            command_id=cmd_id,
+                            step=cmd.step,
+                            tool_kind=cmd.tool.kind,
+                            context=ctx,
+                            meta=meta,
+                            parent_event_id=root_evt_id,
+                            parent_execution_id=req.parent_execution_id,
+                            stage_id=stage_id,
+                            frame_id=frame_id,
+                            created_at=now,
+                        ),
+                    )
                     supervisor_commands.append((str(execution_id), cmd_id, cmd.step, int(evt_id), dict(meta)))
                 await conn.commit()
-        await _mirror_execution_events(mirrored_command_events)
+        await _drain_execution_outbox()
         for s_exec, s_cmd, s_step, s_evt, s_meta in supervisor_commands:
             await supervise_command_issued(s_exec, s_cmd, s_step, event_id=s_evt, meta=s_meta)
         await _publish_commands_with_recovery(command_events, server_url=server_url)
