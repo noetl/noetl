@@ -1958,26 +1958,48 @@ async def cleanup_stuck_executions(request: CleanupStuckExecutionsRequest = Body
                 
                 result = await cursor.fetchone()
                 next_event_id = result['next_event_id']
+                now = datetime.now(timezone.utc)
+                meta = {
+                    "reason": f"Cleaned up stuck execution (older than {request.older_than_minutes} minutes)",
+                    "auto_cancelled": True,
+                    "cleanup_api": True,
+                    "actionable": True,
+                }
                 
                 # Insert cancellation event
                 await cursor.execute("""
                     INSERT INTO event (
                         execution_id, catalog_id, event_id, event_type, status, context, created_at
                     ) VALUES (
-                        %s, %s, %s, 'execution.cancelled', 'CANCELLED', %s, NOW()
+                        %s, %s, %s, 'execution.cancelled', 'CANCELLED', %s, %s
                     )
                 """, (
                     execution_id,
                     catalog_id,
                     next_event_id,
-                    Json({
-                        "reason": f"Cleaned up stuck execution (older than {request.older_than_minutes} minutes)",
-                        "auto_cancelled": True,
-                        "cleanup_api": True
-                    })
+                    Json(meta),
+                    now,
                 ))
+                await _enqueue_execution_route_outbox(
+                    cursor,
+                    {
+                        "event_id": int(next_event_id),
+                        "execution_id": int(execution_id),
+                        "catalog_id": catalog_id,
+                        "event_type": "execution.cancelled",
+                        "node_id": "cleanup",
+                        "node_name": "cleanup",
+                        "status": "CANCELLED",
+                        "result": {"status": "CANCELLED"},
+                        "meta": meta,
+                        "event_time": now,
+                        "ingest_time": now,
+                        "created_at": now,
+                    },
+                )
             
             await conn.commit()
+            await _drain_execution_route_outbox()
             
             logger.info(f"Cancelled {len(execution_ids)} stuck executions")
             

@@ -85,6 +85,28 @@ class _CancelCursor:
         return []
 
 
+class _CleanupCursor:
+    def __init__(self):
+        self.query = ""
+        self.params = None
+        self.executed = []
+
+    async def execute(self, query, params=None):
+        self.query = query
+        self.params = params
+        self.executed.append((query, params))
+
+    async def fetchall(self):
+        if "SELECT DISTINCT" in self.query:
+            return [{"execution_id": 7, "catalog_id": 5}]
+        return []
+
+    async def fetchone(self):
+        if "next_event_id" in self.query:
+            return {"next_event_id": 9002}
+        return None
+
+
 @pytest.mark.asyncio
 async def test_execute_mirrors_initial_command_issued_after_commit(monkeypatch):
     import noetl.server.api.core.commands as commands_module
@@ -191,3 +213,34 @@ async def test_cancel_execution_mirrors_cancelled_event_after_commit(monkeypatch
     assert mirrored[0]["execution_id"] == 7
     assert mirrored[0]["status"] == "CANCELLED"
     assert mirrored[0]["meta"]["reason"] == "operator requested"
+
+
+@pytest.mark.asyncio
+async def test_cleanup_stuck_execution_enqueues_cancelled_event_before_drain(monkeypatch):
+    import noetl.server.api.execution.endpoint as endpoint
+    from noetl.server.api.execution.schema import CleanupStuckExecutionsRequest
+
+    cursor = _CleanupCursor()
+    conn = _FakeConn(cursor)
+    mirrored = []
+
+    async def fake_enqueue(_cur, event):
+        mirrored.append(event)
+
+    async def fake_drain():
+        assert conn.commits == 1
+
+    monkeypatch.setattr(endpoint, "get_pool_connection", lambda: _ConnCtx(conn))
+    monkeypatch.setattr(endpoint, "_enqueue_execution_route_outbox", fake_enqueue)
+    monkeypatch.setattr(endpoint, "_drain_execution_route_outbox", fake_drain)
+
+    result = await endpoint.cleanup_stuck_executions(
+        CleanupStuckExecutionsRequest(older_than_minutes=5, dry_run=False)
+    )
+
+    assert result.cancelled_count == 1
+    assert mirrored[0]["event_id"] == 9002
+    assert mirrored[0]["event_type"] == "execution.cancelled"
+    assert mirrored[0]["execution_id"] == 7
+    assert mirrored[0]["node_name"] == "cleanup"
+    assert mirrored[0]["meta"]["cleanup_api"] is True
