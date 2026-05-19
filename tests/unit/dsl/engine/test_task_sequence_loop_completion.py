@@ -933,7 +933,8 @@ workflow:
     assert state.variables["facility_id"] == 8123
 
 
-def test_mark_step_completed_adds_context_alias_for_plain_dict_results():
+@pytest.mark.asyncio
+async def test_mark_step_completed_adds_context_alias_for_plain_dict_results():
     playbook = Playbook(**yaml.safe_load(
         """
 apiVersion: noetl.io/v2
@@ -951,7 +952,7 @@ workflow:
         """
     ))
     state = ExecutionState("9023", playbook, payload={})
-    state.mark_step_completed(
+    await state.mark_step_completed(
         "compute_report_window",
         {
             "report_start_date": "2026-03-01",
@@ -965,7 +966,8 @@ workflow:
     assert step_result["context"]["report_end_date"] == "2026-03-31"
 
 
-def test_mark_step_completed_does_not_flatten_non_reference_context_payload():
+@pytest.mark.asyncio
+async def test_mark_step_completed_does_not_flatten_non_reference_context_payload():
     playbook = Playbook(**yaml.safe_load(
         """
 apiVersion: noetl.io/v2
@@ -983,7 +985,7 @@ workflow:
         """
     ))
     state = ExecutionState("9024", playbook, payload={})
-    state.mark_step_completed(
+    await state.mark_step_completed(
         "end",
         {
             "status": "COMPLETED",

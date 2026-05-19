@@ -194,15 +194,12 @@ class ExecutionState:
                             result["rows"] = resolved
                     except Exception:
                         pass
-                # Promote context keys to top level
+                # Add a context alias for plain dict results. When the
+                # producer already supplied a context envelope, keep it scoped:
+                # flattening arbitrary context keys changes the public result
+                # shape and can leak nested state into top-level templates.
                 if "context" not in result:
                     result = {**result, "context": dict(result)}
-                context = result.get("context")
-                if isinstance(context, dict):
-                    promoted = dict(result)
-                    for k, v in context.items():
-                        promoted.setdefault(k, v)
-                    result = promoted
 
                 # Preserve row-bearing data from the prior step_result when
                 # the incoming result is compact (e.g. step.exit omits
