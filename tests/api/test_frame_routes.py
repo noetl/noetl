@@ -189,6 +189,7 @@ async def test_insert_frame_event_sets_sparse_stream_version_and_checksum(monkey
         return 123
 
     monkeypatch.setattr(endpoint, "_next_snowflake_id", next_event_id)
+    monkeypatch.delenv("NOETL_EVENT_MIRROR_ENABLED", raising=False)
     cur = Cursor()
 
     event = await endpoint._insert_frame_event(
@@ -224,19 +225,64 @@ async def test_insert_frame_event_sets_sparse_stream_version_and_checksum(monkey
 
 
 @pytest.mark.asyncio
-async def test_frame_event_mirror_is_opt_in(monkeypatch):
+async def test_insert_frame_event_enqueues_outbox_when_enabled(monkeypatch):
+    from noetl.server.api.frames import endpoint
+
+    class Cursor:
+        def __init__(self):
+            self.calls = []
+            self.fetchone_rows = [{"catalog_id": 6}]
+
+        async def execute(self, query, params=None):
+            self.calls.append((query, params))
+
+        async def fetchone(self):
+            return self.fetchone_rows.pop(0)
+
+    enqueued = []
+
+    async def next_event_id(cur):  # noqa: ARG001
+        return 123
+
+    async def enqueue_outbox(_cur, event, *, subject=None):
+        enqueued.append((event, subject))
+
+    monkeypatch.setattr(endpoint, "_next_snowflake_id", next_event_id)
+    monkeypatch.setattr(endpoint, "enqueue_outbox", enqueue_outbox)
+    monkeypatch.setattr(endpoint, "_frame_event_subject", lambda event: f"subject.{event['event_type']}")
+    monkeypatch.setenv("NOETL_EVENT_MIRROR_ENABLED", "true")
+
+    event = await endpoint._insert_frame_event(
+        Cursor(),
+        frame={
+            "frame_id": 9,
+            "stage_id": 8,
+            "execution_id": 7,
+            "tenant_id": "tenant-a",
+            "organization_id": "org-a",
+            "step_name": "fetch_rows",
+        },
+        event_type="frame.dispatched",
+        status="CLAIMED",
+        worker_id="worker-a",
+    )
+
+    assert enqueued == [(event, "subject.frame.dispatched")]
+
+
+@pytest.mark.asyncio
+async def test_frame_event_outbox_is_opt_in(monkeypatch):
     from noetl.server.api.frames import endpoint
 
     calls = []
 
-    class _FakePublisher:
-        async def publish_event(self, event):
-            calls.append(event)
+    async def enqueue_outbox(_cur, event, *, subject=None):
+        calls.append((event, subject))
 
-    monkeypatch.setattr(endpoint, "_event_mirror_publisher", _FakePublisher())
+    monkeypatch.setattr(endpoint, "enqueue_outbox", enqueue_outbox)
     monkeypatch.delenv("NOETL_EVENT_MIRROR_ENABLED", raising=False)
 
-    await endpoint._mirror_frame_events([{"event_id": 1, "event_type": "frame.dispatched"}])
+    await endpoint._enqueue_frame_outbox(object(), {"event_id": 1, "event_type": "frame.dispatched"})
 
     assert calls == []
 
@@ -303,21 +349,23 @@ async def test_load_frame_by_claim_key_matches_pending_frame():
 
 
 @pytest.mark.asyncio
-async def test_frame_event_mirror_publishes_when_enabled(monkeypatch):
+async def test_frame_event_outbox_enqueues_when_enabled(monkeypatch):
     from noetl.server.api.frames import endpoint
 
     calls = []
 
-    class _FakePublisher:
-        async def publish_event(self, event):
-            calls.append(event)
+    async def enqueue_outbox(_cur, event, *, subject=None):
+        calls.append((event, subject))
 
-    monkeypatch.setattr(endpoint, "_event_mirror_publisher", _FakePublisher())
+    monkeypatch.setattr(endpoint, "enqueue_outbox", enqueue_outbox)
+    monkeypatch.setattr(endpoint, "_frame_event_subject", lambda event: f"subject.{event['event_type']}")
     monkeypatch.setenv("NOETL_EVENT_MIRROR_ENABLED", "true")
 
-    await endpoint._mirror_frame_events([{"event_id": 1, "event_type": "frame.dispatched"}])
+    await endpoint._enqueue_frame_outbox(object(), {"event_id": 1, "event_type": "frame.dispatched"})
 
-    assert calls == [{"event_id": 1, "event_type": "frame.dispatched"}]
+    assert calls == [
+        ({"event_id": 1, "event_type": "frame.dispatched"}, "subject.frame.dispatched")
+    ]
 
 
 class _CursorCtx:
@@ -455,12 +503,12 @@ async def test_heartbeat_frame_separates_start_from_lease_extension(
         emitted.append(kwargs)
         return {"event_id": 123, "event_type": kwargs["event_type"]}
 
-    async def mirror_frame_events(_events):
+    async def drain_frame_outbox():
         return None
 
     monkeypatch.setattr(endpoint, "get_pool_connection", lambda: _ConnCtx(conn))
     monkeypatch.setattr(endpoint, "_insert_frame_event", insert_frame_event)
-    monkeypatch.setattr(endpoint, "_mirror_frame_events", mirror_frame_events)
+    monkeypatch.setattr(endpoint, "_drain_frame_outbox", drain_frame_outbox)
 
     response = await endpoint.heartbeat_frame(
         9,
@@ -574,14 +622,14 @@ async def test_claim_frames_reclaims_expired_frame_with_abandoned_event(monkeypa
         emitted.append(kwargs)
         return {"event_id": 100 + len(emitted), "event_type": kwargs["event_type"]}
 
-    async def mirror_frame_events(_events):
+    async def drain_frame_outbox():
         return None
 
     monkeypatch.setattr(endpoint, "get_pool_connection", lambda: _ConnCtx(conn))
     monkeypatch.setattr(endpoint, "_load_stage", load_stage)
     monkeypatch.setattr(endpoint, "_resolve_claim_command_id", resolve_command_id)
     monkeypatch.setattr(endpoint, "_insert_frame_event", insert_frame_event)
-    monkeypatch.setattr(endpoint, "_mirror_frame_events", mirror_frame_events)
+    monkeypatch.setattr(endpoint, "_drain_frame_outbox", drain_frame_outbox)
 
     response = await endpoint.claim_frames(
         8,
@@ -706,7 +754,7 @@ async def test_claim_frames_mints_without_advisory_lock(monkeypatch):
         emitted.append(kwargs)
         return {"event_id": kwargs["event_id"], "event_type": kwargs["event_type"]}
 
-    async def mirror_frame_events(_events):
+    async def drain_frame_outbox():
         return None
 
     monkeypatch.setattr(endpoint, "get_pool_connection", lambda: _ConnCtx(conn))
@@ -714,7 +762,7 @@ async def test_claim_frames_mints_without_advisory_lock(monkeypatch):
     monkeypatch.setattr(endpoint, "_resolve_claim_command_id", resolve_command_id)
     monkeypatch.setattr(endpoint, "_next_snowflake_id", next_snowflake_id)
     monkeypatch.setattr(endpoint, "_insert_frame_event", insert_frame_event)
-    monkeypatch.setattr(endpoint, "_mirror_frame_events", mirror_frame_events)
+    monkeypatch.setattr(endpoint, "_drain_frame_outbox", drain_frame_outbox)
 
     response = await endpoint.claim_frames(
         8,
