@@ -417,6 +417,19 @@ class TransitionMixin:
                         await cur.execute(f"RELEASE SAVEPOINT {savepoint_name}")
                     if owns_transaction:
                         await active_conn.commit()
+                        await _mirror_engine_events([
+                            envelope | {
+                                "event_id": event_id,
+                                "catalog_id": catalog_id,
+                                "node_id": step_def.step,
+                                "node_name": step_def.step,
+                                "status": "OPEN",
+                                "context": {"stage_id": str(stage_id), "loop_event_id": loop_event_id},
+                                "parent_event_id": parent_event_id,
+                                "stage_id": str(stage_id),
+                                "created_at": event_time,
+                            }
+                        ])
                 except Exception as event_exc:
                     if owns_transaction:
                         await active_conn.rollback()

@@ -106,10 +106,33 @@ class LifecycleMixin:
             state.last_event_id = event_id
             if event.step:
                 state.step_event_ids[event.step] = event_id
+            return {
+                "event_id": event_id,
+                "execution_id": int(event.execution_id),
+                "catalog_id": catalog_id,
+                "event_type": event.name,
+                "node_id": event.step,
+                "node_name": event.step,
+                "status": status,
+                "context": context_val,
+                "result": result_val or {"status": status},
+                "meta": event.meta or {},
+                "worker_id": event.worker_id,
+                "parent_event_id": parent_event_id,
+                "parent_execution_id": state.parent_execution_id,
+                "command_id": (event.meta or {}).get("command_id") if isinstance(event.meta, dict) else None,
+                "stage_id": (event.meta or {}).get("stage_id") if isinstance(event.meta, dict) else None,
+                "frame_id": (event.meta or {}).get("frame_id") if isinstance(event.meta, dict) else None,
+                "event_time": event_timestamp,
+                "ingest_time": event_timestamp,
+                "created_at": event_timestamp,
+            }
 
         if conn is None:
             async with get_pool_connection() as c:
-                await _do_persist(c)
+                mirrored_event = await _do_persist(c)
+            if mirrored_event:
+                await _mirror_engine_events([mirrored_event])
         else:
             await _do_persist(conn)
 

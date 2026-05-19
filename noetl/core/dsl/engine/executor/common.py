@@ -59,6 +59,13 @@ def get_snowflake_id():
     return db_pool.get_snowflake_id()
 
 
+async def _mirror_engine_events(events: list[dict[str, Any]]) -> None:
+    """Mirror engine-owned event appends after their DB transaction commits."""
+    from noetl.server.api.core.events import _mirror_events
+
+    await _mirror_events(events)
+
+
 def get_nats_cache():
     """Resolve the shared NATS cache lazily.
 

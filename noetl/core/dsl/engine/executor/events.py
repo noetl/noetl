@@ -207,6 +207,21 @@ class EventHandlingMixin:
                 )
                 if owns_transaction:
                     await active_conn.commit()
+                    await _mirror_engine_events([
+                        envelope | {
+                            "event_id": event_id,
+                            "catalog_id": stage.get("catalog_id") or state.catalog_id,
+                            "node_id": step_name,
+                            "context": {
+                                "stage_id": str(stage["stage_id"]),
+                                "loop_event_id": str(loop_event_id),
+                            },
+                            "parent_event_id": parent_event_id,
+                            "stage_id": str(stage["stage_id"]),
+                            "ingest_time": now,
+                            "created_at": now,
+                        }
+                    ])
                 logger.info(
                     "[CURSOR-LOOP] Closed runtime stage %s for step %s execution=%s frames=%s rows=%s",
                     stage["stage_id"],
