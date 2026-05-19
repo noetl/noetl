@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from .common import *
+from .outbox import drain_executor_outbox, enqueue_executor_outbox
 from .state import ExecutionState
 from .store import PlaybookRepo, StateStore
 from noetl.core.event_store.ports import canonical_event_checksum
@@ -413,6 +414,22 @@ class TransitionMixin:
                         """,
                         (event_id, stage_id),
                     )
+                    await enqueue_executor_outbox(
+                        cur,
+                        envelope
+                        | {
+                            "event_id": event_id,
+                            "catalog_id": catalog_id,
+                            "parent_event_id": parent_event_id,
+                            "node_id": step_def.step,
+                            "node_name": step_def.step,
+                            "status": "OPEN",
+                            "context": {"stage_id": str(stage_id), "loop_event_id": loop_event_id},
+                            "created_at": event_time,
+                            "ingest_time": event_time,
+                            "stage_id": stage_id,
+                        },
+                    )
                     if not owns_transaction:
                         await cur.execute(f"RELEASE SAVEPOINT {savepoint_name}")
                     if owns_transaction:
@@ -441,7 +458,10 @@ class TransitionMixin:
             if conn is not None:
                 return await _open_with_conn(conn, owns_transaction=False)
             async with get_pool_connection() as owned_conn:
-                return await _open_with_conn(owned_conn, owns_transaction=True)
+                stage_id = await _open_with_conn(owned_conn, owns_transaction=True)
+            if stage_id is not None:
+                await drain_executor_outbox()
+            return stage_id
         except Exception as exc:
             logger.warning(
                 "[CURSOR-LOOP] Failed to open runtime stage for step %s execution=%s: %s",

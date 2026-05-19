@@ -3,6 +3,7 @@ from datetime import datetime, timezone
 from typing import Any, Optional
 
 from .common import *
+from .outbox import drain_executor_outbox, enqueue_executor_outbox
 from .state import ExecutionState
 from .store import PlaybookRepo, StateStore
 from noetl.core.dsl.engine.models import Event, Command
@@ -102,6 +103,29 @@ class LifecycleMixin:
                         event.worker_id
                     )
                 )
+                await enqueue_executor_outbox(
+                    cur,
+                    {
+                        "event_id": event_id,
+                        "execution_id": int(event.execution_id),
+                        "catalog_id": catalog_id,
+                        "parent_event_id": parent_event_id,
+                        "parent_execution_id": state.parent_execution_id,
+                        "event_type": event.name,
+                        "node_id": event.step,
+                        "node_name": event.step,
+                        "status": status,
+                        "duration": duration_ms,
+                        "context": context_val,
+                        "result": result_val,
+                        "meta": event.meta or {},
+                        "error": event.payload.get("error") if isinstance(event.payload, dict) else None,
+                        "worker_id": event.worker_id,
+                        "event_time": event_timestamp,
+                        "ingest_time": event_timestamp,
+                        "created_at": event_timestamp,
+                    },
+                )
 
             state.last_event_id = event_id
             if event.step:
@@ -110,6 +134,7 @@ class LifecycleMixin:
         if conn is None:
             async with get_pool_connection() as c:
                 await _do_persist(c)
+            await drain_executor_outbox()
         else:
             await _do_persist(conn)
 
