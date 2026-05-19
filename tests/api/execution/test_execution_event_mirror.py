@@ -119,9 +119,11 @@ async def test_execute_mirrors_initial_command_issued_after_commit(monkeypatch):
     async def fake_store_context_if_needed(**kwargs):
         return kwargs["context"]
 
-    async def fake_mirror(events):
+    async def fake_enqueue(_cur, event):
+        mirrored.append(event)
+
+    async def fake_drain():
         assert conn.commits == 1
-        mirrored.extend(events)
 
     async def fake_publish(items, *, server_url):
         published.extend(items)
@@ -132,7 +134,8 @@ async def test_execute_mirrors_initial_command_issued_after_commit(monkeypatch):
     monkeypatch.setattr(execution_module, "get_engine", lambda: FakeEngine())
     monkeypatch.setattr(execution_module, "get_pool_connection", lambda: _ConnCtx(conn))
     monkeypatch.setattr(execution_module, "_next_snowflake_id", fake_next_snowflake_id)
-    monkeypatch.setattr(execution_module, "_mirror_execution_events", fake_mirror)
+    monkeypatch.setattr(execution_module, "_enqueue_execution_outbox", fake_enqueue)
+    monkeypatch.setattr(execution_module, "_drain_execution_outbox", fake_drain)
     monkeypatch.setattr(execution_module, "_publish_commands_with_recovery", fake_publish)
     monkeypatch.setattr(execution_module, "supervise_command_issued", fake_supervise)
     monkeypatch.setattr(commands_module, "_build_command_context", lambda _cmd: {"url": "https://example.test"})
@@ -163,16 +166,19 @@ async def test_cancel_execution_mirrors_cancelled_event_after_commit(monkeypatch
     conn = _FakeConn(cursor)
     mirrored = []
 
-    async def fake_mirror(events):
+    async def fake_enqueue(_cur, event):
+        mirrored.append(event)
+
+    async def fake_drain():
         assert conn.commits == 1
-        mirrored.extend(events)
 
     monkeypatch.setattr(endpoint, "get_pool_connection", lambda: _ConnCtx(conn))
     async def fake_snowflake_id():
         return 9001
 
     monkeypatch.setattr(endpoint, "get_snowflake_id", fake_snowflake_id)
-    monkeypatch.setattr(endpoint, "_mirror_execution_route_events", fake_mirror)
+    monkeypatch.setattr(endpoint, "_enqueue_execution_route_outbox", fake_enqueue)
+    monkeypatch.setattr(endpoint, "_drain_execution_route_outbox", fake_drain)
 
     result = await endpoint.cancel_execution(
         "7",

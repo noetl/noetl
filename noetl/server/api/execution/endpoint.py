@@ -13,6 +13,8 @@ from psycopg.types.json import Json
 from noetl.core.db.pool import get_pool_connection, get_snowflake_id
 from noetl.core.logger import setup_logger
 from noetl.core.common import convert_snowflake_ids_for_api, normalize_execution_id_for_db
+from noetl.core.messaging import NATSEventPublisher
+from noetl.core.outbox import enqueue_outbox, publish_outbox_batch
 from noetl.server.api.event_queries import PENDING_COMMAND_COUNT_SQL
 from .schema import (
     ExecutionEntryResponse,
@@ -39,6 +41,7 @@ except Exception:  # pragma: no cover
 
 logger = setup_logger(__name__, include_location=True)
 router = APIRouter(tags=["executions"])
+_execution_route_subject_publisher: NATSEventPublisher | None = None
 
 DEFAULT_EXECUTIONS_PAGE_SIZE = 100
 MAX_EXECUTIONS_PAGE_SIZE = 200
@@ -49,6 +52,33 @@ async def _mirror_execution_route_events(events: list[dict[str, Any]]) -> None:
     from noetl.server.api.core.events import _mirror_events
 
     await _mirror_events(events)
+
+
+def _execution_route_mirror_enabled() -> bool:
+    return os.getenv("NOETL_EVENT_MIRROR_ENABLED", "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _execution_route_event_subject(event: dict[str, Any]) -> str:
+    global _execution_route_subject_publisher
+    if _execution_route_subject_publisher is None:
+        _execution_route_subject_publisher = NATSEventPublisher()
+    return _execution_route_subject_publisher.subject_for_event(event)
+
+
+async def _enqueue_execution_route_outbox(cur: Any, event: dict[str, Any]) -> None:
+    if not _execution_route_mirror_enabled():
+        return
+    await enqueue_outbox(cur, event, subject=_execution_route_event_subject(event))
+
+
+async def _drain_execution_route_outbox() -> None:
+    if not _execution_route_mirror_enabled():
+        return
+    try:
+        limit = int(os.getenv("NOETL_EXECUTION_ROUTE_OUTBOX_DRAIN_LIMIT", "100"))
+        await publish_outbox_batch(limit=limit)
+    except Exception as exc:
+        logger.warning("Execution route outbox drain failed: %s", exc)
 
 
 def _as_iso(value: Optional[datetime]) -> Optional[str]:
@@ -968,8 +998,6 @@ async def cancel_execution(execution_id: str, request: CancelExecutionRequest = 
         request = CancelExecutionRequest()
     
     cancelled_ids = []
-    mirrored_events = []
-    
     async with get_pool_connection() as conn:
         async with conn.cursor(row_factory=dict_row) as cur:
             # Check if execution exists and get its current state
@@ -1056,26 +1084,29 @@ async def cancel_execution(execution_id: str, request: CancelExecutionRequest = 
                     "cancel", "cancel", "CANCELLED",
                     Json(meta), now
                 ))
-                mirrored_events.append({
-                    "event_id": int(event_id),
-                    "execution_id": int(exec_id),
-                    "catalog_id": catalog_id,
-                    "event_type": "execution.cancelled",
-                    "node_id": "cancel",
-                    "node_name": "cancel",
-                    "status": "CANCELLED",
-                    "result": {"status": "CANCELLED"},
-                    "meta": meta,
-                    "event_time": now,
-                    "ingest_time": now,
-                    "created_at": now,
-                })
+                await _enqueue_execution_route_outbox(
+                    cur,
+                    {
+                        "event_id": int(event_id),
+                        "execution_id": int(exec_id),
+                        "catalog_id": catalog_id,
+                        "event_type": "execution.cancelled",
+                        "node_id": "cancel",
+                        "node_name": "cancel",
+                        "status": "CANCELLED",
+                        "result": {"status": "CANCELLED"},
+                        "meta": meta,
+                        "event_time": now,
+                        "ingest_time": now,
+                        "created_at": now,
+                    },
+                )
                 
                 cancelled_ids.append(str(exec_id))
                 logger.info(f"Cancelled execution {exec_id} - reason: {request.reason}")
             
             await conn.commit()
-    await _mirror_execution_route_events(mirrored_events)
+    await _drain_execution_route_outbox()
     
     return CancelExecutionResponse(
         status="cancelled",
