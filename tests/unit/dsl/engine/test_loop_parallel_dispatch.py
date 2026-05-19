@@ -62,6 +62,29 @@ class ClaimingNATSCache:
         self._state[key] = state
         return claim_index
 
+    async def claim_next_loop_indices(
+        self,
+        execution_id,
+        step_name,
+        collection_size,
+        max_in_flight,
+        requested_count=1,
+        event_id=None,
+    ):
+        claimed = []
+        for _ in range(int(requested_count or 1)):
+            claim_index = await self.claim_next_loop_index(
+                execution_id,
+                step_name,
+                collection_size,
+                max_in_flight,
+                event_id=event_id,
+            )
+            if claim_index is None:
+                break
+            claimed.append(claim_index)
+        return claimed
+
 
 class RepairingNATSCache:
     def __init__(self, initial_state):
@@ -115,6 +138,29 @@ class RepairingNATSCache:
         self.state["collection_size"] = effective_size
         self.state["event_id"] = event_id
         return claim_index
+
+    async def claim_next_loop_indices(
+        self,
+        execution_id,
+        step_name,
+        collection_size,
+        max_in_flight,
+        requested_count=1,
+        event_id=None,
+    ):
+        claimed = []
+        for _ in range(int(requested_count or 1)):
+            claim_index = await self.claim_next_loop_index(
+                execution_id,
+                step_name,
+                collection_size,
+                max_in_flight,
+                event_id=event_id,
+            )
+            if claim_index is None:
+                break
+            claimed.append(claim_index)
+        return claimed
 
     async def count_observed_loop_iteration_terminals(
         self,

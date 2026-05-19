@@ -345,15 +345,20 @@ def _unwrap_event_payload(payload: Any) -> Any:
     return payload
 
 
-def _extract_command_id_from_event_payload(payload: Any, meta: Optional[dict[str, Any]] = None) -> Optional[int]:
-    """Best-effort extraction of command_id (BIGINT snowflake) from worker event payloads.
+def _extract_command_id_from_event_payload(payload: Any, meta: Optional[dict[str, Any]] = None) -> Optional[str]:
+    """Best-effort extraction of command_id from worker event payloads.
 
-    Accepts int (current shape), or numeric str (legacy). Returns int or None.
+    Command ids are numeric in the current projection tables, but older worker
+    paths and event meta can still carry opaque string ids. Keep the extractor
+    lossless and let query paths compare via text.
     """
-    def _coerce(v: Any) -> Optional[int]:
-        if v is None: return None
-        if isinstance(v, int): return v
-        if isinstance(v, str) and v.strip().isdigit(): return int(v.strip())
+    def _coerce(v: Any) -> Optional[str]:
+        if v is None:
+            return None
+        if isinstance(v, int):
+            return str(v)
+        if isinstance(v, str) and v.strip():
+            return v.strip()
         return None
 
     if isinstance(meta, dict) and "command_id" in meta:
