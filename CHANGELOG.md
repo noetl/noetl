@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.43.0](https://github.com/noetl/noetl/compare/v2.42.0...v2.43.0) (2026-05-19)
+
+### Features
+
+* **events:** add transactional outbox ([ea87ba0](https://github.com/noetl/noetl/commit/ea87ba02bb90f46dcacf60ea174e81afe67dd8a7))
+
 ## [2.42.0](https://github.com/noetl/noetl/compare/v2.41.0...v2.42.0) (2026-05-19)
 
 ### Features
