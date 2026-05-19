@@ -9,6 +9,7 @@ to prevent sensitive data (bearer tokens, passwords, API keys) from being persis
 """
 
 import json
+import os
 import uuid
 from typing import Optional, Dict, Any, List
 from datetime import datetime
@@ -17,11 +18,41 @@ from psycopg.types.json import Json
 from noetl.core.common import get_val
 from noetl.core.db.pool import get_pool_connection, get_snowflake_id
 from noetl.core.logger import setup_logger
+from noetl.core.messaging import NATSEventPublisher
+from noetl.core.outbox import enqueue_outbox, publish_outbox_batch
 from noetl.core.sanitize import sanitize_sensitive_data
 from .schema import EventEmitRequest, EventEmitResponse, EventQuery, EventResponse, EventListResponse, WorkloadData
 
 
 logger = setup_logger(__name__, include_location=True)
+_broker_event_subject_publisher: NATSEventPublisher | None = None
+
+
+def _event_mirror_enabled() -> bool:
+    return os.getenv("NOETL_EVENT_MIRROR_ENABLED", "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _broker_event_subject(event: dict[str, Any]) -> str:
+    global _broker_event_subject_publisher
+    if _broker_event_subject_publisher is None:
+        _broker_event_subject_publisher = NATSEventPublisher()
+    return _broker_event_subject_publisher.subject_for_event(event)
+
+
+async def _enqueue_broker_outbox(cur: Any, event: dict[str, Any]) -> None:
+    if not _event_mirror_enabled():
+        return
+    await enqueue_outbox(cur, event, subject=_broker_event_subject(event))
+
+
+async def _drain_broker_outbox() -> None:
+    if not _event_mirror_enabled():
+        return
+    try:
+        limit = int(os.getenv("NOETL_BROKER_OUTBOX_DRAIN_LIMIT", "100"))
+        await publish_outbox_batch(limit=limit)
+    except Exception as exc:
+        logger.warning("Broker outbox drain failed: %s", exc)
 
 
 class EventService:
@@ -105,15 +136,18 @@ class EventService:
             # Add correlation keys if provided
             if request.correlation:
                 result_ref_obj["correlation"] = request.correlation.model_dump() if hasattr(request.correlation, 'model_dump') else request.correlation
-            result = Json(result_ref_obj)
+            result_obj = result_ref_obj
+            result = Json(result_obj)
         elif request.output_inline:
             # Inline result provided separately - sanitize before storage
             sanitized_inline = sanitize_sensitive_data(request.output_inline)
-            result = Json(sanitized_inline)
+            result_obj = sanitized_inline
+            result = Json(result_obj)
         else:
             # Use original result - sanitize before storage
             sanitized_result = sanitize_sensitive_data(request.result) if request.result else None
-            result = Json(sanitized_result) if sanitized_result else None
+            result_obj = sanitized_result
+            result = Json(result_obj) if result_obj else None
         
         async with get_pool_connection() as conn:
             async with conn.cursor(row_factory=dict_row) as cur:
@@ -177,8 +211,32 @@ class EventService:
                         "created_at": created_at,
                     }
                 )
+                await _enqueue_broker_outbox(
+                    cur,
+                    {
+                        "event_id": int(event_id),
+                        "execution_id": int(execution_id),
+                        "catalog_id": catalog_id,
+                        "parent_event_id": parent_event_id,
+                        "parent_execution_id": parent_execution_id,
+                        "event_type": request.event_type,
+                        "node_id": request.node_id,
+                        "node_name": request.node_name,
+                        "node_type": request.node_type,
+                        "status": request.status,
+                        "context": sanitized_context,
+                        "result": result_obj,
+                        "error": request.error,
+                        "stack_trace": request.stack_trace,
+                        "meta": sanitized_meta,
+                        "event_time": created_at,
+                        "ingest_time": created_at,
+                        "created_at": created_at,
+                    },
+                )
                 
                 await conn.commit()
+        await _drain_broker_outbox()
         
         logger.info(
             f"Event emitted: event_id={event_id}, execution_id={execution_id}, "
