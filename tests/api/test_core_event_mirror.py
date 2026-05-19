@@ -37,6 +37,46 @@ async def test_core_event_mirror_publishes_when_enabled(monkeypatch):
     assert published == [{"event_id": 1, "event_type": "workflow.completed"}]
 
 
+@pytest.mark.asyncio
+async def test_core_event_outbox_enqueue_is_opt_in(monkeypatch):
+    from noetl.server.api.core import events
+
+    enqueued = []
+
+    async def fake_enqueue(cur, event, *, subject=None):
+        enqueued.append((cur, event, subject))
+
+    monkeypatch.setenv("NOETL_EVENT_MIRROR_ENABLED", "false")
+    monkeypatch.setattr(events, "enqueue_outbox", fake_enqueue)
+
+    await events._enqueue_event_outbox("cursor", {"event_id": 1, "execution_id": 7})
+
+    assert enqueued == []
+
+
+@pytest.mark.asyncio
+async def test_core_event_outbox_enqueue_uses_event_subject(monkeypatch):
+    from noetl.server.api.core import events
+
+    enqueued = []
+
+    class FakeSubjectPublisher:
+        def subject_for_event(self, event):
+            return f"events.{event['execution_id']}"
+
+    async def fake_enqueue(cur, event, *, subject=None):
+        enqueued.append((cur, event, subject))
+
+    monkeypatch.setenv("NOETL_EVENT_MIRROR_ENABLED", "true")
+    monkeypatch.setattr(events, "_event_subject_publisher", FakeSubjectPublisher())
+    monkeypatch.setattr(events, "enqueue_outbox", fake_enqueue)
+
+    event = {"event_id": 1, "execution_id": 7}
+    await events._enqueue_event_outbox("cursor", event)
+
+    assert enqueued == [("cursor", event, "events.7")]
+
+
 def test_core_event_mirror_envelope_preserves_lineage():
     from noetl.server.api.core import events
 

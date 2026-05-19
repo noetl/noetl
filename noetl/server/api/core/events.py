@@ -8,6 +8,7 @@ from psycopg_pool import PoolTimeout
 from psycopg.types.json import Json
 from noetl.core.db.pool import get_pool_connection
 from noetl.core.dsl.engine.models import Event
+from noetl.core.outbox import enqueue_outbox, publish_outbox_batch
 from noetl.core.messaging import NATSEventPublisher
 from noetl.server.api.supervision import supervise_persisted_event, supervise_command_issued
 from .core import (
@@ -38,6 +39,7 @@ from .recovery import _publish_commands_with_recovery
 
 router = APIRouter()
 _event_mirror_publisher: NATSEventPublisher | None = None
+_event_subject_publisher: NATSEventPublisher | None = None
 
 
 def _event_mirror_enabled() -> bool:
@@ -60,6 +62,29 @@ async def _mirror_events(events: list[dict[str, Any]]) -> None:
                 event.get("event_type"),
                 exc,
             )
+
+
+def _event_subject(event: dict[str, Any]) -> str:
+    global _event_subject_publisher
+    if _event_subject_publisher is None:
+        _event_subject_publisher = NATSEventPublisher()
+    return _event_subject_publisher.subject_for_event(event)
+
+
+async def _enqueue_event_outbox(cur: Any, event: dict[str, Any]) -> None:
+    if not _event_mirror_enabled():
+        return
+    await enqueue_outbox(cur, event, subject=_event_subject(event))
+
+
+async def _drain_core_outbox() -> None:
+    if not _event_mirror_enabled():
+        return
+    try:
+        limit = int(os.getenv("NOETL_CORE_OUTBOX_DRAIN_LIMIT", "100"))
+        await publish_outbox_batch(limit=limit)
+    except Exception as exc:
+        logger.warning("Core outbox drain failed: %s", exc)
 
 
 def _event_envelope(
@@ -252,8 +277,8 @@ async def handle_event(req: EventRequest) -> EventResponse:
                             INSERT INTO noetl.event (event_id, execution_id, catalog_id, event_type, node_id, node_name, status, result, meta, worker_id, created_at)
                             VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                         """, (evt_id, int(req.execution_id), catalog_id, req.name, req.step, req.step, "RUNNING", Json(res_obj), Json(meta_obj), req.worker_id, datetime.now(timezone.utc)))
-                        await conn.commit()
-                        await _mirror_events([
+                        await _enqueue_event_outbox(
+                            cur,
                             _event_envelope(
                                 event_id=evt_id,
                                 execution_id=int(req.execution_id),
@@ -264,8 +289,10 @@ async def handle_event(req: EventRequest) -> EventResponse:
                                 result=res_obj,
                                 meta=meta_obj,
                                 command_id=command_id,
-                            )
-                        ])
+                            ),
+                        )
+                        await conn.commit()
+                        await _drain_core_outbox()
                         _record_db_operation_success()
                         return EventResponse(status="ok", event_id=evt_id, commands_generated=0)
 
@@ -303,6 +330,20 @@ async def handle_event(req: EventRequest) -> EventResponse:
                     INSERT INTO noetl.event (event_id, execution_id, catalog_id, event_type, node_id, node_name, status, result, meta, error, created_at)
                     VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 """, (evt_id, int(req.execution_id), catalog_id, req.name, req.step, req.step, status, Json(res_obj), Json(event_meta), error_text, datetime.now(timezone.utc)))
+                await _enqueue_event_outbox(
+                    cur,
+                    _event_envelope(
+                        event_id=evt_id,
+                        execution_id=int(req.execution_id),
+                        catalog_id=catalog_id,
+                        event_type=req.name,
+                        node_name=req.step,
+                        status=status,
+                        result=res_obj,
+                        meta=event_meta,
+                        command_id=command_id,
+                    ),
+                )
                 await conn.commit()
                 _record_db_operation_success()
 
@@ -348,19 +389,7 @@ async def handle_event(req: EventRequest) -> EventResponse:
                     except Exception as _cmd_exc:
                         logger.debug("[COMMAND-TABLE] Status update failed for %s: %s", command_id, _cmd_exc)
 
-        await _mirror_events([
-            _event_envelope(
-                event_id=evt_id,
-                execution_id=int(req.execution_id),
-                catalog_id=catalog_id,
-                event_type=req.name,
-                node_name=req.step,
-                status=status,
-                result=res_obj,
-                meta=event_meta,
-                command_id=command_id,
-            )
-        ])
+        await _drain_core_outbox()
         await supervise_persisted_event(req.execution_id, req.step, req.name, req.payload, event_meta, event_id=int(evt_id))
         if req.name in {"command.completed", "command.failed"} and command_id: _active_claim_cache_invalidate(command_id=command_id)
         
@@ -374,7 +403,7 @@ async def handle_event(req: EventRequest) -> EventResponse:
             commands_generated = bool(commands)
 
         server_url = os.getenv("NOETL_SERVER_URL", "http://noetl.noetl.svc.cluster.local:8082")
-        command_events, supervisor_commands, mirrored_command_events = [], [], []
+        command_events, supervisor_commands = [], []
         async with get_pool_connection() as conn:
             async with conn.cursor(row_factory=dict_row) as cur:
                 for cmd in commands:
@@ -393,7 +422,8 @@ async def handle_event(req: EventRequest) -> EventResponse:
                         INSERT INTO noetl.event (event_id, execution_id, catalog_id, event_type, node_id, node_name, node_type, status, context, meta, parent_event_id, parent_execution_id, command_id, stage_id, frame_id, created_at)
                         VALUES (%(event_id)s, %(execution_id)s, %(catalog_id)s, 'command.issued', %(node_id)s, %(node_name)s, %(node_type)s, 'PENDING', %(context)s, %(meta)s, %(parent_event_id)s, %(parent_execution_id)s, %(command_id)s, %(stage_id)s, %(frame_id)s, %(created_at)s)
                     """, {"event_id": new_evt_id, "execution_id": int(cmd.execution_id), "catalog_id": cat_id, "node_id": cmd.step, "node_name": cmd.step, "node_type": cmd.tool.kind, "context": Json(ctx), "meta": Json(meta), "parent_event_id": evt_id, "parent_execution_id": p_exec, "command_id": cmd_id, "stage_id": stage_id, "frame_id": frame_id, "created_at": _now})
-                    mirrored_command_events.append(
+                    await _enqueue_event_outbox(
+                        cur,
                         _command_issued_envelope(
                             event_id=new_evt_id,
                             execution_id=int(cmd.execution_id),
@@ -408,7 +438,7 @@ async def handle_event(req: EventRequest) -> EventResponse:
                             stage_id=stage_id,
                             frame_id=frame_id,
                             created_at=_now,
-                        )
+                        ),
                     )
                     # Dual-write: create the mutable command projection row
                     await cur.execute("""
@@ -439,7 +469,7 @@ async def handle_event(req: EventRequest) -> EventResponse:
                     supervisor_commands.append((str(cmd.execution_id), cmd_id, cmd.step, int(new_evt_id), dict(meta)))
                 await conn.commit()
 
-        await _mirror_events(mirrored_command_events)
+        await _drain_core_outbox()
         for s_exec, s_cmd, s_step, s_evt, s_meta in supervisor_commands:
             await supervise_command_issued(s_exec, s_cmd, s_step, event_id=s_evt, meta=s_meta)
         await _publish_commands_with_recovery(command_events, server_url=server_url)
