@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.44.0](https://github.com/noetl/noetl/compare/v2.43.0...v2.44.0) (2026-05-19)
+
+### Features
+
+* **events:** enqueue auto-resume cancellations through outbox ([69e8dc0](https://github.com/noetl/noetl/commit/69e8dc032108d31227e2c8ec59111fc7aca7e1db))
+* **events:** enqueue batch mirrors through outbox ([479d3ab](https://github.com/noetl/noetl/commit/479d3ab43b662683e0b8bd7f8f8f952999765f10))
+* **events:** enqueue broker emits through outbox ([e66d7e1](https://github.com/noetl/noetl/commit/e66d7e19546e845c8ebf6e959e93befbcf638e34))
+* **events:** enqueue cleanup cancellations through outbox ([9071091](https://github.com/noetl/noetl/commit/9071091230a200e71dac1a94ffb51ae6a229186b))
+* **events:** enqueue core mirrors through outbox ([c1d4e60](https://github.com/noetl/noetl/commit/c1d4e608bc3c706ebcce951271f952620359c2fc))
+* **events:** enqueue execution mirrors through outbox ([755b1ea](https://github.com/noetl/noetl/commit/755b1ea8c48d5f1c053d2fb25255640ba782dd97))
+
 ## [2.43.0](https://github.com/noetl/noetl/compare/v2.42.0...v2.43.0) (2026-05-19)
 
 ### Features
