@@ -338,6 +338,35 @@ CREATE INDEX IF NOT EXISTS idx_event_idempotency_key_column
     ON noetl.event (tenant_id, organization_id, idempotency_key)
     WHERE idempotency_key IS NOT NULL;
 
+-- Transactional outbox for event distribution. Writers insert here in the same
+-- transaction as noetl.event, and a publisher drains committed rows to NATS.
+CREATE TABLE IF NOT EXISTS noetl.outbox (
+    outbox_id BIGSERIAL PRIMARY KEY,
+    execution_id BIGINT,
+    event_id BIGINT NOT NULL,
+    subject TEXT,
+    payload JSONB NOT NULL,
+    payload_bytes BYTEA,
+    payload_codec TEXT NOT NULL DEFAULT 'arrow-feather',
+    status TEXT NOT NULL DEFAULT 'PENDING'
+        CHECK (status IN ('PENDING', 'IN_FLIGHT', 'PUBLISHED', 'FAILED')),
+    attempts INTEGER NOT NULL DEFAULT 0,
+    available_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    locked_at TIMESTAMPTZ,
+    published_at TIMESTAMPTZ,
+    last_error TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    UNIQUE (execution_id, event_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_outbox_ready
+    ON noetl.outbox (status, available_at, outbox_id)
+    WHERE status IN ('PENDING', 'FAILED');
+
+CREATE INDEX IF NOT EXISTS idx_outbox_execution_event
+    ON noetl.outbox (execution_id, event_id);
+
 -- Legacy compatibility view for event_log. Keep this after additive event
 -- columns so SELECT * expands to the migrated event envelope.
 CREATE OR REPLACE VIEW noetl.event_log AS SELECT * FROM noetl.event;

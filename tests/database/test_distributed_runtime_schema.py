@@ -9,6 +9,7 @@ def test_distributed_runtime_schema_contract_is_present():
 
     assert "CREATE TABLE IF NOT EXISTS noetl.stage" in ddl
     assert "CREATE TABLE IF NOT EXISTS noetl.frame" in ddl
+    assert "CREATE TABLE IF NOT EXISTS noetl.outbox" in ddl
     assert "CREATE TABLE IF NOT EXISTS noetl.projection" in ddl
     assert "CREATE TABLE IF NOT EXISTS noetl.projection_snapshot" in ddl
     assert "CREATE INDEX IF NOT EXISTS frame_open_idx" in ddl
@@ -40,3 +41,4 @@ def test_distributed_runtime_schema_contract_is_present():
     assert "idx_event_tenant_org_execution_event_id" in ddl
     assert "idx_event_stream_version" in ddl
     assert "idx_event_aggregate_event_id" in ddl
+    assert "idx_outbox_ready" in ddl

@@ -8,6 +8,7 @@ from typing import Any, Iterable, Mapping, Optional
 
 
 ARROW_STREAM_MEDIA_TYPE = "application/vnd.apache.arrow.stream"
+ARROW_FEATHER_MEDIA_TYPE = "application/vnd.apache.arrow.file"
 
 
 def rows_to_arrow_ipc(
@@ -64,4 +65,58 @@ def arrow_ipc_to_rows(payload: bytes) -> list[dict[str, Any]]:
     return table.to_pylist()
 
 
-__all__ = ["ARROW_STREAM_MEDIA_TYPE", "rows_to_arrow_ipc", "arrow_ipc_to_rows"]
+def rows_to_arrow_feather(
+    rows: Iterable[Mapping[str, Any]],
+    *,
+    columns: Optional[list[str]] = None,
+) -> tuple[bytes, str, int]:
+    """Serialize row dictionaries to Arrow Feather/file bytes."""
+    try:
+        import pyarrow as pa
+        import pyarrow.feather as feather
+    except Exception as exc:  # pragma: no cover - exercised when optional dep missing
+        raise RuntimeError("pyarrow is required for Arrow Feather serialization") from exc
+
+    materialized_rows = [dict(row) for row in rows]
+    if columns is None:
+        seen: list[str] = []
+        for row in materialized_rows:
+            for key in row.keys():
+                key_str = str(key)
+                if key_str not in seen:
+                    seen.append(key_str)
+        columns = seen
+
+    normalized_rows = [
+        {column: row.get(column) for column in columns}
+        for row in materialized_rows
+    ]
+    table = pa.Table.from_pylist(normalized_rows, schema=None)
+    if columns:
+        table = table.select([column for column in columns if column in table.column_names])
+
+    sink = BytesIO()
+    feather.write_feather(table, sink)
+    payload = sink.getvalue()
+    schema_digest = hashlib.sha256(table.schema.serialize().to_pybytes()).hexdigest()
+    return payload, schema_digest, len(materialized_rows)
+
+
+def arrow_feather_to_rows(payload: bytes) -> list[dict[str, Any]]:
+    """Decode Arrow Feather/file bytes back into Python row dictionaries."""
+    try:
+        import pyarrow.feather as feather
+    except Exception as exc:  # pragma: no cover - exercised when optional dep missing
+        raise RuntimeError("pyarrow is required for Arrow Feather deserialization") from exc
+
+    return feather.read_table(BytesIO(payload)).to_pylist()
+
+
+__all__ = [
+    "ARROW_FEATHER_MEDIA_TYPE",
+    "ARROW_STREAM_MEDIA_TYPE",
+    "arrow_feather_to_rows",
+    "arrow_ipc_to_rows",
+    "rows_to_arrow_feather",
+    "rows_to_arrow_ipc",
+]
