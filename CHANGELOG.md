@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.42.0](https://github.com/noetl/noetl/compare/v2.41.0...v2.42.0) (2026-05-19)
+
+### Features
+
+* **events:** mirror batch event ingestion ([db174fa](https://github.com/noetl/noetl/commit/db174fa8b01248c1f6bf66eff0f9a2fb43c64e69))
+* **events:** mirror execution route events ([c1b9e15](https://github.com/noetl/noetl/commit/c1b9e156d7298e24644c1752006daff8c49bd47c))
+
 ## [2.41.0](https://github.com/noetl/noetl/compare/v2.40.0...v2.41.0) (2026-05-18)
 
 ### Features
