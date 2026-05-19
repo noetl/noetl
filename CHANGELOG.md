@@ -2,6 +2,19 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.45.0](https://github.com/noetl/noetl/compare/v2.44.0...v2.45.0) (2026-05-19)
+
+### Features
+
+* **event-store:** enqueue appends through outbox ([cae5696](https://github.com/noetl/noetl/commit/cae56964422e5e371bf21a94882c2d4c9beb1205))
+* **events:** enqueue command claims through outbox ([736e924](https://github.com/noetl/noetl/commit/736e924ef4ec0965983cf9b3c2bc84e9df0ac305))
+* **events:** enqueue DSL executor events through outbox ([1cf0234](https://github.com/noetl/noetl/commit/1cf023465b8bc7111f6d620d2cb18586ed1bdf78))
+
+### Bug Fixes
+
+* **dsl:** avoid local next-arcs scope shadowing ([b52f19f](https://github.com/noetl/noetl/commit/b52f19f2d0d9ff6af2835eab4cda180d773a89ec))
+* **dsl:** keep explicit context scoped in step results ([a67049f](https://github.com/noetl/noetl/commit/a67049fee6f8a53d829e7f2c9ed4d8eb38a24f75))
+
 ## [2.44.0](https://github.com/noetl/noetl/compare/v2.43.0...v2.44.0) (2026-05-19)
 
 ### Features
