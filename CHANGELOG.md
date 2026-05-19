@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.46.0](https://github.com/noetl/noetl/compare/v2.45.0...v2.46.0) (2026-05-19)
+
+### Features
+
+* **frames:** enqueue lifecycle events via outbox ([b08b0c9](https://github.com/noetl/noetl/commit/b08b0c9c275daeac9c906d30f58153f86b37fe0e))
+* **outbox:** add standalone publisher worker ([4e130fc](https://github.com/noetl/noetl/commit/4e130fc28b88d281cd9d3607a670295cde3ec356))
+* **projector:** decode arrow feather event payloads ([b785e34](https://github.com/noetl/noetl/commit/b785e342cfc2ebe1f92a19aeca93019e0b5c676b))
+
 ## [2.45.0](https://github.com/noetl/noetl/compare/v2.44.0...v2.45.0) (2026-05-19)
 
 ### Features
