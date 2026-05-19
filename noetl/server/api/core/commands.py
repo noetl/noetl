@@ -436,13 +436,16 @@ async def claim_command(event_id: int, req: ClaimRequest):
                 if stale_reclaim:
                     claim_meta.update({"reclaimed": True, "reclaimed_from_worker": reclaimed_from, "reclaimed_reason": reclaimed_reason})
                 
+                from .events import _drain_core_outbox, _enqueue_event_outbox, _event_envelope
+
+                created_at = datetime.now(timezone.utc)
                 res_obj = _build_reference_only_result(payload={"command_id": command_id}, status="RUNNING")
                 await cur.execute("""
                     INSERT INTO noetl.event (event_id, execution_id, catalog_id, event_type, node_id, node_name, status, result, meta, worker_id, created_at)
                     SELECT %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
                     WHERE NOT EXISTS (SELECT 1 FROM noetl.event WHERE execution_id = %s AND event_type = ANY(%s) LIMIT 1)
                     RETURNING event_id
-                """, (claim_evt_id, execution_id, catalog_id, "command.claimed", step, step, "RUNNING", Json(res_obj), Json(claim_meta), req.worker_id, datetime.now(timezone.utc), execution_id, _EXECUTION_TERMINAL_EVENT_TYPES))
+                """, (claim_evt_id, execution_id, catalog_id, "command.claimed", step, step, "RUNNING", Json(res_obj), Json(claim_meta), req.worker_id, created_at, execution_id, _EXECUTION_TERMINAL_EVENT_TYPES))
                 
                 if not await cur.fetchone():
                     _active_claim_cache_invalidate(command_id=command_id, event_id=event_id)
@@ -460,8 +463,24 @@ async def claim_command(event_id: int, req: ClaimRequest):
                     """,
                     (req.worker_id, claim_evt_id, command_id),
                 )
+                await _enqueue_event_outbox(
+                    cur,
+                    _event_envelope(
+                        event_id=claim_evt_id,
+                        execution_id=execution_id,
+                        catalog_id=catalog_id,
+                        event_type="command.claimed",
+                        node_name=step,
+                        status="RUNNING",
+                        result=res_obj,
+                        meta=claim_meta,
+                        command_id=command_id,
+                        event_time=created_at,
+                    ),
+                )
                 
                 await conn.commit()
+                await _drain_core_outbox()
                 _active_claim_cache_set(event_id, command_id, req.worker_id)
                 logger.info(f"[CLAIM] Command {command_id} claimed by {req.worker_id}")
                 return ClaimResponse(status="ok", event_id=event_id, execution_id=execution_id, node_id=step, node_name=step, action=tool_kind, context=context, meta=meta)
