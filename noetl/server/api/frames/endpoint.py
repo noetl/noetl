@@ -14,6 +14,7 @@ from noetl.core.db.pool import get_pool_connection
 from noetl.core.event_store.ports import canonical_event_checksum
 from noetl.core.logger import setup_logger
 from noetl.core.messaging import NATSEventPublisher
+from noetl.core.outbox import enqueue_outbox, publish_outbox_batch
 
 from noetl.server.api.core.db import _next_snowflake_id
 
@@ -21,7 +22,7 @@ from .schema import FrameClaimRequest, FrameCommitRequest, FrameHeartbeatRequest
 
 logger = setup_logger(__name__, include_location=True)
 router = APIRouter(tags=["frames"])
-_event_mirror_publisher: NATSEventPublisher | None = None
+_event_subject_publisher: NATSEventPublisher | None = None
 
 
 def _event_meta(*, frame: dict[str, Any], worker_id: str, extra: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -348,7 +349,7 @@ async def _insert_frame_event(
             "now": now,
         },
     )
-    return {
+    event = {
         "event_id": int(event_id),
         "execution_id": frame["execution_id"],
         "catalog_id": catalog_id,
@@ -376,6 +377,8 @@ async def _insert_frame_event(
         "payload_ref": payload_ref,
         "envelope_checksum": envelope_checksum,
     }
+    await _enqueue_frame_outbox(cur, event)
+    return event
 
 
 def _frame_commit_result(
@@ -446,22 +449,27 @@ def _event_mirror_enabled() -> bool:
     return os.getenv("NOETL_EVENT_MIRROR_ENABLED", "").strip().lower() in {"1", "true", "yes", "on"}
 
 
-async def _mirror_frame_events(events: list[dict[str, Any]]) -> None:
-    if not events or not _event_mirror_enabled():
+def _frame_event_subject(event: dict[str, Any]) -> str:
+    global _event_subject_publisher
+    if _event_subject_publisher is None:
+        _event_subject_publisher = NATSEventPublisher()
+    return _event_subject_publisher.subject_for_event(event)
+
+
+async def _enqueue_frame_outbox(cur: Any, event: dict[str, Any]) -> None:
+    if not _event_mirror_enabled():
         return
-    global _event_mirror_publisher
-    if _event_mirror_publisher is None:
-        _event_mirror_publisher = NATSEventPublisher()
-    for event in events:
-        try:
-            await _event_mirror_publisher.publish_event(event)
-        except Exception as exc:
-            logger.warning(
-                "Frame event mirror failed event_id=%s event_type=%s: %s",
-                event.get("event_id"),
-                event.get("event_type"),
-                exc,
-            )
+    await enqueue_outbox(cur, event, subject=_frame_event_subject(event))
+
+
+async def _drain_frame_outbox() -> None:
+    if not _event_mirror_enabled():
+        return
+    try:
+        limit = int(os.getenv("NOETL_FRAME_OUTBOX_DRAIN_LIMIT", "100"))
+        await publish_outbox_batch(limit=limit)
+    except Exception as exc:
+        logger.warning("Frame outbox drain failed: %s", exc)
 
 
 def _frame_response(frame: dict[str, Any], event_id: int | None = None) -> dict[str, Any]:
@@ -502,7 +510,6 @@ async def claim_frames(stage_id: int, req: FrameClaimRequest) -> dict[str, Any]:
                     requested_command_id=req.command_id,
                 )
                 claimed: list[dict[str, Any]] = []
-                events_to_mirror: list[dict[str, Any]] = []
                 for _ in range(req.requested_count):
                     frame = await _load_idempotent_claimed_frame(
                         cur,
@@ -613,7 +620,7 @@ async def claim_frames(stage_id: int, req: FrameClaimRequest) -> dict[str, Any]:
                         frame["step_name"] = stage["step_name"]
 
                     if frame.get("expired_lease"):
-                        abandoned = await _insert_frame_event(
+                        await _insert_frame_event(
                             cur,
                             frame={**frame, "catalog_id": stage["catalog_id"]},
                             event_type="frame.abandoned",
@@ -630,7 +637,6 @@ async def claim_frames(stage_id: int, req: FrameClaimRequest) -> dict[str, Any]:
                                 ),
                             },
                         )
-                        events_to_mirror.append(abandoned)
 
                     await cur.execute(
                         """
@@ -671,11 +677,10 @@ async def claim_frames(stage_id: int, req: FrameClaimRequest) -> dict[str, Any]:
                         event_id=updated.get("claimed_event_id"),
                     )
                     updated["claimed_event_id"] = event["event_id"]
-                    events_to_mirror.append(event)
                     claimed.append(_frame_response(updated, event["event_id"]))
 
                 await conn.commit()
-                await _mirror_frame_events(events_to_mirror)
+                await _drain_frame_outbox()
                 return {"status": "ok", "frames": claimed}
     except HTTPException:
         raise
@@ -733,7 +738,7 @@ async def heartbeat_frame(frame_id: int, req: FrameHeartbeatRequest) -> dict[str
                     meta_extra={"lease_until": str(frame.get("lease_until"))},
                 )
                 await conn.commit()
-                await _mirror_frame_events([event])
+                await _drain_frame_outbox()
                 return {"status": "ok", "frame": _frame_response(frame, event["event_id"])}
     except HTTPException:
         raise
@@ -809,7 +814,7 @@ async def commit_frame(frame_id: int, req: FrameCommitRequest) -> dict[str, Any]
                 )
                 frame["terminal_event_id"] = event["event_id"]
                 await conn.commit()
-                await _mirror_frame_events([event])
+                await _drain_frame_outbox()
                 return {"status": "ok", "frame": _frame_response(frame, event["event_id"])}
     except HTTPException:
         raise
