@@ -46,6 +46,8 @@ class QueryMixin:
     ) -> int:
         """Count persisted events by command_id for actionable idempotency guards."""
         try:
+            command_id_text = str(command_id)
+            command_id_int = int(command_id_text) if command_id_text.isdigit() else None
             async with get_pool_connection() as conn:
                 async with conn.cursor(row_factory=dict_row) as cur:
                     await cur.execute(
@@ -54,9 +56,18 @@ class QueryMixin:
                         FROM noetl.event
                         WHERE execution_id = %s
                           AND event_type = %s
-                          AND command_id = %s
+                          AND (
+                              (%s AND command_id = %s)
+                              OR meta->>'command_id' = %s
+                          )
                         """,
-                        (int(execution_id), event_type, int(command_id)),
+                        (
+                            int(execution_id),
+                            event_type,
+                            command_id_int is not None,
+                            command_id_int,
+                            command_id_text,
+                        ),
                     )
                     row = await cur.fetchone()
                     return int((row or {}).get("cnt", 0) or 0)
@@ -79,6 +90,8 @@ class QueryMixin:
     ) -> bool:
         """Return True when the provided persisted event_id is the earliest duplicate candidate."""
         try:
+            command_id_text = str(command_id)
+            command_id_int = int(command_id_text) if command_id_text.isdigit() else None
             async with get_pool_connection() as conn:
                 async with conn.cursor(row_factory=dict_row) as cur:
                     await cur.execute(
@@ -87,9 +100,18 @@ class QueryMixin:
                         FROM noetl.event
                         WHERE execution_id = %s
                           AND event_type = %s
-                          AND command_id = %s
+                          AND (
+                              (%s AND command_id = %s)
+                              OR meta->>'command_id' = %s
+                          )
                         """,
-                        (int(execution_id), event_type, int(command_id)),
+                        (
+                            int(execution_id),
+                            event_type,
+                            command_id_int is not None,
+                            command_id_int,
+                            command_id_text,
+                        ),
                     )
                     row = await cur.fetchone()
                     first_event_id = int((row or {}).get("first_event_id", 0) or 0)

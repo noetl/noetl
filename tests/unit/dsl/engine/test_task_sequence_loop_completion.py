@@ -29,14 +29,32 @@ class FakeNATSCache:
     async def get_loop_state(self, execution_id, step_name, event_id=None):
         self.get_state_calls.append((execution_id, step_name, event_id))
         return {
-            "collection_size": 20,
+            "collection_size": 220,
             "completed_count": 1,
+            "scheduled_count": 1,
             "event_id": event_id,
         }
 
     async def set_loop_state(self, execution_id, step_name, state, event_id=None):
         self.set_state_calls.append((execution_id, step_name, state, event_id))
         return True
+
+    async def claim_next_loop_indices(
+        self,
+        execution_id,
+        step_name,
+        collection_size,
+        max_in_flight,
+        requested_count=1,
+        event_id=None,
+    ):
+        completed_count = 1
+        scheduled_count = 1
+        collection_size = int(collection_size or 220)
+        if scheduled_count >= collection_size:
+            return []
+        claim_count = min(int(requested_count or 1), int(max_in_flight or 1), collection_size - scheduled_count)
+        return list(range(scheduled_count, scheduled_count + claim_count))
 
     async def try_claim_loop_done(self, execution_id, step_name, event_id=None):
         return True  # always grants by default in existing tests
@@ -59,9 +77,26 @@ class EventAwareNATSCache(FakeNATSCache):
             return {
                 "collection_size": 220,
                 "completed_count": 6,
+                "scheduled_count": 6,
                 "event_id": event_id,
             }
         return None
+
+    async def claim_next_loop_indices(
+        self,
+        execution_id,
+        step_name,
+        collection_size,
+        max_in_flight,
+        requested_count=1,
+        event_id=None,
+    ):
+        if event_id != self.exec_event_id:
+            return []
+        scheduled_count = 6
+        collection_size = int(collection_size or 220)
+        claim_count = min(int(requested_count or 1), int(max_in_flight or 1), collection_size - scheduled_count)
+        return list(range(scheduled_count, scheduled_count + claim_count))
 
 
 class ClaimAwareNATSCache(FakeNATSCache):
