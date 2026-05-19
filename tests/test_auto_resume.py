@@ -234,6 +234,80 @@ class _FakeConnCtx:
         return False
 
 
+class _CancelCursor:
+    def __init__(self):
+        self.query = ""
+        self.executed = []
+
+    async def execute(self, query, params=None):
+        self.query = query
+        self.executed.append((query, params))
+
+    async def fetchone(self):
+        if "SELECT catalog_id" in self.query:
+            return {"catalog_id": 5}
+        return None
+
+
+class _CancelConn:
+    def __init__(self, cursor):
+        self._cursor = cursor
+        self.commits = 0
+
+    def cursor(self, row_factory=None):
+        return _FakeCursorCtx(self._cursor)
+
+    async def commit(self):
+        self.commits += 1
+
+
+class _CancelConnCtx:
+    def __init__(self, conn):
+        self._conn = conn
+
+    async def __aenter__(self):
+        return self._conn
+
+    async def __aexit__(self, exc_type, exc, tb):
+        return False
+
+
+@pytest.mark.asyncio
+async def test_mark_execution_cancelled_enqueues_outbox_before_drain(monkeypatch):
+    cursor = _CancelCursor()
+    conn = _CancelConn(cursor)
+    enqueued = []
+
+    async def fake_enqueue(_cur, event):
+        enqueued.append(event)
+
+    async def fake_drain():
+        assert conn.commits == 1
+
+    async def fake_snowflake_id():
+        return 9001
+
+    monkeypatch.setattr(auto_resume, "get_pool_connection", lambda *args, **kwargs: _CancelConnCtx(conn))
+    monkeypatch.setattr(auto_resume, "get_snowflake_id", fake_snowflake_id)
+    monkeypatch.setattr(auto_resume, "_enqueue_auto_resume_outbox", fake_enqueue)
+    monkeypatch.setattr(auto_resume, "_drain_auto_resume_outbox", fake_drain)
+
+    ok = await auto_resume.mark_execution_cancelled(
+        7,
+        "restart replacement created",
+        meta_extra={"restarted_execution_id": "8"},
+        payload_extra={"restarted_execution_id": "8"},
+    )
+
+    assert ok is True
+    assert enqueued[0]["event_id"] == 9001
+    assert enqueued[0]["event_type"] == "execution.cancelled"
+    assert enqueued[0]["execution_id"] == 7
+    assert enqueued[0]["catalog_id"] == 5
+    assert enqueued[0]["result"]["context"]["restarted_execution_id"] == "8"
+    assert enqueued[0]["meta"]["auto_resume"] is True
+
+
 @pytest.mark.asyncio
 async def test_get_execution_status_treats_workflow_completed_as_completed(monkeypatch):
     row = {"event_type": "workflow.completed", "status": "COMPLETED"}
