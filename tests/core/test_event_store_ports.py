@@ -84,3 +84,89 @@ async def test_postgres_event_store_append_rejects_expected_version_conflict(mon
             [EventRecord(event_type="test.event", stream_id="execution/1")],
             expected_version=2,
         )
+
+
+@pytest.mark.asyncio
+async def test_postgres_event_store_append_enqueues_outbox_before_drain(monkeypatch):
+    from noetl.core.event_store import EventRecord, PostgresEventStore
+    import noetl.core.event_store.postgres as postgres_module
+
+    enqueued = []
+
+    class Cursor:
+        def __init__(self):
+            self.query = ""
+            self.executed = []
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        async def execute(self, query, params=None):
+            self.query = query
+            self.executed.append((query, params))
+
+        async def fetchone(self):
+            if "max(stream_version)" in self.query:
+                return {"version": 0}
+            if "snowflake_id" in self.query:
+                return {"snowflake_id": 9001}
+            return None
+
+    class Conn:
+        def __init__(self, cursor):
+            self.cursor_obj = cursor
+            self.commits = 0
+
+        def cursor(self, row_factory=None):  # noqa: ARG002
+            return self.cursor_obj
+
+        async def commit(self):
+            self.commits += 1
+
+    cursor = Cursor()
+    conn = Conn(cursor)
+
+    class Ctx:
+        async def __aenter__(self):
+            return conn
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+    async def fake_enqueue(_cur, event):
+        enqueued.append(event)
+
+    async def fake_drain():
+        assert conn.commits == 1
+
+    monkeypatch.setattr(postgres_module, "get_pool_connection", lambda: Ctx())
+    monkeypatch.setattr(postgres_module, "_enqueue_event_store_outbox", fake_enqueue)
+    monkeypatch.setattr(postgres_module, "_drain_event_store_outbox", fake_drain)
+
+    store = PostgresEventStore()
+    version = await store.append(
+        "execution/7",
+        [
+            EventRecord(
+                event_type="test.event",
+                stream_id="execution/7",
+                execution_id=7,
+                tenant_id="tenant-a",
+                organization_id="org-a",
+                result={"status": "OK"},
+            )
+        ],
+        expected_version=0,
+    )
+
+    assert version == 1
+    assert enqueued[0]["event_id"] == 9001
+    assert enqueued[0]["execution_id"] == 7
+    assert enqueued[0]["event_type"] == "test.event"
+    assert enqueued[0]["stream_id"] == "execution/7"
+    assert enqueued[0]["stream_version"] == 1
+    assert enqueued[0]["tenant_id"] == "tenant-a"
+    assert enqueued[0]["organization_id"] == "org-a"
