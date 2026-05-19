@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from .common import *
+from .outbox import drain_executor_outbox, enqueue_executor_outbox
 from .state import ExecutionState
 from .store import PlaybookRepo, StateStore
 from noetl.core.event_store.ports import canonical_event_checksum
@@ -205,6 +206,20 @@ class EventHandlingMixin:
                     """,
                     (event_id, stage["stage_id"]),
                 )
+                await enqueue_executor_outbox(
+                    cur,
+                    envelope
+                    | {
+                        "event_id": event_id,
+                        "catalog_id": stage.get("catalog_id") or state.catalog_id,
+                        "parent_event_id": parent_event_id,
+                        "node_id": step_name,
+                        "created_at": now,
+                        "ingest_time": now,
+                        "context": {"stage_id": str(stage["stage_id"]), "loop_event_id": str(loop_event_id)},
+                        "stage_id": stage["stage_id"],
+                    },
+                )
                 if owns_transaction:
                     await active_conn.commit()
                 logger.info(
@@ -221,7 +236,10 @@ class EventHandlingMixin:
             if conn is not None:
                 return await _close_with_conn(conn, owns_transaction=False)
             async with get_pool_connection() as owned_conn:
-                return await _close_with_conn(owned_conn, owns_transaction=True)
+                stage_id = await _close_with_conn(owned_conn, owns_transaction=True)
+            if stage_id is not None:
+                await drain_executor_outbox()
+            return stage_id
         except Exception as exc:
             logger.warning(
                 "[CURSOR-LOOP] Failed to close runtime stage for step %s execution=%s loop_event_id=%s: %s",
