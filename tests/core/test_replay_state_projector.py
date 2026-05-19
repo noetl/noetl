@@ -219,6 +219,46 @@ async def test_nats_projector_worker_projects_owned_event_batch():
     assert snapshot["last_projection_source_event_id"] == 20
 
 
+def test_projector_notification_decoder_accepts_json_and_arrow_feather():
+    from noetl.core.projector.nats_worker import decode_projector_notification
+    from noetl.core.storage.arrow_ipc import rows_to_arrow_feather
+
+    json_payload = b'{"event_id": 20, "execution_id": 7, "event_type": "workflow.completed"}'
+    assert decode_projector_notification(json_payload)["event_id"] == 20
+
+    arrow_payload, _schema_digest, row_count = rows_to_arrow_feather(
+        [
+            {
+                "event_id": 21,
+                "execution_id": 7,
+                "event_type": "frame.committed",
+                "status": "COMPLETED",
+            }
+        ]
+    )
+
+    assert row_count == 1
+    decoded = decode_projector_notification(arrow_payload)
+    assert decoded["event_id"] == 21
+    assert decoded["event_type"] == "frame.committed"
+
+
+def test_projector_notification_decoder_wraps_arrow_batches():
+    from noetl.core.projector.nats_worker import decode_projector_notification
+    from noetl.core.storage.arrow_ipc import rows_to_arrow_feather
+
+    arrow_payload, _schema_digest, row_count = rows_to_arrow_feather(
+        [
+            {"event_id": 21, "execution_id": 7, "event_type": "frame.dispatched"},
+            {"event_id": 22, "execution_id": 7, "event_type": "frame.committed"},
+        ]
+    )
+
+    assert row_count == 2
+    decoded = decode_projector_notification(arrow_payload)
+    assert [event["event_id"] for event in decoded["events"]] == [21, 22]
+
+
 @pytest.mark.asyncio
 async def test_nats_projector_worker_acks_empty_or_unowned_notifications():
     from noetl.core.projector.metrics import ProjectorMetrics
@@ -253,6 +293,7 @@ async def test_nats_projector_worker_tolerates_projection_schema_permission(monk
     class FakeSubscriber:
         def __init__(self, **kwargs):
             calls.append(("init", kwargs["consumer_name"]))
+            assert callable(kwargs["message_decoder"])
 
         async def connect(self):
             calls.append(("connect", None))

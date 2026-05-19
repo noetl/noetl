@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import re
 from dataclasses import dataclass
@@ -15,6 +16,7 @@ from noetl.core.db.pool import close_pool, init_pool
 from noetl.core.logger import setup_logger
 from noetl.core.messaging import NATSCommandSubscriber
 from noetl.core.projection_store import PostgresProjectionStore, ProjectionStore
+from noetl.core.storage.arrow_ipc import arrow_feather_to_rows
 
 from .metrics import ProjectorMetrics, start_projector_metrics_server
 from .service import ReplayStateProjector
@@ -109,6 +111,7 @@ class NATSProjectorWorker:
             max_ack_pending=self.settings.max_ack_pending,
             fetch_timeout=self.settings.fetch_timeout_seconds,
             fetch_heartbeat=self.settings.fetch_heartbeat_seconds,
+            message_decoder=decode_projector_notification,
         )
         await self._subscriber.connect()
         logger.info(
@@ -216,6 +219,23 @@ def _extract_events(notification: dict[str, Any]) -> list[dict[str, Any]]:
         return [dict(notification)]
 
     return []
+
+
+def decode_projector_notification(payload: bytes) -> dict[str, Any]:
+    """Decode projector notifications from JSON or Arrow Feather outbox payloads."""
+
+    try:
+        decoded = json.loads(payload.decode("utf-8"))
+        if isinstance(decoded, dict):
+            return decoded
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        pass
+
+    rows = arrow_feather_to_rows(payload)
+    events = [dict(row) for row in rows if isinstance(row, dict)]
+    if len(events) == 1:
+        return events[0]
+    return {"events": events}
 
 
 def _parse_shard_index(shard_id: str) -> int:

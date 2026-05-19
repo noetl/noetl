@@ -286,6 +286,7 @@ class NATSCommandSubscriber:
         fetch_timeout: Optional[float] = None,
         fetch_heartbeat: Optional[float] = None,
         callback_timeout_seconds: Optional[float] = None,
+        message_decoder: Optional[Callable[[bytes], dict[str, Any]]] = None,
     ):
         from noetl.core.config import get_worker_settings
         ws = get_worker_settings()
@@ -310,12 +311,17 @@ class NATSCommandSubscriber:
             5.0,
             min(30.0, self.callback_timeout_seconds / 4.0),
         )
+        self._message_decoder = message_decoder or self._decode_json_message
         self._nc: Optional[NATSClient] = None
         self._js: Optional[JetStreamContext] = None
         self._subscription = None
         self._background_tasks: set = set()
         self._inflight_semaphore = asyncio.Semaphore(self.max_inflight)
         self._throttle_hits = 0
+
+    @staticmethod
+    def _decode_json_message(payload: bytes) -> dict[str, Any]:
+        return json.loads(payload.decode("utf-8"))
 
     @staticmethod
     def _effective_ack_wait_seconds() -> float:
@@ -689,8 +695,7 @@ class NATSCommandSubscriber:
 
                     for msg in messages:
                         try:
-                            import json
-                            data = json.loads(msg.data.decode())
+                            data = self._message_decoder(bytes(msg.data))
                             # Process in background and ack/nak based on callback result.
                             create_background_task(process_message(data, msg))
 
