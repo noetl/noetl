@@ -27,6 +27,12 @@ _STATUS_TERMINAL_EVENT_TYPES = (
 _EXECUTABLE_CATALOG_KINDS = {"playbook", "agent"}
 
 
+async def _mirror_execution_events(events: list[dict[str, Any]]) -> None:
+    from .events import _mirror_events
+
+    await _mirror_events(events)
+
+
 def _normalize_catalog_kind(value: Optional[str]) -> Optional[str]:
     if value is None:
         return None
@@ -40,6 +46,7 @@ def _normalize_catalog_kind(value: Optional[str]) -> Optional[str]:
 @router.post("/execute", response_model=ExecuteResponse)
 async def execute(req: ExecuteRequest) -> ExecuteResponse:
     from .commands import _build_command_context, _validate_postgres_command_context_or_422, _store_command_context_if_needed
+    from .events import _command_issued_envelope
     try:
         engine = get_engine()
         requested_kind = _normalize_catalog_kind(req.resource_kind)
@@ -103,6 +110,7 @@ async def execute(req: ExecuteRequest) -> ExecuteResponse:
                     catalog_id, path = row['catalog_id'], row['path']
         
         execution_id, commands = await engine.start_execution(path, req.payload, catalog_id, req.parent_execution_id)
+        mirrored_command_events = []
         async with get_pool_connection() as conn:
             async with conn.cursor(row_factory=dict_row) as cur:
                 await cur.execute("SELECT event_id FROM noetl.event WHERE execution_id = %s AND event_type = 'playbook.initialized' LIMIT 1", (int(execution_id),))
@@ -149,8 +157,24 @@ async def execute(req: ExecuteRequest) -> ExecuteResponse:
                         "created_at": now,
                     })
                     command_events.append((int(execution_id), evt_id, cmd_id, cmd.step))
+                    mirrored_command_events.append(_command_issued_envelope(
+                        event_id=evt_id,
+                        execution_id=int(execution_id),
+                        catalog_id=catalog_id,
+                        command_id=cmd_id,
+                        step=cmd.step,
+                        tool_kind=cmd.tool.kind,
+                        context=ctx,
+                        meta=meta,
+                        parent_event_id=root_evt_id,
+                        parent_execution_id=req.parent_execution_id,
+                        stage_id=stage_id,
+                        frame_id=frame_id,
+                        created_at=now,
+                    ))
                     supervisor_commands.append((str(execution_id), cmd_id, cmd.step, int(evt_id), dict(meta)))
                 await conn.commit()
+        await _mirror_execution_events(mirrored_command_events)
         for s_exec, s_cmd, s_step, s_evt, s_meta in supervisor_commands:
             await supervise_command_issued(s_exec, s_cmd, s_step, event_id=s_evt, meta=s_meta)
         await _publish_commands_with_recovery(command_events, server_url=server_url)
