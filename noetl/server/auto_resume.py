@@ -19,8 +19,11 @@ from psycopg.types.json import Json
 
 from noetl.core.db.pool import get_pool_connection, get_snowflake_id
 from noetl.core.logger import setup_logger
+from noetl.core.messaging import NATSEventPublisher
+from noetl.core.outbox import enqueue_outbox, publish_outbox_batch
 
 logger = setup_logger(__name__, include_location=True)
+_auto_resume_event_subject_publisher: NATSEventPublisher | None = None
 
 _AUTO_RESUME_ENABLED = os.getenv("NOETL_AUTO_RESUME_ENABLED", "true").strip().lower() in {
     "1",
@@ -75,6 +78,33 @@ _auto_resume_metrics: dict[str, float] = {
     "recoveries_cancelled_total": 0.0,
     "recoveries_restarted_total": 0.0,
 }
+
+
+def _event_mirror_enabled() -> bool:
+    return os.getenv("NOETL_EVENT_MIRROR_ENABLED", "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _auto_resume_event_subject(event: dict[str, Any]) -> str:
+    global _auto_resume_event_subject_publisher
+    if _auto_resume_event_subject_publisher is None:
+        _auto_resume_event_subject_publisher = NATSEventPublisher()
+    return _auto_resume_event_subject_publisher.subject_for_event(event)
+
+
+async def _enqueue_auto_resume_outbox(cur: Any, event: dict[str, Any]) -> None:
+    if not _event_mirror_enabled():
+        return
+    await enqueue_outbox(cur, event, subject=_auto_resume_event_subject(event))
+
+
+async def _drain_auto_resume_outbox() -> None:
+    if not _event_mirror_enabled():
+        return
+    try:
+        limit = int(os.getenv("NOETL_AUTO_RESUME_OUTBOX_DRAIN_LIMIT", "100"))
+        await publish_outbox_batch(limit=limit)
+    except Exception as exc:
+        logger.warning("[AUTO-RESUME] Outbox drain failed: %s", exc)
 
 
 def _inc_metric(name: str, amount: float = 1.0) -> None:
@@ -373,6 +403,8 @@ async def mark_execution_cancelled(
                 }
                 if meta_extra:
                     cancel_meta.update(meta_extra)
+                created_at = datetime.now(timezone.utc)
+                result_obj = {"status": "CANCELLED", "context": cancel_payload}
                 await cur.execute(
                     """
                     INSERT INTO noetl.event (
@@ -380,7 +412,7 @@ async def mark_execution_cancelled(
                         node_id, node_name, status, result, meta, created_at
                     ) VALUES (
                         %s, %s, %s, 'execution.cancelled',
-                        %s, %s, 'CANCELLED', %s, %s, NOW()
+                        %s, %s, 'CANCELLED', %s, %s, %s
                     )
                     """,
                     (
@@ -389,11 +421,30 @@ async def mark_execution_cancelled(
                         int(event_id),
                         "workflow",
                         "workflow",
-                        Json({"status": "CANCELLED", "context": cancel_payload}),
+                        Json(result_obj),
                         Json(cancel_meta),
+                        created_at,
                     ),
                 )
+                await _enqueue_auto_resume_outbox(
+                    cur,
+                    {
+                        "event_id": int(event_id),
+                        "execution_id": int(execution_id),
+                        "catalog_id": row["catalog_id"],
+                        "event_type": "execution.cancelled",
+                        "node_id": "workflow",
+                        "node_name": "workflow",
+                        "status": "CANCELLED",
+                        "result": result_obj,
+                        "meta": cancel_meta,
+                        "event_time": created_at,
+                        "ingest_time": created_at,
+                        "created_at": created_at,
+                    },
+                )
                 await conn.commit()
+        await _drain_auto_resume_outbox()
 
         _inc_metric("recoveries_cancelled_total")
         logger.info("[AUTO-RESUME] Marked execution %s as CANCELLED", execution_id)
