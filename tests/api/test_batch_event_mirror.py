@@ -65,6 +65,46 @@ class _MemoryProjectionStore:
 
 
 @pytest.mark.asyncio
+async def test_batch_outbox_enqueue_is_opt_in(monkeypatch):
+    from noetl.server.api.core import batch
+
+    enqueued = []
+
+    async def fake_enqueue(cur, event, *, subject=None):
+        enqueued.append((cur, event, subject))
+
+    monkeypatch.setenv("NOETL_EVENT_MIRROR_ENABLED", "false")
+    monkeypatch.setattr(batch, "enqueue_outbox", fake_enqueue)
+
+    await batch._enqueue_batch_outbox("cursor", {"event_id": 1, "execution_id": 7})
+
+    assert enqueued == []
+
+
+@pytest.mark.asyncio
+async def test_batch_outbox_enqueue_uses_event_subject(monkeypatch):
+    from noetl.server.api.core import batch
+
+    enqueued = []
+
+    class FakeSubjectPublisher:
+        def subject_for_event(self, event):
+            return f"events.{event['execution_id']}"
+
+    async def fake_enqueue(cur, event, *, subject=None):
+        enqueued.append((cur, event, subject))
+
+    monkeypatch.setenv("NOETL_EVENT_MIRROR_ENABLED", "true")
+    monkeypatch.setattr(batch, "_batch_event_subject_publisher", FakeSubjectPublisher())
+    monkeypatch.setattr(batch, "enqueue_outbox", fake_enqueue)
+
+    event = {"event_id": 1, "execution_id": 7}
+    await batch._enqueue_batch_outbox("cursor", event)
+
+    assert enqueued == [("cursor", event, "events.7")]
+
+
+@pytest.mark.asyncio
 async def test_batch_status_event_is_mirrored_after_commit(monkeypatch):
     from noetl.server.api.core import batch
 
@@ -75,12 +115,16 @@ async def test_batch_status_event_is_mirrored_after_commit(monkeypatch):
     async def fake_next_snowflake_id(_cur):
         return 101
 
-    async def fake_mirror(events):
-        mirrored.extend(events)
+    async def fake_enqueue(_cur, event):
+        mirrored.append(event)
+
+    async def fake_drain():
+        assert conn.commit_count == 1
 
     monkeypatch.setattr(batch, "get_pool_connection", lambda: conn)
     monkeypatch.setattr(batch, "_next_snowflake_id", fake_next_snowflake_id)
-    monkeypatch.setattr(batch, "_mirror_batch_events", fake_mirror)
+    monkeypatch.setattr(batch, "_enqueue_batch_outbox", fake_enqueue)
+    monkeypatch.setattr(batch, "_drain_batch_outbox", fake_drain)
 
     await batch._persist_batch_status_event(
         execution_id=7,
@@ -113,12 +157,16 @@ async def test_batch_acceptance_mirrors_item_and_acceptance_events(monkeypatch):
     async def fake_next_snowflake_id(_cur):
         return next(snowflakes)
 
-    async def fake_mirror(events):
-        mirrored.extend(events)
+    async def fake_enqueue(_cur, event):
+        mirrored.append(event)
+
+    async def fake_drain():
+        assert conn.commit_count == 1
 
     monkeypatch.setattr(batch, "get_pool_connection", lambda: conn)
     monkeypatch.setattr(batch, "_next_snowflake_id", fake_next_snowflake_id)
-    monkeypatch.setattr(batch, "_mirror_batch_events", fake_mirror)
+    monkeypatch.setattr(batch, "_enqueue_batch_outbox", fake_enqueue)
+    monkeypatch.setattr(batch, "_drain_batch_outbox", fake_drain)
 
     result = await batch._persist_batch_acceptance(
         BatchEventRequest(
@@ -161,12 +209,16 @@ async def test_batch_mirror_envelopes_feed_replay_state_projector(monkeypatch):
     async def fake_next_snowflake_id(_cur):
         return next(snowflakes)
 
-    async def fake_mirror(events):
-        mirrored.extend(events)
+    async def fake_enqueue(_cur, event):
+        mirrored.append(event)
+
+    async def fake_drain():
+        assert conn.commit_count == 1
 
     monkeypatch.setattr(batch, "get_pool_connection", lambda: conn)
     monkeypatch.setattr(batch, "_next_snowflake_id", fake_next_snowflake_id)
-    monkeypatch.setattr(batch, "_mirror_batch_events", fake_mirror)
+    monkeypatch.setattr(batch, "_enqueue_batch_outbox", fake_enqueue)
+    monkeypatch.setattr(batch, "_drain_batch_outbox", fake_drain)
 
     await batch._persist_batch_acceptance(
         BatchEventRequest(

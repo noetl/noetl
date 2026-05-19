@@ -12,6 +12,8 @@ from psycopg_pool import PoolTimeout
 from psycopg.types.json import Json
 from noetl.core.db.pool import get_pool_connection
 from noetl.core.dsl.engine.models import Event
+from noetl.core.messaging import NATSEventPublisher
+from noetl.core.outbox import enqueue_outbox, publish_outbox_batch
 from .core import (
     logger, get_engine,
     _BATCH_ACCEPT_QUEUE_MAXSIZE, _BATCH_ACCEPT_WORKERS,
@@ -36,6 +38,7 @@ from .cache import _active_claim_cache_invalidate
 from .recovery import _publish_commands_with_recovery
 
 router = APIRouter()
+_batch_event_subject_publisher: NATSEventPublisher | None = None
 
 @dataclass(slots=True)
 class _BatchAcceptJob:
@@ -85,6 +88,33 @@ async def _mirror_batch_events(events: list[dict[str, Any]]) -> None:
 
     await _mirror_events(events)
 
+
+def _batch_event_mirror_enabled() -> bool:
+    return os.getenv("NOETL_EVENT_MIRROR_ENABLED", "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _batch_event_subject(event: dict[str, Any]) -> str:
+    global _batch_event_subject_publisher
+    if _batch_event_subject_publisher is None:
+        _batch_event_subject_publisher = NATSEventPublisher()
+    return _batch_event_subject_publisher.subject_for_event(event)
+
+
+async def _enqueue_batch_outbox(cur: Any, event: dict[str, Any]) -> None:
+    if not _batch_event_mirror_enabled():
+        return
+    await enqueue_outbox(cur, event, subject=_batch_event_subject(event))
+
+
+async def _drain_batch_outbox() -> None:
+    if not _batch_event_mirror_enabled():
+        return
+    try:
+        limit = int(os.getenv("NOETL_BATCH_OUTBOX_DRAIN_LIMIT", "100"))
+        await publish_outbox_batch(limit=limit)
+    except Exception as exc:
+        logger.warning("Batch outbox drain failed: %s", exc)
+
 async def _get_batch_execution_lock(execution_id: int) -> asyncio.Lock:
     async with _get_batch_execution_locks_guard():
         lock = _batch_execution_locks.get(execution_id)
@@ -114,7 +144,6 @@ async def shutdown_batch_acceptor() -> None:
 async def _persist_batch_status_event(execution_id: int, catalog_id: Optional[int], request_id: str, worker_id: Optional[str], idempotency_key: Optional[str], event_type: str, status: str, payload: dict[str, Any], error: Optional[str] = None) -> None:
     from .events import _event_envelope
     from .commands import _build_reference_only_result
-    mirrored_events: list[dict[str, Any]] = []
     async with get_pool_connection() as conn:
         async with conn.cursor(row_factory=dict_row) as cur:
             evt_id = await _next_snowflake_id(cur)
@@ -125,19 +154,22 @@ async def _persist_batch_status_event(execution_id: int, catalog_id: Optional[in
                 INSERT INTO noetl.event (event_id, execution_id, catalog_id, event_type, node_id, node_name, status, result, meta, worker_id, error, created_at)
                 VALUES (%s, %s, %s, %s, 'events.batch', 'events.batch', %s, %s, %s, %s, %s, %s)
             """, (evt_id, execution_id, catalog_id, event_type, status, Json(result_obj), Json(meta), worker_id, error, created_at))
+            await _enqueue_batch_outbox(
+                cur,
+                _event_envelope(
+                    event_id=evt_id,
+                    execution_id=execution_id,
+                    catalog_id=catalog_id,
+                    event_type=event_type,
+                    node_name="events.batch",
+                    status=status,
+                    result=result_obj,
+                    meta=meta,
+                    event_time=created_at,
+                ),
+            )
             await conn.commit()
-            mirrored_events.append(_event_envelope(
-                event_id=evt_id,
-                execution_id=execution_id,
-                catalog_id=catalog_id,
-                event_type=event_type,
-                node_name="events.batch",
-                status=status,
-                result=result_obj,
-                meta=meta,
-                event_time=created_at,
-            ))
-    await _mirror_batch_events(mirrored_events)
+    await _drain_batch_outbox()
 
 async def _persist_batch_failed_event(job: _BatchAcceptJob, code: str, message: str) -> None:
     try: await _persist_batch_status_event(job.execution_id, job.catalog_id, job.request_id, job.worker_id, job.idempotency_key, "batch.failed", "FAILED", {"request_id": job.request_id, "error_code": code, "message": message}, error=message)
@@ -254,7 +286,6 @@ async def _persist_batch_acceptance(req: BatchEventRequest, idempotency_key: Opt
                 INSERT INTO noetl.event (event_id, execution_id, catalog_id, event_type, node_id, node_name, status, result, meta, worker_id, created_at)
                 VALUES (%s, %s, %s, %s, 'events.batch', 'events.batch', 'PENDING', %s, %s, %s, %s)
             """, (accepted_evt_id, exec_id, catalog_id, "batch.accepted", Json(accepted_result), Json(acc_meta), req.worker_id, accepted_at))
-            await conn.commit()
             mirrored_events.append(_event_envelope(
                 event_id=accepted_evt_id,
                 execution_id=exec_id,
@@ -266,8 +297,11 @@ async def _persist_batch_acceptance(req: BatchEventRequest, idempotency_key: Opt
                 meta=acc_meta,
                 event_time=accepted_at,
             ))
+            for event in mirrored_events:
+                await _enqueue_batch_outbox(cur, event)
+            await conn.commit()
             for cid in term_cmd_ids: _active_claim_cache_invalidate(command_id=cid)
-    await _mirror_batch_events(mirrored_events)
+    await _drain_batch_outbox()
     return _BatchAcceptanceResult(job=_BatchAcceptJob(request_id, exec_id, catalog_id, req.worker_id, idempotency_key, req.events, last_act_evt, last_act_evt_id, accepted_evt_id, time.perf_counter()), event_ids=event_ids, duplicate=False)
 
 async def _issue_commands_for_batch(job: _BatchAcceptJob, commands: list) -> None:
@@ -337,6 +371,7 @@ async def _issue_commands_for_batch(job: _BatchAcceptJob, commands: list) -> Non
             chunk_size = 10
             for j in range(0, len(insert_params), chunk_size):
                 chunk = insert_params[j:j + chunk_size]
+                prepared_chunk = prepared_commands[j:j + chunk_size]
                 await cur.executemany("""
                     INSERT INTO noetl.event (event_id, execution_id, catalog_id, event_type, node_id, node_name, node_type, status, context, meta, parent_event_id, parent_execution_id, command_id, stage_id, frame_id, created_at)
                     VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
@@ -349,26 +384,28 @@ async def _issue_commands_for_batch(job: _BatchAcceptJob, commands: list) -> Non
                     VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                     ON CONFLICT (execution_id, command_id) DO NOTHING
                 """, command_table_params[j:j + chunk_size])
+                for p in prepared_chunk:
+                    await _enqueue_batch_outbox(
+                        cur,
+                        _command_issued_envelope(
+                            event_id=p["evt_id"],
+                            execution_id=p["execution_id"],
+                            catalog_id=cat_id,
+                            command_id=p["cmd_id"],
+                            step=p["step"],
+                            tool_kind=p["tool_kind"],
+                            context=p["ctx"],
+                            meta=p["meta"],
+                            parent_event_id=job.last_actionable_evt_id,
+                            parent_execution_id=p_exec,
+                            stage_id=p["meta"].get("stage_id"),
+                            frame_id=p["meta"].get("frame_id"),
+                            created_at=now,
+                        ),
+                    )
                 await conn.commit()
 
-    await _mirror_batch_events([
-        _command_issued_envelope(
-            event_id=p["evt_id"],
-            execution_id=p["execution_id"],
-            catalog_id=cat_id,
-            command_id=p["cmd_id"],
-            step=p["step"],
-            tool_kind=p["tool_kind"],
-            context=p["ctx"],
-            meta=p["meta"],
-            parent_event_id=job.last_actionable_evt_id,
-            parent_execution_id=p_exec,
-            stage_id=p["meta"].get("stage_id"),
-            frame_id=p["meta"].get("frame_id"),
-            created_at=now,
-        )
-        for p in prepared_commands
-    ])
+    await _drain_batch_outbox()
 
     # 5. Parallel NATS publish
     publish_items = [(p["execution_id"], p["evt_id"], p["cmd_id"], p["step"]) for p in prepared_commands]
