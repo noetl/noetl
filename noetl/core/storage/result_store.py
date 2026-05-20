@@ -39,6 +39,7 @@ from noetl.core.storage.models import (
     TempRefMeta,
     IpcHint,
 )
+from noetl.core.storage.arrow_ipc import ARROW_STREAM_MEDIA_TYPE, arrow_ipc_to_rows
 from noetl.core.storage.router import StorageRouter, default_router
 from noetl.core.storage.extractor import create_preview
 from noetl.core.logger import setup_logger
@@ -992,6 +993,8 @@ class TempStore:
         ref_uri = ref.get("ref")
         if ref_uri:
             try:
+                if self._is_arrow_ipc_ref(ref):
+                    return await self._resolve_arrow_ipc_ref(ref)
                 return await self.get(ref_uri)
             except KeyError:
                 logger.warning(
@@ -1008,6 +1011,34 @@ class TempStore:
                 return ref.get("preview", {})
 
         return ref.get("preview", ref)
+
+    def _is_arrow_ipc_ref(self, ref: Dict[str, Any]) -> bool:
+        meta = ref.get("meta")
+        meta = meta if isinstance(meta, dict) else {}
+        media_type = ref.get("media_type") or meta.get("media_type") or meta.get("content_type")
+        return str(media_type or "").lower() == ARROW_STREAM_MEDIA_TYPE
+
+    async def _resolve_arrow_ipc_ref(self, ref: Dict[str, Any]) -> list[Dict[str, Any]]:
+        temp_ref = TempRef.model_validate(ref)
+        data = await self.get_ipc_bytes(
+            temp_ref,
+            ipc_cache=self._default_ipc_cache_for_ref(temp_ref),
+        )
+        return arrow_ipc_to_rows(data)
+
+    def _default_ipc_cache_for_ref(self, temp_ref: TempRef) -> Any:
+        if temp_ref.ipc is None:
+            return None
+        try:
+            from noetl.core.storage import ArrowIpcSharedMemoryCache
+
+            return ArrowIpcSharedMemoryCache(
+                namespace=os.getenv("NOETL_CURSOR_FRAME_IPC_NAMESPACE", "noetl_frame"),
+                producer=os.getenv("HOSTNAME") or "resolver",
+            )
+        except Exception as exc:
+            logger.debug("TEMP: IPC cache unavailable for %s: %s", temp_ref.ref, exc)
+            return None
 
     async def _resolve_manifest(self, manifest: Dict[str, Any]) -> List[Any]:
         """Resolve a Manifest to its combined data."""
