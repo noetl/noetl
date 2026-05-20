@@ -32,8 +32,17 @@ class ProjectorMetrics:
             "errors_total": 0.0,
             "last_success_unixtime": 0.0,
             "last_error_unixtime": 0.0,
+            "last_action_unixtime": 0.0,
+            "last_ack_unixtime": 0.0,
+            "last_redelivery_request_unixtime": 0.0,
+            "last_termination_unixtime": 0.0,
+            "last_redelivery_delay_seconds": 0.0,
+            "last_batch_extracted_events": 0.0,
             "last_batch_events": 0.0,
+            "last_batch_unowned_events": 0.0,
+            "last_batch_unshardable_events": 0.0,
             "last_batch_projection_records": 0.0,
+            "last_batch_stale_projection_records": 0.0,
             "last_projection_source_event_id": 0.0,
             "last_projection_event_time_watermark_unixtime": 0.0,
             "last_projection_projected_at_unixtime": 0.0,
@@ -61,8 +70,12 @@ class ProjectorMetrics:
             self._values["projection_records_total"] += float(max(0, projection_records))
             self._values["projection_stale_records_total"] += float(max(0, stale_projection_records))
             self._values["last_success_unixtime"] = now
+            self._values["last_batch_extracted_events"] = float(max(0, extracted_events))
             self._values["last_batch_events"] = float(max(0, owned_events))
+            self._values["last_batch_unowned_events"] = float(max(0, unowned_events))
+            self._values["last_batch_unshardable_events"] = float(max(0, unshardable_events))
             self._values["last_batch_projection_records"] = float(max(0, projection_records))
+            self._values["last_batch_stale_projection_records"] = float(max(0, stale_projection_records))
             if owned_events <= 0:
                 self._values["empty_or_unowned_notifications_total"] += 1.0
 
@@ -79,15 +92,25 @@ class ProjectorMetrics:
             self._values["last_error_unixtime"] = time.time()
 
     def record_message_action(self, action: str, delay_seconds: Optional[float] = None) -> None:
+        now = time.time()
         with self._lock:
             if action == "ack":
                 self._values["acknowledged_notifications_total"] += 1.0
+                self._values["last_ack_unixtime"] = now
             elif action == "nak":
                 self._values["redelivery_requests_total"] += 1.0
+                self._values["last_redelivery_request_unixtime"] = now
                 if delay_seconds is not None and delay_seconds > 0:
                     self._values["delayed_redelivery_requests_total"] += 1.0
+                    self._values["last_redelivery_delay_seconds"] = float(delay_seconds)
+                else:
+                    self._values["last_redelivery_delay_seconds"] = 0.0
             elif action == "term":
                 self._values["terminated_notifications_total"] += 1.0
+                self._values["last_termination_unixtime"] = now
+            else:
+                return
+            self._values["last_action_unixtime"] = now
 
     def record_projection_checkpoints(self, records: Iterable[Any]) -> None:
         with self._lock:
@@ -117,6 +140,23 @@ class ProjectorMetrics:
     def snapshot(self) -> dict[str, float]:
         with self._lock:
             return dict(self._values)
+
+    def action_summary(self) -> dict[str, float]:
+        with self._lock:
+            acknowledged = self._values["acknowledged_notifications_total"]
+            redelivery = self._values["redelivery_requests_total"]
+            terminated = self._values["terminated_notifications_total"]
+            total = acknowledged + redelivery + terminated
+            return {
+                "actions_total": total,
+                "acknowledged_notifications_total": acknowledged,
+                "redelivery_requests_total": redelivery,
+                "delayed_redelivery_requests_total": self._values["delayed_redelivery_requests_total"],
+                "terminated_notifications_total": terminated,
+                "ack_ratio": acknowledged / total if total else 0.0,
+                "redelivery_ratio": redelivery / total if total else 0.0,
+                "termination_ratio": terminated / total if total else 0.0,
+            }
 
 
 def render_projector_metrics(metrics: ProjectorMetrics, *, labels: Optional[Mapping[str, str]] = None) -> str:
@@ -191,12 +231,48 @@ def render_projector_metrics(metrics: ProjectorMetrics, *, labels: Optional[Mapp
         "# HELP noetl_projector_last_error_unixtime Last failed notification handling time.",
         "# TYPE noetl_projector_last_error_unixtime gauge",
         f"noetl_projector_last_error_unixtime{label_text} {snapshot['last_error_unixtime']}",
+        "# HELP noetl_projector_last_action_unixtime Last projector subscriber terminal action time.",
+        "# TYPE noetl_projector_last_action_unixtime gauge",
+        f"noetl_projector_last_action_unixtime{label_text} {snapshot['last_action_unixtime']}",
+        "# HELP noetl_projector_last_ack_unixtime Last projector notification ACK time.",
+        "# TYPE noetl_projector_last_ack_unixtime gauge",
+        f"noetl_projector_last_ack_unixtime{label_text} {snapshot['last_ack_unixtime']}",
+        "# HELP noetl_projector_last_redelivery_request_unixtime Last projector notification NAK time.",
+        "# TYPE noetl_projector_last_redelivery_request_unixtime gauge",
+        (
+            "noetl_projector_last_redelivery_request_unixtime"
+            f"{label_text} {snapshot['last_redelivery_request_unixtime']}"
+        ),
+        "# HELP noetl_projector_last_termination_unixtime Last projector notification TERM time.",
+        "# TYPE noetl_projector_last_termination_unixtime gauge",
+        f"noetl_projector_last_termination_unixtime{label_text} {snapshot['last_termination_unixtime']}",
+        "# HELP noetl_projector_last_redelivery_delay_seconds Last requested projector redelivery delay.",
+        "# TYPE noetl_projector_last_redelivery_delay_seconds gauge",
+        f"noetl_projector_last_redelivery_delay_seconds{label_text} {snapshot['last_redelivery_delay_seconds']}",
         "# HELP noetl_projector_last_batch_events Owned events in the last handled notification.",
         "# TYPE noetl_projector_last_batch_events gauge",
         f"noetl_projector_last_batch_events{label_text} {snapshot['last_batch_events']}",
+        "# HELP noetl_projector_last_batch_extracted_events Events extracted from the last handled notification.",
+        "# TYPE noetl_projector_last_batch_extracted_events gauge",
+        f"noetl_projector_last_batch_extracted_events{label_text} {snapshot['last_batch_extracted_events']}",
+        "# HELP noetl_projector_last_batch_unowned_events Events assigned to other shards in the last handled notification.",
+        "# TYPE noetl_projector_last_batch_unowned_events gauge",
+        f"noetl_projector_last_batch_unowned_events{label_text} {snapshot['last_batch_unowned_events']}",
+        "# HELP noetl_projector_last_batch_unshardable_events Events without valid shard keys in the last handled notification.",
+        "# TYPE noetl_projector_last_batch_unshardable_events gauge",
+        (
+            "noetl_projector_last_batch_unshardable_events"
+            f"{label_text} {snapshot['last_batch_unshardable_events']}"
+        ),
         "# HELP noetl_projector_last_batch_projection_records Projection records from the last handled notification.",
         "# TYPE noetl_projector_last_batch_projection_records gauge",
         f"noetl_projector_last_batch_projection_records{label_text} {snapshot['last_batch_projection_records']}",
+        "# HELP noetl_projector_last_batch_stale_projection_records Stale projection records from the last handled notification.",
+        "# TYPE noetl_projector_last_batch_stale_projection_records gauge",
+        (
+            "noetl_projector_last_batch_stale_projection_records"
+            f"{label_text} {snapshot['last_batch_stale_projection_records']}"
+        ),
         "# HELP noetl_projector_last_projection_source_event_id Last projected source event id.",
         "# TYPE noetl_projector_last_projection_source_event_id gauge",
         f"noetl_projector_last_projection_source_event_id{label_text} {snapshot['last_projection_source_event_id']}",
