@@ -95,14 +95,10 @@ def _validate_int_field(
         if required:
             failures.append({"field": field, "reason": "must be an integer"})
         return None
-    if isinstance(value, bool):
+    if isinstance(value, bool) or not isinstance(value, int):
         failures.append({"field": field, "reason": "must be an integer", "supplied": value})
         return None
-    try:
-        parsed = int(value)
-    except (TypeError, ValueError):
-        failures.append({"field": field, "reason": "must be an integer", "supplied": value})
-        return None
+    parsed = value
     if minimum is not None and parsed < minimum:
         failures.append(
             {
