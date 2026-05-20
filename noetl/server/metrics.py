@@ -38,6 +38,30 @@ def append_storage_ipc_metrics(
     lines.append(f"noetl_storage_ipc_read_hit_ratio{label_text} {hit_ratio}")
 
 
+def append_frame_backlog_metrics(
+    lines: list[str],
+    rows: list[Mapping[str, object]],
+) -> None:
+    """Append frame backlog gauges grouped by status and stage kind."""
+    metric_name = "noetl_frame_backlog_total"
+    lines.append("# HELP noetl_frame_backlog_total Worker-claimable frame backlog by stage kind and status")
+    lines.append("# TYPE noetl_frame_backlog_total gauge")
+    totals_by_status: dict[str, int] = {}
+    total = 0
+    for row in rows:
+        stage_kind = str(row.get("stage_kind") or "unknown")
+        status = str(row.get("status") or "unknown")
+        count = int(row.get("count") or 0)
+        total += count
+        totals_by_status[status] = totals_by_status.get(status, 0) + count
+        labels = _format_labels({"stage_kind": stage_kind, "status": status})
+        lines.append(f"{metric_name}{labels} {count}")
+
+    for status, count in sorted(totals_by_status.items()):
+        lines.append(f'{metric_name}{{stage_kind="all",status="{_escape_label(status)}"}} {count}')
+    lines.append(f'{metric_name}{{stage_kind="all",status="all"}} {total}')
+
+
 def _format_labels(labels: Mapping[str, str]) -> str:
     filtered = {key: value for key, value in labels.items() if value}
     if not filtered:
@@ -50,4 +74,4 @@ def _escape_label(value: str) -> str:
     return str(value).replace("\\", "\\\\").replace("\n", "\\n").replace('"', '\\"')
 
 
-__all__ = ["append_storage_ipc_metrics"]
+__all__ = ["append_frame_backlog_metrics", "append_storage_ipc_metrics"]
