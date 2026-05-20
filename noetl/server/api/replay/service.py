@@ -669,6 +669,64 @@ def command_projection_checksum(rows: Iterable[Mapping[str, Any]]) -> str:
     return _canonical_checksum({"commands": list(rows)})
 
 
+def _normalized_business_object_projection_row(row: Mapping[str, Any]) -> dict[str, Any]:
+    return {
+        "object_key": str(row.get("object_key")),
+        "object_type": str(row.get("object_type")),
+        "object_id": str(row.get("object_id")),
+        "status": row.get("status"),
+        "version": int(row.get("version") or 0),
+        "event_count": int(row.get("event_count") or 0),
+        "first_event_id": (
+            int(row.get("first_event_id")) if row.get("first_event_id") is not None else None
+        ),
+        "last_event_id": (
+            int(row.get("last_event_id")) if row.get("last_event_id") is not None else None
+        ),
+        "deleted_event_id": (
+            int(row.get("deleted_event_id")) if row.get("deleted_event_id") is not None else None
+        ),
+        "last_event_type": row.get("last_event_type"),
+        "last_payload_ref_summary": _payload_summary(
+            (row.get("last_payload_ref") or {}).get("reference")
+            if isinstance(row.get("last_payload_ref"), Mapping)
+            else row.get("last_payload_ref")
+        ),
+        "payload_ref_count": len(row.get("payload_refs") or []),
+        "attributes": row.get("attributes") or {},
+    }
+
+
+def normalize_live_business_object_projection(rows: Iterable[Mapping[str, Any]]) -> list[dict[str, Any]]:
+    return sorted(
+        (_normalized_business_object_projection_row(row) for row in rows),
+        key=lambda row: row["object_key"],
+    )
+
+
+def normalize_replayed_business_object_projection(state: Mapping[str, Any]) -> list[dict[str, Any]]:
+    business_objects = state.get("business_objects")
+    if not isinstance(business_objects, Mapping):
+        return []
+    return sorted(
+        (
+            _normalized_business_object_projection_row(
+                {
+                    "object_key": business_object.get("object_key") or object_key,
+                    **business_object,
+                }
+            )
+            for object_key, business_object in business_objects.items()
+            if isinstance(business_object, Mapping)
+        ),
+        key=lambda row: row["object_key"],
+    )
+
+
+def business_object_projection_checksum(rows: Iterable[Mapping[str, Any]]) -> str:
+    return _canonical_checksum({"business_objects": list(rows)})
+
+
 class ReplayService:
     """Read canonical events and fold replay state."""
 
