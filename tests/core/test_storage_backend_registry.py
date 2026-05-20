@@ -5,6 +5,7 @@ import pytest
 from noetl.core.storage.backends import (
     MemoryBackend,
     StorageBackend,
+    clear_registered_backends,
     get_backend,
     register_backend,
     registered_backend_names,
@@ -17,7 +18,7 @@ class CustomMemoryBackend(MemoryBackend):
 
 
 def teardown_function():
-    unregister_backend("custom")
+    clear_registered_backends()
 
 
 def test_registered_backend_names_include_builtins():
@@ -32,11 +33,13 @@ def test_registry_helpers_are_public_storage_exports():
         register_backend as public_register_backend,
         registered_backend_names as public_registered_backend_names,
         unregister_backend as public_unregister_backend,
+        clear_registered_backends as public_clear_registered_backends,
     )
 
     assert public_register_backend is register_backend
     assert public_registered_backend_names is registered_backend_names
     assert public_unregister_backend is unregister_backend
+    assert public_clear_registered_backends is clear_registered_backends
 
 
 def test_get_backend_uses_in_process_registration():
