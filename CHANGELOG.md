@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.80.0](https://github.com/noetl/noetl/compare/v2.79.0...v2.80.0) (2026-05-20)
+
+### Features
+
+* **projector:** add action summary helper ([4ae0bdc](https://github.com/noetl/noetl/commit/4ae0bdc3132cfe376b5c9f327f13d773c5136046))
+* **projector:** add last batch shape gauges ([c5e7d8b](https://github.com/noetl/noetl/commit/c5e7d8bcd043b5cdf022ebd411ed78b7bf5498a2))
+* **projector:** add terminal action timestamp gauges ([55a76e0](https://github.com/noetl/noetl/commit/55a76e005f7654ef35fec7178b944bdff712b237))
+
 ## [2.79.0](https://github.com/noetl/noetl/compare/v2.78.0...v2.79.0) (2026-05-20)
 
 ### Features
