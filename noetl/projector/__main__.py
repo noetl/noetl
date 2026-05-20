@@ -33,7 +33,7 @@ def main() -> None:
             subject=args.subject or base.subject,
             consumer_name=args.consumer or base.consumer_name,
             shard_id=args.shard_id or base.shard_id,
-            shard_count=max(1, args.shard_count or base.shard_count),
+            shard_count=args.shard_count if args.shard_count is not None else base.shard_count,
             max_inflight=base.max_inflight,
             max_ack_pending=base.max_ack_pending,
             fetch_timeout_seconds=base.fetch_timeout_seconds,

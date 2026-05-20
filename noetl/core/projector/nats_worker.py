@@ -81,11 +81,11 @@ def load_projector_worker_settings() -> ProjectorWorkerSettings:
         subject=os.getenv("NOETL_PROJECTOR_NATS_SUBJECT") or "noetl.events.>",
         consumer_name=consumer_name,
         shard_id=shard_id,
-        shard_count=max(1, _int_env("NOETL_PROJECTOR_SHARD_COUNT", 1)),
-        max_inflight=max(1, _int_env("NOETL_PROJECTOR_MAX_INFLIGHT", 8)),
-        max_ack_pending=max(1, _int_env("NOETL_PROJECTOR_NATS_MAX_ACK_PENDING", 64)),
-        fetch_timeout_seconds=max(0.1, _float_env("NOETL_PROJECTOR_NATS_FETCH_TIMEOUT_SECONDS", 30.0)),
-        fetch_heartbeat_seconds=max(0.1, _float_env("NOETL_PROJECTOR_NATS_FETCH_HEARTBEAT_SECONDS", 5.0)),
+        shard_count=_int_env("NOETL_PROJECTOR_SHARD_COUNT", 1),
+        max_inflight=_int_env("NOETL_PROJECTOR_MAX_INFLIGHT", 8),
+        max_ack_pending=_int_env("NOETL_PROJECTOR_NATS_MAX_ACK_PENDING", 64),
+        fetch_timeout_seconds=_float_env("NOETL_PROJECTOR_NATS_FETCH_TIMEOUT_SECONDS", 30.0),
+        fetch_heartbeat_seconds=_float_env("NOETL_PROJECTOR_NATS_FETCH_HEARTBEAT_SECONDS", 5.0),
         metrics_host=os.getenv("NOETL_PROJECTOR_METRICS_HOST") or "0.0.0.0",
         metrics_port=_optional_int_env("NOETL_PROJECTOR_METRICS_PORT"),
     )
@@ -316,8 +316,7 @@ def _optional_int_env(name: str) -> Optional[int]:
     value = os.getenv(name)
     if value is None or value.strip() == "":
         return None
-    parsed = int(value)
-    return parsed if parsed > 0 else None
+    return int(value)
 
 
 def _float_env(name: str, default: float) -> float:

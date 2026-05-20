@@ -400,6 +400,36 @@ def test_projector_worker_settings_rejects_invalid_runtime_limits():
         ProjectorWorkerSettings(metrics_port=0)
 
 
+@pytest.mark.parametrize(
+    ("env_name", "env_value", "error_match"),
+    [
+        ("NOETL_PROJECTOR_SHARD_COUNT", "0", "shard_count"),
+        ("NOETL_PROJECTOR_MAX_INFLIGHT", "0", "max_inflight"),
+        ("NOETL_PROJECTOR_NATS_MAX_ACK_PENDING", "0", "max_ack_pending"),
+        ("NOETL_PROJECTOR_NATS_FETCH_TIMEOUT_SECONDS", "0", "fetch_timeout_seconds"),
+        ("NOETL_PROJECTOR_NATS_FETCH_HEARTBEAT_SECONDS", "0", "fetch_heartbeat_seconds"),
+        ("NOETL_PROJECTOR_METRICS_PORT", "0", "metrics_port"),
+    ],
+)
+def test_load_projector_worker_settings_rejects_invalid_env_values(monkeypatch, env_name, env_value, error_match):
+    from noetl.core.projector.nats_worker import load_projector_worker_settings
+
+    monkeypatch.setenv(env_name, env_value)
+
+    with pytest.raises(ValueError, match=error_match):
+        load_projector_worker_settings()
+
+
+def test_load_projector_worker_settings_rejects_env_shard_id_outside_count(monkeypatch):
+    from noetl.core.projector.nats_worker import load_projector_worker_settings
+
+    monkeypatch.setenv("NOETL_PROJECTOR_SHARD_ID", "noetl-projector-2")
+    monkeypatch.setenv("NOETL_PROJECTOR_SHARD_COUNT", "2")
+
+    with pytest.raises(ValueError, match="shard index must be less than shard_count"):
+        load_projector_worker_settings()
+
+
 @pytest.mark.asyncio
 async def test_nats_projector_worker_acks_empty_or_unowned_notifications():
     from noetl.core.projector.metrics import ProjectorMetrics
