@@ -11,6 +11,7 @@ fi
 
 "$PYTHON_BIN" -m pytest -q \
   tests/core/test_replay_golden_corpus.py \
+  tests/scripts/test_check_replay_parity_report.py \
   tests/api/test_replay_routes.py \
   tests/core/test_replay_upcasters.py \
   tests/core/test_replay_state_projector.py \

@@ -71,6 +71,7 @@ class ReplayStateProjector:
                     "projection_lag_ms": _projection_lag_ms(event_watermark, projected_at),
                     "projector": "replay_state",
                     "projection": self.projection,
+                    "projection_checksums": state.get("projection_checksums"),
                     "source_event_id": source_event_id,
                     "upcaster_registry_digest": state.get("upcaster_registry_digest"),
                 },

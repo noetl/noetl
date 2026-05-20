@@ -145,6 +145,15 @@ def test_fold_replay_state_tracks_execution_frames_loops_and_checksum():
     assert state["upcaster_registry_digest"] == "abc123"
     assert state["checksum_algorithm"] == "sha256"
     assert len(state["checksum"]) == 64
+    assert set(state["projection_checksums"]) == {
+        "execution",
+        "stages",
+        "frames",
+        "commands",
+        "business_objects",
+        "loops",
+    }
+    assert all(len(checksum) == 64 for checksum in state["projection_checksums"].values())
 
 
 def test_fold_replay_state_tracks_commands_and_topology():
@@ -756,3 +765,169 @@ def test_execution_projection_checksum_matches_live_rows_and_replayed_state():
 
     assert replayed_rows == live_rows
     assert execution_projection_checksum(replayed_rows) == execution_projection_checksum(live_rows)
+
+
+def test_replay_projection_checksum_bundle_includes_all_surfaces():
+    from noetl.server.api.replay import (
+        business_object_projection_checksum,
+        command_projection_checksum,
+        execution_projection_checksum,
+        fold_replay_state,
+        frame_projection_checksum,
+        loop_projection_checksum,
+        normalize_replayed_business_object_projection,
+        normalize_replayed_command_projection,
+        normalize_replayed_execution_projection,
+        normalize_replayed_frame_projection,
+        normalize_replayed_loop_projection,
+        normalize_replayed_stage_projection,
+        replay_projection_checksum_bundle,
+        stage_projection_checksum,
+    )
+
+    state = fold_replay_state(
+        [
+            {"event_id": 1, "event_type": "execution.started", "status": "RUNNING"},
+            {
+                "event_id": 2,
+                "event_type": "stage.opened",
+                "aggregate_type": "stage",
+                "aggregate_id": "stage/7",
+                "status": "OPEN",
+                "node_name": "stage",
+            },
+            {
+                "event_id": 3,
+                "event_type": "frame.dispatched",
+                "aggregate_type": "frame",
+                "aggregate_id": "frame/9",
+                "stage_id": 7,
+                "command_id": 11,
+            },
+            {
+                "event_id": 4,
+                "event_type": "command.claimed",
+                "command_id": 11,
+                "stage_id": 7,
+                "worker_id": "worker-a",
+            },
+            {
+                "event_id": 5,
+                "event_type": "patient.created",
+                "aggregate_type": "business_object",
+                "aggregate_id": "patient/p-1",
+                "meta": {"business_object": {"state": {"risk": "low"}}},
+            },
+            {
+                "event_id": 6,
+                "event_type": "loop.done",
+                "node_name": "stage",
+                "meta": {"loop_id": "loop-1"},
+            },
+        ],
+        tenant_id="tenant-a",
+        organization_id="org-a",
+        execution_id=123,
+    )
+
+    assert replay_projection_checksum_bundle(state) == {
+        "execution": execution_projection_checksum(
+            normalize_replayed_execution_projection(state)
+        ),
+        "stages": stage_projection_checksum(normalize_replayed_stage_projection(state)),
+        "frames": frame_projection_checksum(normalize_replayed_frame_projection(state)),
+        "commands": command_projection_checksum(
+            normalize_replayed_command_projection(state)
+        ),
+        "business_objects": business_object_projection_checksum(
+            normalize_replayed_business_object_projection(state)
+        ),
+        "loops": loop_projection_checksum(normalize_replayed_loop_projection(state)),
+    }
+
+
+def test_projection_checksum_parity_report_compares_adapter_bundles():
+    from noetl.server.api.replay import (
+        fold_replay_state,
+        live_projection_checksum_bundle,
+        normalize_replayed_business_object_projection,
+        normalize_replayed_command_projection,
+        normalize_replayed_execution_projection,
+        normalize_replayed_frame_projection,
+        normalize_replayed_loop_projection,
+        normalize_replayed_stage_projection,
+        projection_checksum_parity_report,
+    )
+
+    state = fold_replay_state(
+        [
+            {"event_id": 1, "event_type": "execution.started", "status": "RUNNING"},
+            {
+                "event_id": 2,
+                "event_type": "stage.opened",
+                "aggregate_type": "stage",
+                "aggregate_id": "stage/7",
+                "status": "OPEN",
+                "node_name": "stage",
+            },
+            {
+                "event_id": 3,
+                "event_type": "frame.dispatched",
+                "aggregate_type": "frame",
+                "aggregate_id": "frame/9",
+                "stage_id": 7,
+                "command_id": 11,
+            },
+            {
+                "event_id": 4,
+                "event_type": "command.claimed",
+                "command_id": 11,
+                "stage_id": 7,
+                "worker_id": "worker-a",
+            },
+            {
+                "event_id": 5,
+                "event_type": "patient.created",
+                "aggregate_type": "business_object",
+                "aggregate_id": "patient/p-1",
+                "meta": {"business_object": {"state": {"risk": "low"}}},
+            },
+            {
+                "event_id": 6,
+                "event_type": "loop.done",
+                "node_name": "stage",
+                "meta": {"loop_id": "loop-1"},
+            },
+        ],
+        tenant_id="tenant-a",
+        organization_id="org-a",
+        execution_id=123,
+    )
+    live_bundle = live_projection_checksum_bundle(
+        execution_rows=normalize_replayed_execution_projection(state),
+        stage_rows=normalize_replayed_stage_projection(state),
+        frame_rows=normalize_replayed_frame_projection(state),
+        command_rows=normalize_replayed_command_projection(state),
+        business_object_rows=normalize_replayed_business_object_projection(state),
+        loop_rows=normalize_replayed_loop_projection(state),
+    )
+
+    report = projection_checksum_parity_report(
+        replayed=state["projection_checksums"],
+        live=live_bundle,
+    )
+
+    assert report["matched"] is True
+    assert all(surface["matched"] for surface in report["surfaces"].values())
+
+    diverged_live_bundle = {**live_bundle, "frames": "0" * 64}
+    diverged_report = projection_checksum_parity_report(
+        replayed=state["projection_checksums"],
+        live=diverged_live_bundle,
+    )
+    assert diverged_report["matched"] is False
+    assert diverged_report["surfaces"]["frames"] == {
+        "replayed": state["projection_checksums"]["frames"],
+        "live": "0" * 64,
+        "matched": False,
+    }

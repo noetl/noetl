@@ -81,8 +81,17 @@ async def test_replay_state_projector_writes_grouped_projection_records():
     assert first.version == 2
     assert first.source_event_id == 10
     assert first.state["frames"]["1"]["status"] == "COMPLETED"
+    assert set(first.state["projection_checksums"]) == {
+        "execution",
+        "stages",
+        "frames",
+        "commands",
+        "business_objects",
+        "loops",
+    }
     assert first.checksum == first.state["checksum"]
     assert first.meta["projector"] == "replay_state"
+    assert first.meta["projection_checksums"] == first.state["projection_checksums"]
     assert first.meta["source_event_id"] == 10
 
 
