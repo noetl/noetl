@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.47.0](https://github.com/noetl/noetl/compare/v2.46.0...v2.47.0) (2026-05-20)
+
+### Features
+
+* **projection:** add query port ([89c4f10](https://github.com/noetl/noetl/commit/89c4f10e7f0035cdfaf2ffdb6c2a4c23be205f30))
+
 ## [2.46.0](https://github.com/noetl/noetl/compare/v2.45.0...v2.46.0) (2026-05-19)
 
 ### Features
