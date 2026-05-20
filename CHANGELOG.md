@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.64.0](https://github.com/noetl/noetl/compare/v2.63.0...v2.64.0) (2026-05-20)
+
+### Features
+
+* **replay:** add execution projection checksums ([f0e531d](https://github.com/noetl/noetl/commit/f0e531df7db42d9dd7ff90a6132f9dd79ae2325e))
+* **replay:** add stage projection checksums ([d19a515](https://github.com/noetl/noetl/commit/d19a515f34f80c88fbb47fea662740bb49a27a00))
+
 ## [2.63.0](https://github.com/noetl/noetl/compare/v2.62.0...v2.63.0) (2026-05-20)
 
 ### Features
