@@ -13,6 +13,14 @@ from typing import Any
 from noetl.server.api.replay import replay_payload_resolution_summary
 
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
+SUMMARY_FIELDS = (
+    "total",
+    "resolved",
+    "unresolved",
+    "unique_refs",
+    "all_resolved",
+    "checksum",
+)
 
 
 def _load_report(path: Path) -> dict[str, Any]:
@@ -80,6 +88,64 @@ def _checksum_shape_failures(rows: list[dict[str, Any]]) -> list[dict[str, Any]]
     return failures
 
 
+def _summary_shape_failures(summary: Any) -> list[dict[str, Any]]:
+    failures: list[dict[str, Any]] = []
+    if summary is None:
+        return failures
+    if not isinstance(summary, dict):
+        return [
+            {
+                "field": "payload_resolution_summary",
+                "reason": "payload_resolution_summary must be an object",
+                "supplied_type": type(summary).__name__,
+            }
+        ]
+
+    for field in SUMMARY_FIELDS:
+        if field not in summary:
+            failures.append(
+                {
+                    "field": f"payload_resolution_summary.{field}",
+                    "reason": "missing required summary field",
+                }
+            )
+    for field in sorted(set(summary) - set(SUMMARY_FIELDS)):
+        failures.append(
+            {
+                "field": f"payload_resolution_summary.{field}",
+                "reason": "unknown summary field",
+            }
+        )
+    for field in ("total", "resolved", "unresolved", "unique_refs"):
+        value = summary.get(field)
+        if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+            failures.append(
+                {
+                    "field": f"payload_resolution_summary.{field}",
+                    "reason": "must be a non-negative integer",
+                    "supplied": value,
+                }
+            )
+    if not isinstance(summary.get("all_resolved"), bool):
+        failures.append(
+            {
+                "field": "payload_resolution_summary.all_resolved",
+                "reason": "must be a boolean",
+                "supplied": summary.get("all_resolved"),
+            }
+        )
+    checksum = summary.get("checksum")
+    if not isinstance(checksum, str) or not _SHA256_RE.fullmatch(checksum):
+        failures.append(
+            {
+                "field": "payload_resolution_summary.checksum",
+                "reason": "checksum must be a lowercase sha256 hex digest",
+                "supplied": checksum,
+            }
+        )
+    return failures
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description="Validate NoETL replay payload-resolution report JSON",
@@ -115,8 +181,18 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     computed_summary = replay_payload_resolution_summary(rows)
-    supplied_summary = report.get("payload_resolution_summary") or {}
-    if supplied_summary and supplied_summary.get("checksum") != computed_summary["checksum"]:
+    supplied_summary = report.get("payload_resolution_summary")
+    summary_shape_failures = _summary_shape_failures(supplied_summary)
+    if summary_shape_failures:
+        output = {
+            "matched": False,
+            "reason": "payload_resolution_summary shape mismatch",
+            "summary_shape_failures": summary_shape_failures,
+            "computed": computed_summary,
+        }
+        print(json.dumps(output, indent=2, sort_keys=True))
+        return 1
+    if supplied_summary is not None and supplied_summary.get("checksum") != computed_summary["checksum"]:
         output = {
             "matched": False,
             "reason": "payload_resolution_summary checksum mismatch",
