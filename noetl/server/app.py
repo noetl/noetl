@@ -33,7 +33,8 @@ from noetl.server.command_reaper import (
     run_command_reaper,
     is_reaper_enabled as is_command_reaper_enabled,
 )
-from noetl.server.metrics import append_storage_ipc_metrics
+from noetl.server.frame_backlog import collect_frame_backlog_snapshot
+from noetl.server.metrics import append_frame_backlog_metrics, append_storage_ipc_metrics
 from noetl.server.runtime_leases import RuntimeLease, load_control_lease_seconds
 
 logger = setup_logger(__name__, include_location=True)
@@ -558,6 +559,11 @@ def _create_app(settings: Settings) -> FastAPI:
             append_storage_ipc_metrics(lines, default_store.ipc_stats())
         except Exception as exc:
             logger.debug("Failed to append storage IPC metrics: %s", exc)
+
+        try:
+            append_frame_backlog_metrics(lines, await collect_frame_backlog_snapshot())
+        except Exception as exc:
+            logger.debug("Failed to append frame backlog metrics: %s", exc)
 
         body = "\n".join(lines) + "\n"
         return Response(content=body, media_type="text/plain; version=0.0.4; charset=utf-8")

@@ -34,3 +34,23 @@ def test_core_batch_metrics_export_is_callable_without_route_state():
     assert "accepted_total" in snapshot
     assert "queue_depth" in snapshot
     assert "worker_count" in snapshot
+
+
+def test_append_frame_backlog_metrics_exports_stage_and_total_gauges():
+    from noetl.server.metrics import append_frame_backlog_metrics
+
+    lines: list[str] = []
+    append_frame_backlog_metrics(
+        lines,
+        [
+            {"stage_kind": "loop", "status": "PENDING", "count": 3},
+            {"stage_kind": "loop", "status": "RUNNING", "count": 2},
+            {"stage_kind": "reduce", "status": "PENDING", "count": 1},
+        ],
+    )
+    body = "\n".join(lines)
+
+    assert "noetl_frame_backlog_total{stage_kind=\"loop\",status=\"PENDING\"} 3" in body
+    assert "noetl_frame_backlog_total{stage_kind=\"reduce\",status=\"PENDING\"} 1" in body
+    assert "noetl_frame_backlog_total{stage_kind=\"all\",status=\"PENDING\"} 4" in body
+    assert "noetl_frame_backlog_total{stage_kind=\"all\",status=\"all\"} 6" in body
