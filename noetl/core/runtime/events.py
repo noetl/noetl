@@ -15,6 +15,7 @@ from typing import Dict, Any, Optional
 
 from noetl.core.logger import setup_logger
 from noetl.core.config import WorkerSettings, get_worker_settings
+from noetl.core.runtime.topology import worker_locality_from_env, worker_locator
 
 logger = setup_logger(__name__, include_location=True)
 
@@ -170,6 +171,26 @@ def _enrich_event_metadata(event_data: Dict[str, Any]) -> None:
             meta['worker_pool'] = worker_pool
         if worker_runtime and not meta.get('worker_runtime'):
             meta['worker_runtime'] = worker_runtime
+        locality = worker_locality_from_env()
+        if worker_pool:
+            locality["worker_pool"] = worker_pool
+        if worker_runtime:
+            locality["runtime"] = worker_runtime
+        effective_locality = meta.get("locality") if isinstance(meta.get("locality"), dict) else locality
+        if locality and not meta.get("locality"):
+            meta["locality"] = locality
+
+        tenant_id = event_data.get("tenant_id") or meta.get("tenant_id") or "default"
+        organization_id = event_data.get("organization_id") or meta.get("organization_id") or "default"
+        worker_id = event_data.get("worker_id") or os.environ.get("NOETL_WORKER_ID") or socket.gethostname()
+        locator = worker_locator(
+            tenant_id=tenant_id,
+            organization_id=organization_id,
+            worker_id=str(worker_id),
+            locality=effective_locality,
+        )
+        if locator and not meta.get("worker_locator"):
+            meta["worker_locator"] = locator
             
         event_data['meta'] = meta
     except Exception:
