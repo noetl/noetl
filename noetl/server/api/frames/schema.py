@@ -53,6 +53,7 @@ class FrameClaimRequest(BaseModel):
     lease_seconds: int = Field(60, ge=5, le=3600)
     cursor: dict[str, Any] = Field(default_factory=dict)
     frame_policy: dict[str, Any] = Field(default_factory=dict)
+    locality: dict[str, Any] = Field(default_factory=dict)
 
 
 class FrameHeartbeatRequest(BaseModel):
