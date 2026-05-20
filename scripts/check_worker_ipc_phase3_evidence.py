@@ -12,6 +12,10 @@ from typing import Any
 from scripts.check_worker_ipc_metrics import validate_worker_ipc_metrics
 from scripts.package_replay_validation_artifacts import resolve_indexed_path
 
+ADMISSION_ONLY_MINIMUMS = {
+    "noetl_storage_ipc_admit_success_total": 1.0,
+}
+
 
 def _load_manifest(path: Path) -> dict[str, Any]:
     data: Any = json.loads(path.read_text())
@@ -35,6 +39,9 @@ def validate_worker_ipc_phase3_evidence(
     failures: list[dict[str, Any]] = []
     artifacts = manifest.get("artifacts")
     artifacts = artifacts if isinstance(artifacts, dict) else {}
+    config = manifest.get("config")
+    config = config if isinstance(config, dict) else {}
+    admission_only = bool(config.get("worker_metrics_admission_only"))
     worker_metrics = artifacts.get("worker_metrics")
     if not isinstance(worker_metrics, list) or not worker_metrics:
         failures.append(
@@ -74,7 +81,10 @@ def validate_worker_ipc_phase3_evidence(
                 continue
             path = _resolve(path_value, manifest_path=manifest_path)
             try:
-                result = validate_worker_ipc_metrics(path.read_text())
+                result = validate_worker_ipc_metrics(
+                    path.read_text(),
+                    minimums=ADMISSION_ONLY_MINIMUMS if admission_only else None,
+                )
             except OSError as exc:
                 failures.append(
                     {
@@ -97,6 +107,7 @@ def validate_worker_ipc_phase3_evidence(
 
     return {
         "matched": not failures,
+        "worker_metrics_admission_only": admission_only,
         "metric_results": metric_results,
         "failures": failures,
     }

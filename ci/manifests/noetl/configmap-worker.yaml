@@ -18,7 +18,9 @@ data:
   NOETL_HTTP_MOCK_LOCAL: "false"
   PAGINATION_API_URL: "http://paginated-api.test-server.svc.cluster.local:5555"
   NOETL_SERVER_URL: "http://noetl.noetl.svc.cluster.local:8082"
-  NOETL_DISABLE_METRICS: "true"
+  NOETL_DISABLE_METRICS: "false"
+  NOETL_WORKER_METRICS_HOST: "0.0.0.0"
+  NOETL_WORKER_METRICS_PORT: "9091"
   NOETL_VICTORIALOGS_URL: "http://vmlogs-single-server.vmlogs.svc.cluster.local:9428"
   NOETL_LOG_FORMAT: ""
   # Mirror executor events to the event outbox for local projector validation.
