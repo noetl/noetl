@@ -376,6 +376,30 @@ def test_projector_notification_decoder_wraps_arrow_batches():
     assert [event["event_id"] for event in decoded["events"]] == [21, 22]
 
 
+def test_projector_worker_settings_rejects_out_of_range_shard_id():
+    from noetl.core.projector.nats_worker import ProjectorWorkerSettings
+
+    with pytest.raises(ValueError, match="shard index must be less than shard_count"):
+        ProjectorWorkerSettings(shard_id="noetl-projector-2", shard_count=2)
+
+
+def test_projector_worker_settings_rejects_invalid_runtime_limits():
+    from noetl.core.projector.nats_worker import ProjectorWorkerSettings
+
+    with pytest.raises(ValueError, match="shard_count"):
+        ProjectorWorkerSettings(shard_count=0)
+    with pytest.raises(ValueError, match="max_inflight"):
+        ProjectorWorkerSettings(max_inflight=0)
+    with pytest.raises(ValueError, match="max_ack_pending"):
+        ProjectorWorkerSettings(max_ack_pending=0)
+    with pytest.raises(ValueError, match="fetch_timeout_seconds"):
+        ProjectorWorkerSettings(fetch_timeout_seconds=0)
+    with pytest.raises(ValueError, match="fetch_heartbeat_seconds"):
+        ProjectorWorkerSettings(fetch_heartbeat_seconds=0)
+    with pytest.raises(ValueError, match="metrics_port"):
+        ProjectorWorkerSettings(metrics_port=0)
+
+
 @pytest.mark.asyncio
 async def test_nats_projector_worker_acks_empty_or_unowned_notifications():
     from noetl.core.projector.metrics import ProjectorMetrics

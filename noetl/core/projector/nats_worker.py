@@ -41,6 +41,25 @@ class ProjectorWorkerSettings:
     metrics_host: str = "0.0.0.0"
     metrics_port: Optional[int] = None
 
+    def __post_init__(self) -> None:
+        if self.shard_count < 1:
+            raise ValueError("projector shard_count must be at least 1")
+        if self.shard_index >= self.shard_count:
+            raise ValueError(
+                "projector shard index must be less than shard_count "
+                f"(shard_id={self.shard_id!r}, shard_index={self.shard_index}, shard_count={self.shard_count})"
+            )
+        if self.max_inflight < 1:
+            raise ValueError("projector max_inflight must be at least 1")
+        if self.max_ack_pending < 1:
+            raise ValueError("projector max_ack_pending must be at least 1")
+        if self.fetch_timeout_seconds <= 0:
+            raise ValueError("projector fetch_timeout_seconds must be positive")
+        if self.fetch_heartbeat_seconds <= 0:
+            raise ValueError("projector fetch_heartbeat_seconds must be positive")
+        if self.metrics_port is not None and self.metrics_port <= 0:
+            raise ValueError("projector metrics_port must be positive when set")
+
     @property
     def shard_index(self) -> int:
         return _parse_shard_index(self.shard_id)
