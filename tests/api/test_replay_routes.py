@@ -496,3 +496,72 @@ def test_command_projection_checksum_matches_live_rows_and_replayed_state():
 
     assert replayed_rows == live_rows
     assert command_projection_checksum(replayed_rows) == command_projection_checksum(live_rows)
+
+
+def test_business_object_projection_checksum_matches_live_rows_and_replayed_state():
+    from noetl.server.api.replay import (
+        business_object_projection_checksum,
+        fold_replay_state,
+        normalize_live_business_object_projection,
+        normalize_replayed_business_object_projection,
+    )
+
+    payload_ref = {
+        "uri": "noetl://tenant/tenant-a/org/org-a/payloads/sha256/patient",
+        "sha256": "patient",
+        "media_type": "application/json",
+    }
+    events = [
+        {
+            "event_id": 30,
+            "event_type": "patient.created",
+            "aggregate_type": "business_object",
+            "aggregate_id": "patient/p-1",
+            "status": "ACTIVE",
+            "meta": {
+                "business_object": {
+                    "state": {"name": "Ada", "risk": "low"},
+                    "version": 1,
+                }
+            },
+        },
+        {
+            "event_id": 31,
+            "event_type": "patient.updated",
+            "payload_ref": payload_ref,
+            "meta": {
+                "business_object_type": "patient",
+                "business_object_id": "p-1",
+                "business_object": {"patch": {"risk": "high"}, "version": 2},
+            },
+        },
+    ]
+    state = fold_replay_state(
+        events,
+        tenant_id="tenant-a",
+        organization_id="org-a",
+        execution_id=123,
+    )
+    live_rows = normalize_live_business_object_projection(
+        [
+            {
+                "object_key": "patient/p-1",
+                "object_type": "patient",
+                "object_id": "p-1",
+                "status": "ACTIVE",
+                "version": 2,
+                "event_count": 2,
+                "first_event_id": 30,
+                "last_event_id": 31,
+                "deleted_event_id": None,
+                "last_event_type": "patient.updated",
+                "last_payload_ref": {"event_id": 31, "reference": payload_ref},
+                "payload_refs": [{"event_id": 31, "reference": payload_ref}],
+                "attributes": {"name": "Ada", "risk": "high"},
+            }
+        ]
+    )
+    replayed_rows = normalize_replayed_business_object_projection(state)
+
+    assert replayed_rows == live_rows
+    assert business_object_projection_checksum(replayed_rows) == business_object_projection_checksum(live_rows)
