@@ -197,6 +197,7 @@ def fold_replay_state(
         state.setdefault("execution", {"status": "UNKNOWN", "last_node_name": None, "payload_refs": []})
         state.setdefault("stages", {})
         state.setdefault("frames", {})
+        state.setdefault("commands", {})
         state.setdefault("loops", {})
     else:
         state = {
@@ -215,6 +216,7 @@ def fold_replay_state(
             },
             "stages": {},
             "frames": {},
+            "commands": {},
             "loops": {},
         }
     if snapshot_seed is not None:
@@ -343,6 +345,64 @@ def fold_replay_state(
                 frame["terminal_event_id"] = event_id
             elif status:
                 frame["status"] = str(status)
+
+        command_id = _command_id(event)
+        if command_id:
+            command = state["commands"].setdefault(
+                command_id,
+                {
+                    "command_id": command_id,
+                    "stage_id": str(_stage_id(event)) if _stage_id(event) is not None else None,
+                    "frame_id": _frame_id(event),
+                    "parent_command_id": None,
+                    "worker_id": None,
+                    "worker_locator": None,
+                    "locality": {},
+                    "source_locality": {},
+                    "placement": {},
+                    "status": "UNKNOWN",
+                    "issued_event_id": None,
+                    "claimed_event_id": None,
+                    "started_event_id": None,
+                    "terminal_event_id": None,
+                    "last_event_id": None,
+                },
+            )
+            command["last_event_id"] = event_id
+            command_stage_id = _stage_id(event)
+            if command_stage_id is not None:
+                command["stage_id"] = str(command_stage_id)
+            command_frame_id = _frame_id(event)
+            if command_frame_id:
+                command["frame_id"] = command_frame_id
+            if meta.get("parent_command_id") is not None:
+                command["parent_command_id"] = str(meta.get("parent_command_id"))
+            worker_id = event.get("worker_id") or meta.get("worker_id")
+            if worker_id is not None:
+                command["worker_id"] = str(worker_id)
+            if meta.get("worker_locator") is not None:
+                command["worker_locator"] = str(meta.get("worker_locator"))
+            if isinstance(meta.get("locality"), Mapping):
+                command["locality"] = dict(meta["locality"])
+            if isinstance(meta.get("source_locality"), Mapping):
+                command["source_locality"] = dict(meta["source_locality"])
+            if isinstance(meta.get("placement"), Mapping):
+                command["placement"] = dict(meta["placement"])
+
+            if event_type == "command.issued":
+                command["status"] = status or "PENDING"
+                command["issued_event_id"] = event_id
+            elif event_type == "command.claimed":
+                command["status"] = status or "CLAIMED"
+                command["claimed_event_id"] = event_id
+            elif event_type == "command.started":
+                command["status"] = status or "RUNNING"
+                command["started_event_id"] = event_id
+            elif event_type in {"command.completed", "command.failed", "command.cancelled"}:
+                command["status"] = status or event_type.removeprefix("command.").upper()
+                command["terminal_event_id"] = event_id
+            elif event_type.startswith("command.") and status:
+                command["status"] = str(status)
 
         loop_id = _loop_id(event)
         if loop_id:
