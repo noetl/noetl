@@ -8,7 +8,13 @@ def test_projector_metrics_render_prometheus_labels():
     from noetl.core.projector.metrics import ProjectorMetrics, render_projector_metrics
 
     metrics = ProjectorMetrics()
-    metrics.record_notification(extracted_events=3, owned_events=2, projection_records=1)
+    metrics.record_notification(
+        extracted_events=3,
+        owned_events=2,
+        unowned_events=1,
+        unshardable_events=0,
+        projection_records=1,
+    )
 
     body = render_projector_metrics(
         metrics,
@@ -20,6 +26,8 @@ def test_projector_metrics_render_prometheus_labels():
     assert "noetl_projector_notifications_total" in body
     assert "noetl_projector_events_extracted_total" in body
     assert "noetl_projector_events_owned_total" in body
+    assert "noetl_projector_events_unowned_total" in body
+    assert "noetl_projector_events_unshardable_total" in body
     assert "noetl_projector_projection_records_total" in body
     assert " 1.0" in body
 

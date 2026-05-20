@@ -18,6 +18,8 @@ class ProjectorMetrics:
             "notifications_total": 0.0,
             "events_extracted_total": 0.0,
             "events_owned_total": 0.0,
+            "events_unowned_total": 0.0,
+            "events_unshardable_total": 0.0,
             "projection_records_total": 0.0,
             "empty_or_unowned_notifications_total": 0.0,
             "errors_total": 0.0,
@@ -38,12 +40,16 @@ class ProjectorMetrics:
         extracted_events: int,
         owned_events: int,
         projection_records: int,
+        unowned_events: int = 0,
+        unshardable_events: int = 0,
     ) -> None:
         now = time.time()
         with self._lock:
             self._values["notifications_total"] += 1.0
             self._values["events_extracted_total"] += float(max(0, extracted_events))
             self._values["events_owned_total"] += float(max(0, owned_events))
+            self._values["events_unowned_total"] += float(max(0, unowned_events))
+            self._values["events_unshardable_total"] += float(max(0, unshardable_events))
             self._values["projection_records_total"] += float(max(0, projection_records))
             self._values["last_success_unixtime"] = now
             self._values["last_batch_events"] = float(max(0, owned_events))
@@ -101,6 +107,12 @@ def render_projector_metrics(metrics: ProjectorMetrics, *, labels: Optional[Mapp
         "# HELP noetl_projector_events_owned_total Events owned by this projector shard.",
         "# TYPE noetl_projector_events_owned_total counter",
         f"noetl_projector_events_owned_total{label_text} {snapshot['events_owned_total']}",
+        "# HELP noetl_projector_events_unowned_total Events assigned to another projector shard.",
+        "# TYPE noetl_projector_events_unowned_total counter",
+        f"noetl_projector_events_unowned_total{label_text} {snapshot['events_unowned_total']}",
+        "# HELP noetl_projector_events_unshardable_total Events without a valid shard key.",
+        "# TYPE noetl_projector_events_unshardable_total counter",
+        f"noetl_projector_events_unshardable_total{label_text} {snapshot['events_unshardable_total']}",
         "# HELP noetl_projector_projection_records_total Projection records written by this projector.",
         "# TYPE noetl_projector_projection_records_total counter",
         f"noetl_projector_projection_records_total{label_text} {snapshot['projection_records_total']}",

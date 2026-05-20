@@ -131,12 +131,24 @@ class NATSProjectorWorker:
         """Project one NATS notification and return an ack action."""
 
         extracted_events = _extract_events(notification)
-        events = [event for event in extracted_events if self._owns_event(event)]
+        events: list[dict[str, Any]] = []
+        unowned_events = 0
+        unshardable_events = 0
+        for event in extracted_events:
+            decision = self._shard_decision(event)
+            if decision == "owned":
+                events.append(event)
+            elif decision == "unowned":
+                unowned_events += 1
+            else:
+                unshardable_events += 1
         if not events:
             self.metrics.record_notification(
                 extracted_events=len(extracted_events),
                 owned_events=0,
                 projection_records=0,
+                unowned_events=unowned_events,
+                unshardable_events=unshardable_events,
             )
             return "ack"
 
@@ -149,6 +161,8 @@ class NATSProjectorWorker:
             extracted_events=len(extracted_events),
             owned_events=len(events),
             projection_records=len(written),
+            unowned_events=unowned_events,
+            unshardable_events=unshardable_events,
         )
         self.metrics.record_projection_checkpoints(written)
         logger.debug(
@@ -160,15 +174,22 @@ class NATSProjectorWorker:
         return "ack"
 
     def _owns_event(self, event: dict[str, Any]) -> bool:
+        return self._shard_decision(event) == "owned"
+
+    def _shard_decision(self, event: dict[str, Any]) -> str:
         if self.settings.shard_count <= 1:
-            return True
+            return "owned"
         execution_id = event.get("execution_id")
         if execution_id is None:
-            return False
+            return "unshardable"
         try:
-            return int(execution_id) % self.settings.shard_count == self.settings.shard_index
+            return (
+                "owned"
+                if int(execution_id) % self.settings.shard_count == self.settings.shard_index
+                else "unowned"
+            )
         except (TypeError, ValueError):
-            return False
+            return "unshardable"
 
 
 async def run_projector_worker(settings: Optional[ProjectorWorkerSettings] = None) -> None:
