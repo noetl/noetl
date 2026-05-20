@@ -10,6 +10,8 @@ def _bundle(tmp_path: Path) -> tuple[Path, Path]:
     replay.write_text("{}")
     report = tmp_path / "validation-report.json"
     report.write_text("{}")
+    summary = tmp_path / "projector-summary.json"
+    summary.write_text("{}")
     index = tmp_path / "artifact-index.json"
     manifest = tmp_path / "validation.json"
     manifest.write_text(
@@ -23,6 +25,7 @@ def _bundle(tmp_path: Path) -> tuple[Path, Path]:
                     "replay": str(replay),
                     "live_rows": None,
                     "live_checksums": None,
+                    "projector_summaries": [],
                     "report": str(report),
                     "artifact_index": str(index),
                 },
@@ -40,6 +43,8 @@ def _bundle(tmp_path: Path) -> tuple[Path, Path]:
                     "live_checksums": None,
                     "live_rows": None,
                     "export_live_rows_postgres": False,
+                    "projector_summary": [],
+                    "projector_summary_url": [],
                     "artifact_index_output": str(index),
                 },
                 "steps": [
@@ -85,6 +90,62 @@ def _bundle(tmp_path: Path) -> tuple[Path, Path]:
         + "\n"
     )
     return manifest, index
+
+
+def _add_projector_phase2_evidence(manifest: Path, index: Path, tmp_path: Path) -> None:
+    payload = json.loads(manifest.read_text())
+    summary = tmp_path / "projector-summary.json"
+    summary.write_text("{}")
+    live_rows = tmp_path / "live-rows.json"
+    live_rows.write_text("{}")
+    live = tmp_path / "live-checksums.json"
+    live.write_text("{}")
+    payload["artifacts"]["live_rows"] = str(live_rows)
+    payload["artifacts"]["live_checksums"] = str(live)
+    payload["config"]["live_rows"] = str(live_rows)
+    payload["artifacts"]["projector_summaries"] = [
+        {"role": "projector_summary_1", "path": str(summary)}
+    ]
+    payload["config"]["live_checksums"] = None
+    payload["config"]["projector_summary"] = [str(summary)]
+    payload["steps"] = [
+        step for step in payload["steps"] if step["name"] != "projection_parity"
+    ]
+    payload["steps"].insert(
+        5,
+        {
+            "name": "projection_parity",
+            "command": ["python", "scripts/check_replay_parity_report.py"],
+            "returncode": 0,
+            "duration_seconds": 0.1,
+            "stdout": "{}",
+            "stderr": "",
+        },
+    )
+    payload["steps"].insert(
+        -1,
+        {
+            "name": "projector_summary_1_integrity",
+            "command": ["python", "scripts/check_projector_metrics_summary.py"],
+            "returncode": 0,
+            "duration_seconds": 0.1,
+            "stdout": "{}",
+            "stderr": "",
+        },
+    )
+    manifest.write_text(json.dumps(payload))
+    index.write_text(
+        json.dumps(
+            build_artifact_index(
+                manifest_path=manifest,
+                output_path=index,
+                extra_artifacts=[("projector_summary_1", summary)],
+            ),
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n"
+    )
 
 
 def test_check_replay_validation_bundle_accepts_manifest_referenced_index(
@@ -149,5 +210,42 @@ def test_check_replay_validation_bundle_rejects_missing_index_reference(
     output = json.loads(capsys.readouterr().out)
     assert any(
         failure["field"] == "artifacts.artifact_index"
+        for failure in output["failures"]
+    )
+
+
+def test_check_replay_validation_bundle_accepts_projector_phase2_evidence(
+    tmp_path: Path,
+    capsys,
+):
+    manifest, index = _bundle(tmp_path)
+    _add_projector_phase2_evidence(manifest, index, tmp_path)
+
+    assert (
+        main(
+            [
+                "--manifest",
+                str(manifest),
+                "--require-projector-phase2",
+                "--require-projection-parity",
+            ]
+        )
+        == 0
+    )
+    output = json.loads(capsys.readouterr().out)
+    assert output["matched"] is True
+    assert output["phase2_projector_result"]["matched"] is True
+
+
+def test_check_replay_validation_bundle_rejects_missing_projector_phase2_evidence(
+    tmp_path: Path,
+    capsys,
+):
+    manifest, _index = _bundle(tmp_path)
+
+    assert main(["--manifest", str(manifest), "--require-projector-phase2"]) == 1
+    output = json.loads(capsys.readouterr().out)
+    assert any(
+        failure["field"] == "phase2_projector_evidence"
         for failure in output["failures"]
     )
