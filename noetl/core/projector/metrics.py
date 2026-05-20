@@ -70,6 +70,7 @@ class ProjectorMetrics:
 
     def record_decode_error(self) -> None:
         with self._lock:
+            self._values["errors_total"] += 1.0
             self._values["decode_errors_total"] += 1.0
             self._values["last_error_unixtime"] = time.time()
 
