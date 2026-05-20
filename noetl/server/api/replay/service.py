@@ -13,7 +13,7 @@ import copy
 from datetime import datetime, timezone
 from typing import Any, Iterable, Mapping, Optional
 
-from noetl.core.replay import default_upcaster_registry
+from noetl.core.replay import EventUpcasterRegistry, default_upcaster_registry
 
 from .event_reader import PostgresReplayEventReader, ReplayEventReader
 from .payload_resolver import (
@@ -1069,6 +1069,7 @@ class ReplayService:
 
     event_reader: ReplayEventReader = PostgresReplayEventReader()
     payload_resolver: ReplayPayloadResolver = DEFAULT_REPLAY_PAYLOAD_RESOLVER
+    upcaster_registry: EventUpcasterRegistry = default_upcaster_registry
 
     @classmethod
     def configure_event_reader(cls, event_reader: ReplayEventReader) -> None:
@@ -1077,6 +1078,10 @@ class ReplayService:
     @classmethod
     def configure_payload_resolver(cls, payload_resolver: ReplayPayloadResolver) -> None:
         cls.payload_resolver = payload_resolver
+
+    @classmethod
+    def configure_upcaster_registry(cls, upcaster_registry: EventUpcasterRegistry) -> None:
+        cls.upcaster_registry = upcaster_registry
 
     @classmethod
     async def load_events(
@@ -1129,8 +1134,10 @@ class ReplayService:
         event_reader: ReplayEventReader | None = None,
         resolve_payloads: bool = False,
         payload_resolver: ReplayPayloadResolver | None = None,
+        upcaster_registry: EventUpcasterRegistry | None = None,
     ) -> dict[str, Any]:
         reader = event_reader or cls.event_reader
+        registry = upcaster_registry or cls.upcaster_registry
         snapshot_seed = await reader.load_snapshot_seed(
             tenant_id=tenant_id,
             organization_id=organization_id,
@@ -1138,7 +1145,7 @@ class ReplayService:
             projection=projection,
             cutoff=cutoff,
         )
-        events = default_upcaster_registry.upcast_events(
+        events = registry.upcast_events(
             await reader.load_events(
                 tenant_id=tenant_id,
                 organization_id=organization_id,
@@ -1154,7 +1161,7 @@ class ReplayService:
             organization_id=organization_id,
             execution_id=execution_id,
             projection=projection,
-            upcaster_registry_digest=default_upcaster_registry.digest(),
+            upcaster_registry_digest=registry.digest(),
             base_state=snapshot_seed.state if snapshot_seed else None,
             snapshot_seed=snapshot_seed,
         )

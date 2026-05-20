@@ -1,5 +1,7 @@
 """Replay API for deterministic event-sourced state reconstruction."""
 
+from noetl.core.replay import EventUpcasterRegistry
+
 from .endpoint import router
 from .event_reader import PostgresReplayEventReader, ReplayEventReader
 from .payload_resolver import (
@@ -40,6 +42,7 @@ from .service import (
 
 __all__ = [
     "router",
+    "EventUpcasterRegistry",
     "PostgresReplayEventReader",
     "ReplayEventReader",
     "ReplayPayloadResolution",
