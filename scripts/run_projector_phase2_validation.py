@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import subprocess
 import sys
 import time
@@ -28,11 +29,15 @@ def _parse_json(value: str) -> object | None:
 
 def _run(command: list[str]) -> tuple[int, str, str, float]:
     started = time.monotonic()
+    env = os.environ.copy()
+    repo_root = str(Path.cwd())
+    env["PYTHONPATH"] = repo_root if not env.get("PYTHONPATH") else f"{repo_root}{os.pathsep}{env['PYTHONPATH']}"
     completed = subprocess.run(
         command,
         check=False,
         text=True,
         capture_output=True,
+        env=env,
     )
     return completed.returncode, completed.stdout, completed.stderr, time.monotonic() - started
 
@@ -51,6 +56,10 @@ def _step(name: str, command: list[str]) -> dict[str, Any]:
     if stdout_json is not None:
         step["stdout_json"] = stdout_json
     return step
+
+
+def _validation_python() -> str:
+    return os.environ.get("NOETL_VALIDATION_PYTHON") or sys.executable
 
 
 def _emit(report: dict[str, Any], output: Path | None) -> None:
@@ -129,7 +138,7 @@ def main(argv: list[str] | None = None) -> int:
     started_at = _utc_now()
 
     replay_command = [
-        sys.executable,
+        _validation_python(),
         "scripts/run_replay_validation.py",
         "--base-url",
         args.base_url,
@@ -182,7 +191,7 @@ def main(argv: list[str] | None = None) -> int:
         return int(steps[-1]["returncode"])
 
     phase_gate_command = [
-        sys.executable,
+        _validation_python(),
         "scripts/check_projector_phase2_evidence.py",
         "--manifest",
         str(manifest_path),

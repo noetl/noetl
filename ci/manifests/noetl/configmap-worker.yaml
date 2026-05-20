@@ -21,6 +21,11 @@ data:
   NOETL_DISABLE_METRICS: "true"
   NOETL_VICTORIALOGS_URL: "http://vmlogs-single-server.vmlogs.svc.cluster.local:9428"
   NOETL_LOG_FORMAT: ""
+  # Mirror executor events to the event outbox for local projector validation.
+  NOETL_EVENT_MIRROR_ENABLED: "true"
+  NOETL_EVENT_NATS_STREAM: "NOETL_EVENTS"
+  NOETL_EVENT_NATS_SUBJECT_PREFIX: "noetl.events"
+  NOETL_EVENT_NATS_SHARD_COUNT: "1"
   # NATS Configuration for worker command distribution
   NATS_URL: "nats://noetl:noetl@nats.nats.svc.cluster.local:4222"
   NATS_USER: "noetl"
