@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.59.0](https://github.com/noetl/noetl/compare/v2.58.0...v2.59.0) (2026-05-20)
+
+### Features
+
+* **commands:** attach topology to command claims ([79a588f](https://github.com/noetl/noetl/commit/79a588f471d3d675fac65419011f4d430e44f435))
+* **events:** enrich runtime events with topology ([e9d7166](https://github.com/noetl/noetl/commit/e9d71661c35193e33939d467b651c433f19f2364))
+
 ## [2.58.0](https://github.com/noetl/noetl/compare/v2.57.0...v2.58.0) (2026-05-20)
 
 ### Features
