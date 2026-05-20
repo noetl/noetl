@@ -16,6 +16,11 @@ from typing import Any, Iterable, Mapping, Optional
 from noetl.core.replay import default_upcaster_registry
 
 from .event_reader import PostgresReplayEventReader, ReplayEventReader
+from .payload_resolver import (
+    ReplayPayloadResolver,
+    TempStoreReplayPayloadResolver,
+    replay_payload_ref_locator,
+)
 from .types import ReplayCutoff, ReplaySnapshotSeed
 
 PROJECTION_CHECKSUM_SURFACES = (
@@ -26,6 +31,8 @@ PROJECTION_CHECKSUM_SURFACES = (
     "business_objects",
     "loops",
 )
+
+DEFAULT_REPLAY_PAYLOAD_RESOLVER = TempStoreReplayPayloadResolver()
 
 
 def _json_default(value: Any) -> str:
@@ -949,14 +956,127 @@ def projection_checksum_parity_report(
     }
 
 
+def replay_payload_references(state: Mapping[str, Any]) -> list[dict[str, Any]]:
+    """Return payload references carried by the replay state with lineage labels."""
+    references: list[dict[str, Any]] = []
+    execution = state.get("execution")
+    if isinstance(execution, Mapping):
+        for payload_ref in execution.get("payload_refs") or []:
+            if isinstance(payload_ref, Mapping) and payload_ref.get("reference") is not None:
+                references.append(
+                    {
+                        "scope": "execution",
+                        "event_id": payload_ref.get("event_id"),
+                        "reference": payload_ref["reference"],
+                    }
+                )
+    frames = state.get("frames")
+    if isinstance(frames, Mapping):
+        for frame_id, frame in frames.items():
+            if isinstance(frame, Mapping) and frame.get("output_ref") is not None:
+                references.append(
+                    {
+                        "scope": "frame",
+                        "frame_id": str(frame.get("frame_id") or frame_id),
+                        "event_id": frame.get("terminal_event_id"),
+                        "reference": frame["output_ref"],
+                    }
+                )
+    business_objects = state.get("business_objects")
+    if isinstance(business_objects, Mapping):
+        for object_key, business_object in business_objects.items():
+            if not isinstance(business_object, Mapping):
+                continue
+            for payload_ref in business_object.get("payload_refs") or []:
+                if isinstance(payload_ref, Mapping) and payload_ref.get("reference") is not None:
+                    references.append(
+                        {
+                            "scope": "business_object",
+                            "object_key": str(business_object.get("object_key") or object_key),
+                            "event_id": payload_ref.get("event_id"),
+                            "reference": payload_ref["reference"],
+                        }
+                    )
+    return references
+
+
+async def resolve_replay_payload_references(
+    state: Mapping[str, Any],
+    *,
+    payload_resolver: ReplayPayloadResolver,
+) -> list[dict[str, Any]]:
+    """Resolve replay payload refs through a storage adapter and return bounded summaries."""
+    resolved: list[dict[str, Any]] = []
+    resolution_cache: dict[str, dict[str, Any]] = {}
+    for payload_ref in replay_payload_references(state):
+        locator = replay_payload_ref_locator(payload_ref["reference"]) or json.dumps(
+            payload_ref["reference"],
+            sort_keys=True,
+            default=_json_default,
+        )
+        if locator not in resolution_cache:
+            resolution = await payload_resolver.resolve_payload_ref(payload_ref["reference"])
+            resolution_cache[locator] = resolution.as_dict()
+        resolved.append(
+            {
+                **{key: value for key, value in payload_ref.items() if key != "reference"},
+                "reference_summary": _payload_summary(payload_ref["reference"]),
+                "resolution": resolution_cache[locator],
+            }
+        )
+    return resolved
+
+
+def replay_payload_resolution_summary(resolutions: Iterable[Mapping[str, Any]]) -> dict[str, Any]:
+    """Return deterministic aggregate status for resolved replay payload references."""
+    resolution_rows = list(resolutions)
+    resolved_count = sum(
+        1
+        for row in resolution_rows
+        if isinstance(row.get("resolution"), Mapping)
+        and row["resolution"].get("resolved") is True
+    )
+    unresolved_count = len(resolution_rows) - resolved_count
+    unique_refs = sorted(
+        {
+            str(row["resolution"]["ref"])
+            for row in resolution_rows
+            if isinstance(row.get("resolution"), Mapping)
+            and row["resolution"].get("ref")
+        }
+    )
+    summary = {
+        "total": len(resolution_rows),
+        "resolved": resolved_count,
+        "unresolved": unresolved_count,
+        "unique_refs": len(unique_refs),
+        "all_resolved": unresolved_count == 0,
+    }
+    return {
+        **summary,
+        "checksum": _canonical_checksum(
+            {
+                **summary,
+                "unique_refs": unique_refs,
+                "rows": resolution_rows,
+            }
+        ),
+    }
+
+
 class ReplayService:
     """Read canonical events and fold replay state."""
 
     event_reader: ReplayEventReader = PostgresReplayEventReader()
+    payload_resolver: ReplayPayloadResolver = DEFAULT_REPLAY_PAYLOAD_RESOLVER
 
     @classmethod
     def configure_event_reader(cls, event_reader: ReplayEventReader) -> None:
         cls.event_reader = event_reader
+
+    @classmethod
+    def configure_payload_resolver(cls, payload_resolver: ReplayPayloadResolver) -> None:
+        cls.payload_resolver = payload_resolver
 
     @classmethod
     async def load_events(
@@ -1007,6 +1127,8 @@ class ReplayService:
         projection: str,
         limit: int,
         event_reader: ReplayEventReader | None = None,
+        resolve_payloads: bool = False,
+        payload_resolver: ReplayPayloadResolver | None = None,
     ) -> dict[str, Any]:
         reader = event_reader or cls.event_reader
         snapshot_seed = await reader.load_snapshot_seed(
@@ -1026,7 +1148,7 @@ class ReplayService:
                 after_event_id=snapshot_seed.version if snapshot_seed else None,
             )
         )
-        return fold_replay_state(
+        state = fold_replay_state(
             events,
             tenant_id=tenant_id,
             organization_id=organization_id,
@@ -1036,3 +1158,12 @@ class ReplayService:
             base_state=snapshot_seed.state if snapshot_seed else None,
             snapshot_seed=snapshot_seed,
         )
+        if resolve_payloads:
+            state["payload_resolution"] = await resolve_replay_payload_references(
+                state,
+                payload_resolver=payload_resolver or cls.payload_resolver,
+            )
+            state["payload_resolution_summary"] = replay_payload_resolution_summary(
+                state["payload_resolution"]
+            )
+        return state

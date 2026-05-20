@@ -25,6 +25,7 @@ async def replay_state(
     as_of_time: Optional[datetime] = Query(None, description="Replay through this event_time"),
     projection: str = Query("all", description="Projection to fold: execution | frame | loop | business_object | all"),
     limit: int = Query(10000, ge=1, le=100000, description="Maximum events to fold in this Phase 0 endpoint"),
+    resolve_payloads: bool = Query(False, description="Resolve payload refs and return bounded verification summaries"),
 ) -> dict:
     """Reconstruct lightweight state from canonical events.
 
@@ -50,6 +51,7 @@ async def replay_state(
             ),
             projection=projection,
             limit=limit,
+            resolve_payloads=resolve_payloads,
         )
     except HTTPException:
         raise

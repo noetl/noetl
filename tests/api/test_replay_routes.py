@@ -154,6 +154,7 @@ def test_fold_replay_state_tracks_execution_frames_loops_and_checksum():
         "business_objects",
         "loops",
     }
+    assert all(len(checksum) == 64 for checksum in state["projection_checksums"].values())
 
 
 @pytest.mark.asyncio
@@ -186,7 +187,150 @@ async def test_replay_service_accepts_per_call_event_reader():
 
     assert state["execution_id"] == 456
     assert state["execution"]["status"] == "FAILED"
-    assert all(len(checksum) == 64 for checksum in state["projection_checksums"].values())
+
+
+@pytest.mark.asyncio
+async def test_replay_service_resolves_payload_refs_with_adapter():
+    from noetl.server.api.replay import (
+        ReplayCutoff,
+        ReplayPayloadResolution,
+        ReplayService,
+        replay_payload_references,
+    )
+
+    payload_ref = {
+        "rows_ref": {
+            "ref": "noetl://execution/123/result/frame/9",
+            "meta": {
+                "sha256": "payload-sha",
+                "row_count": 2,
+                "media_type": "application/vnd.apache.arrow.stream",
+            },
+        }
+    }
+
+    class _Reader:
+        async def load_snapshot_seed(self, **kwargs):
+            return None
+
+        async def load_events(self, **kwargs):
+            return [
+                {
+                    "event_id": 1,
+                    "event_type": "frame.committed",
+                    "aggregate_type": "frame",
+                    "aggregate_id": "frame/9",
+                    "stage_id": 7,
+                    "payload_ref": payload_ref,
+                    "meta": {"row_count": 2},
+                    "execution_id": kwargs["execution_id"],
+                }
+            ]
+
+    class _Resolver:
+        def __init__(self):
+            self.references = []
+
+        async def resolve_payload_ref(self, reference):
+            self.references.append(reference)
+            return ReplayPayloadResolution(
+                ref=reference["rows_ref"]["ref"],
+                resolved=True,
+                checksum="a" * 64,
+                size_bytes=128,
+                row_count=2,
+                value_type="list",
+            )
+
+    resolver = _Resolver()
+    state = await ReplayService.replay_state(
+        tenant_id="tenant-a",
+        organization_id="org-a",
+        execution_id=123,
+        cutoff=ReplayCutoff(),
+        projection="all",
+        limit=100,
+        event_reader=_Reader(),
+        resolve_payloads=True,
+        payload_resolver=resolver,
+    )
+
+    references = replay_payload_references(state)
+    assert len(references) == 2
+    assert references[0]["scope"] == "execution"
+    assert references[1]["scope"] == "frame"
+    assert resolver.references == [payload_ref]
+    assert state["payload_resolution"] == [
+        {
+            "scope": "execution",
+            "event_id": 1,
+            "reference_summary": {
+                "sha256": "payload-sha",
+                "schema_digest": None,
+                "row_count": 2,
+                "media_type": "application/vnd.apache.arrow.stream",
+                "ref": "noetl://execution/123/result/frame/9",
+            },
+            "resolution": {
+                "ref": "noetl://execution/123/result/frame/9",
+                "resolved": True,
+                "checksum": "a" * 64,
+                "size_bytes": 128,
+                "row_count": 2,
+                "value_type": "list",
+                "error": None,
+            },
+        },
+        {
+            "scope": "frame",
+            "frame_id": "9",
+            "event_id": 1,
+            "reference_summary": {
+                "sha256": "payload-sha",
+                "schema_digest": None,
+                "row_count": 2,
+                "media_type": "application/vnd.apache.arrow.stream",
+                "ref": "noetl://execution/123/result/frame/9",
+            },
+            "resolution": {
+                "ref": "noetl://execution/123/result/frame/9",
+                "resolved": True,
+                "checksum": "a" * 64,
+                "size_bytes": 128,
+                "row_count": 2,
+                "value_type": "list",
+                "error": None,
+            },
+        },
+    ]
+    assert state["payload_resolution_summary"] == {
+        "total": 2,
+        "resolved": 2,
+        "unresolved": 0,
+        "unique_refs": 1,
+        "all_resolved": True,
+        "checksum": state["payload_resolution_summary"]["checksum"],
+    }
+    assert len(state["payload_resolution_summary"]["checksum"]) == 64
+
+
+def test_replay_payload_resolution_summary_reports_unresolved_refs():
+    from noetl.server.api.replay import replay_payload_resolution_summary
+
+    summary = replay_payload_resolution_summary(
+        [
+            {"resolution": {"ref": "noetl://payload/1", "resolved": True}},
+            {"resolution": {"ref": "noetl://payload/2", "resolved": False}},
+            {"resolution": {"ref": "noetl://payload/1", "resolved": True}},
+        ]
+    )
+
+    assert summary["total"] == 3
+    assert summary["resolved"] == 2
+    assert summary["unresolved"] == 1
+    assert summary["unique_refs"] == 2
+    assert summary["all_resolved"] is False
+    assert len(summary["checksum"]) == 64
 
 
 def test_fold_replay_state_tracks_commands_and_topology():
