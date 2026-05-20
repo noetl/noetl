@@ -120,6 +120,38 @@ async def test_claim_url_normalizes_server_url_with_api_suffix():
 
 
 @pytest.mark.asyncio
+async def test_claim_request_includes_worker_locality(monkeypatch):
+    worker = Worker(worker_id="test-worker")
+    worker._http_client = _FakeHttpClient(
+        _FakeResponse(
+            409,
+            payload={"detail": {"code": "active_claim", "message": "claimed elsewhere"}},
+        )
+    )
+    monkeypatch.setenv("NOETL_WORKER_POOL_NAME", "worker-cpu-01")
+    monkeypatch.setenv("NOETL_WORKER_POOL_RUNTIME", "cpu")
+    monkeypatch.setenv("NOETL_NODE_ID", "node-a")
+    monkeypatch.setenv("NOETL_CLUSTER_ID", "cluster-a")
+    monkeypatch.setenv("NOETL_REGION", "us-central1")
+    monkeypatch.setenv("NOETL_ZONE", "us-central1-a")
+
+    await worker._claim_and_fetch_command("http://server", 42)
+
+    _, _args, kwargs = worker._http_client.calls[0]
+    assert kwargs["json"] == {
+        "worker_id": "test-worker",
+        "locality": {
+            "node_id": "node-a",
+            "cluster_id": "cluster-a",
+            "region": "us-central1",
+            "zone": "us-central1-a",
+            "worker_pool": "worker-cpu-01",
+            "runtime": "cpu",
+        },
+    }
+
+
+@pytest.mark.asyncio
 async def test_emit_command_failed_normalizes_server_url_with_api_suffix():
     worker = Worker(worker_id="test-worker")
     fake_client = _FakeHttpClient(_FakeResponse(200, payload={"status": "ok"}))

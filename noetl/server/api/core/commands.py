@@ -5,6 +5,7 @@ from fastapi import APIRouter, HTTPException
 from psycopg.rows import dict_row
 from psycopg_pool import PoolTimeout
 from noetl.core.db.pool import get_pool_connection
+from noetl.core.runtime.topology import placement_evaluation, worker_locator
 from noetl.core.storage import Scope, default_store, estimate_size
 from noetl.claim_policy import decide_reclaim_for_existing_claim
 from .core import (
@@ -44,6 +45,49 @@ router = APIRouter()
 _COMMAND_CONTEXT_FIELD_INLINE_MAX_BYTES = int(
     os.getenv("NOETL_COMMAND_CONTEXT_FIELD_INLINE_MAX_BYTES", "8192")
 )
+
+
+def _source_locality_from_command_meta(meta: dict[str, Any] | None) -> dict[str, Any]:
+    if not isinstance(meta, dict):
+        return {}
+    for key in ("source_locality", "producer_locality"):
+        value = meta.get(key)
+        if isinstance(value, dict):
+            return value
+    return {}
+
+
+def _claim_topology_metadata(
+    *,
+    command_meta: dict[str, Any] | None,
+    request_locality: dict[str, Any] | None,
+    tenant_id: Any = None,
+    organization_id: Any = None,
+    worker_id: str,
+) -> dict[str, Any]:
+    locality = request_locality or {}
+    meta: dict[str, Any] = {}
+    if locality:
+        meta["locality"] = locality
+        locator = worker_locator(
+            tenant_id=tenant_id or (command_meta or {}).get("tenant_id"),
+            organization_id=organization_id or (command_meta or {}).get("organization_id"),
+            worker_id=worker_id,
+            locality=locality,
+        )
+        if locator:
+            meta["worker_locator"] = locator
+
+    source_locality = _source_locality_from_command_meta(command_meta)
+    if source_locality:
+        max_distance = str(locality.get("max_distance") or "any")
+        meta["source_locality"] = source_locality
+        meta["placement"] = placement_evaluation(
+            source=source_locality,
+            target=locality,
+            max_distance=max_distance,
+        )
+    return meta
 
 def _command_input_from_model(cmd: Any) -> dict[str, Any]:
     cmd_input = getattr(cmd, "input", None)
@@ -432,7 +476,17 @@ async def claim_command(event_id: int, req: ClaimRequest):
                         return ClaimResponse(status="ok", event_id=event_id, execution_id=execution_id, node_id=step, node_name=step, action=tool_kind, context=context, meta=meta)
 
                 claim_evt_id = await _next_snowflake_id(cur)
-                claim_meta = {"command_id": command_id, "worker_id": req.worker_id, "actionable": False, "informative": True}
+                claim_meta = {
+                    "command_id": command_id,
+                    "worker_id": req.worker_id,
+                    "actionable": False,
+                    "informative": True,
+                    **_claim_topology_metadata(
+                        command_meta=meta,
+                        request_locality=req.locality,
+                        worker_id=req.worker_id,
+                    ),
+                }
                 if stale_reclaim:
                     claim_meta.update({"reclaimed": True, "reclaimed_from_worker": reclaimed_from, "reclaimed_reason": reclaimed_reason})
                 
