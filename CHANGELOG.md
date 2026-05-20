@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.56.0](https://github.com/noetl/noetl/compare/v2.55.0...v2.56.0) (2026-05-20)
+
+### Features
+
+* **frames:** carry locality hints on claims ([e455710](https://github.com/noetl/noetl/commit/e455710aa21ea45192e36023a0830f78aa1bc6e5))
+* **frames:** include worker locator in dispatch metadata ([187f2bf](https://github.com/noetl/noetl/commit/187f2bfcdc38419096294e7a08688d0640f6c2da))
+
 ## [2.55.0](https://github.com/noetl/noetl/compare/v2.54.0...v2.55.0) (2026-05-20)
 
 ### Features
