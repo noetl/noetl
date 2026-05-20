@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.76.0](https://github.com/noetl/noetl/compare/v2.75.0...v2.76.0) (2026-05-20)
+
+### Features
+
+* **projector:** expose projection error metrics ([b6b6713](https://github.com/noetl/noetl/commit/b6b671335c68434f6bd9aaf33b4213ee950aaa66))
+
 ## [2.75.0](https://github.com/noetl/noetl/compare/v2.74.0...v2.75.0) (2026-05-20)
 
 ### Features
