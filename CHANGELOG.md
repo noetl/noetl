@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.52.0](https://github.com/noetl/noetl/compare/v2.51.0...v2.52.0) (2026-05-20)
+
+### Features
+
+* **core:** adopt resource locator validation ([2543ded](https://github.com/noetl/noetl/commit/2543ded8599ea6e6e51e7c8710581cb99de4c618))
+
 ## [2.51.0](https://github.com/noetl/noetl/compare/v2.50.0...v2.51.0) (2026-05-20)
 
 ### Features
