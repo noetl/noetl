@@ -31,12 +31,14 @@ class _FakeCursorDriver:
 class _FakeStore:
     def __init__(self):
         self.puts = []
+        self.payloads = {}
+        self.resolved = []
 
     async def put_ipc_bytes(self, **kwargs):
-        from noetl.core.storage import Scope, StoreTier, TempRef, TempRefMeta
+        from noetl.core.storage import IpcHint, Scope, StoreTier, TempRef, TempRefMeta
 
         self.puts.append(kwargs)
-        return TempRef.create(
+        ref = TempRef.create(
             execution_id=kwargs["execution_id"],
             name=kwargs["name"],
             store=kwargs.get("store") or StoreTier.KV,
@@ -50,6 +52,29 @@ class _FakeStore:
                 encoding="binary",
             ),
         )
+        ref.ipc = IpcHint(
+            shm_name=f"fake-{kwargs['name']}",
+            schema_digest=kwargs["schema_digest"],
+            byte_length=len(kwargs["data_bytes"]),
+            row_count=kwargs["row_count"],
+            node_id="node-a",
+        )
+        self.payloads[ref.ref] = kwargs["data_bytes"]
+        return ref
+
+    async def resolve(self, rows_ref):
+        from noetl.core.storage import arrow_ipc_to_rows
+
+        self.resolved.append(rows_ref)
+        return arrow_ipc_to_rows(self.payloads[rows_ref["ref"]])
+
+
+class _FakeIpcCache:
+    def __init__(self):
+        self.deleted = []
+
+    def delete(self, hint):
+        self.deleted.append(hint)
 
 
 class _FakeBatchCursorDriver(_FakeCursorDriver):
@@ -262,6 +287,72 @@ async def test_cursor_worker_claims_and_serializes_bounded_frames(monkeypatch):
     assert fake_store.puts[0]["media_type"] == "application/vnd.apache.arrow.stream"
     assert driver.claim_contexts[0]["frame_index"] == 0
     assert driver.claim_contexts[1]["frame_row_index"] == 1
+
+
+@pytest.mark.asyncio
+async def test_cursor_worker_can_verify_frame_ipc_hit_and_fallback(monkeypatch):
+    from noetl.core.cursor_drivers import register_driver
+    from noetl.worker import cursor_worker
+
+    driver = _FakeBatchCursorDriver(
+        [
+            {"id": 1, "status": "pending"},
+            {"id": 2, "status": "pending"},
+        ]
+    )
+    register_driver(driver.kind, driver)
+    fake_store = _FakeStore()
+    fake_cache = _FakeIpcCache()
+    monkeypatch.setattr(cursor_worker, "default_store", fake_store)
+    monkeypatch.setattr(cursor_worker, "_frame_ipc_cache", lambda: fake_cache)
+
+    async def fetch_credential(auth_key):
+        return {"dsn": "memory"}
+
+    monkeypatch.setattr(cursor_worker, "fetch_credential_by_key_async", fetch_credential)
+
+    async def tool_executor(kind, cfg, ctx):
+        return {"status": "ok"}
+
+    result = await cursor_worker.execute_cursor_worker(
+        config={
+            "cursor": {
+                "kind": driver.kind,
+                "auth": "pg",
+                "claim": "select next limit {{ __frame_max_rows }}",
+                "options": {"max_iterations": 10},
+            },
+            "iterator": "item",
+            "tasks": [{"name": "process_item", "kind": "noop"}],
+            "frame_policy": {
+                "max_rows": 2,
+                "max_seconds": 30,
+                "max_bytes": 4096,
+                "verify_ipc": True,
+            },
+        },
+        context={"execution_id": 42},
+        jinja_env=Environment(),
+        tool_executor=tool_executor,
+        render_template=lambda template, ctx: template.replace("{{ __frame_max_rows }}", str(ctx["__frame_max_rows"])),
+        render_dict=lambda data, ctx: data,
+        worker_slot_id="slot-1",
+    )
+
+    verification = result["frames"][0]["ipc_verification"]
+    assert verification == {
+        "enabled": True,
+        "verified": True,
+        "row_count": 2,
+        "ipc_hint_present": True,
+        "ipc_read_row_count": 2,
+        "ipc_read_matches": True,
+        "ipc_hint_evicted": True,
+        "fallback_read_row_count": 2,
+        "fallback_read_matches": True,
+    }
+    assert len(fake_store.resolved) == 2
+    assert len(fake_cache.deleted) == 1
 
 
 @pytest.mark.asyncio

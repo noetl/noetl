@@ -28,6 +28,7 @@ from noetl.core.runtime.topology import worker_locality_from_env
 from noetl.core.storage import (
     ARROW_STREAM_MEDIA_TYPE,
     ArrowIpcSharedMemoryCache,
+    IpcHint,
     Scope,
     StoreTier,
     default_store,
@@ -127,6 +128,18 @@ def _estimate_row_bytes(row: dict[str, Any]) -> int:
         return 1024
 
 
+def _truthy_policy(value: Any, *, default: bool = False) -> bool:
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return value != 0
+    if isinstance(value, str):
+        return value.strip().lower() in {"1", "true", "yes", "y", "on"}
+    return bool(value)
+
+
 async def _store_claimed_frame(
     *,
     execution_id: Any,
@@ -177,6 +190,49 @@ async def _store_claimed_frame(
             "capture_failed": True,
             "capture_error": str(exc)[:300],
         }
+
+
+async def _verify_claimed_frame_ipc(
+    *,
+    frame_meta: dict[str, Any],
+    expected_rows: list[dict[str, Any]],
+    frame_policy: dict[str, Any],
+) -> Optional[dict[str, Any]]:
+    if not _truthy_policy(frame_policy.get("verify_ipc"), default=False):
+        return None
+
+    rows_ref = frame_meta.get("rows_ref")
+    if not isinstance(rows_ref, dict):
+        return {"enabled": True, "verified": False, "reason": "missing rows_ref"}
+
+    result: dict[str, Any] = {
+        "enabled": True,
+        "verified": False,
+        "row_count": len(expected_rows),
+        "ipc_hint_present": isinstance(rows_ref.get("ipc"), dict),
+    }
+    try:
+        ipc_rows = await default_store.resolve(rows_ref)
+        result["ipc_read_row_count"] = len(ipc_rows) if isinstance(ipc_rows, list) else None
+        result["ipc_read_matches"] = ipc_rows == expected_rows
+
+        ipc_hint = rows_ref.get("ipc")
+        if isinstance(ipc_hint, dict):
+            cache = _frame_ipc_cache()
+            if cache is not None:
+                cache.delete(IpcHint.model_validate(ipc_hint))
+                result["ipc_hint_evicted"] = True
+            else:
+                result["ipc_hint_evicted"] = False
+
+        fallback_rows = await default_store.resolve(rows_ref)
+        result["fallback_read_row_count"] = len(fallback_rows) if isinstance(fallback_rows, list) else None
+        result["fallback_read_matches"] = fallback_rows == expected_rows
+        result["verified"] = bool(result["ipc_read_matches"] and result["fallback_read_matches"])
+        return result
+    except Exception as exc:
+        result["error"] = str(exc)[:300]
+        return result
 
 
 def _runtime_api_base(context: dict[str, Any]) -> str:
@@ -699,6 +755,13 @@ async def execute_cursor_worker(
                 frame_policy=frame_policy,
             )
             if frame_meta is not None:
+                verification = await _verify_claimed_frame_ipc(
+                    frame_meta=frame_meta,
+                    expected_rows=frame_rows,
+                    frame_policy=frame_policy,
+                )
+                if verification is not None:
+                    frame_meta["ipc_verification"] = verification
                 frames.append(frame_meta)
 
             stop_after_frame = False

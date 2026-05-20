@@ -371,6 +371,26 @@
           ],
           "title": "Process",
           "type": "string"
+        },
+        "verify_ipc": {
+          "default": false,
+          "description": "When true, the cursor worker verifies captured frame rows through an IPC read and a durable fallback read for Phase 3 evidence",
+          "title": "Verify Ipc",
+          "type": "boolean"
+        },
+        "retry_mode": {
+          "const": "whole_frame",
+          "default": "whole_frame",
+          "description": "Frame recovery mode. Phase 1 only retries the whole frame boundary; row-split retry requires a later subframe model.",
+          "title": "Retry Mode",
+          "type": "string"
+        },
+        "max_attempts": {
+          "default": 3,
+          "description": "Maximum frame claim attempts before operator intervention is expected",
+          "minimum": 1,
+          "title": "Max Attempts",
+          "type": "integer"
         }
       },
       "title": "FramePolicy",
@@ -465,11 +485,14 @@
               "type": "integer"
             },
             {
+              "type": "string"
+            },
+            {
               "type": "null"
             }
           ],
           "default": null,
-          "description": "Maximum concurrent iterations (parallel) / workers (cursor)",
+          "description": "Maximum concurrent iterations (parallel) / workers (cursor). May be an integer or a renderable expression resolved before dispatch.",
           "title": "Max In Flight"
         },
         "policy": {
