@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.66.0](https://github.com/noetl/noetl/compare/v2.65.0...v2.66.0) (2026-05-20)
+
+### Features
+
+* **replay:** add payload resolver port ([e410230](https://github.com/noetl/noetl/commit/e410230791108bb24648f06ffa2f6d1cc8f4328e))
+
 ## [2.65.0](https://github.com/noetl/noetl/compare/v2.64.0...v2.65.0) (2026-05-20)
 
 ### Features
