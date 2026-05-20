@@ -9,11 +9,12 @@ adapter-neutral row JSON through scripts/build_live_projection_checksums.py.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import sys
 from collections.abc import Mapping
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 from decimal import Decimal
 from pathlib import Path
 from typing import Any
@@ -189,6 +190,16 @@ def _json_default(value: Any) -> str | int | float:
     raise TypeError(f"{type(value).__name__} is not JSON serializable")
 
 
+def _utc_now() -> str:
+    return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def _canonical_checksum(value: Any) -> str:
+    normalized = json.loads(json.dumps(value, default=_json_default, sort_keys=True))
+    rendered = json.dumps(normalized, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+    return hashlib.sha256(rendered.encode("utf-8")).hexdigest()
+
+
 def _connect(dsn: str | None):
     conninfo = dsn or os.getenv("NOETL_DATABASE_URL") or os.getenv("DATABASE_URL")
     if not conninfo:
@@ -313,13 +324,16 @@ def main(argv: list[str] | None = None) -> int:
         )
 
     payload = {
+        "schema_version": 1,
         "adapter": "postgres",
         "execution_id": args.execution_id,
         "tenant_id": args.tenant_id,
         "organization_id": args.organization_id,
         "projection": args.projection,
+        "exported_at": _utc_now(),
         "rows": rows,
         "row_counts": {surface: len(rows[surface]) for surface in SURFACES},
+        "rows_checksum": _canonical_checksum(rows),
     }
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(

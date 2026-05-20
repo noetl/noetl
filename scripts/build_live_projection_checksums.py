@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import sys
 from pathlib import Path
@@ -23,6 +24,7 @@ SURFACE_ROW_KEYS = {
 
 def _load_rows(path: Path) -> dict[str, list[dict[str, Any]]]:
     data: Any = json.loads(path.read_text())
+    artifact = data if isinstance(data, dict) and isinstance(data.get("rows"), dict) else None
     if isinstance(data, dict) and isinstance(data.get("rows"), dict):
         data = data["rows"]
     if not isinstance(data, dict):
@@ -40,6 +42,19 @@ def _load_rows(path: Path) -> dict[str, list[dict[str, Any]]]:
     unknown = sorted(set(data) - set(SURFACE_ROW_KEYS))
     if unknown:
         raise ValueError(f"{path}: unknown live projection row surfaces: {', '.join(unknown)}")
+
+    if artifact is not None:
+        row_counts = artifact.get("row_counts")
+        if isinstance(row_counts, dict):
+            for surface, surface_rows in rows.items():
+                if row_counts.get(surface) != len(surface_rows):
+                    raise ValueError(f"{path}: row_counts.{surface} does not match exported rows")
+        rows_checksum = artifact.get("rows_checksum")
+        if rows_checksum is not None:
+            rendered = json.dumps(rows, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+            expected = hashlib.sha256(rendered.encode("utf-8")).hexdigest()
+            if rows_checksum != expected:
+                raise ValueError(f"{path}: rows_checksum does not match exported rows")
     return rows
 
 
