@@ -89,6 +89,9 @@ from noetl.core.storage.backends import (
     GCSBackend,
     StorageNotImplementedError,
     get_backend,
+    register_backend,
+    registered_backend_names,
+    unregister_backend,
 )
 
 from noetl.core.storage.extractor import (
@@ -150,6 +153,9 @@ __all__ = [
     'GCSBackend',
     'StorageNotImplementedError',
     'get_backend',
+    'register_backend',
+    'registered_backend_names',
+    'unregister_backend',
     # Extractor
     'extract_output_select',
     'estimate_size',

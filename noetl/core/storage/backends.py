@@ -23,16 +23,19 @@ Each backend implements async get/put/delete operations.
 import asyncio
 import gzip
 import hashlib
+import importlib
 import json
 import os
 from abc import ABC, abstractmethod
 from collections import OrderedDict
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Callable, Dict, Optional, Tuple
 from datetime import datetime, timezone
 
 from noetl.core.logger import setup_logger
 
 logger = setup_logger(__name__, include_location=True)
+
+BackendFactory = Callable[..., "StorageBackend"]
 
 
 class StorageBackend(ABC):
@@ -862,17 +865,23 @@ class GCSBackend(StorageBackend):
         return await loop.run_in_executor(None, _exists)
 
 
-# Factory function
-def get_backend(tier: str, **kwargs) -> StorageBackend:
-    """Get storage backend by tier name."""
-    # Back-compat: map removed "object" tier to "disk" with a warning.
-    # The warning itself is emitted by noetl.core.storage.models._normalize_store_value
-    # on first exposure; here we just rewrite silently to avoid duplicate noise.
-    tier_lc = (tier or "").lower()
-    if tier_lc == "object":
-        tier_lc = "disk"
+# Backend registry / factory helpers.
+#
+# Built-ins stay in this module so existing deployments keep their current
+# behavior. Extensions can either register a factory in-process or point an
+# env var at a factory/class using ``module:attribute``.
+_REGISTERED_BACKENDS: Dict[str, BackendFactory] = {}
 
-    backends = {
+
+def _normalize_backend_name(tier: str) -> str:
+    tier_lc = (tier or "").strip().lower()
+    if tier_lc == "object":
+        return "disk"
+    return tier_lc
+
+
+def _builtin_backends() -> Dict[str, BackendFactory]:
+    return {
         "memory": MemoryBackend,
         "kv": NATSKVBackend,
         "disk": DiskCacheBackend,
@@ -880,11 +889,74 @@ def get_backend(tier: str, **kwargs) -> StorageBackend:
         "gcs": GCSBackend,
     }
 
-    backend_class = backends.get(tier_lc)
-    if not backend_class:
+
+def register_backend(name: str, factory: BackendFactory, *, replace: bool = False) -> None:
+    """Register a storage backend factory under ``name``.
+
+    ``factory`` may be a backend class or any callable returning a
+    ``StorageBackend`` instance. Built-in names require ``replace=True`` so an
+    accidental registration cannot shadow a production tier.
+    """
+    normalized = _normalize_backend_name(name)
+    if not normalized:
+        raise ValueError("storage backend name must be non-empty")
+    if not callable(factory):
+        raise TypeError("storage backend factory must be callable")
+    if not replace and normalized in {**_builtin_backends(), **_REGISTERED_BACKENDS}:
+        raise ValueError(f"storage backend already registered: {name}")
+    _REGISTERED_BACKENDS[normalized] = factory
+
+
+def unregister_backend(name: str) -> None:
+    """Remove an in-process backend registration if present."""
+    _REGISTERED_BACKENDS.pop(_normalize_backend_name(name), None)
+
+
+def registered_backend_names(*, include_builtin: bool = True) -> tuple[str, ...]:
+    """Return known backend names in deterministic order."""
+    names = set(_REGISTERED_BACKENDS)
+    if include_builtin:
+        names.update(_builtin_backends())
+    return tuple(sorted(names))
+
+
+def _backend_env_var(name: str) -> str:
+    suffix = name.upper().replace("-", "_")
+    return f"NOETL_STORAGE_BACKEND_{suffix}"
+
+
+def _load_backend_factory(spec: str) -> BackendFactory:
+    if ":" not in spec:
+        raise ValueError("storage backend import spec must use module:attribute")
+    module_name, attr_name = (part.strip() for part in spec.split(":", 1))
+    if not module_name or not attr_name:
+        raise ValueError("storage backend import spec must use module:attribute")
+    module = importlib.import_module(module_name)
+    factory = getattr(module, attr_name)
+    if not callable(factory):
+        raise TypeError(f"storage backend import is not callable: {spec}")
+    return factory
+
+
+def get_backend(tier: str, **kwargs) -> StorageBackend:
+    """Get storage backend by tier name."""
+    # Back-compat: map removed "object" tier to "disk" with a warning.
+    # The warning itself is emitted by noetl.core.storage.models._normalize_store_value
+    # on first exposure; here we just rewrite silently to avoid duplicate noise.
+    tier_lc = _normalize_backend_name(tier)
+
+    env_spec = os.getenv(_backend_env_var(tier_lc))
+    backend_factory = _load_backend_factory(env_spec) if env_spec else None
+    if backend_factory is None:
+        backend_factory = _REGISTERED_BACKENDS.get(tier_lc) or _builtin_backends().get(tier_lc)
+
+    if not backend_factory:
         raise ValueError(f"Unknown storage tier: {tier}")
 
-    return backend_class(**kwargs)
+    backend = backend_factory(**kwargs)
+    if not isinstance(backend, StorageBackend):
+        raise TypeError(f"storage backend factory for {tier} did not return StorageBackend")
+    return backend
 
 
 __all__ = [
@@ -896,4 +968,7 @@ __all__ = [
     "GCSBackend",
     "StorageNotImplementedError",
     "get_backend",
+    "register_backend",
+    "registered_backend_names",
+    "unregister_backend",
 ]
