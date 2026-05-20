@@ -5,6 +5,8 @@ from noetl.server.api.replay import fold_replay_state
 from noetl.server.api.replay.types import ReplaySnapshotSeed
 from scripts.check_replay_state_report import main
 
+REGISTRY_DIGEST = "a" * 64
+
 
 def _replay_state():
     return fold_replay_state(
@@ -25,7 +27,7 @@ def _replay_state():
         tenant_id="tenant-a",
         organization_id="org-a",
         execution_id=123,
-        upcaster_registry_digest="digest-a",
+        upcaster_registry_digest=REGISTRY_DIGEST,
     )
 
 
@@ -90,6 +92,22 @@ def test_check_replay_state_report_requires_sha256_algorithm(tmp_path: Path, cap
     assert "checksum_algorithm" in fields
 
 
+def test_check_replay_state_report_rejects_invalid_registry_digest_shape(
+    tmp_path: Path,
+    capsys,
+):
+    state = _replay_state()
+    state["upcaster_registry_digest"] = "digest-a"
+    path = tmp_path / "replay.json"
+    path.write_text(json.dumps(state))
+
+    assert main(["--report", str(path)]) == 1
+    output = json.loads(capsys.readouterr().out)
+    assert output["matched"] is False
+    fields = {failure["field"] for failure in output["failures"]}
+    assert "upcaster_registry_digest" in fields
+
+
 def test_check_replay_state_report_rejects_inconsistent_snapshot(tmp_path: Path, capsys):
     base = _replay_state()
     seed = ReplaySnapshotSeed(
@@ -98,7 +116,7 @@ def test_check_replay_state_report_rejects_inconsistent_snapshot(tmp_path: Path,
         version=2,
         checksum=base["checksum"],
         state=base,
-        meta={"upcaster_registry_digest": "digest-a"},
+        meta={"upcaster_registry_digest": REGISTRY_DIGEST},
     )
     state = fold_replay_state(
         [
@@ -112,11 +130,11 @@ def test_check_replay_state_report_rejects_inconsistent_snapshot(tmp_path: Path,
         tenant_id="tenant-a",
         organization_id="org-a",
         execution_id=123,
-        upcaster_registry_digest="digest-a",
+        upcaster_registry_digest=REGISTRY_DIGEST,
         base_state=base,
         snapshot_seed=seed,
     )
-    state["replay_snapshot"]["meta"]["upcaster_registry_digest"] = "digest-b"
+    state["replay_snapshot"]["meta"]["upcaster_registry_digest"] = "b" * 64
     path = tmp_path / "replay.json"
     path.write_text(json.dumps(state))
 

@@ -6,12 +6,15 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import re
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Mapping
 
 from noetl.server.api.replay import replay_projection_checksum_bundle
+
+_SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 
 REQUIRED_TOP_LEVEL_FIELDS = (
     "tenant_id",
@@ -62,12 +65,36 @@ def replay_state_checksum(report: Mapping[str, Any]) -> str:
     return _canonical_checksum(checksum_input)
 
 
+def _validate_digest_shape(
+    failures: list[dict[str, Any]],
+    *,
+    field: str,
+    value: Any,
+) -> None:
+    if value is None:
+        return
+    if not _SHA256_RE.fullmatch(str(value)):
+        failures.append(
+            {
+                "field": field,
+                "reason": "digest must be a lowercase sha256 hex value",
+                "supplied": value,
+            }
+        )
+
+
 def validate_replay_state_report(report: dict[str, Any]) -> dict[str, Any]:
     failures: list[dict[str, Any]] = []
 
     for field in REQUIRED_TOP_LEVEL_FIELDS:
         if field not in report:
             failures.append({"field": field, "reason": "missing required replay state field"})
+
+    _validate_digest_shape(
+        failures,
+        field="upcaster_registry_digest",
+        value=report.get("upcaster_registry_digest"),
+    )
 
     supplied_bundle = report.get("projection_checksums")
     if not isinstance(supplied_bundle, dict):
@@ -128,6 +155,11 @@ def validate_replay_state_report(report: dict[str, Any]) -> dict[str, Any]:
             state_digest = report.get("upcaster_registry_digest")
             snapshot_meta = snapshot.get("meta") if isinstance(snapshot.get("meta"), dict) else {}
             snapshot_digest = snapshot_meta.get("upcaster_registry_digest")
+            _validate_digest_shape(
+                failures,
+                field="replay_snapshot.meta.upcaster_registry_digest",
+                value=snapshot_digest,
+            )
             if snapshot_digest is not None and state_digest is not None and snapshot_digest != state_digest:
                 failures.append(
                     {
