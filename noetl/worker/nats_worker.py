@@ -43,6 +43,13 @@ _HOT_PATH_INITIAL_EVENT_MAX_RETRIES = max(
 )
 
 
+def _optional_int_env(name: str) -> Optional[int]:
+    raw = os.getenv(name)
+    if raw is None or str(raw).strip() == "":
+        return None
+    return int(raw)
+
+
 def _safe_keys(value: Any, max_items: int = 10) -> list[str]:
     if isinstance(value, dict):
         return list(value.keys())[:max_items]
@@ -3665,6 +3672,20 @@ async def run_worker(
         nats_url=nats_url,
         server_url=server_url
     )
+    metrics_server = None
+    metrics_port = _optional_int_env("NOETL_WORKER_METRICS_PORT")
+    if metrics_port is not None:
+        from noetl.worker.metrics import start_worker_metrics_server
+
+        metrics_server = start_worker_metrics_server(
+            worker_id=worker_id,
+            host=os.getenv("NOETL_WORKER_METRICS_HOST") or "0.0.0.0",
+            port=metrics_port,
+            labels={
+                "worker_pool": os.getenv("NOETL_WORKER_POOL_NAME") or "worker-cpu-01",
+                "runtime": os.getenv("NOETL_WORKER_POOL_RUNTIME") or "cpu",
+            },
+        )
     
     try:
         await worker.start()  # Should run forever
@@ -3674,6 +3695,9 @@ async def run_worker(
         logger.error(f"Worker error: {e}", exc_info=True)
         raise
     finally:
+        if metrics_server is not None:
+            metrics_server.shutdown()
+            metrics_server.server_close()
         await worker.cleanup()
         logger.info("Worker cleanup complete")
 
