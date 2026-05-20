@@ -86,6 +86,21 @@ def locality_within(
         return False
 
 
+def placement_evaluation(
+    *,
+    source: Mapping[str, Any] | None,
+    target: Mapping[str, Any] | None,
+    max_distance: str = "any",
+) -> dict[str, Any]:
+    """Return a replayable placement evaluation for scheduler/audit metadata."""
+    distance = locality_distance(source, target)
+    return {
+        "distance": distance,
+        "max_distance": max_distance,
+        "within_max_distance": locality_within(source, target, max_distance=max_distance),
+    }
+
+
 def _same_non_empty(source: Mapping[str, Any], target: Mapping[str, Any], key: str) -> bool:
     source_value = str(source.get(key) or "").strip()
     target_value = str(target.get(key) or "").strip()
@@ -96,6 +111,7 @@ __all__ = [
     "LOCALITY_DISTANCES",
     "locality_distance",
     "locality_within",
+    "placement_evaluation",
     "worker_locality_from_env",
     "worker_locator",
 ]

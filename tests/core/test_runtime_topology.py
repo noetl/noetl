@@ -56,7 +56,7 @@ def test_worker_locator_returns_none_for_invalid_segments():
 
 
 def test_locality_distance_prefers_closest_match():
-    from noetl.core.runtime.topology import locality_distance, locality_within
+    from noetl.core.runtime.topology import locality_distance, locality_within, placement_evaluation
 
     source = {
         "cluster_id": "cluster-a",
@@ -78,3 +78,12 @@ def test_locality_distance_prefers_closest_match():
     assert locality_distance(source, {"cluster_id": "cluster-b"}) == "any"
     assert locality_within(source, {**source, "node_id": "node-b"}, max_distance="zone")
     assert not locality_within(source, {"cluster_id": "cluster-b"}, max_distance="region")
+    assert placement_evaluation(
+        source=source,
+        target={**source, "node_id": "node-b"},
+        max_distance="zone",
+    ) == {
+        "distance": "zone",
+        "max_distance": "zone",
+        "within_max_distance": True,
+    }

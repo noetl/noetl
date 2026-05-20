@@ -712,7 +712,11 @@ async def test_claim_frames_mints_without_advisory_lock(monkeypatch):
                     "command_id": 5,
                     "claimed_event_id": None,
                     "terminal_event_id": None,
-                    "cursor": {"worker_slot_id": "slot-1", "frame_index": 0},
+                    "cursor": {
+                        "worker_slot_id": "slot-1",
+                        "frame_index": 0,
+                        "source_locality": {"zone": "us-central1-a"},
+                    },
                     "row_count": 0,
                     "status": "PENDING",
                     "owner_worker": None,
@@ -732,7 +736,11 @@ async def test_claim_frames_mints_without_advisory_lock(monkeypatch):
                     "command_id": 5,
                     "claimed_event_id": 102,
                     "terminal_event_id": None,
-                    "cursor": {"worker_slot_id": "slot-1", "frame_index": 0},
+                    "cursor": {
+                        "worker_slot_id": "slot-1",
+                        "frame_index": 0,
+                        "source_locality": {"zone": "us-central1-a"},
+                    },
                     "row_count": 0,
                     "status": "CLAIMED",
                     "owner_worker": "worker-a",
@@ -794,9 +802,13 @@ async def test_claim_frames_mints_without_advisory_lock(monkeypatch):
             command_id=5,
             requested_count=1,
             lease_seconds=60,
-            cursor={"worker_slot_id": "slot-1", "frame_index": 0},
+            cursor={
+                "worker_slot_id": "slot-1",
+                "frame_index": 0,
+                "source_locality": {"zone": "us-central1-a"},
+            },
             frame_policy={"process": "frame", "max_rows": 50},
-            locality={"node_id": "node-a", "zone": "us-central1-a"},
+            locality={"node_id": "node-a", "zone": "us-central1-a", "max_distance": "zone"},
         ),
     )
 
@@ -804,7 +816,17 @@ async def test_claim_frames_mints_without_advisory_lock(monkeypatch):
     assert response["frames"][0]["frame_id"] == 9
     assert response["frames"][0]["claimed_event_id"] == 102
     assert [item["event_type"] for item in emitted] == ["frame.dispatched"]
-    assert emitted[0]["meta_extra"]["locality"] == {"node_id": "node-a", "zone": "us-central1-a"}
+    assert emitted[0]["meta_extra"]["locality"] == {
+        "node_id": "node-a",
+        "zone": "us-central1-a",
+        "max_distance": "zone",
+    }
+    assert emitted[0]["meta_extra"]["source_locality"] == {"zone": "us-central1-a"}
+    assert emitted[0]["meta_extra"]["placement"] == {
+        "distance": "zone",
+        "max_distance": "zone",
+        "within_max_distance": True,
+    }
     assert (
         emitted[0]["meta_extra"]["worker_locator"]
         == "noetl://tenant/tenant-a/org/org-a/node/node-a/worker/worker-a"
