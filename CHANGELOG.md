@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.55.0](https://github.com/noetl/noetl/compare/v2.54.0...v2.55.0) (2026-05-20)
+
+### Features
+
+* **metrics:** add tenant frame backlog detail ([544ee11](https://github.com/noetl/noetl/commit/544ee110568d2c699963421f3adfb6459d131487))
+* **metrics:** label worker topology ([0b8c548](https://github.com/noetl/noetl/commit/0b8c548c0b270c77f804f07db348698d1587c48a))
+
 ## [2.54.0](https://github.com/noetl/noetl/compare/v2.53.0...v2.54.0) (2026-05-20)
 
 ### Features
