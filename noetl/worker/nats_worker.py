@@ -3676,19 +3676,13 @@ async def run_worker(
     metrics_port = _optional_int_env("NOETL_WORKER_METRICS_PORT")
     if metrics_port is not None:
         from noetl.worker.metrics import start_worker_metrics_server
+        from noetl.core.runtime.topology import worker_locality_from_env
 
         metrics_server = start_worker_metrics_server(
             worker_id=worker_id,
             host=os.getenv("NOETL_WORKER_METRICS_HOST") or "0.0.0.0",
             port=metrics_port,
-            labels={
-                "worker_pool": os.getenv("NOETL_WORKER_POOL_NAME") or "worker-cpu-01",
-                "runtime": os.getenv("NOETL_WORKER_POOL_RUNTIME") or "cpu",
-                "node_id": os.getenv("NOETL_NODE_ID") or os.getenv("NODE_NAME") or "",
-                "cluster_id": os.getenv("NOETL_CLUSTER_ID") or os.getenv("NOETL_CLUSTER_NAME") or "",
-                "region": os.getenv("NOETL_REGION") or "",
-                "zone": os.getenv("NOETL_ZONE") or "",
-            },
+            labels=worker_locality_from_env(),
         )
     
     try:

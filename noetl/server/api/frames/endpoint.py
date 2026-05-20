@@ -15,7 +15,7 @@ from noetl.core.event_store.ports import canonical_event_checksum
 from noetl.core.logger import setup_logger
 from noetl.core.messaging import NATSEventPublisher
 from noetl.core.outbox import enqueue_outbox, publish_outbox_batch
-from noetl.core.resource_locator import ResourceLocatorError, build_noetl_locator
+from noetl.core.runtime.topology import worker_locator
 
 from noetl.server.api.core.db import _next_snowflake_id
 
@@ -41,28 +41,6 @@ def _event_meta(*, frame: dict[str, Any], worker_id: str, extra: dict[str, Any] 
     if extra:
         meta.update(extra)
     return meta
-
-
-def _worker_locator(*, stage: dict[str, Any], worker_id: str, locality: dict[str, Any] | None) -> str | None:
-    locality = locality or {}
-    try:
-        segments: list[str] = [
-            "tenant",
-            stage.get("tenant_id") or "default",
-            "org",
-            stage.get("organization_id") or "default",
-        ]
-        cluster_id = locality.get("cluster_id")
-        node_id = locality.get("node_id")
-        worker_pool = locality.get("worker_pool") or worker_id
-        if cluster_id:
-            segments.extend(["cluster", cluster_id])
-        if node_id:
-            segments.extend(["node", node_id])
-        segments.extend(["worker", worker_pool])
-        return build_noetl_locator(*segments)
-    except (ResourceLocatorError, TypeError, ValueError):
-        return None
 
 
 async def _load_stage(cur: Any, stage_id: int) -> dict[str, Any]:
@@ -698,8 +676,9 @@ async def claim_frames(stage_id: int, req: FrameClaimRequest) -> dict[str, Any]:
                                 req.frame_policy or stage.get("frame_policy") or {}
                             ),
                             "locality": locality,
-                            "worker_locator": _worker_locator(
-                                stage=stage,
+                            "worker_locator": worker_locator(
+                                tenant_id=stage.get("tenant_id"),
+                                organization_id=stage.get("organization_id"),
                                 worker_id=req.worker_id,
                                 locality=locality,
                             ),
