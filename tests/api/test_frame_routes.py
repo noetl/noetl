@@ -93,6 +93,29 @@ def test_frame_commit_allows_ipc_hint_with_nested_durable_ref():
     assert commit.output_ref["rows_ref"]["ref"] == "noetl://execution/1/result/frame/abc"
 
 
+def test_frame_commit_rejects_malformed_noetl_durable_locator_with_ipc_hint():
+    from pydantic import ValidationError
+
+    from noetl.server.api.frames import FrameCommitRequest
+
+    with pytest.raises(ValidationError, match="durable ref, uri, or locator"):
+        FrameCommitRequest(
+            worker_id="worker-a",
+            row_count=10,
+            output_ref={
+                "rows_ref": {
+                    "ref": "noetl://execution/1/result/frame/abc?debug=true",
+                    "ipc": {
+                        "kind": "arrow_ipc",
+                        "shm_name": "/noetl-frame-1",
+                        "schema_digest": "sha256:abc",
+                        "byte_length": 4096,
+                    },
+                }
+            },
+        )
+
+
 def test_frame_commit_result_keeps_event_result_shape():
     from noetl.server.api.frames import endpoint
 

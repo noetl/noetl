@@ -4,6 +4,8 @@ from typing import Any, Optional
 
 from pydantic import BaseModel, Field, model_validator
 
+from noetl.core.resource_locator import ResourceLocatorError, parse_noetl_locator
+
 
 _DURABLE_REF_KEYS = ("ref", "uri", "locator")
 
@@ -20,12 +22,26 @@ def _has_ipc_hint(value: Any) -> bool:
 
 def _has_durable_reference(value: Any) -> bool:
     if isinstance(value, dict):
-        if any(str(value.get(key) or "").strip() for key in _DURABLE_REF_KEYS):
-            return True
+        for key in _DURABLE_REF_KEYS:
+            if _is_valid_durable_locator(value.get(key)):
+                return True
         return any(_has_durable_reference(item) for item in value.values())
     if isinstance(value, list):
         return any(_has_durable_reference(item) for item in value)
     return False
+
+
+def _is_valid_durable_locator(value: Any) -> bool:
+    locator = str(value or "").strip()
+    if not locator:
+        return False
+    if not locator.startswith("noetl://"):
+        return True
+    try:
+        parse_noetl_locator(locator)
+        return True
+    except ResourceLocatorError:
+        return False
 
 
 class FrameClaimRequest(BaseModel):
