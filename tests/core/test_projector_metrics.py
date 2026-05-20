@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from types import SimpleNamespace
 from urllib.request import urlopen
 
@@ -302,11 +303,16 @@ def test_projector_metrics_server_exposes_metrics_and_health():
     try:
         with urlopen(f"http://{host}:{port}/health", timeout=2) as response:
             assert response.read() == b"ok\n"
+        with urlopen(f"http://{host}:{port}/summary", timeout=2) as response:
+            summary = json.loads(response.read().decode("utf-8"))
         with urlopen(f"http://{host}:{port}/metrics", timeout=2) as response:
             body = response.read().decode("utf-8")
     finally:
         server.shutdown()
         server.server_close()
 
+    assert summary["labels"] == {"shard_id": "test-shard"}
+    assert summary["summary"]["notifications_total"] == 1
+    assert summary["summary"]["batch"]["owned_events"] == 0
     assert "noetl_projector_empty_or_unowned_notifications_total" in body
     assert 'shard_id="test-shard"' in body
