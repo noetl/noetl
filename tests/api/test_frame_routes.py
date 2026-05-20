@@ -805,5 +805,9 @@ async def test_claim_frames_mints_without_advisory_lock(monkeypatch):
     assert response["frames"][0]["claimed_event_id"] == 102
     assert [item["event_type"] for item in emitted] == ["frame.dispatched"]
     assert emitted[0]["meta_extra"]["locality"] == {"node_id": "node-a", "zone": "us-central1-a"}
+    assert (
+        emitted[0]["meta_extra"]["worker_locator"]
+        == "noetl://tenant/tenant-a/org/org-a/node/node-a/worker/worker-a"
+    )
     assert any("ON CONFLICT DO NOTHING" in query for query, _ in cursor.queries)
     assert conn.commits == 1
