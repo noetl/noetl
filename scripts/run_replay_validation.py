@@ -63,6 +63,7 @@ def _build_report(
             "as_of_time": args.as_of_time,
             "resolve_payloads": args.resolve_payloads,
             "live_checksums": str(args.live_checksums) if args.live_checksums else None,
+            "live_rows": str(args.live_rows) if args.live_rows else None,
         },
         "steps": steps,
     }
@@ -94,6 +95,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--timeout", default=60.0, type=float)
     parser.add_argument("--live-checksums", type=Path)
     parser.add_argument(
+        "--live-rows",
+        type=Path,
+        help="Optional adapter-exported live projection rows JSON; converted to live checksums before parity",
+    )
+    parser.add_argument(
         "--report-output",
         type=Path,
         help="Optional path to write the validation run manifest JSON",
@@ -106,11 +112,16 @@ def main(argv: list[str] | None = None) -> int:
     )
     if cutoff_count > 1:
         parser.error("use only one replay cutoff")
+    if args.live_checksums and args.live_rows:
+        parser.error("use only one live parity input: --live-checksums or --live-rows")
 
     started_at = _utc_now()
     output_dir = args.output_dir
     output_dir.mkdir(parents=True, exist_ok=True)
     replay_path = output_dir / f"replay-{args.execution_id}.json"
+    live_checksums_path = args.live_checksums
+    if args.live_rows:
+        live_checksums_path = output_dir / f"live-checksums-{args.execution_id}.json"
     fetch_command = [
         sys.executable,
         "scripts/fetch_replay_state_report.py",
@@ -151,6 +162,19 @@ def main(argv: list[str] | None = None) -> int:
             ],
         ),
         (
+            "live_checksums",
+            [
+                sys.executable,
+                "scripts/build_live_projection_checksums.py",
+                "--rows",
+                str(args.live_rows),
+                "--output",
+                str(live_checksums_path),
+            ]
+            if args.live_rows
+            else [],
+        ),
+        (
             "projection_parity",
             [
                 sys.executable,
@@ -158,9 +182,9 @@ def main(argv: list[str] | None = None) -> int:
                 "--replayed",
                 str(replay_path),
                 "--live",
-                str(args.live_checksums),
+                str(live_checksums_path),
             ]
-            if args.live_checksums
+            if live_checksums_path
             else [],
         ),
         (
