@@ -53,3 +53,28 @@ def test_worker_locator_returns_none_for_invalid_segments():
         )
         is None
     )
+
+
+def test_locality_distance_prefers_closest_match():
+    from noetl.core.runtime.topology import locality_distance, locality_within
+
+    source = {
+        "cluster_id": "cluster-a",
+        "region": "us-central1",
+        "zone": "us-central1-a",
+        "node_id": "node-a",
+    }
+
+    assert locality_distance(source, {**source, "node_id": "node-a"}) == "node"
+    assert locality_distance(source, {**source, "node_id": "node-b"}) == "zone"
+    assert locality_distance(source, {**source, "zone": "us-central1-b", "node_id": "node-c"}) == "region"
+    assert (
+        locality_distance(
+            source,
+            {"cluster_id": "cluster-a", "region": "us-east1", "zone": "us-east1-b", "node_id": "node-d"},
+        )
+        == "cluster"
+    )
+    assert locality_distance(source, {"cluster_id": "cluster-b"}) == "any"
+    assert locality_within(source, {**source, "node_id": "node-b"}, max_distance="zone")
+    assert not locality_within(source, {"cluster_id": "cluster-b"}, max_distance="region")
