@@ -608,6 +608,64 @@ def frame_projection_checksum(rows: Iterable[Mapping[str, Any]]) -> str:
     return _canonical_checksum({"frames": list(rows)})
 
 
+def _normalized_stage_projection_row(row: Mapping[str, Any]) -> dict[str, Any]:
+    return {
+        "stage_id": str(row.get("stage_id")),
+        "status": row.get("status"),
+        "kind": row.get("kind"),
+        "step_name": row.get("step_name"),
+        "parent_stage_id": (
+            str(row.get("parent_stage_id")) if row.get("parent_stage_id") is not None else None
+        ),
+        "loop_event_id": (
+            str(row.get("loop_event_id")) if row.get("loop_event_id") is not None else None
+        ),
+        "opened_event_id": (
+            int(row.get("opened_event_id")) if row.get("opened_event_id") is not None else None
+        ),
+        "closed_event_id": (
+            int(row.get("closed_event_id")) if row.get("closed_event_id") is not None else None
+        ),
+        "frame_count": int(row.get("frame_count") or 0),
+        "row_count": int(row.get("row_count") or 0),
+        "events_emitted": int(row.get("events_emitted") or 0),
+        "failed_count": int(row.get("failed_count") or 0),
+        "last_event_id": (
+            int(row.get("last_event_id")) if row.get("last_event_id") is not None else None
+        ),
+    }
+
+
+def normalize_live_stage_projection(rows: Iterable[Mapping[str, Any]]) -> list[dict[str, Any]]:
+    return sorted(
+        (_normalized_stage_projection_row(row) for row in rows),
+        key=lambda row: int(row["stage_id"]),
+    )
+
+
+def normalize_replayed_stage_projection(state: Mapping[str, Any]) -> list[dict[str, Any]]:
+    stages = state.get("stages")
+    if not isinstance(stages, Mapping):
+        return []
+    return sorted(
+        (
+            _normalized_stage_projection_row(
+                {
+                    "stage_id": stage.get("stage_id") or stage_id,
+                    **stage,
+                }
+            )
+            for stage_id, stage in stages.items()
+            if isinstance(stage, Mapping)
+        ),
+        key=lambda row: int(row["stage_id"]),
+    )
+
+
+def stage_projection_checksum(rows: Iterable[Mapping[str, Any]]) -> str:
+    return _canonical_checksum({"stages": list(rows)})
+
+
 def _normalized_command_projection_row(row: Mapping[str, Any]) -> dict[str, Any]:
     return {
         "command_id": str(row.get("command_id")),
