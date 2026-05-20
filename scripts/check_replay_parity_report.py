@@ -13,6 +13,14 @@ from typing import Any
 from noetl.server.api.replay import projection_checksum_parity_report
 
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
+REQUIRED_PROJECTION_SURFACES = (
+    "execution",
+    "stages",
+    "frames",
+    "commands",
+    "business_objects",
+    "loops",
+)
 
 
 def _load_bundle(path: Path) -> dict[str, str]:
@@ -36,6 +44,28 @@ def _checksum_shape_report(bundle: dict[str, str], *, label: str) -> list[dict[s
                     "reason": "checksum must be a lowercase sha256 hex digest",
                 }
             )
+    return failures
+
+
+def _surface_shape_report(bundle: dict[str, str], *, label: str) -> list[dict[str, str]]:
+    failures: list[dict[str, str]] = []
+    for surface in REQUIRED_PROJECTION_SURFACES:
+        if surface not in bundle:
+            failures.append(
+                {
+                    "bundle": label,
+                    "surface": surface,
+                    "reason": "missing required projection checksum surface",
+                }
+            )
+    for surface in sorted(set(bundle) - set(REQUIRED_PROJECTION_SURFACES)):
+        failures.append(
+            {
+                "bundle": label,
+                "surface": surface,
+                "reason": "unknown projection checksum surface",
+            }
+        )
     return failures
 
 
@@ -68,6 +98,13 @@ def main(argv: list[str] | None = None) -> int:
         replayed=replayed,
         live=live,
     )
+    surface_failures: list[dict[str, str]] = []
+    surface_failures.extend(_surface_shape_report(replayed, label="replayed"))
+    surface_failures.extend(_surface_shape_report(live, label="live"))
+    if surface_failures:
+        report["matched"] = False
+        report["surface_shape_failures"] = surface_failures
+
     shape_failures: list[dict[str, str]] = []
     if not args.allow_invalid_checksum_shape:
         shape_failures.extend(_checksum_shape_report(replayed, label="replayed"))

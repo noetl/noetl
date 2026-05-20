@@ -97,3 +97,43 @@ def test_check_replay_parity_report_can_allow_legacy_checksum_shape(tmp_path: Pa
         == 0
     )
     assert json.loads(capsys.readouterr().out)["matched"] is True
+
+
+def test_check_replay_parity_report_rejects_missing_required_surface(tmp_path: Path, capsys):
+    bundle = {
+        "execution": "a" * 64,
+        "stages": "b" * 64,
+        "frames": "c" * 64,
+        "commands": "d" * 64,
+        "business_objects": "e" * 64,
+    }
+    replayed_path = tmp_path / "replayed.json"
+    live_path = tmp_path / "live.json"
+    replayed_path.write_text(json.dumps(bundle))
+    live_path.write_text(json.dumps(bundle))
+
+    assert main(["--replayed", str(replayed_path), "--live", str(live_path)]) == 1
+    report = json.loads(capsys.readouterr().out)
+    assert report["matched"] is False
+    assert report["surface_shape_failures"][0]["surface"] == "loops"
+
+
+def test_check_replay_parity_report_rejects_unknown_surface(tmp_path: Path, capsys):
+    bundle = {
+        "execution": "a" * 64,
+        "stages": "b" * 64,
+        "frames": "c" * 64,
+        "commands": "d" * 64,
+        "business_objects": "e" * 64,
+        "loops": "f" * 64,
+        "extra": "0" * 64,
+    }
+    replayed_path = tmp_path / "replayed.json"
+    live_path = tmp_path / "live.json"
+    replayed_path.write_text(json.dumps(bundle))
+    live_path.write_text(json.dumps(bundle))
+
+    assert main(["--replayed", str(replayed_path), "--live", str(live_path)]) == 1
+    report = json.loads(capsys.readouterr().out)
+    assert report["matched"] is False
+    assert report["surface_shape_failures"][0]["surface"] == "extra"
