@@ -262,6 +262,31 @@ def test_projector_metrics_summary_combines_current_runtime_state():
     assert summary["errors"]["decode_error_ratio"] == 1.0
 
 
+def test_projector_metrics_summary_payload_filters_labels():
+    from noetl.core.projector.metrics import ProjectorMetrics, projector_metrics_summary
+
+    metrics = ProjectorMetrics()
+    metrics.record_notification(extracted_events=2, owned_events=1, projection_records=1)
+    metrics.record_message_action("ack", None)
+
+    payload = projector_metrics_summary(
+        metrics,
+        labels={
+            "shard_id": "noetl-projector-0",
+            "shard_index": "0",
+            "empty": "",
+        },
+    )
+
+    assert payload["labels"] == {
+        "shard_id": "noetl-projector-0",
+        "shard_index": "0",
+    }
+    assert payload["summary"]["notifications_total"] == 1
+    assert payload["summary"]["actions"]["ack_ratio"] == 1.0
+    assert payload["summary"]["batch"]["owned_ratio"] == 0.5
+
+
 def test_projector_metrics_server_exposes_metrics_and_health():
     from noetl.core.projector.metrics import ProjectorMetrics, start_projector_metrics_server
 

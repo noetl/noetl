@@ -316,6 +316,19 @@ def render_projector_metrics(metrics: ProjectorMetrics, *, labels: Optional[Mapp
     return "\n".join(lines) + "\n"
 
 
+def projector_metrics_summary(
+    metrics: ProjectorMetrics,
+    *,
+    labels: Optional[Mapping[str, str]] = None,
+) -> dict[str, Any]:
+    """Return a JSON-friendly projector metrics summary payload."""
+
+    return {
+        "labels": _filtered_labels(labels or {}),
+        "summary": metrics.summary(),
+    }
+
+
 def start_projector_metrics_server(
     metrics: ProjectorMetrics,
     *,
@@ -354,11 +367,15 @@ def start_projector_metrics_server(
 
 
 def _format_labels(labels: Mapping[str, str]) -> str:
-    filtered = {key: value for key, value in labels.items() if value}
+    filtered = _filtered_labels(labels)
     if not filtered:
         return ""
     body = ",".join(f'{key}="{_escape_label(value)}"' for key, value in sorted(filtered.items()))
     return "{" + body + "}"
+
+
+def _filtered_labels(labels: Mapping[str, str]) -> dict[str, str]:
+    return {str(key): str(value) for key, value in labels.items() if value}
 
 
 def _escape_label(value: str) -> str:
@@ -453,6 +470,7 @@ def _coerce_datetime_unixtime(value: Any) -> Optional[float]:
 
 __all__ = [
     "ProjectorMetrics",
+    "projector_metrics_summary",
     "render_projector_metrics",
     "start_projector_metrics_server",
 ]
