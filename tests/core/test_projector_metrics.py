@@ -53,7 +53,19 @@ def test_projector_metrics_render_prometheus_labels():
     assert "noetl_projector_last_redelivery_request_unixtime" in body
     assert "noetl_projector_last_termination_unixtime" in body
     assert "noetl_projector_last_redelivery_delay_seconds" in body
+    assert "noetl_projector_last_batch_extracted_events" in body
+    assert "noetl_projector_last_batch_unowned_events" in body
+    assert "noetl_projector_last_batch_unshardable_events" in body
+    assert "noetl_projector_last_batch_stale_projection_records" in body
     assert " 1.0" in body
+
+    snapshot = metrics.snapshot()
+    assert snapshot["last_batch_extracted_events"] == 3
+    assert snapshot["last_batch_events"] == 2
+    assert snapshot["last_batch_unowned_events"] == 1
+    assert snapshot["last_batch_unshardable_events"] == 0
+    assert snapshot["last_batch_projection_records"] == 1
+    assert snapshot["last_batch_stale_projection_records"] == 1
 
 
 def test_projector_metrics_record_message_actions():

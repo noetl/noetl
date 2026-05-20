@@ -37,8 +37,12 @@ class ProjectorMetrics:
             "last_redelivery_request_unixtime": 0.0,
             "last_termination_unixtime": 0.0,
             "last_redelivery_delay_seconds": 0.0,
+            "last_batch_extracted_events": 0.0,
             "last_batch_events": 0.0,
+            "last_batch_unowned_events": 0.0,
+            "last_batch_unshardable_events": 0.0,
             "last_batch_projection_records": 0.0,
+            "last_batch_stale_projection_records": 0.0,
             "last_projection_source_event_id": 0.0,
             "last_projection_event_time_watermark_unixtime": 0.0,
             "last_projection_projected_at_unixtime": 0.0,
@@ -66,8 +70,12 @@ class ProjectorMetrics:
             self._values["projection_records_total"] += float(max(0, projection_records))
             self._values["projection_stale_records_total"] += float(max(0, stale_projection_records))
             self._values["last_success_unixtime"] = now
+            self._values["last_batch_extracted_events"] = float(max(0, extracted_events))
             self._values["last_batch_events"] = float(max(0, owned_events))
+            self._values["last_batch_unowned_events"] = float(max(0, unowned_events))
+            self._values["last_batch_unshardable_events"] = float(max(0, unshardable_events))
             self._values["last_batch_projection_records"] = float(max(0, projection_records))
+            self._values["last_batch_stale_projection_records"] = float(max(0, stale_projection_records))
             if owned_events <= 0:
                 self._values["empty_or_unowned_notifications_total"] += 1.0
 
@@ -227,9 +235,27 @@ def render_projector_metrics(metrics: ProjectorMetrics, *, labels: Optional[Mapp
         "# HELP noetl_projector_last_batch_events Owned events in the last handled notification.",
         "# TYPE noetl_projector_last_batch_events gauge",
         f"noetl_projector_last_batch_events{label_text} {snapshot['last_batch_events']}",
+        "# HELP noetl_projector_last_batch_extracted_events Events extracted from the last handled notification.",
+        "# TYPE noetl_projector_last_batch_extracted_events gauge",
+        f"noetl_projector_last_batch_extracted_events{label_text} {snapshot['last_batch_extracted_events']}",
+        "# HELP noetl_projector_last_batch_unowned_events Events assigned to other shards in the last handled notification.",
+        "# TYPE noetl_projector_last_batch_unowned_events gauge",
+        f"noetl_projector_last_batch_unowned_events{label_text} {snapshot['last_batch_unowned_events']}",
+        "# HELP noetl_projector_last_batch_unshardable_events Events without valid shard keys in the last handled notification.",
+        "# TYPE noetl_projector_last_batch_unshardable_events gauge",
+        (
+            "noetl_projector_last_batch_unshardable_events"
+            f"{label_text} {snapshot['last_batch_unshardable_events']}"
+        ),
         "# HELP noetl_projector_last_batch_projection_records Projection records from the last handled notification.",
         "# TYPE noetl_projector_last_batch_projection_records gauge",
         f"noetl_projector_last_batch_projection_records{label_text} {snapshot['last_batch_projection_records']}",
+        "# HELP noetl_projector_last_batch_stale_projection_records Stale projection records from the last handled notification.",
+        "# TYPE noetl_projector_last_batch_stale_projection_records gauge",
+        (
+            "noetl_projector_last_batch_stale_projection_records"
+            f"{label_text} {snapshot['last_batch_stale_projection_records']}"
+        ),
         "# HELP noetl_projector_last_projection_source_event_id Last projected source event id.",
         "# TYPE noetl_projector_last_projection_source_event_id gauge",
         f"noetl_projector_last_projection_source_event_id{label_text} {snapshot['last_projection_source_event_id']}",
