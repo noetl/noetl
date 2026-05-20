@@ -158,6 +158,28 @@ class ProjectorMetrics:
                 "termination_ratio": terminated / total if total else 0.0,
             }
 
+    def batch_summary(self) -> dict[str, float]:
+        with self._lock:
+            extracted = self._values["last_batch_extracted_events"]
+            owned = self._values["last_batch_events"]
+            unowned = self._values["last_batch_unowned_events"]
+            unshardable = self._values["last_batch_unshardable_events"]
+            projection_records = self._values["last_batch_projection_records"]
+            stale_projection_records = self._values["last_batch_stale_projection_records"]
+            return {
+                "extracted_events": extracted,
+                "owned_events": owned,
+                "unowned_events": unowned,
+                "unshardable_events": unshardable,
+                "projection_records": projection_records,
+                "stale_projection_records": stale_projection_records,
+                "owned_ratio": _safe_ratio(owned, extracted),
+                "unowned_ratio": _safe_ratio(unowned, extracted),
+                "unshardable_ratio": _safe_ratio(unshardable, extracted),
+                "projection_record_ratio": _safe_ratio(projection_records, owned),
+                "stale_projection_ratio": _safe_ratio(stale_projection_records, projection_records),
+            }
+
 
 def render_projector_metrics(metrics: ProjectorMetrics, *, labels: Optional[Mapping[str, str]] = None) -> str:
     """Render projector metrics using Prometheus text exposition."""
@@ -345,6 +367,10 @@ def _format_labels(labels: Mapping[str, str]) -> str:
 
 def _escape_label(value: str) -> str:
     return str(value).replace("\\", "\\\\").replace("\n", "\\n").replace('"', '\\"')
+
+
+def _safe_ratio(numerator: float, denominator: float) -> float:
+    return numerator / denominator if denominator else 0.0
 
 
 def _coerce_float(value: Any) -> Optional[float]:

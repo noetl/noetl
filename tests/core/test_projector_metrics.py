@@ -67,6 +67,33 @@ def test_projector_metrics_render_prometheus_labels():
     assert snapshot["last_batch_projection_records"] == 1
     assert snapshot["last_batch_stale_projection_records"] == 1
 
+    summary = metrics.batch_summary()
+    assert summary["extracted_events"] == 3
+    assert summary["owned_events"] == 2
+    assert summary["unowned_events"] == 1
+    assert summary["unshardable_events"] == 0
+    assert summary["projection_records"] == 1
+    assert summary["stale_projection_records"] == 1
+    assert summary["owned_ratio"] == 2 / 3
+    assert summary["unowned_ratio"] == 1 / 3
+    assert summary["unshardable_ratio"] == 0
+    assert summary["projection_record_ratio"] == 0.5
+    assert summary["stale_projection_ratio"] == 1.0
+
+
+def test_projector_metrics_batch_summary_handles_empty_batches():
+    from noetl.core.projector.metrics import ProjectorMetrics
+
+    metrics = ProjectorMetrics()
+
+    summary = metrics.batch_summary()
+    assert summary["extracted_events"] == 0
+    assert summary["owned_events"] == 0
+    assert summary["projection_records"] == 0
+    assert summary["owned_ratio"] == 0
+    assert summary["projection_record_ratio"] == 0
+    assert summary["stale_projection_ratio"] == 0
+
 
 def test_projector_metrics_record_message_actions():
     from noetl.core.projector.metrics import ProjectorMetrics, render_projector_metrics
