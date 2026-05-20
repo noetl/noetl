@@ -180,6 +180,20 @@ class ProjectorMetrics:
                 "stale_projection_ratio": _safe_ratio(stale_projection_records, projection_records),
             }
 
+    def error_summary(self) -> dict[str, float]:
+        with self._lock:
+            errors = self._values["errors_total"]
+            decode_errors = self._values["decode_errors_total"]
+            projection_errors = self._values["projection_errors_total"]
+            return {
+                "errors_total": errors,
+                "decode_errors_total": decode_errors,
+                "projection_errors_total": projection_errors,
+                "decode_error_ratio": _safe_ratio(decode_errors, errors),
+                "projection_error_ratio": _safe_ratio(projection_errors, errors),
+                "last_error_unixtime": self._values["last_error_unixtime"],
+            }
+
 
 def render_projector_metrics(metrics: ProjectorMetrics, *, labels: Optional[Mapping[str, str]] = None) -> str:
     """Render projector metrics using Prometheus text exposition."""
