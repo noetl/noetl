@@ -110,3 +110,80 @@ async def test_tempstore_ipc_stats_track_admission_failure():
         assert store.ipc_stats()["fallback_reads"] == 1
     finally:
         await store.delete(ref)
+
+
+@pytest.mark.asyncio
+async def test_tempstore_resolve_arrow_result_ref_uses_ipc_then_decodes_rows():
+    from noetl.core.storage import (
+        ArrowIpcSharedMemoryCache,
+        Scope,
+        StoreTier,
+        TempStore,
+        rows_to_arrow_ipc,
+    )
+
+    rows = [{"id": 1, "name": "Ada"}, {"id": 2, "name": "Grace"}]
+    payload, schema_digest, row_count = rows_to_arrow_ipc(rows)
+    store = TempStore()
+    cache = ArrowIpcSharedMemoryCache(namespace="noetl-test", budget_bytes=4096)
+    ref = await store.put_ipc_bytes(
+        execution_id="exec-1",
+        name="frame-1",
+        data_bytes=payload,
+        schema_digest=schema_digest,
+        row_count=row_count,
+        scope=Scope.EXECUTION,
+        store=StoreTier.MEMORY,
+        ipc_cache=cache,
+    )
+
+    try:
+        store._default_ipc_cache_for_ref = lambda _ref: cache
+
+        assert await store.resolve(ref.model_dump(mode="json")) == rows
+
+        stats = store.ipc_stats()
+        assert stats["read_attempts"] == 1
+        assert stats["read_hits"] == 1
+        assert stats["fallback_reads"] == 0
+    finally:
+        await store.delete(ref)
+
+
+@pytest.mark.asyncio
+async def test_tempstore_resolve_arrow_result_ref_falls_back_to_durable_bytes():
+    from noetl.core.storage import (
+        ArrowIpcSharedMemoryCache,
+        Scope,
+        StoreTier,
+        TempStore,
+        rows_to_arrow_ipc,
+    )
+
+    rows = [{"id": 1, "name": "Ada"}]
+    payload, schema_digest, row_count = rows_to_arrow_ipc(rows)
+    store = TempStore()
+    cache = ArrowIpcSharedMemoryCache(namespace="noetl-test", budget_bytes=4096)
+    ref = await store.put_ipc_bytes(
+        execution_id="exec-1",
+        name="frame-1",
+        data_bytes=payload,
+        schema_digest=schema_digest,
+        row_count=row_count,
+        scope=Scope.EXECUTION,
+        store=StoreTier.MEMORY,
+        ipc_cache=cache,
+    )
+
+    try:
+        store._default_ipc_cache_for_ref = lambda _ref: cache
+        cache.delete(ref.ipc)
+
+        assert await store.resolve(ref.model_dump(mode="json")) == rows
+
+        stats = store.ipc_stats()
+        assert stats["read_attempts"] == 1
+        assert stats["read_misses"] == 1
+        assert stats["fallback_reads"] == 1
+    finally:
+        await store.delete(ref)
