@@ -59,6 +59,29 @@ def _artifact_path(value: str, manifest_path: Path | None) -> Path:
     return path
 
 
+def _validate_artifact_path(
+    failures: list[dict[str, Any]],
+    *,
+    field: str,
+    value: Any,
+    manifest_path: Path | None,
+    check_artifacts: bool,
+) -> None:
+    if value is None:
+        return
+    if not isinstance(value, str) or not value:
+        failures.append({"field": field, "reason": "artifact path must be a string"})
+    elif check_artifacts and not _artifact_path(value, manifest_path).exists():
+        failures.append({"field": field, "reason": "artifact path does not exist", "path": value})
+
+
+def _is_projector_summary_step(name: str) -> bool:
+    return (
+        name.startswith("projector_summary_")
+        and (name.endswith("_integrity") or name.endswith("_fetch"))
+    )
+
+
 def _validate_manifest(
     manifest: dict[str, Any],
     *,
@@ -101,14 +124,50 @@ def _validate_manifest(
     artifacts = manifest.get("artifacts")
     if artifacts is not None and not isinstance(artifacts, dict):
         failures.append({"field": "artifacts", "reason": "must be an object"})
-    elif isinstance(artifacts, dict) and check_artifacts:
+    elif isinstance(artifacts, dict):
         for field, value in artifacts.items():
-            if value is None:
+            if field == "projector_summaries":
+                if not isinstance(value, list):
+                    failures.append({"field": "artifacts.projector_summaries", "reason": "must be a list"})
+                    continue
+                for index, entry in enumerate(value):
+                    if not isinstance(entry, dict):
+                        failures.append(
+                            {
+                                "field": f"artifacts.projector_summaries[{index}]",
+                                "reason": "must be an object",
+                            }
+                        )
+                        continue
+                    if not isinstance(entry.get("role"), str) or not entry.get("role"):
+                        failures.append(
+                            {
+                                "field": f"artifacts.projector_summaries[{index}].role",
+                                "reason": "must be a non-empty string",
+                            }
+                        )
+                    _validate_artifact_path(
+                        failures,
+                        field=f"artifacts.projector_summaries[{index}].path",
+                        value=entry.get("path"),
+                        manifest_path=manifest_path,
+                        check_artifacts=check_artifacts,
+                    )
+                    if "url" in entry and (not isinstance(entry.get("url"), str) or not entry.get("url")):
+                        failures.append(
+                            {
+                                "field": f"artifacts.projector_summaries[{index}].url",
+                                "reason": "must be a non-empty string when present",
+                            }
+                        )
                 continue
-            if not isinstance(value, str) or not value:
-                failures.append({"field": f"artifacts.{field}", "reason": "artifact path must be a string"})
-            elif not _artifact_path(value, manifest_path).exists():
-                failures.append({"field": f"artifacts.{field}", "reason": "artifact path does not exist", "path": value})
+            _validate_artifact_path(
+                failures,
+                field=f"artifacts.{field}",
+                value=value,
+                manifest_path=manifest_path,
+                check_artifacts=check_artifacts,
+            )
 
         artifact_index = artifacts.get("artifact_index")
         if isinstance(artifact_index, str) and artifact_index:
@@ -218,6 +277,16 @@ def _validate_manifest(
                 }
             )
     artifacts_index = artifacts.get("artifact_index") if isinstance(artifacts, dict) else None
+    projector_summaries = artifacts.get("projector_summaries") if isinstance(artifacts, dict) else None
+    if projector_summaries:
+        integrity_steps = [name for name in step_names if _is_projector_summary_step(name) and name.endswith("_integrity")]
+        if len(integrity_steps) < len(projector_summaries):
+            failures.append(
+                {
+                    "field": "steps",
+                    "reason": "projector summary artifacts require matching integrity steps",
+                }
+            )
     if artifacts_index:
         if "artifact_index" not in step_names:
             failures.append(
@@ -241,6 +310,8 @@ def _validate_manifest(
             }
         )
     for name in step_names:
+        if _is_projector_summary_step(name):
+            continue
         if name not in (*REQUIRED_STEP_ORDER, *OPTIONAL_STEP_NAMES, "fetch_artifact"):
             failures.append({"field": "steps", "reason": "unknown validation step", "step": name})
 
