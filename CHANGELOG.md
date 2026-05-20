@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.71.0](https://github.com/noetl/noetl/compare/v2.70.0...v2.71.0) (2026-05-20)
+
+### Features
+
+* **projector:** report stale projection writes ([4c20f42](https://github.com/noetl/noetl/commit/4c20f42ee443f2cbdf6c7c3c013e42c911864a88))
+
 ## [2.70.0](https://github.com/noetl/noetl/compare/v2.69.0...v2.70.0) (2026-05-20)
 
 ### Features
