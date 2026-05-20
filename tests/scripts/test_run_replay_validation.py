@@ -52,6 +52,8 @@ def test_run_replay_validation_fetches_and_runs_selected_gates(monkeypatch, tmp_
     assert output["matched"] is True
     assert output["replay"].endswith("replay-123.json")
     assert output["config"]["execution_id"] == 123
+    assert output["artifacts"]["replay"].endswith("replay-123.json")
+    assert output["artifacts"]["report"].endswith("manifest.json")
     assert output["steps"][0]["stdout_json"] == {"ok": True}
     assert output["steps"][0]["duration_seconds"] == 0.01
     manifest_path = tmp_path / "reports" / "manifest.json"
@@ -130,6 +132,7 @@ def test_run_replay_validation_builds_live_checksums_from_rows(monkeypatch, tmp_
     assert any("live-checksums-123.json" in str(part) for call in calls for part in call)
     output = json.loads(capsys.readouterr().out)
     assert output["config"]["live_rows"] == str(live_rows_path)
+    assert output["artifacts"]["live_checksums"].endswith("live-checksums-123.json")
 
 
 def test_run_replay_validation_rejects_multiple_cutoffs(tmp_path: Path):
