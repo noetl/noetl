@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.51.0](https://github.com/noetl/noetl/compare/v2.50.0...v2.51.0) (2026-05-20)
+
+### Features
+
+* **core:** add noetl resource locator helper ([f7b0054](https://github.com/noetl/noetl/commit/f7b00547e5c09d435ee638d080c47b7dadbfdc73))
+* **worker:** label metrics with node identity ([ca429ec](https://github.com/noetl/noetl/commit/ca429ec5d6b204fd237346356cf407abaaff87d2))
+
 ## [2.50.0](https://github.com/noetl/noetl/compare/v2.49.0...v2.50.0) (2026-05-20)
 
 ### Features
