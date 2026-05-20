@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.63.0](https://github.com/noetl/noetl/compare/v2.62.0...v2.63.0) (2026-05-20)
+
+### Features
+
+* **replay:** add loop projection checksums ([da595b8](https://github.com/noetl/noetl/commit/da595b879ae260458d3dd1e2501d395c06f02e05))
+
 ## [2.62.0](https://github.com/noetl/noetl/compare/v2.61.0...v2.62.0) (2026-05-20)
 
 ### Features
