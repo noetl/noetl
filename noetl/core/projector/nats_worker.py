@@ -153,6 +153,7 @@ class NATSProjectorWorker:
             return "ack"
 
         try:
+            projection_group_count = _projection_group_count(events)
             written = await self.projector.project(events)
         except Exception:
             self.metrics.record_error()
@@ -163,6 +164,7 @@ class NATSProjectorWorker:
             projection_records=len(written),
             unowned_events=unowned_events,
             unshardable_events=unshardable_events,
+            stale_projection_records=max(0, projection_group_count - len(written)),
         )
         self.metrics.record_projection_checkpoints(written)
         logger.debug(
@@ -240,6 +242,26 @@ def _extract_events(notification: dict[str, Any]) -> list[dict[str, Any]]:
         return [dict(notification)]
 
     return []
+
+
+def _projection_group_count(events: Iterable[dict[str, Any]]) -> int:
+    groups: set[tuple[str, str, int]] = set()
+    for event in events:
+        execution_id = event.get("execution_id")
+        if execution_id is None:
+            continue
+        try:
+            parsed_execution_id = int(execution_id)
+        except (TypeError, ValueError):
+            continue
+        groups.add(
+            (
+                str(event.get("tenant_id") or "default"),
+                str(event.get("organization_id") or "default"),
+                parsed_execution_id,
+            )
+        )
+    return len(groups)
 
 
 def decode_projector_notification(payload: bytes) -> dict[str, Any]:

@@ -21,6 +21,7 @@ class ProjectorMetrics:
             "events_unowned_total": 0.0,
             "events_unshardable_total": 0.0,
             "projection_records_total": 0.0,
+            "projection_stale_records_total": 0.0,
             "empty_or_unowned_notifications_total": 0.0,
             "errors_total": 0.0,
             "last_success_unixtime": 0.0,
@@ -42,6 +43,7 @@ class ProjectorMetrics:
         projection_records: int,
         unowned_events: int = 0,
         unshardable_events: int = 0,
+        stale_projection_records: int = 0,
     ) -> None:
         now = time.time()
         with self._lock:
@@ -51,6 +53,7 @@ class ProjectorMetrics:
             self._values["events_unowned_total"] += float(max(0, unowned_events))
             self._values["events_unshardable_total"] += float(max(0, unshardable_events))
             self._values["projection_records_total"] += float(max(0, projection_records))
+            self._values["projection_stale_records_total"] += float(max(0, stale_projection_records))
             self._values["last_success_unixtime"] = now
             self._values["last_batch_events"] = float(max(0, owned_events))
             self._values["last_batch_projection_records"] = float(max(0, projection_records))
@@ -116,6 +119,12 @@ def render_projector_metrics(metrics: ProjectorMetrics, *, labels: Optional[Mapp
         "# HELP noetl_projector_projection_records_total Projection records written by this projector.",
         "# TYPE noetl_projector_projection_records_total counter",
         f"noetl_projector_projection_records_total{label_text} {snapshot['projection_records_total']}",
+        "# HELP noetl_projector_projection_stale_records_total Projection records skipped because a newer version already exists.",
+        "# TYPE noetl_projector_projection_stale_records_total counter",
+        (
+            "noetl_projector_projection_stale_records_total"
+            f"{label_text} {snapshot['projection_stale_records_total']}"
+        ),
         "# HELP noetl_projector_empty_or_unowned_notifications_total Notifications with no owned events.",
         "# TYPE noetl_projector_empty_or_unowned_notifications_total counter",
         (
