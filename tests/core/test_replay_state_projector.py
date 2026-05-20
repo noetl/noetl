@@ -376,6 +376,25 @@ def test_projector_notification_decoder_wraps_arrow_batches():
     assert [event["event_id"] for event in decoded["events"]] == [21, 22]
 
 
+def test_nats_projector_worker_records_decode_errors():
+    from noetl.core.projector.metrics import ProjectorMetrics
+    from noetl.core.projector.nats_worker import NATSProjectorWorker, ProjectorWorkerSettings
+
+    metrics = ProjectorMetrics()
+    worker = NATSProjectorWorker(
+        projection_store=_MemoryProjectionStore(),
+        settings=ProjectorWorkerSettings(),
+        metrics=metrics,
+    )
+
+    with pytest.raises(Exception):
+        worker._decode_notification(b"not-json-or-arrow")
+
+    snapshot = metrics.snapshot()
+    assert snapshot["decode_errors_total"] == 1
+    assert snapshot["last_error_unixtime"] > 0
+
+
 def test_projector_worker_settings_rejects_out_of_range_shard_id():
     from noetl.core.projector.nats_worker import ProjectorWorkerSettings
 

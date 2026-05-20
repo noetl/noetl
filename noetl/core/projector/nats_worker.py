@@ -130,7 +130,7 @@ class NATSProjectorWorker:
             max_ack_pending=self.settings.max_ack_pending,
             fetch_timeout=self.settings.fetch_timeout_seconds,
             fetch_heartbeat=self.settings.fetch_heartbeat_seconds,
-            message_decoder=decode_projector_notification,
+            message_decoder=self._decode_notification,
         )
         await self._subscriber.connect()
         logger.info(
@@ -145,6 +145,13 @@ class NATSProjectorWorker:
     async def close(self) -> None:
         if self._subscriber is not None:
             await self._subscriber.close()
+
+    def _decode_notification(self, payload: bytes) -> dict[str, Any]:
+        try:
+            return decode_projector_notification(payload)
+        except Exception:
+            self.metrics.record_decode_error()
+            raise
 
     async def handle_notification(self, notification: dict[str, Any]) -> str:
         """Project one NATS notification and return an ack action."""
