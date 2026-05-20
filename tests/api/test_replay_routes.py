@@ -413,3 +413,86 @@ def test_frame_projection_checksum_matches_live_rows_and_replayed_state():
         "media_type": "application/vnd.apache.arrow.stream",
         "ref": "noetl://execution/123/result/frame/abc",
     }
+
+
+def test_command_projection_checksum_matches_live_rows_and_replayed_state():
+    from noetl.server.api.replay import (
+        command_projection_checksum,
+        fold_replay_state,
+        normalize_live_command_projection,
+        normalize_replayed_command_projection,
+    )
+
+    events = [
+        {
+            "event_id": 20,
+            "event_type": "command.issued",
+            "status": "PENDING",
+            "command_id": 900,
+            "stage_id": 7,
+            "frame_id": 42,
+            "meta": {"parent_command_id": "899"},
+        },
+        {
+            "event_id": 21,
+            "event_type": "command.claimed",
+            "status": "CLAIMED",
+            "command_id": 900,
+            "stage_id": 7,
+            "frame_id": 42,
+            "worker_id": "worker-a",
+            "meta": {
+                "worker_id": "worker-a",
+                "worker_locator": "noetl://tenant/tenant-a/org/org-a/node/node-a/worker/worker-cpu-01",
+                "locality": {"node_id": "node-a"},
+                "source_locality": {"node_id": "node-a"},
+                "placement": {
+                    "distance": "node",
+                    "max_distance": "node",
+                    "within_max_distance": True,
+                },
+            },
+        },
+        {
+            "event_id": 22,
+            "event_type": "command.completed",
+            "status": "COMPLETED",
+            "command_id": 900,
+            "stage_id": 7,
+            "frame_id": 42,
+        },
+    ]
+    state = fold_replay_state(
+        events,
+        tenant_id="tenant-a",
+        organization_id="org-a",
+        execution_id=123,
+    )
+    live_rows = normalize_live_command_projection(
+        [
+            {
+                "command_id": 900,
+                "stage_id": 7,
+                "frame_id": 42,
+                "parent_command_id": "899",
+                "worker_id": "worker-a",
+                "worker_locator": "noetl://tenant/tenant-a/org/org-a/node/node-a/worker/worker-cpu-01",
+                "locality": {"node_id": "node-a"},
+                "source_locality": {"node_id": "node-a"},
+                "placement": {
+                    "distance": "node",
+                    "max_distance": "node",
+                    "within_max_distance": True,
+                },
+                "status": "COMPLETED",
+                "issued_event_id": 20,
+                "claimed_event_id": 21,
+                "started_event_id": None,
+                "terminal_event_id": 22,
+            }
+        ]
+    )
+    replayed_rows = normalize_replayed_command_projection(state)
+
+    assert replayed_rows == live_rows
+    assert command_projection_checksum(replayed_rows) == command_projection_checksum(live_rows)

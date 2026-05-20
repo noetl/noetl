@@ -608,6 +608,67 @@ def frame_projection_checksum(rows: Iterable[Mapping[str, Any]]) -> str:
     return _canonical_checksum({"frames": list(rows)})
 
 
+def _normalized_command_projection_row(row: Mapping[str, Any]) -> dict[str, Any]:
+    return {
+        "command_id": str(row.get("command_id")),
+        "stage_id": str(row.get("stage_id")) if row.get("stage_id") is not None else None,
+        "frame_id": str(row.get("frame_id")) if row.get("frame_id") is not None else None,
+        "parent_command_id": (
+            str(row.get("parent_command_id")) if row.get("parent_command_id") is not None else None
+        ),
+        "worker_id": str(row.get("worker_id")) if row.get("worker_id") is not None else None,
+        "worker_locator": (
+            str(row.get("worker_locator")) if row.get("worker_locator") is not None else None
+        ),
+        "locality": row.get("locality") or {},
+        "source_locality": row.get("source_locality") or {},
+        "placement": row.get("placement") or {},
+        "status": row.get("status"),
+        "issued_event_id": (
+            int(row.get("issued_event_id")) if row.get("issued_event_id") is not None else None
+        ),
+        "claimed_event_id": (
+            int(row.get("claimed_event_id")) if row.get("claimed_event_id") is not None else None
+        ),
+        "started_event_id": (
+            int(row.get("started_event_id")) if row.get("started_event_id") is not None else None
+        ),
+        "terminal_event_id": (
+            int(row.get("terminal_event_id")) if row.get("terminal_event_id") is not None else None
+        ),
+    }
+
+
+def normalize_live_command_projection(rows: Iterable[Mapping[str, Any]]) -> list[dict[str, Any]]:
+    return sorted(
+        (_normalized_command_projection_row(row) for row in rows),
+        key=lambda row: int(row["command_id"]),
+    )
+
+
+def normalize_replayed_command_projection(state: Mapping[str, Any]) -> list[dict[str, Any]]:
+    commands = state.get("commands")
+    if not isinstance(commands, Mapping):
+        return []
+    return sorted(
+        (
+            _normalized_command_projection_row(
+                {
+                    "command_id": command.get("command_id") or command_id,
+                    **command,
+                }
+            )
+            for command_id, command in commands.items()
+            if isinstance(command, Mapping)
+        ),
+        key=lambda row: int(row["command_id"]),
+    )
+
+
+def command_projection_checksum(rows: Iterable[Mapping[str, Any]]) -> str:
+    return _canonical_checksum({"commands": list(rows)})
+
+
 class ReplayService:
     """Read canonical events and fold replay state."""
 
