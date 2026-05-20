@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.58.0](https://github.com/noetl/noetl/compare/v2.57.0...v2.58.0) (2026-05-20)
+
+### Features
+
+* **frames:** record locality placement evaluation ([455a9b0](https://github.com/noetl/noetl/commit/455a9b088cc19b68eca5b12586d13e9f6812d510))
+
 ## [2.57.0](https://github.com/noetl/noetl/compare/v2.56.0...v2.57.0) (2026-05-20)
 
 ### Features
