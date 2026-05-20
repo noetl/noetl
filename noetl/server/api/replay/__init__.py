@@ -37,6 +37,8 @@ from .service import (
     projection_checksum_parity_report,
     replay_payload_references,
     replay_payload_resolution_summary,
+    replay_snapshot_is_compatible,
+    replay_snapshot_upcaster_registry_digest,
     resolve_replay_payload_references,
 )
 
@@ -75,5 +77,7 @@ __all__ = [
     "projection_checksum_parity_report",
     "replay_payload_references",
     "replay_payload_resolution_summary",
+    "replay_snapshot_is_compatible",
+    "replay_snapshot_upcaster_registry_digest",
     "resolve_replay_payload_references",
 ]

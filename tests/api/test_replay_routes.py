@@ -616,6 +616,79 @@ async def test_replay_service_uses_configured_event_reader():
 
 
 @pytest.mark.asyncio
+async def test_replay_service_ignores_snapshot_with_mismatched_upcaster_digest():
+    from noetl.core.replay import EventUpcasterRegistry
+    from noetl.server.api.replay import ReplayCutoff, ReplayService
+    from noetl.server.api.replay.service import ReplaySnapshotSeed, fold_replay_state
+
+    stale_state = fold_replay_state(
+        [
+            {
+                "event_id": 1,
+                "event_type": "execution.failed",
+                "status": "FAILED",
+                "execution_id": 123,
+            }
+        ],
+        tenant_id="tenant-a",
+        organization_id="org-a",
+        execution_id=123,
+        upcaster_registry_digest="stale-digest",
+    )
+
+    class _Reader:
+        def __init__(self):
+            self.after_event_id = None
+
+        async def load_snapshot_seed(self, **kwargs):
+            return ReplaySnapshotSeed(
+                aggregate_id="execution/123/all",
+                aggregate_type="replay_state",
+                version=1,
+                checksum=stale_state["checksum"],
+                state=stale_state,
+                meta={},
+            )
+
+        async def load_events(self, **kwargs):
+            self.after_event_id = kwargs["after_event_id"]
+            return [
+                {
+                    "event_id": 1,
+                    "event_type": "execution.started",
+                    "status": "RUNNING",
+                    "execution_id": kwargs["execution_id"],
+                },
+                {
+                    "event_id": 2,
+                    "event_type": "execution.completed",
+                    "status": "COMPLETED",
+                    "execution_id": kwargs["execution_id"],
+                },
+            ]
+
+    reader = _Reader()
+    registry = EventUpcasterRegistry()
+
+    state = await ReplayService.replay_state(
+        tenant_id="tenant-a",
+        organization_id="org-a",
+        execution_id=123,
+        cutoff=ReplayCutoff(),
+        projection="all",
+        limit=100,
+        event_reader=reader,
+        upcaster_registry=registry,
+    )
+
+    assert reader.after_event_id is None
+    assert "replay_snapshot" not in state
+    assert state["event_count"] == 2
+    assert state["execution"]["status"] == "COMPLETED"
+    assert state["upcaster_registry_digest"] == registry.digest()
+
+
+@pytest.mark.asyncio
 async def test_postgres_replay_reader_uses_snapshot_seed_for_time_cutoff(monkeypatch):
     import noetl.server.api.replay.event_reader as event_reader_module
 
