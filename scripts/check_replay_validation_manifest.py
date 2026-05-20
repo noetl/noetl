@@ -214,6 +214,29 @@ def _validate_manifest(
                     "reason": "live_rows_integrity must run before live_checksums",
                 }
             )
+    artifacts_index = artifacts.get("artifact_index") if isinstance(artifacts, dict) else None
+    if artifacts_index:
+        if "artifact_index" not in step_names:
+            failures.append(
+                {
+                    "field": "steps",
+                    "reason": "artifact index manifests require artifact_index step",
+                }
+            )
+        elif step_names.index("artifact_index") != len(step_names) - 1:
+            failures.append(
+                {
+                    "field": "steps",
+                    "reason": "artifact_index step must be last",
+                }
+            )
+    elif "artifact_index" in step_names:
+        failures.append(
+            {
+                "field": "artifacts.artifact_index",
+                "reason": "artifact_index step requires artifacts.artifact_index",
+            }
+        )
     for name in step_names:
         if name not in (*REQUIRED_STEP_ORDER, *OPTIONAL_STEP_NAMES, "fetch_artifact"):
             failures.append({"field": "steps", "reason": "unknown validation step", "step": name})
