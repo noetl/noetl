@@ -12,7 +12,12 @@ def _manifest(tmp_path: Path) -> dict:
         "started_at": "2026-05-20T00:00:00Z",
         "finished_at": "2026-05-20T00:00:01Z",
         "replay": str(replay),
-        "artifacts": {"replay": str(replay), "live_checksums": None, "report": None},
+        "artifacts": {
+            "replay": str(replay),
+            "live_rows": None,
+            "live_checksums": None,
+            "report": None,
+        },
         "config": {
             "base_url": "http://noetl.example",
             "execution_id": 123,
@@ -26,6 +31,7 @@ def _manifest(tmp_path: Path) -> dict:
             "resolve_payloads": False,
             "live_checksums": None,
             "live_rows": None,
+            "export_live_rows_postgres": False,
         },
         "steps": [
             {
@@ -44,6 +50,10 @@ def _manifest(tmp_path: Path) -> dict:
                 "duration_seconds": 0.1,
                 "stdout": "{}",
                 "stderr": "",
+            },
+            {
+                "name": "live_rows_export",
+                "skipped": True,
             },
             {"name": "projection_parity", "skipped": True},
             {"name": "payload_resolution", "skipped": True},
@@ -104,6 +114,18 @@ def test_check_replay_validation_manifest_rejects_missing_artifact(tmp_path: Pat
     assert main(["--manifest", str(path), "--check-artifacts"]) == 1
     output = json.loads(capsys.readouterr().out)
     assert output["failures"][0]["field"] == "artifacts.replay"
+
+
+def test_check_replay_validation_manifest_checks_live_rows_artifact(tmp_path: Path, capsys):
+    manifest = _manifest(tmp_path)
+    live_rows = tmp_path / "live-rows.json"
+    live_rows.write_text("{}")
+    manifest["artifacts"]["live_rows"] = str(live_rows)
+    path = tmp_path / "manifest.json"
+    path.write_text(json.dumps(manifest))
+
+    assert main(["--manifest", str(path), "--check-artifacts"]) == 0
+    assert json.loads(capsys.readouterr().out)["matched"] is True
 
 
 def test_check_replay_validation_manifest_rejects_multiple_live_inputs(tmp_path: Path, capsys):

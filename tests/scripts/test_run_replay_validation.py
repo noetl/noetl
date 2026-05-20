@@ -53,6 +53,7 @@ def test_run_replay_validation_fetches_and_runs_selected_gates(monkeypatch, tmp_
     assert output["replay"].endswith("replay-123.json")
     assert output["config"]["execution_id"] == 123
     assert output["artifacts"]["replay"].endswith("replay-123.json")
+    assert output["artifacts"]["live_rows"] is None
     assert output["artifacts"]["report"].endswith("manifest.json")
     assert output["steps"][0]["stdout_json"] == {"ok": True}
     assert output["steps"][0]["duration_seconds"] == 0.01
@@ -132,7 +133,66 @@ def test_run_replay_validation_builds_live_checksums_from_rows(monkeypatch, tmp_
     assert any("live-checksums-123.json" in str(part) for call in calls for part in call)
     output = json.loads(capsys.readouterr().out)
     assert output["config"]["live_rows"] == str(live_rows_path)
+    assert output["artifacts"]["live_rows"] == str(live_rows_path)
     assert output["artifacts"]["live_checksums"].endswith("live-checksums-123.json")
+
+
+def test_run_replay_validation_can_export_live_rows_from_postgres(monkeypatch, tmp_path: Path, capsys):
+    calls = []
+
+    def _run(command):
+        calls.append(command)
+        if any(str(part).endswith("fetch_replay_state_report.py") for part in command):
+            output_path = Path(command[command.index("--output") + 1])
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            output_path.write_text(json.dumps({"projection_checksums": {"execution": "a" * 64}}))
+        if any(str(part).endswith("export_live_projection_rows_postgres.py") for part in command):
+            output_path = Path(command[command.index("--output") + 1])
+            output_path.write_text(json.dumps({"rows": {"execution": []}}))
+        if any(str(part).endswith("build_live_projection_checksums.py") for part in command):
+            output_path = Path(command[command.index("--output") + 1])
+            output_path.write_text(json.dumps({"projection_checksums": {"execution": "a" * 64}}))
+        return 0, json.dumps({"ok": True}), "", 0.01
+
+    monkeypatch.setattr(run_replay_validation, "_run", _run)
+
+    assert (
+        run_replay_validation.main(
+            [
+                "--base-url",
+                "http://noetl.example",
+                "--execution-id",
+                "123",
+                "--tenant-id",
+                "tenant-a",
+                "--organization-id",
+                "org-a",
+                "--export-live-rows-postgres",
+                "--postgres-dsn",
+                "postgresql://example",
+                "--output-dir",
+                str(tmp_path),
+            ]
+        )
+        == 0
+    )
+
+    assert any("scripts/export_live_projection_rows_postgres.py" in call for call in calls)
+    export_call = next(
+        call for call in calls if "scripts/export_live_projection_rows_postgres.py" in call
+    )
+    assert "--dsn" in export_call
+    assert "postgresql://example" in export_call
+    output = json.loads(capsys.readouterr().out)
+    assert output["config"]["export_live_rows_postgres"] is True
+    assert output["artifacts"]["live_rows"].endswith("live-rows-123.json")
+    assert output["artifacts"]["live_checksums"].endswith("live-checksums-123.json")
+    assert [step["name"] for step in output["steps"][:4]] == [
+        "fetch",
+        "state_integrity",
+        "live_rows_export",
+        "live_checksums",
+    ]
 
 
 def test_run_replay_validation_rejects_multiple_cutoffs(tmp_path: Path):
@@ -169,6 +229,27 @@ def test_run_replay_validation_rejects_multiple_live_inputs(tmp_path: Path):
                 str(tmp_path / "live-checksums.json"),
                 "--live-rows",
                 str(tmp_path / "live-rows.json"),
+                "--export-live-rows-postgres",
+                "--output-dir",
+                str(tmp_path),
+            ]
+        )
+    except SystemExit as exc:
+        assert exc.code == 2
+    else:
+        raise AssertionError("expected parser error")
+
+
+def test_run_replay_validation_rejects_postgres_dsn_without_export(tmp_path: Path):
+    try:
+        run_replay_validation.main(
+            [
+                "--base-url",
+                "http://noetl.example",
+                "--execution-id",
+                "123",
+                "--postgres-dsn",
+                "postgresql://example",
                 "--output-dir",
                 str(tmp_path),
             ]

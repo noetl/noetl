@@ -20,7 +20,12 @@ REQUIRED_CONFIG_FIELDS = (
     "resolve_payloads",
 )
 REQUIRED_STEP_ORDER = ("fetch", "state_integrity")
-OPTIONAL_STEP_NAMES = ("live_checksums", "projection_parity", "payload_resolution")
+OPTIONAL_STEP_NAMES = (
+    "live_rows_export",
+    "live_checksums",
+    "projection_parity",
+    "payload_resolution",
+)
 
 
 def _load_manifest(path: Path) -> dict[str, Any]:

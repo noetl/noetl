@@ -43,6 +43,7 @@ def _build_report(
     args: argparse.Namespace,
     replay_path: Path,
     live_checksums_path: Path | None,
+    live_rows_path: Path | None,
     steps: list[dict[str, object]],
     started_at: str,
 ) -> dict[str, object]:
@@ -54,6 +55,7 @@ def _build_report(
         "replay": str(replay_path),
         "artifacts": {
             "replay": str(replay_path),
+            "live_rows": str(live_rows_path) if live_rows_path else None,
             "live_checksums": str(live_checksums_path) if live_checksums_path else None,
             "report": str(args.report_output) if args.report_output else None,
         },
@@ -70,6 +72,7 @@ def _build_report(
             "resolve_payloads": args.resolve_payloads,
             "live_checksums": str(args.live_checksums) if args.live_checksums else None,
             "live_rows": str(args.live_rows) if args.live_rows else None,
+            "export_live_rows_postgres": args.export_live_rows_postgres,
         },
         "steps": steps,
     }
@@ -106,6 +109,15 @@ def main(argv: list[str] | None = None) -> int:
         help="Optional adapter-exported live projection rows JSON; converted to live checksums before parity",
     )
     parser.add_argument(
+        "--export-live-rows-postgres",
+        action="store_true",
+        help="Export live rows from the reference Postgres adapter before parity",
+    )
+    parser.add_argument(
+        "--postgres-dsn",
+        help="Optional Postgres DSN for --export-live-rows-postgres; defaults to NoETL env",
+    )
+    parser.add_argument(
         "--report-output",
         type=Path,
         help="Optional path to write the validation run manifest JSON",
@@ -118,15 +130,31 @@ def main(argv: list[str] | None = None) -> int:
     )
     if cutoff_count > 1:
         parser.error("use only one replay cutoff")
-    if args.live_checksums and args.live_rows:
-        parser.error("use only one live parity input: --live-checksums or --live-rows")
+    live_input_count = sum(
+        1
+        for enabled in (
+            bool(args.live_checksums),
+            bool(args.live_rows),
+            bool(args.export_live_rows_postgres),
+        )
+        if enabled
+    )
+    if live_input_count > 1:
+        parser.error(
+            "use only one live parity input: --live-checksums, --live-rows, or --export-live-rows-postgres"
+        )
+    if args.postgres_dsn and not args.export_live_rows_postgres:
+        parser.error("--postgres-dsn requires --export-live-rows-postgres")
 
     started_at = _utc_now()
     output_dir = args.output_dir
     output_dir.mkdir(parents=True, exist_ok=True)
     replay_path = output_dir / f"replay-{args.execution_id}.json"
     live_checksums_path = args.live_checksums
-    if args.live_rows:
+    live_rows_path = args.live_rows
+    if args.export_live_rows_postgres:
+        live_rows_path = output_dir / f"live-rows-{args.execution_id}.json"
+    if live_rows_path:
         live_checksums_path = output_dir / f"live-checksums-{args.execution_id}.json"
     fetch_command = [
         sys.executable,
@@ -168,16 +196,36 @@ def main(argv: list[str] | None = None) -> int:
             ],
         ),
         (
+            "live_rows_export",
+            [
+                sys.executable,
+                "scripts/export_live_projection_rows_postgres.py",
+                "--execution-id",
+                str(args.execution_id),
+                "--tenant-id",
+                args.tenant_id,
+                "--organization-id",
+                args.organization_id,
+                "--projection",
+                args.projection,
+                "--output",
+                str(live_rows_path),
+            ]
+            + (["--dsn", args.postgres_dsn] if args.postgres_dsn else [])
+            if args.export_live_rows_postgres
+            else [],
+        ),
+        (
             "live_checksums",
             [
                 sys.executable,
                 "scripts/build_live_projection_checksums.py",
                 "--rows",
-                str(args.live_rows),
+                str(live_rows_path),
                 "--output",
                 str(live_checksums_path),
             ]
-            if args.live_rows
+            if live_rows_path
             else [],
         ),
         (
@@ -228,6 +276,7 @@ def main(argv: list[str] | None = None) -> int:
                     args=args,
                     replay_path=replay_path,
                     live_checksums_path=live_checksums_path,
+                    live_rows_path=live_rows_path,
                     steps=steps,
                     started_at=started_at,
                 ),
@@ -250,6 +299,7 @@ def main(argv: list[str] | None = None) -> int:
                     args=args,
                     replay_path=replay_path,
                     live_checksums_path=live_checksums_path,
+                    live_rows_path=live_rows_path,
                     steps=steps,
                     started_at=started_at,
                 ),
@@ -263,6 +313,7 @@ def main(argv: list[str] | None = None) -> int:
             args=args,
             replay_path=replay_path,
             live_checksums_path=live_checksums_path,
+            live_rows_path=live_rows_path,
             steps=steps,
             started_at=started_at,
         ),
