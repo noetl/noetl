@@ -44,13 +44,31 @@ def test_append_frame_backlog_metrics_exports_stage_and_total_gauges():
         lines,
         [
             {"stage_kind": "loop", "status": "PENDING", "count": 3},
-            {"stage_kind": "loop", "status": "RUNNING", "count": 2},
-            {"stage_kind": "reduce", "status": "PENDING", "count": 1},
+            {
+                "tenant_id": "tenant-a",
+                "organization_id": "org-a",
+                "stage_kind": "loop",
+                "status": "RUNNING",
+                "count": 2,
+            },
+            {
+                "tenant_id": "tenant-b",
+                "organization_id": "org-b",
+                "stage_kind": "reduce",
+                "status": "PENDING",
+                "count": 1,
+            },
         ],
     )
     body = "\n".join(lines)
 
+    assert (
+        "noetl_frame_backlog_detail_total"
+        "{organization_id=\"org-a\",stage_kind=\"loop\",status=\"RUNNING\",tenant_id=\"tenant-a\"} 2"
+        in body
+    )
     assert "noetl_frame_backlog_total{stage_kind=\"loop\",status=\"PENDING\"} 3" in body
+    assert "noetl_frame_backlog_total{stage_kind=\"loop\",status=\"RUNNING\"} 2" in body
     assert "noetl_frame_backlog_total{stage_kind=\"reduce\",status=\"PENDING\"} 1" in body
     assert "noetl_frame_backlog_total{stage_kind=\"all\",status=\"PENDING\"} 4" in body
     assert "noetl_frame_backlog_total{stage_kind=\"all\",status=\"all\"} 6" in body

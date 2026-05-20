@@ -42,18 +42,39 @@ def append_frame_backlog_metrics(
     lines: list[str],
     rows: list[Mapping[str, object]],
 ) -> None:
-    """Append frame backlog gauges grouped by status and stage kind."""
+    """Append global and tenant-scoped frame backlog gauges."""
     metric_name = "noetl_frame_backlog_total"
     lines.append("# HELP noetl_frame_backlog_total Worker-claimable frame backlog by stage kind and status")
     lines.append("# TYPE noetl_frame_backlog_total gauge")
+    detail_metric_name = "noetl_frame_backlog_detail_total"
+    lines.append(
+        "# HELP noetl_frame_backlog_detail_total Worker-claimable frame backlog by tenant, organization, stage kind, and status"
+    )
+    lines.append("# TYPE noetl_frame_backlog_detail_total gauge")
     totals_by_status: dict[str, int] = {}
+    totals_by_stage_status: dict[tuple[str, str], int] = {}
     total = 0
     for row in rows:
+        tenant_id = str(row.get("tenant_id") or "default")
+        organization_id = str(row.get("organization_id") or "default")
         stage_kind = str(row.get("stage_kind") or "unknown")
         status = str(row.get("status") or "unknown")
         count = int(row.get("count") or 0)
         total += count
         totals_by_status[status] = totals_by_status.get(status, 0) + count
+        stage_key = (stage_kind, status)
+        totals_by_stage_status[stage_key] = totals_by_stage_status.get(stage_key, 0) + count
+        detail_labels = _format_labels(
+            {
+                "tenant_id": tenant_id,
+                "organization_id": organization_id,
+                "stage_kind": stage_kind,
+                "status": status,
+            }
+        )
+        lines.append(f"{detail_metric_name}{detail_labels} {count}")
+
+    for (stage_kind, status), count in sorted(totals_by_stage_status.items()):
         labels = _format_labels({"stage_kind": stage_kind, "status": status})
         lines.append(f"{metric_name}{labels} {count}")
 

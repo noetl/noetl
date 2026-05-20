@@ -8,7 +8,7 @@ from noetl.core.common import get_async_db_connection
 
 
 async def collect_frame_backlog_snapshot() -> list[dict[str, Any]]:
-    """Return worker-claimable frame backlog grouped by stage kind and status.
+    """Return worker-claimable frame backlog grouped by tenant, stage kind, and status.
 
     This is the NoETL runtime boundary used by metrics and autoscaling. The
     current adapter reads the projection store; callers should not depend on
@@ -20,19 +20,26 @@ async def collect_frame_backlog_snapshot() -> list[dict[str, Any]]:
         async with conn.cursor() as cur:
             await cur.execute(
                 """
-                SELECT s.kind AS stage_kind, f.status, COUNT(*)::int AS count
+                SELECT
+                    f.tenant_id,
+                    f.organization_id,
+                    s.kind AS stage_kind,
+                    f.status,
+                    COUNT(*)::int AS count
                 FROM noetl.frame f
                 JOIN noetl.stage s ON s.stage_id = f.stage_id
                 WHERE f.status IN ('PENDING','CLAIMED','RUNNING')
-                GROUP BY s.kind, f.status
-                ORDER BY s.kind, f.status
+                GROUP BY f.tenant_id, f.organization_id, s.kind, f.status
+                ORDER BY f.tenant_id, f.organization_id, s.kind, f.status
                 """
             )
             return [
                 {
-                    "stage_kind": row[0],
-                    "status": row[1],
-                    "count": row[2],
+                    "tenant_id": row[0],
+                    "organization_id": row[1],
+                    "stage_kind": row[2],
+                    "status": row[3],
+                    "count": row[4],
                 }
                 for row in await cur.fetchall()
             ]
