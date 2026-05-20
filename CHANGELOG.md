@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.57.0](https://github.com/noetl/noetl/compare/v2.56.0...v2.57.0) (2026-05-20)
+
+### Features
+
+* **runtime:** add locality distance helper ([83cbeea](https://github.com/noetl/noetl/commit/83cbeea6ab7aec345858185d19d556736e1e02c7))
+
 ## [2.56.0](https://github.com/noetl/noetl/compare/v2.55.0...v2.56.0) (2026-05-20)
 
 ### Features
