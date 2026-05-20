@@ -63,6 +63,33 @@ def test_check_replay_state_report_rejects_state_checksum_drift(tmp_path: Path, 
     assert "checksum" in fields
 
 
+def test_check_replay_state_report_rejects_missing_required_fields(tmp_path: Path, capsys):
+    state = _replay_state()
+    state.pop("tenant_id")
+    state.pop("checksum")
+    path = tmp_path / "replay.json"
+    path.write_text(json.dumps(state))
+
+    assert main(["--report", str(path)]) == 1
+    output = json.loads(capsys.readouterr().out)
+    assert output["matched"] is False
+    fields = {failure["field"] for failure in output["failures"]}
+    assert {"tenant_id", "checksum"} <= fields
+
+
+def test_check_replay_state_report_requires_sha256_algorithm(tmp_path: Path, capsys):
+    state = _replay_state()
+    state["checksum_algorithm"] = "md5"
+    path = tmp_path / "replay.json"
+    path.write_text(json.dumps(state))
+
+    assert main(["--report", str(path)]) == 1
+    output = json.loads(capsys.readouterr().out)
+    assert output["matched"] is False
+    fields = {failure["field"] for failure in output["failures"]}
+    assert "checksum_algorithm" in fields
+
+
 def test_check_replay_state_report_rejects_inconsistent_snapshot(tmp_path: Path, capsys):
     base = _replay_state()
     seed = ReplaySnapshotSeed(
