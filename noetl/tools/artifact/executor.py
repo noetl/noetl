@@ -687,7 +687,7 @@ def _load_from_nats_kv(uri: str, context: Dict[str, Any]) -> Dict[str, Any]:
     import asyncio
 
     try:
-        from noetl.core.storage.backends import NATSKVBackend
+        from noetl.core.storage import get_backend
 
         # Parse URI
         # nats-kv://bucket/key
@@ -703,7 +703,7 @@ def _load_from_nats_kv(uri: str, context: Dict[str, Any]) -> Dict[str, Any]:
 
         logger.debug(f"Loading artifact from NATS KV: bucket={bucket}, key={key}")
 
-        backend = NATSKVBackend(bucket_name=bucket)
+        backend = get_backend("kv", bucket_name=bucket)
 
         # Run async get in sync context - always use asyncio.run() for thread safety
         data_bytes = asyncio.run(backend.get(key))
