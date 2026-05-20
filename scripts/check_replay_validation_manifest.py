@@ -82,6 +82,56 @@ def _is_projector_summary_step(name: str) -> bool:
     )
 
 
+def _is_worker_metrics_step(name: str) -> bool:
+    return (
+        name.startswith("worker_metrics_")
+        and (name.endswith("_integrity") or name.endswith("_fetch"))
+    )
+
+
+def _validate_artifact_list(
+    failures: list[dict[str, Any]],
+    *,
+    field: str,
+    value: Any,
+    manifest_path: Path | None,
+    check_artifacts: bool,
+) -> None:
+    if not isinstance(value, list):
+        failures.append({"field": field, "reason": "must be a list"})
+        return
+    for index, entry in enumerate(value):
+        if not isinstance(entry, dict):
+            failures.append(
+                {
+                    "field": f"{field}[{index}]",
+                    "reason": "must be an object",
+                }
+            )
+            continue
+        if not isinstance(entry.get("role"), str) or not entry.get("role"):
+            failures.append(
+                {
+                    "field": f"{field}[{index}].role",
+                    "reason": "must be a non-empty string",
+                }
+            )
+        _validate_artifact_path(
+            failures,
+            field=f"{field}[{index}].path",
+            value=entry.get("path"),
+            manifest_path=manifest_path,
+            check_artifacts=check_artifacts,
+        )
+        if "url" in entry and (not isinstance(entry.get("url"), str) or not entry.get("url")):
+            failures.append(
+                {
+                    "field": f"{field}[{index}].url",
+                    "reason": "must be a non-empty string when present",
+                }
+            )
+
+
 def _validate_manifest(
     manifest: dict[str, Any],
     *,
@@ -127,39 +177,22 @@ def _validate_manifest(
     elif isinstance(artifacts, dict):
         for field, value in artifacts.items():
             if field == "projector_summaries":
-                if not isinstance(value, list):
-                    failures.append({"field": "artifacts.projector_summaries", "reason": "must be a list"})
-                    continue
-                for index, entry in enumerate(value):
-                    if not isinstance(entry, dict):
-                        failures.append(
-                            {
-                                "field": f"artifacts.projector_summaries[{index}]",
-                                "reason": "must be an object",
-                            }
-                        )
-                        continue
-                    if not isinstance(entry.get("role"), str) or not entry.get("role"):
-                        failures.append(
-                            {
-                                "field": f"artifacts.projector_summaries[{index}].role",
-                                "reason": "must be a non-empty string",
-                            }
-                        )
-                    _validate_artifact_path(
-                        failures,
-                        field=f"artifacts.projector_summaries[{index}].path",
-                        value=entry.get("path"),
-                        manifest_path=manifest_path,
-                        check_artifacts=check_artifacts,
-                    )
-                    if "url" in entry and (not isinstance(entry.get("url"), str) or not entry.get("url")):
-                        failures.append(
-                            {
-                                "field": f"artifacts.projector_summaries[{index}].url",
-                                "reason": "must be a non-empty string when present",
-                            }
-                        )
+                _validate_artifact_list(
+                    failures,
+                    field="artifacts.projector_summaries",
+                    value=value,
+                    manifest_path=manifest_path,
+                    check_artifacts=check_artifacts,
+                )
+                continue
+            if field == "worker_metrics":
+                _validate_artifact_list(
+                    failures,
+                    field="artifacts.worker_metrics",
+                    value=value,
+                    manifest_path=manifest_path,
+                    check_artifacts=check_artifacts,
+                )
                 continue
             _validate_artifact_path(
                 failures,
@@ -287,6 +320,16 @@ def _validate_manifest(
                     "reason": "projector summary artifacts require matching integrity steps",
                 }
             )
+    worker_metrics = artifacts.get("worker_metrics") if isinstance(artifacts, dict) else None
+    if worker_metrics:
+        integrity_steps = [name for name in step_names if _is_worker_metrics_step(name) and name.endswith("_integrity")]
+        if len(integrity_steps) < len(worker_metrics):
+            failures.append(
+                {
+                    "field": "steps",
+                    "reason": "worker metrics artifacts require matching integrity steps",
+                }
+            )
     if artifacts_index:
         if "artifact_index" not in step_names:
             failures.append(
@@ -311,6 +354,8 @@ def _validate_manifest(
         )
     for name in step_names:
         if _is_projector_summary_step(name):
+            continue
+        if _is_worker_metrics_step(name):
             continue
         if name not in (*REQUIRED_STEP_ORDER, *OPTIONAL_STEP_NAMES, "fetch_artifact"):
             failures.append({"field": "steps", "reason": "unknown validation step", "step": name})

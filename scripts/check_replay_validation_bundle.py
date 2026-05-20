@@ -11,6 +11,7 @@ from typing import Any
 
 from scripts.check_projector_phase2_evidence import validate_projector_phase2_evidence
 from scripts.check_replay_validation_manifest import _load_manifest, _validate_manifest
+from scripts.check_worker_ipc_phase3_evidence import validate_worker_ipc_phase3_evidence
 from scripts.package_replay_validation_artifacts import (
     resolve_indexed_path,
     validate_artifact_index,
@@ -34,6 +35,7 @@ def validate_bundle(
     require_matched: bool = True,
     require_projector_phase2: bool = False,
     require_projection_parity: bool = False,
+    require_worker_ipc_phase3: bool = False,
 ) -> dict[str, Any]:
     failures: list[dict[str, Any]] = []
     manifest = _load_manifest(manifest_path)
@@ -66,6 +68,21 @@ def validate_bundle(
                     "field": "phase2_projector_evidence",
                     "reason": "Phase 2 projector evidence validation failed",
                     "failures": phase2_result.get("failures", []),
+                }
+            )
+    phase3_result: dict[str, Any] | None = None
+    if require_worker_ipc_phase3:
+        phase3_result = validate_worker_ipc_phase3_evidence(
+            manifest,
+            check_artifacts=True,
+            manifest_path=manifest_path,
+        )
+        if phase3_result.get("matched") is not True:
+            failures.append(
+                {
+                    "field": "phase3_worker_ipc_evidence",
+                    "reason": "Phase 3 worker IPC evidence validation failed",
+                    "failures": phase3_result.get("failures", []),
                 }
             )
 
@@ -131,6 +148,7 @@ def validate_bundle(
         "artifact_index": str(resolved_index_path) if resolved_index_path else None,
         "manifest_result": manifest_result,
         "phase2_projector_result": phase2_result,
+        "phase3_worker_ipc_result": phase3_result,
         "artifact_index_result": index_result,
         "failures": failures,
     }
@@ -151,6 +169,11 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="When requiring Phase 2 projector evidence, require projection parity to run",
     )
+    parser.add_argument(
+        "--require-worker-ipc-phase3",
+        action="store_true",
+        help="Require Phase 3 worker IPC metrics evidence in the manifest",
+    )
     args = parser.parse_args(argv)
 
     output = validate_bundle(
@@ -159,6 +182,7 @@ def main(argv: list[str] | None = None) -> int:
         require_matched=not args.allow_failed,
         require_projector_phase2=args.require_projector_phase2,
         require_projection_parity=args.require_projection_parity,
+        require_worker_ipc_phase3=args.require_worker_ipc_phase3,
     )
     print(json.dumps(output, indent=2, sort_keys=True))
     return 0 if output["matched"] else 1

@@ -364,6 +364,86 @@ def test_run_replay_validation_rejects_invalid_projector_summary_url(tmp_path: P
         raise AssertionError("expected parser error")
 
 
+def test_run_replay_validation_fetches_and_indexes_worker_metrics(
+    monkeypatch,
+    tmp_path: Path,
+    capsys,
+):
+    calls = []
+
+    def _run(command):
+        calls.append(command)
+        if any(str(part).endswith("fetch_replay_state_report.py") for part in command):
+            output_path = Path(command[command.index("--output") + 1])
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            output_path.write_text(json.dumps({"projection_checksums": {"execution": "a" * 64}}))
+        if any(str(part).endswith("fetch_worker_metrics.py") for part in command):
+            output_path = Path(command[command.index("--output") + 1])
+            output_path.write_text("noetl_worker_up 1\n")
+        if any(str(part).endswith("package_replay_validation_artifacts.py") for part in command):
+            artifact_args = [
+                command[idx + 1]
+                for idx, value in enumerate(command)
+                if value == "--artifact"
+            ]
+            assert any(arg.startswith("worker_metrics_url_1_worker-0=") for arg in artifact_args)
+            output_path = Path(command[command.index("--output") + 1])
+            output_path.write_text(json.dumps({"schema_version": 1, "matched": True, "artifacts": []}))
+        return 0, json.dumps({"ok": True}), "", 0.01
+
+    monkeypatch.setattr(run_replay_validation, "_run", _run)
+    manifest = tmp_path / "validation.json"
+    artifact_index = tmp_path / "artifact-index.json"
+
+    assert (
+        run_replay_validation.main(
+            [
+                "--base-url",
+                "http://noetl.example",
+                "--execution-id",
+                "123",
+                "--worker-metrics-url",
+                "worker-0=http://worker-0.example:9091",
+                "--output-dir",
+                str(tmp_path),
+                "--report-output",
+                str(manifest),
+                "--artifact-index-output",
+                str(artifact_index),
+            ]
+        )
+        == 0
+    )
+
+    assert any("scripts/fetch_worker_metrics.py" in call for call in calls)
+    assert any("scripts/check_worker_ipc_metrics.py" in call for call in calls)
+    output = json.loads(capsys.readouterr().out)
+    metrics = output["artifacts"]["worker_metrics"]
+    assert metrics[0]["role"] == "worker_metrics_url_1_worker-0"
+    assert metrics[0]["url"] == "http://worker-0.example:9091"
+    assert metrics[0]["path"].endswith("worker_metrics_url_1_worker-0.prom")
+
+
+def test_run_replay_validation_rejects_invalid_worker_metrics_url(tmp_path: Path):
+    try:
+        run_replay_validation.main(
+            [
+                "--base-url",
+                "http://noetl.example",
+                "--execution-id",
+                "123",
+                "--worker-metrics-url",
+                "http://worker.example",
+                "--output-dir",
+                str(tmp_path),
+            ]
+        )
+    except SystemExit as exc:
+        assert exc.code == 2
+    else:
+        raise AssertionError("expected parser error")
+
+
 def test_run_replay_validation_rejects_multiple_cutoffs(tmp_path: Path):
     try:
         run_replay_validation.main(
