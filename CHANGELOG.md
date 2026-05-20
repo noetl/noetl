@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.53.0](https://github.com/noetl/noetl/compare/v2.52.0...v2.53.0) (2026-05-20)
+
+### Features
+
+* **dsl:** render loop max in flight ([865ec7d](https://github.com/noetl/noetl/commit/865ec7d5c4df501a7f4fbd4e66faac3792fab074))
+
 ## [2.52.0](https://github.com/noetl/noetl/compare/v2.51.0...v2.52.0) (2026-05-20)
 
 ### Features
