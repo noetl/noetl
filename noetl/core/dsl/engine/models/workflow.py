@@ -93,9 +93,12 @@ class LoopSpec(BaseModel):
         default="sequential",
         description="Execution mode: sequential, parallel, or cursor"
     )
-    max_in_flight: Optional[int] = Field(
+    max_in_flight: Optional[Union[int, str]] = Field(
         None,
-        description="Maximum concurrent iterations (parallel) / workers (cursor)"
+        description=(
+            "Maximum concurrent iterations (parallel) / workers (cursor). "
+            "May be an integer or a renderable expression resolved before dispatch."
+        )
     )
     policy: Optional[LoopPolicy] = Field(
         None,

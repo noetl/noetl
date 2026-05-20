@@ -5,9 +5,10 @@ from .outbox import drain_executor_outbox, enqueue_executor_outbox
 from .state import ExecutionState
 from .store import PlaybookRepo, StateStore
 from noetl.core.event_store.ports import canonical_event_checksum
+from noetl.core.dsl.render import render_template
 
 class TransitionMixin:
-    def _get_loop_max_in_flight(self, step: Step) -> int:
+    def _get_loop_max_in_flight(self, step: Step, context: dict[str, Any] | None = None) -> int:
         """Resolve max in-flight limit for loop scheduling.
 
         For cursor loops max_in_flight is the worker concurrency — the
@@ -20,8 +21,30 @@ class TransitionMixin:
         if loop_mode not in ("parallel", "cursor"):
             return 1
         if step.loop.spec and step.loop.spec.max_in_flight:
-            return max(1, int(step.loop.spec.max_in_flight))
+            return self._coerce_loop_max_in_flight(step.loop.spec.max_in_flight, context=context)
         return 1
+
+    def _coerce_loop_max_in_flight(self, raw_value: Any, context: dict[str, Any] | None = None) -> int:
+        rendered_value = raw_value
+        if isinstance(raw_value, str):
+            candidate = raw_value.strip()
+            if "{{" in candidate or "{%" in candidate:
+                if context is None:
+                    raise ValueError("loop.spec.max_in_flight template requires render context")
+                rendered_value = render_template(self.jinja_env, candidate, context)
+            else:
+                rendered_value = candidate
+        try:
+            value = int(rendered_value)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(
+                f"loop.spec.max_in_flight must render to a positive integer, got {rendered_value!r}"
+            ) from exc
+        if value < 1:
+            raise ValueError(
+                f"loop.spec.max_in_flight must render to a positive integer, got {rendered_value!r}"
+            )
+        return value
 
     async def _issue_cursor_loop_commands(
         self,
@@ -58,7 +81,13 @@ class TransitionMixin:
             # Workers self-continue; nothing to re-dispatch.
             return []
 
-        worker_count = self._get_loop_max_in_flight(step_def)
+        base_context = state.get_render_context(Event(
+            execution_id=state.execution_id,
+            step=step_def.step,
+            name="cursor_loop_init",
+            payload={},
+        ))
+        worker_count = self._get_loop_max_in_flight(step_def, base_context)
         loop_event_id = f"loop_{state.execution_id}_{int(time.time() * 1_000_000)}"
         if existing_loop_state:
             del state.loop_state[step_def.step]
@@ -134,12 +163,6 @@ class TransitionMixin:
             )
         except Exception as _e:
             logger.info("[DIAG-DISPATCH] failed: %s", _e)
-        base_context = state.get_render_context(Event(
-            execution_id=state.execution_id,
-            step=step_def.step,
-            name="cursor_loop_init",
-            payload={},
-        ))
         max_frame_rows = max(1, int((frame_policy or {}).get("max_rows") or 1))
         base_context["__frame_max_rows"] = max_frame_rows
         base_context["__frame_policy"] = frame_policy or {}
@@ -540,7 +563,7 @@ class TransitionMixin:
                     str(state.execution_id), step_def.step, loop_event_id, collection
                 )
 
-        issue_budget = self._get_loop_max_in_flight(step_def)
+        issue_budget = self._get_loop_max_in_flight(step_def, context)
         commands: list[Command] = []
         shared_control_args = dict(step_input)
         shared_control_args["__base_context"] = context

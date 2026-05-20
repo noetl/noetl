@@ -810,9 +810,10 @@ class EventHandlingMixin:
                             # slot per worker).  Recover size from the step
                             # spec instead of trying to re-render loop.in_.
                             if parent_step_def.loop and parent_step_def.loop.is_cursor:
-                                worker_count_fallback = 1
-                                if parent_step_def.loop.spec and parent_step_def.loop.spec.max_in_flight:
-                                    worker_count_fallback = max(1, int(parent_step_def.loop.spec.max_in_flight))
+                                worker_count_fallback = self._get_loop_max_in_flight(
+                                    parent_step_def,
+                                    state.get_render_context(event),
+                                )
                                 collection_size = worker_count_fallback
                                 loop_state["collection_size"] = collection_size
                                 logger.info(
@@ -1460,9 +1461,10 @@ class EventHandlingMixin:
                     if collection_size == 0:
                         if step_def.loop and step_def.loop.is_cursor:
                             # Cursor loops: collection_size == worker concurrency.
-                            worker_count_fallback = 1
-                            if step_def.loop.spec and step_def.loop.spec.max_in_flight:
-                                worker_count_fallback = max(1, int(step_def.loop.spec.max_in_flight))
+                            worker_count_fallback = self._get_loop_max_in_flight(
+                                step_def,
+                                state.get_render_context(event),
+                            )
                             collection_size = worker_count_fallback
                             loop_state["collection_size"] = collection_size
                             logger.info(
@@ -1865,9 +1867,10 @@ class EventHandlingMixin:
                             # Cursor loops: collection is synthetic (one
                             # slot per worker); there is no loop.in_ to
                             # render.  Rebuild the synthetic collection.
-                            worker_count_fallback = 1
-                            if step_def.loop.spec and step_def.loop.spec.max_in_flight:
-                                worker_count_fallback = max(1, int(step_def.loop.spec.max_in_flight))
+                            worker_count_fallback = self._get_loop_max_in_flight(
+                                step_def,
+                                state.get_render_context(event),
+                            )
                             collection = list(range(worker_count_fallback))
                             loop_state["collection"] = collection
                             logger.info(
