@@ -220,6 +220,48 @@ def test_projector_metrics_export_projection_checkpoint_gauges():
     assert "noetl_projector_max_projection_lag_milliseconds 2000.0" in body
 
 
+def test_projector_metrics_summary_combines_current_runtime_state():
+    from noetl.core.projector.metrics import ProjectorMetrics
+
+    metrics = ProjectorMetrics()
+    metrics.record_notification(
+        extracted_events=4,
+        owned_events=3,
+        unowned_events=1,
+        projection_records=2,
+        stale_projection_records=1,
+    )
+    metrics.record_message_action("ack", None)
+    metrics.record_decode_error()
+    metrics.record_projection_checkpoints(
+        [
+            SimpleNamespace(
+                source_event_id=41,
+                meta={
+                    "event_time_watermark": "2026-05-18T18:00:00Z",
+                    "projected_at": "2026-05-18T18:00:01Z",
+                    "projection_lag_ms": 1000,
+                },
+            )
+        ]
+    )
+
+    summary = metrics.summary()
+    assert summary["notifications_total"] == 1
+    assert summary["last_success_unixtime"] > 0
+    assert summary["last_error_unixtime"] > 0
+    assert summary["last_projection_source_event_id"] == 41
+    assert summary["last_projection_lag_milliseconds"] == 1000
+    assert summary["max_projection_lag_milliseconds"] == 1000
+    assert summary["actions"]["actions_total"] == 1
+    assert summary["actions"]["ack_ratio"] == 1.0
+    assert summary["batch"]["owned_events"] == 3
+    assert summary["batch"]["owned_ratio"] == 0.75
+    assert summary["batch"]["stale_projection_ratio"] == 0.5
+    assert summary["errors"]["errors_total"] == 1
+    assert summary["errors"]["decode_error_ratio"] == 1.0
+
+
 def test_projector_metrics_server_exposes_metrics_and_health():
     from noetl.core.projector.metrics import ProjectorMetrics, start_projector_metrics_server
 
