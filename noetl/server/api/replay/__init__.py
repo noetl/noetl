@@ -1,6 +1,7 @@
 """Replay API for deterministic event-sourced state reconstruction."""
 
 from .endpoint import router
+from .event_reader import PostgresReplayEventReader, ReplayEventReader
 from .service import (
     ReplayCutoff,
     ReplayService,
@@ -30,6 +31,8 @@ from .service import (
 
 __all__ = [
     "router",
+    "PostgresReplayEventReader",
+    "ReplayEventReader",
     "ReplayCutoff",
     "ReplayService",
     "business_object_projection_checksum",
