@@ -14,6 +14,8 @@ fi
   tests/core/test_replay_payload_resolver.py \
   tests/scripts/test_fetch_replay_state_report.py \
   tests/scripts/test_run_replay_validation.py \
+  tests/scripts/test_run_projector_phase2_validation.py \
+  tests/scripts/test_render_projector_phase2_command.py \
   tests/scripts/test_export_live_projection_rows_postgres.py \
   tests/scripts/test_check_live_projection_rows.py \
   tests/scripts/test_package_replay_validation_artifacts.py \
