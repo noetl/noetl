@@ -143,19 +143,37 @@ class ProjectorMetrics:
 
     def action_summary(self) -> dict[str, float]:
         with self._lock:
-            acknowledged = self._values["acknowledged_notifications_total"]
-            redelivery = self._values["redelivery_requests_total"]
-            terminated = self._values["terminated_notifications_total"]
-            total = acknowledged + redelivery + terminated
+            return _action_summary(self._values)
+
+    def batch_summary(self) -> dict[str, float]:
+        with self._lock:
+            return _batch_summary(self._values)
+
+    def error_summary(self) -> dict[str, float]:
+        with self._lock:
+            return _error_summary(self._values)
+
+    def summary(self) -> dict[str, Any]:
+        with self._lock:
+            action_summary = _action_summary(self._values)
+            batch_summary = _batch_summary(self._values)
+            error_summary = _error_summary(self._values)
             return {
-                "actions_total": total,
-                "acknowledged_notifications_total": acknowledged,
-                "redelivery_requests_total": redelivery,
-                "delayed_redelivery_requests_total": self._values["delayed_redelivery_requests_total"],
-                "terminated_notifications_total": terminated,
-                "ack_ratio": acknowledged / total if total else 0.0,
-                "redelivery_ratio": redelivery / total if total else 0.0,
-                "termination_ratio": terminated / total if total else 0.0,
+                "notifications_total": self._values["notifications_total"],
+                "last_success_unixtime": self._values["last_success_unixtime"],
+                "last_error_unixtime": self._values["last_error_unixtime"],
+                "last_projection_source_event_id": self._values["last_projection_source_event_id"],
+                "last_projection_event_time_watermark_unixtime": self._values[
+                    "last_projection_event_time_watermark_unixtime"
+                ],
+                "last_projection_projected_at_unixtime": self._values[
+                    "last_projection_projected_at_unixtime"
+                ],
+                "last_projection_lag_milliseconds": self._values["last_projection_lag_milliseconds"],
+                "max_projection_lag_milliseconds": self._values["max_projection_lag_milliseconds"],
+                "actions": action_summary,
+                "batch": batch_summary,
+                "errors": error_summary,
             }
 
 
@@ -345,6 +363,63 @@ def _format_labels(labels: Mapping[str, str]) -> str:
 
 def _escape_label(value: str) -> str:
     return str(value).replace("\\", "\\\\").replace("\n", "\\n").replace('"', '\\"')
+
+
+def _action_summary(values: Mapping[str, float]) -> dict[str, float]:
+    acknowledged = values["acknowledged_notifications_total"]
+    redelivery = values["redelivery_requests_total"]
+    terminated = values["terminated_notifications_total"]
+    total = acknowledged + redelivery + terminated
+    return {
+        "actions_total": total,
+        "acknowledged_notifications_total": acknowledged,
+        "redelivery_requests_total": redelivery,
+        "delayed_redelivery_requests_total": values["delayed_redelivery_requests_total"],
+        "terminated_notifications_total": terminated,
+        "ack_ratio": _safe_ratio(acknowledged, total),
+        "redelivery_ratio": _safe_ratio(redelivery, total),
+        "termination_ratio": _safe_ratio(terminated, total),
+    }
+
+
+def _batch_summary(values: Mapping[str, float]) -> dict[str, float]:
+    extracted = values["last_batch_extracted_events"]
+    owned = values["last_batch_events"]
+    unowned = values["last_batch_unowned_events"]
+    unshardable = values["last_batch_unshardable_events"]
+    projection_records = values["last_batch_projection_records"]
+    stale_projection_records = values["last_batch_stale_projection_records"]
+    return {
+        "extracted_events": extracted,
+        "owned_events": owned,
+        "unowned_events": unowned,
+        "unshardable_events": unshardable,
+        "projection_records": projection_records,
+        "stale_projection_records": stale_projection_records,
+        "owned_ratio": _safe_ratio(owned, extracted),
+        "unowned_ratio": _safe_ratio(unowned, extracted),
+        "unshardable_ratio": _safe_ratio(unshardable, extracted),
+        "projection_record_ratio": _safe_ratio(projection_records, owned),
+        "stale_projection_ratio": _safe_ratio(stale_projection_records, projection_records),
+    }
+
+
+def _error_summary(values: Mapping[str, float]) -> dict[str, float]:
+    errors = values["errors_total"]
+    decode_errors = values["decode_errors_total"]
+    projection_errors = values["projection_errors_total"]
+    return {
+        "errors_total": errors,
+        "decode_errors_total": decode_errors,
+        "projection_errors_total": projection_errors,
+        "decode_error_ratio": _safe_ratio(decode_errors, errors),
+        "projection_error_ratio": _safe_ratio(projection_errors, errors),
+        "last_error_unixtime": values["last_error_unixtime"],
+    }
+
+
+def _safe_ratio(numerator: float, denominator: float) -> float:
+    return numerator / denominator if denominator else 0.0
 
 
 def _coerce_float(value: Any) -> Optional[float]:
