@@ -42,6 +42,7 @@ def _build_report(
     matched: bool,
     args: argparse.Namespace,
     replay_path: Path,
+    live_checksums_path: Path | None,
     steps: list[dict[str, object]],
     started_at: str,
 ) -> dict[str, object]:
@@ -51,6 +52,11 @@ def _build_report(
         "started_at": started_at,
         "finished_at": finished_at,
         "replay": str(replay_path),
+        "artifacts": {
+            "replay": str(replay_path),
+            "live_checksums": str(live_checksums_path) if live_checksums_path else None,
+            "report": str(args.report_output) if args.report_output else None,
+        },
         "config": {
             "base_url": args.base_url,
             "execution_id": args.execution_id,
@@ -221,6 +227,7 @@ def main(argv: list[str] | None = None) -> int:
                     matched=False,
                     args=args,
                     replay_path=replay_path,
+                    live_checksums_path=live_checksums_path,
                     steps=steps,
                     started_at=started_at,
                 ),
@@ -242,6 +249,7 @@ def main(argv: list[str] | None = None) -> int:
                     matched=False,
                     args=args,
                     replay_path=replay_path,
+                    live_checksums_path=live_checksums_path,
                     steps=steps,
                     started_at=started_at,
                 ),
@@ -254,6 +262,7 @@ def main(argv: list[str] | None = None) -> int:
             matched=True,
             args=args,
             replay_path=replay_path,
+            live_checksums_path=live_checksums_path,
             steps=steps,
             started_at=started_at,
         ),
