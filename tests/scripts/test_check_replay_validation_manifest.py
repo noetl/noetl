@@ -17,6 +17,7 @@ def _manifest(tmp_path: Path) -> dict:
             "live_rows": None,
             "live_checksums": None,
             "report": None,
+            "artifact_index": None,
         },
         "config": {
             "base_url": "http://noetl.example",
