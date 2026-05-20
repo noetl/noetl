@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.85.0](https://github.com/noetl/noetl/compare/v2.84.0...v2.85.0) (2026-05-20)
+
+### Features
+
+* **projector:** enable local phase2 e2e validation ([b23710a](https://github.com/noetl/noetl/commit/b23710a8b929d1ea3cce71e576223860889f6f55))
+
 ## [2.84.0](https://github.com/noetl/noetl/compare/v2.83.0...v2.84.0) (2026-05-20)
 
 ### Features
