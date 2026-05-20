@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.73.0](https://github.com/noetl/noetl/compare/v2.72.0...v2.73.0) (2026-05-20)
+
+### Features
+
+* **projector:** enforce strict settings loaders ([ca4bafd](https://github.com/noetl/noetl/commit/ca4bafdbf1e3a1ffb3b23d2bb61c96c3c85d6c71))
+
 ## [2.72.0](https://github.com/noetl/noetl/compare/v2.71.0...v2.72.0) (2026-05-20)
 
 ### Features
