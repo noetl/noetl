@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.77.0](https://github.com/noetl/noetl/compare/v2.76.0...v2.77.0) (2026-05-20)
+
+### Features
+
+* **projector:** include decode failures in aggregate errors ([c46a8ca](https://github.com/noetl/noetl/commit/c46a8ca65a4c7f777a80567fef708a77a3014830))
+
 ## [2.76.0](https://github.com/noetl/noetl/compare/v2.75.0...v2.76.0) (2026-05-20)
 
 ### Features
