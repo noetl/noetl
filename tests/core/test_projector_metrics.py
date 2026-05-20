@@ -42,8 +42,25 @@ def test_projector_metrics_render_prometheus_labels():
     assert "noetl_projector_events_unshardable_total" in body
     assert "noetl_projector_projection_records_total" in body
     assert "noetl_projector_projection_stale_records_total" in body
+    assert "noetl_projector_projection_errors_total" in body
     assert "noetl_projector_decode_errors_total" in body
     assert " 1.0" in body
+
+
+def test_projector_metrics_record_projection_errors():
+    from noetl.core.projector.metrics import ProjectorMetrics, render_projector_metrics
+
+    metrics = ProjectorMetrics()
+    metrics.record_error()
+
+    snapshot = metrics.snapshot()
+    assert snapshot["errors_total"] == 1
+    assert snapshot["projection_errors_total"] == 1
+    assert snapshot["last_error_unixtime"] > 0
+
+    body = render_projector_metrics(metrics)
+    assert "noetl_projector_errors_total 1.0" in body
+    assert "noetl_projector_projection_errors_total 1.0" in body
 
 
 def test_projector_metrics_record_decode_errors():

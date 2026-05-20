@@ -33,6 +33,11 @@ class _SchemaLimitedProjectionStore(_MemoryProjectionStore):
         raise pg_errors.InsufficientPrivilege("must be owner of table projection")
 
 
+class _FailingProjectionStore(_MemoryProjectionStore):
+    async def save_projection(self, record):
+        raise RuntimeError("projection write failed")
+
+
 @pytest.mark.asyncio
 async def test_replay_state_projector_writes_grouped_projection_records():
     from noetl.core.projector import ReplayStateProjector
@@ -285,6 +290,38 @@ async def test_nats_projector_worker_counts_stale_projection_writes():
     assert snapshot["projection_records_total"] == 1
     assert snapshot["projection_stale_records_total"] == 1
     assert store.records["execution/7/all"].version == 3
+
+
+@pytest.mark.asyncio
+async def test_nats_projector_worker_counts_projection_errors():
+    from noetl.core.projector.metrics import ProjectorMetrics
+    from noetl.core.projector.nats_worker import NATSProjectorWorker, ProjectorWorkerSettings
+
+    metrics = ProjectorMetrics()
+    worker = NATSProjectorWorker(
+        projection_store=_FailingProjectionStore(),
+        settings=ProjectorWorkerSettings(shard_count=1),
+        metrics=metrics,
+    )
+
+    with pytest.raises(RuntimeError, match="projection write failed"):
+        await worker.handle_notification(
+            {
+                "event": {
+                    "event_id": 40,
+                    "stream_version": 1,
+                    "tenant_id": "tenant-a",
+                    "organization_id": "org-a",
+                    "execution_id": 7,
+                    "event_type": "workflow.completed",
+                }
+            }
+        )
+
+    snapshot = metrics.snapshot()
+    assert snapshot["errors_total"] == 1
+    assert snapshot["projection_errors_total"] == 1
+    assert snapshot["decode_errors_total"] == 0
 
 
 @pytest.mark.asyncio
