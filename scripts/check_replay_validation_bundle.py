@@ -9,6 +9,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
+from scripts.check_projector_phase2_evidence import validate_projector_phase2_evidence
 from scripts.check_replay_validation_manifest import _load_manifest, _validate_manifest
 from scripts.package_replay_validation_artifacts import (
     resolve_indexed_path,
@@ -31,6 +32,8 @@ def validate_bundle(
     manifest_path: Path,
     artifact_index_path: Path | None = None,
     require_matched: bool = True,
+    require_projector_phase2: bool = False,
+    require_projection_parity: bool = False,
 ) -> dict[str, Any]:
     failures: list[dict[str, Any]] = []
     manifest = _load_manifest(manifest_path)
@@ -49,6 +52,22 @@ def validate_bundle(
                 "failures": manifest_result.get("failures", []),
             }
         )
+    phase2_result: dict[str, Any] | None = None
+    if require_projector_phase2:
+        phase2_result = validate_projector_phase2_evidence(
+            manifest,
+            require_projection_parity=require_projection_parity,
+            check_artifacts=True,
+            manifest_path=manifest_path,
+        )
+        if phase2_result.get("matched") is not True:
+            failures.append(
+                {
+                    "field": "phase2_projector_evidence",
+                    "reason": "Phase 2 projector evidence validation failed",
+                    "failures": phase2_result.get("failures", []),
+                }
+            )
 
     manifest_index = _artifact_index_from_manifest(manifest)
     if artifact_index_path is None:
@@ -111,6 +130,7 @@ def validate_bundle(
         "manifest": str(manifest_path),
         "artifact_index": str(resolved_index_path) if resolved_index_path else None,
         "manifest_result": manifest_result,
+        "phase2_projector_result": phase2_result,
         "artifact_index_result": index_result,
         "failures": failures,
     }
@@ -121,12 +141,24 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--manifest", required=True, type=Path)
     parser.add_argument("--artifact-index", type=Path)
     parser.add_argument("--allow-failed", action="store_true", help="Allow matched=false manifests")
+    parser.add_argument(
+        "--require-projector-phase2",
+        action="store_true",
+        help="Require Phase 2 projector summary evidence in the manifest",
+    )
+    parser.add_argument(
+        "--require-projection-parity",
+        action="store_true",
+        help="When requiring Phase 2 projector evidence, require projection parity to run",
+    )
     args = parser.parse_args(argv)
 
     output = validate_bundle(
         manifest_path=args.manifest,
         artifact_index_path=args.artifact_index,
         require_matched=not args.allow_failed,
+        require_projector_phase2=args.require_projector_phase2,
+        require_projection_parity=args.require_projection_parity,
     )
     print(json.dumps(output, indent=2, sort_keys=True))
     return 0 if output["matched"] else 1
