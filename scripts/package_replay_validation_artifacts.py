@@ -126,6 +126,20 @@ def validate_artifact_index(index_path: Path) -> dict[str, Any]:
         failures.append({"field": "schema_version", "reason": f"must be {INDEX_SCHEMA_VERSION}"})
     if not isinstance(index.get("generated_at"), str) or not index.get("generated_at"):
         failures.append({"field": "generated_at", "reason": "must be a non-empty string"})
+    if index.get("path_base") not in (None, "artifact_index_dir"):
+        failures.append({"field": "path_base", "reason": "must be artifact_index_dir when present"})
+
+    indexed_manifest = index.get("manifest")
+    if not isinstance(indexed_manifest, str) or not indexed_manifest:
+        failures.append({"field": "manifest", "reason": "must be a non-empty string"})
+    elif not resolve_indexed_path(indexed_manifest, index_path=index_path).exists():
+        failures.append(
+            {
+                "field": "manifest",
+                "reason": "manifest path does not exist",
+                "path": indexed_manifest,
+            }
+        )
 
     artifacts = index.get("artifacts")
     if not isinstance(artifacts, list):

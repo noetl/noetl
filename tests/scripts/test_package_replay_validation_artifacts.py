@@ -118,12 +118,16 @@ def test_package_replay_validation_artifacts_rejects_missing_required_role(
     tmp_path: Path,
     capsys,
 ):
+    manifest = tmp_path / "validation.json"
+    manifest.write_text("{}")
     output = tmp_path / "artifact-index.json"
     output.write_text(
         json.dumps(
             {
                 "schema_version": 1,
                 "generated_at": "2026-05-20T00:00:00Z",
+                "path_base": "artifact_index_dir",
+                "manifest": "validation.json",
                 "artifacts": [],
             }
         )
@@ -132,6 +136,52 @@ def test_package_replay_validation_artifacts_rejects_missing_required_role(
     assert main(["--check", str(output)]) == 1
     result = json.loads(capsys.readouterr().out)
     assert any(failure.get("role") == "manifest" for failure in result["failures"])
+
+
+def test_package_replay_validation_artifacts_rejects_missing_manifest_pointer(
+    tmp_path: Path,
+    capsys,
+):
+    output = tmp_path / "artifact-index.json"
+    output.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "generated_at": "2026-05-20T00:00:00Z",
+                "path_base": "artifact_index_dir",
+                "manifest": "missing-validation.json",
+                "artifacts": [],
+            }
+        )
+    )
+
+    assert main(["--check", str(output)]) == 1
+    result = json.loads(capsys.readouterr().out)
+    assert any(failure["field"] == "manifest" for failure in result["failures"])
+
+
+def test_package_replay_validation_artifacts_rejects_unknown_path_base(
+    tmp_path: Path,
+    capsys,
+):
+    manifest = tmp_path / "validation.json"
+    manifest.write_text("{}")
+    output = tmp_path / "artifact-index.json"
+    output.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "generated_at": "2026-05-20T00:00:00Z",
+                "path_base": "cwd",
+                "manifest": "validation.json",
+                "artifacts": [],
+            }
+        )
+    )
+
+    assert main(["--check", str(output)]) == 1
+    result = json.loads(capsys.readouterr().out)
+    assert any(failure["field"] == "path_base" for failure in result["failures"])
 
 
 def test_package_replay_validation_artifacts_rejects_duplicate_roles(tmp_path: Path, capsys):
