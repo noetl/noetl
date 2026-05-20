@@ -48,6 +48,11 @@ def test_projector_metrics_render_prometheus_labels():
     assert "noetl_projector_redelivery_requests_total" in body
     assert "noetl_projector_delayed_redelivery_requests_total" in body
     assert "noetl_projector_terminated_notifications_total" in body
+    assert "noetl_projector_last_action_unixtime" in body
+    assert "noetl_projector_last_ack_unixtime" in body
+    assert "noetl_projector_last_redelivery_request_unixtime" in body
+    assert "noetl_projector_last_termination_unixtime" in body
+    assert "noetl_projector_last_redelivery_delay_seconds" in body
     assert " 1.0" in body
 
 
@@ -65,12 +70,18 @@ def test_projector_metrics_record_message_actions():
     assert snapshot["redelivery_requests_total"] == 2
     assert snapshot["delayed_redelivery_requests_total"] == 1
     assert snapshot["terminated_notifications_total"] == 1
+    assert snapshot["last_action_unixtime"] > 0
+    assert snapshot["last_ack_unixtime"] > 0
+    assert snapshot["last_redelivery_request_unixtime"] > 0
+    assert snapshot["last_termination_unixtime"] > 0
+    assert snapshot["last_redelivery_delay_seconds"] == 2.5
 
     body = render_projector_metrics(metrics)
     assert "noetl_projector_acknowledged_notifications_total 1.0" in body
     assert "noetl_projector_redelivery_requests_total 2.0" in body
     assert "noetl_projector_delayed_redelivery_requests_total 1.0" in body
     assert "noetl_projector_terminated_notifications_total 1.0" in body
+    assert "noetl_projector_last_redelivery_delay_seconds 2.5" in body
 
 
 def test_projector_metrics_record_projection_errors():
