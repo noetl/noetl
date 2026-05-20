@@ -1,4 +1,5 @@
 import json
+import os
 from pathlib import Path
 
 from scripts.package_replay_validation_artifacts import main
@@ -38,10 +39,65 @@ def test_package_replay_validation_artifacts_builds_and_checks_index(tmp_path: P
     assert created["output"] == str(output)
 
     index = json.loads(output.read_text())
+    assert index["path_base"] == "artifact_index_dir"
+    assert index["manifest"] == "validation.json"
     roles = {entry["role"] for entry in index["artifacts"]}
     assert {"manifest", "replay", "live_rows", "live_checksums", "report"} <= roles
     assert all(entry["exists"] for entry in index["artifacts"])
+    assert all(not Path(entry["path"]).is_absolute() for entry in index["artifacts"])
 
+    assert main(["--check", str(output)]) == 0
+    assert json.loads(capsys.readouterr().out)["matched"] is True
+
+
+def test_package_replay_validation_artifacts_checks_relative_paths_from_index_dir(
+    tmp_path: Path,
+    capsys,
+):
+    manifest = _manifest(tmp_path)
+    output = tmp_path / "artifact-index.json"
+    assert main(["--manifest", str(manifest), "--output", str(output)]) == 0
+    capsys.readouterr()
+
+    previous_cwd = Path.cwd()
+    other_dir = tmp_path / "other"
+    other_dir.mkdir()
+    try:
+        os.chdir(other_dir)
+        assert main(["--check", str(output)]) == 0
+    finally:
+        os.chdir(previous_cwd)
+    assert json.loads(capsys.readouterr().out)["matched"] is True
+
+
+def test_package_replay_validation_artifacts_keeps_external_paths_absolute(
+    tmp_path: Path,
+    capsys,
+):
+    manifest = _manifest(tmp_path)
+    external_dir = tmp_path.parent / f"{tmp_path.name}-external"
+    external_dir.mkdir()
+    external = external_dir / "extra.json"
+    external.write_text("{}")
+    output = tmp_path / "artifact-index.json"
+
+    assert (
+        main(
+            [
+                "--manifest",
+                str(manifest),
+                "--output",
+                str(output),
+                "--artifact",
+                f"extra={external}",
+            ]
+        )
+        == 0
+    )
+    index = json.loads(output.read_text())
+    extra = next(entry for entry in index["artifacts"] if entry["role"] == "extra")
+    assert extra["path"] == str(external)
+    capsys.readouterr()
     assert main(["--check", str(output)]) == 0
     assert json.loads(capsys.readouterr().out)["matched"] is True
 
@@ -62,12 +118,16 @@ def test_package_replay_validation_artifacts_rejects_missing_required_role(
     tmp_path: Path,
     capsys,
 ):
+    manifest = tmp_path / "validation.json"
+    manifest.write_text("{}")
     output = tmp_path / "artifact-index.json"
     output.write_text(
         json.dumps(
             {
                 "schema_version": 1,
                 "generated_at": "2026-05-20T00:00:00Z",
+                "path_base": "artifact_index_dir",
+                "manifest": "validation.json",
                 "artifacts": [],
             }
         )
@@ -76,6 +136,52 @@ def test_package_replay_validation_artifacts_rejects_missing_required_role(
     assert main(["--check", str(output)]) == 1
     result = json.loads(capsys.readouterr().out)
     assert any(failure.get("role") == "manifest" for failure in result["failures"])
+
+
+def test_package_replay_validation_artifacts_rejects_missing_manifest_pointer(
+    tmp_path: Path,
+    capsys,
+):
+    output = tmp_path / "artifact-index.json"
+    output.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "generated_at": "2026-05-20T00:00:00Z",
+                "path_base": "artifact_index_dir",
+                "manifest": "missing-validation.json",
+                "artifacts": [],
+            }
+        )
+    )
+
+    assert main(["--check", str(output)]) == 1
+    result = json.loads(capsys.readouterr().out)
+    assert any(failure["field"] == "manifest" for failure in result["failures"])
+
+
+def test_package_replay_validation_artifacts_rejects_unknown_path_base(
+    tmp_path: Path,
+    capsys,
+):
+    manifest = tmp_path / "validation.json"
+    manifest.write_text("{}")
+    output = tmp_path / "artifact-index.json"
+    output.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "generated_at": "2026-05-20T00:00:00Z",
+                "path_base": "cwd",
+                "manifest": "validation.json",
+                "artifacts": [],
+            }
+        )
+    )
+
+    assert main(["--check", str(output)]) == 1
+    result = json.loads(capsys.readouterr().out)
+    assert any(failure["field"] == "path_base" for failure in result["failures"])
 
 
 def test_package_replay_validation_artifacts_rejects_duplicate_roles(tmp_path: Path, capsys):

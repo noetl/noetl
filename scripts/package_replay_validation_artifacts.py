@@ -35,11 +35,26 @@ def _load_json(path: Path) -> dict[str, Any]:
     return data
 
 
-def _artifact_entry(role: str, path: Path, *, required: bool = True) -> dict[str, Any]:
+def _portable_path(path: Path, *, base_dir: Path | None = None) -> str:
+    if base_dir is None:
+        return str(path)
+    try:
+        return str(path.resolve().relative_to(base_dir.resolve()))
+    except ValueError:
+        return str(path)
+
+
+def _artifact_entry(
+    role: str,
+    path: Path,
+    *,
+    required: bool = True,
+    base_dir: Path | None = None,
+) -> dict[str, Any]:
     exists = path.exists()
     entry: dict[str, Any] = {
         "role": role,
-        "path": str(path),
+        "path": _portable_path(path, base_dir=base_dir),
         "required": required,
         "exists": exists,
     }
@@ -52,13 +67,17 @@ def _artifact_entry(role: str, path: Path, *, required: bool = True) -> dict[str
 def build_artifact_index(
     *,
     manifest_path: Path,
+    output_path: Path | None = None,
     extra_artifacts: list[tuple[str, Path]] | None = None,
 ) -> dict[str, Any]:
     manifest = _load_json(manifest_path)
     artifacts = manifest.get("artifacts")
     artifacts = artifacts if isinstance(artifacts, dict) else {}
+    base_dir = output_path.parent if output_path is not None else manifest_path.parent
 
-    entries: list[dict[str, Any]] = [_artifact_entry("manifest", manifest_path)]
+    entries: list[dict[str, Any]] = [
+        _artifact_entry("manifest", manifest_path, base_dir=base_dir)
+    ]
     for role in ("replay", "live_rows", "live_checksums", "report"):
         value = artifacts.get(role)
         if value is None:
@@ -77,18 +96,26 @@ def build_artifact_index(
         path = Path(value)
         if not path.is_absolute():
             path = (manifest_path.parent / path).resolve()
-        entries.append(_artifact_entry(role, path))
+        entries.append(_artifact_entry(role, path, base_dir=base_dir))
 
     for role, path in extra_artifacts or []:
-        entries.append(_artifact_entry(role, path))
+        entries.append(_artifact_entry(role, path, base_dir=base_dir))
 
     return {
         "schema_version": INDEX_SCHEMA_VERSION,
         "generated_at": _utc_now(),
-        "manifest": str(manifest_path),
+        "path_base": "artifact_index_dir",
+        "manifest": _portable_path(manifest_path, base_dir=base_dir),
         "matched": all(entry.get("exists") for entry in entries if entry.get("required", True)),
         "artifacts": entries,
     }
+
+
+def resolve_indexed_path(path_value: str, *, index_path: Path) -> Path:
+    path = Path(path_value)
+    if not path.is_absolute():
+        return (index_path.parent / path).resolve()
+    return path
 
 
 def validate_artifact_index(index_path: Path) -> dict[str, Any]:
@@ -99,6 +126,20 @@ def validate_artifact_index(index_path: Path) -> dict[str, Any]:
         failures.append({"field": "schema_version", "reason": f"must be {INDEX_SCHEMA_VERSION}"})
     if not isinstance(index.get("generated_at"), str) or not index.get("generated_at"):
         failures.append({"field": "generated_at", "reason": "must be a non-empty string"})
+    if index.get("path_base") not in (None, "artifact_index_dir"):
+        failures.append({"field": "path_base", "reason": "must be artifact_index_dir when present"})
+
+    indexed_manifest = index.get("manifest")
+    if not isinstance(indexed_manifest, str) or not indexed_manifest:
+        failures.append({"field": "manifest", "reason": "must be a non-empty string"})
+    elif not resolve_indexed_path(indexed_manifest, index_path=index_path).exists():
+        failures.append(
+            {
+                "field": "manifest",
+                "reason": "manifest path does not exist",
+                "path": indexed_manifest,
+            }
+        )
 
     artifacts = index.get("artifacts")
     if not isinstance(artifacts, list):
@@ -119,7 +160,7 @@ def validate_artifact_index(index_path: Path) -> dict[str, Any]:
         if not isinstance(path_value, str) or not path_value:
             failures.append({"field": f"artifacts[{idx}].path", "reason": "must be a non-empty string"})
             continue
-        path = Path(path_value)
+        path = resolve_indexed_path(path_value, index_path=index_path)
         required = bool(entry.get("required", True))
         if required and not path.exists():
             failures.append(
@@ -216,8 +257,12 @@ def main(argv: list[str] | None = None) -> int:
             parser.error("--artifact must be ROLE=PATH")
         extra_artifacts.append((role, Path(value)))
 
-    index = build_artifact_index(manifest_path=args.manifest, extra_artifacts=extra_artifacts)
     args.output.parent.mkdir(parents=True, exist_ok=True)
+    index = build_artifact_index(
+        manifest_path=args.manifest,
+        output_path=args.output,
+        extra_artifacts=extra_artifacts,
+    )
     args.output.write_text(json.dumps(index, indent=2, sort_keys=True) + "\n")
     print(json.dumps({"output": str(args.output), "matched": index["matched"]}, sort_keys=True))
     return 0 if index["matched"] else 1
