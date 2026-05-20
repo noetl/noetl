@@ -16,20 +16,38 @@ _IPC_COUNTERS = {
 }
 
 
-def append_storage_ipc_metrics(lines: list[str], stats: Mapping[str, int | float]) -> None:
+def append_storage_ipc_metrics(
+    lines: list[str],
+    stats: Mapping[str, int | float],
+    *,
+    labels: Mapping[str, str] | None = None,
+) -> None:
     """Append TempStore IPC counters and derived hit ratio to metrics output."""
+    label_text = _format_labels(labels or {})
     for key, (metric_name, help_text) in _IPC_COUNTERS.items():
         value = stats.get(key, 0)
         lines.append(f"# HELP {metric_name} {help_text}")
         lines.append(f"# TYPE {metric_name} counter")
-        lines.append(f"{metric_name} {value}")
+        lines.append(f"{metric_name}{label_text} {value}")
 
     read_attempts = float(stats.get("read_attempts", 0) or 0)
     read_hits = float(stats.get("read_hits", 0) or 0)
     hit_ratio = read_hits / read_attempts if read_attempts > 0 else 0.0
     lines.append("# HELP noetl_storage_ipc_read_hit_ratio IPC cache read hit ratio for this process")
     lines.append("# TYPE noetl_storage_ipc_read_hit_ratio gauge")
-    lines.append(f"noetl_storage_ipc_read_hit_ratio {hit_ratio}")
+    lines.append(f"noetl_storage_ipc_read_hit_ratio{label_text} {hit_ratio}")
+
+
+def _format_labels(labels: Mapping[str, str]) -> str:
+    filtered = {key: value for key, value in labels.items() if value}
+    if not filtered:
+        return ""
+    body = ",".join(f'{key}="{_escape_label(value)}"' for key, value in sorted(filtered.items()))
+    return "{" + body + "}"
+
+
+def _escape_label(value: str) -> str:
+    return str(value).replace("\\", "\\\\").replace("\n", "\\n").replace('"', '\\"')
 
 
 __all__ = ["append_storage_ipc_metrics"]
