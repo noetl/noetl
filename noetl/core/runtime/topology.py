@@ -4,11 +4,31 @@ from __future__ import annotations
 
 import os
 from collections.abc import Mapping
+from dataclasses import dataclass
 from typing import Any
 
-from noetl.core.resource_locator import ResourceLocatorError, build_noetl_locator
+from noetl.core.resource_locator import ResourceLocatorError, build_noetl_locator, parse_noetl_locator
 
 LOCALITY_DISTANCES = ("node", "zone", "region", "cluster", "any")
+
+
+@dataclass(frozen=True)
+class WorkerLocatorParts:
+    """Cloud OS identity fields encoded by a worker locator."""
+
+    tenant_id: str
+    organization_id: str
+    worker_pool: str
+    cluster_id: str | None = None
+    node_id: str | None = None
+
+    def as_locality(self) -> dict[str, str]:
+        locality: dict[str, str] = {"worker_pool": self.worker_pool}
+        if self.cluster_id:
+            locality["cluster_id"] = self.cluster_id
+        if self.node_id:
+            locality["node_id"] = self.node_id
+        return locality
 
 
 def worker_locality_from_env(env: Mapping[str, str] | None = None) -> dict[str, str]:
@@ -52,6 +72,35 @@ def worker_locator(
         return build_noetl_locator(*segments)
     except (ResourceLocatorError, TypeError, ValueError):
         return None
+
+
+def parse_worker_locator(value: str) -> WorkerLocatorParts:
+    """Parse and validate a canonical Cloud OS worker locator."""
+    locator = parse_noetl_locator(value)
+    if locator.kind != "tenant":
+        raise ResourceLocatorError("worker locator must start with tenant")
+
+    try:
+        parts = locator.pairs()
+    except ResourceLocatorError as exc:
+        raise ResourceLocatorError("worker locator must use alternating key/value segments") from exc
+
+    unknown = sorted(set(parts) - {"tenant", "org", "cluster", "node", "worker"})
+    if unknown:
+        raise ResourceLocatorError(f"worker locator contains unknown segments: {', '.join(unknown)}")
+
+    required = ("tenant", "org", "worker")
+    missing = [key for key in required if not parts.get(key)]
+    if missing:
+        raise ResourceLocatorError(f"worker locator missing required segments: {', '.join(missing)}")
+
+    return WorkerLocatorParts(
+        tenant_id=parts["tenant"],
+        organization_id=parts["org"],
+        cluster_id=parts.get("cluster"),
+        node_id=parts.get("node"),
+        worker_pool=parts["worker"],
+    )
 
 
 def locality_distance(
@@ -112,6 +161,8 @@ __all__ = [
     "locality_distance",
     "locality_within",
     "placement_evaluation",
+    "parse_worker_locator",
+    "WorkerLocatorParts",
     "worker_locality_from_env",
     "worker_locator",
 ]

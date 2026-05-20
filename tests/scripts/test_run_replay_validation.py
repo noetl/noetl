@@ -42,12 +42,13 @@ def test_run_replay_validation_fetches_and_runs_selected_gates(monkeypatch, tmp_
         == 0
     )
 
-    assert len(calls) == 4
+    assert len(calls) == 5
     assert "scripts/fetch_replay_state_report.py" in calls[0]
     assert "--resolve-payloads" in calls[0]
     assert "scripts/check_replay_state_report.py" in calls[1]
-    assert "scripts/check_replay_parity_report.py" in calls[2]
-    assert "scripts/check_replay_payload_resolution_report.py" in calls[3]
+    assert "scripts/check_runtime_locator_surfaces.py" in calls[2]
+    assert "scripts/check_replay_parity_report.py" in calls[3]
+    assert "scripts/check_replay_payload_resolution_report.py" in calls[4]
     output = json.loads(capsys.readouterr().out)
     assert output["matched"] is True
     assert output["replay"].endswith("replay-123.json")
@@ -190,9 +191,9 @@ def test_run_replay_validation_can_export_live_rows_from_postgres(monkeypatch, t
     assert [step["name"] for step in output["steps"][:5]] == [
         "fetch",
         "state_integrity",
+        "runtime_locator_state",
         "live_rows_export",
         "live_rows_integrity",
-        "live_checksums",
     ]
 
 

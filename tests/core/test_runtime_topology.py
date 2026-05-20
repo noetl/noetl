@@ -55,6 +55,38 @@ def test_worker_locator_returns_none_for_invalid_segments():
     )
 
 
+def test_parse_worker_locator_returns_cloud_os_parts():
+    from noetl.core.runtime.topology import parse_worker_locator
+
+    parts = parse_worker_locator(
+        "noetl://tenant/tenant-a/org/org-a/cluster/cluster-a/node/node-a/worker/worker-cpu-01"
+    )
+
+    assert parts.tenant_id == "tenant-a"
+    assert parts.organization_id == "org-a"
+    assert parts.cluster_id == "cluster-a"
+    assert parts.node_id == "node-a"
+    assert parts.worker_pool == "worker-cpu-01"
+    assert parts.as_locality() == {
+        "cluster_id": "cluster-a",
+        "node_id": "node-a",
+        "worker_pool": "worker-cpu-01",
+    }
+
+
+def test_parse_worker_locator_rejects_non_worker_locator():
+    import pytest
+
+    from noetl.core.resource_locator import ResourceLocatorError
+    from noetl.core.runtime.topology import parse_worker_locator
+
+    with pytest.raises(ResourceLocatorError, match="must start with tenant"):
+        parse_worker_locator("noetl://execution/123/result/load/abcd")
+
+    with pytest.raises(ResourceLocatorError, match="missing required segments"):
+        parse_worker_locator("noetl://tenant/tenant-a/org/org-a")
+
+
 def test_locality_distance_prefers_closest_match():
     from noetl.core.runtime.topology import locality_distance, locality_within, placement_evaluation
 
