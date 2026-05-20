@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.72.0](https://github.com/noetl/noetl/compare/v2.71.0...v2.72.0) (2026-05-20)
+
+### Features
+
+* **projector:** validate shard settings ([e647e57](https://github.com/noetl/noetl/commit/e647e5766f3104e45766acef8b03b5d21b1d71f6))
+
 ## [2.71.0](https://github.com/noetl/noetl/compare/v2.70.0...v2.71.0) (2026-05-20)
 
 ### Features
