@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.48.0](https://github.com/noetl/noetl/compare/v2.47.0...v2.48.0) (2026-05-20)
+
+### Features
+
+* **worker:** expose ipc cache metrics ([123e87c](https://github.com/noetl/noetl/commit/123e87cdca831f57ecfc1b87b36bd52e109bbadc))
+
 ## [2.47.0](https://github.com/noetl/noetl/compare/v2.46.0...v2.47.0) (2026-05-20)
 
 ### Features
