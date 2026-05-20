@@ -557,14 +557,51 @@ async def test_run_projector_worker_initializes_and_closes_db_pool(monkeypatch):
     monkeypatch.setattr(module, "close_pool", fake_close_pool)
     monkeypatch.setattr(module, "NATSProjectorWorker", FakeWorker)
 
+    def fake_metrics_server(_metrics, *, host, port, labels):
+        calls.append(("metrics", host, port, labels))
+
+        class FakeMetricsServer:
+            def shutdown(self):
+                calls.append(("metrics_shutdown", None))
+
+            def server_close(self):
+                calls.append(("metrics_close", None))
+
+        return FakeMetricsServer()
+
+    monkeypatch.setattr(module, "start_projector_metrics_server", fake_metrics_server)
+
     with pytest.raises(RuntimeError, match="stop projector test"):
         await module.run_projector_worker(
-            module.ProjectorWorkerSettings(shard_id="noetl-projector-0")
+            module.ProjectorWorkerSettings(
+                shard_id="noetl-projector-1",
+                consumer_name="consumer-a",
+                shard_count=2,
+                stream_name="NOETL_EVENTS",
+                subject="noetl.events.>",
+                metrics_host="127.0.0.1",
+                metrics_port=9090,
+            )
         )
 
     assert calls == [
         ("init", "dbname=noetl"),
-        ("start", "noetl-projector-0"),
+        (
+            "metrics",
+            "127.0.0.1",
+            9090,
+            {
+                "shard_id": "noetl-projector-1",
+                "shard_index": "1",
+                "shard_count": "2",
+                "consumer": "consumer-a",
+                "stream": "NOETL_EVENTS",
+                "subject": "noetl.events.>",
+            },
+        ),
+        ("start", "noetl-projector-1"),
+        ("metrics_shutdown", None),
+        ("metrics_close", None),
         ("worker_close", None),
         ("close", None),
     ]

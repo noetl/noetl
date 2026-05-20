@@ -225,7 +225,11 @@ async def run_projector_worker(settings: Optional[ProjectorWorkerSettings] = Non
             port=effective_settings.metrics_port,
             labels={
                 "shard_id": effective_settings.shard_id,
+                "shard_index": str(effective_settings.shard_index),
+                "shard_count": str(effective_settings.shard_count),
                 "consumer": effective_settings.consumer_name,
+                "stream": effective_settings.stream_name,
+                "subject": effective_settings.subject,
             },
         )
         logger.info(
