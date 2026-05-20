@@ -102,3 +102,35 @@ async def test_claim_command_enqueues_claimed_event_before_drain(monkeypatch):
     assert enqueued[0]["meta"]["worker_id"] == "worker-1"
     assert isinstance(enqueued[0]["created_at"], datetime)
     assert enqueued[0]["created_at"].tzinfo == timezone.utc
+
+
+def test_claim_topology_metadata_records_locator_and_placement():
+    from noetl.server.api.core.commands import _claim_topology_metadata
+
+    meta = _claim_topology_metadata(
+        command_meta={
+            "tenant_id": "tenant-a",
+            "organization_id": "org-a",
+            "source_locality": {"zone": "us-central1-a"},
+        },
+        request_locality={
+            "cluster_id": "cluster-a",
+            "node_id": "node-a",
+            "zone": "us-central1-a",
+            "worker_pool": "worker-cpu-01",
+            "max_distance": "zone",
+        },
+        worker_id="worker-a",
+    )
+
+    assert meta["locality"]["node_id"] == "node-a"
+    assert meta["source_locality"] == {"zone": "us-central1-a"}
+    assert meta["placement"] == {
+        "distance": "zone",
+        "max_distance": "zone",
+        "within_max_distance": True,
+    }
+    assert (
+        meta["worker_locator"]
+        == "noetl://tenant/tenant-a/org/org-a/cluster/cluster-a/node/node-a/worker/worker-cpu-01"
+    )

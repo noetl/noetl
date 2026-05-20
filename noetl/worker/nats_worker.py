@@ -1264,9 +1264,19 @@ class Worker:
             await self._concurrency.acquire()
             _released = False
             try:
+                claim_payload: dict[str, Any] = {"worker_id": self.worker_id}
+                try:
+                    from noetl.core.runtime.topology import worker_locality_from_env
+
+                    locality = worker_locality_from_env()
+                    if locality:
+                        claim_payload["locality"] = locality
+                except Exception:
+                    logger.debug("[CLAIM] Failed to attach worker locality to claim", exc_info=True)
+
                 response = await self._http_client.post(
                     _api_url(server_url, f"commands/{event_id}/claim"),
-                    json={"worker_id": self.worker_id},
+                    json=claim_payload,
                 )
 
                 if response.status_code == 200:

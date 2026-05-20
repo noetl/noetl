@@ -95,6 +95,7 @@ class BatchEventResponse(BaseModel):
 class ClaimRequest(BaseModel):
     """Request to claim a command."""
     worker_id: str
+    locality: Optional[dict[str, Any]] = None
 
 class ClaimResponse(BaseModel):
     """Response for successful claim with command details."""
