@@ -26,6 +26,7 @@ from psycopg.rows import dict_row
 from noetl.core.dsl.engine.models import Event, Command, Playbook, Step, ToolCall, CommandSpec, NextRouter, Arc
 from noetl.core.db import pool as db_pool
 from noetl.core.cache import nats_kv
+from noetl.core.resource_locator import ResourceLocatorError, parse_noetl_locator
 from noetl.core.storage import default_store
 
 from noetl.core.logger import setup_logger
@@ -488,7 +489,9 @@ def _reference_to_result_ref(reference: Any) -> Optional[dict[str, Any]]:
         return None
 
     locator = str(reference.get("locator") or reference.get("ref") or "").strip()
-    if not locator.startswith("noetl://"):
+    try:
+        parse_noetl_locator(locator)
+    except ResourceLocatorError:
         return None
 
     store = str(reference.get("store") or "kv").strip().lower() or "kv"

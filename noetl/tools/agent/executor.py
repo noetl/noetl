@@ -29,6 +29,7 @@ from jinja2 import Environment
 
 from noetl.core.dsl.render import render_template
 from noetl.core.logger import setup_logger
+from noetl.core.resource_locator import ResourceLocatorError, parse_noetl_locator
 
 
 # Default catalog path for the self-troubleshoot agent. Override at the
@@ -180,7 +181,9 @@ def _normalise_result_reference(reference: Any) -> Optional[Dict[str, Any]]:
     if not isinstance(reference, dict):
         return None
     locator = str(reference.get("locator") or reference.get("ref") or "").strip()
-    if not locator.startswith("noetl://"):
+    try:
+        parse_noetl_locator(locator)
+    except ResourceLocatorError:
         return None
     store = str(reference.get("store") or "kv").strip().lower() or "kv"
     return {
