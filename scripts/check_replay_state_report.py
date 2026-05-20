@@ -13,6 +13,20 @@ from typing import Any, Mapping
 
 from noetl.server.api.replay import replay_projection_checksum_bundle
 
+REQUIRED_TOP_LEVEL_FIELDS = (
+    "tenant_id",
+    "organization_id",
+    "execution_id",
+    "projection",
+    "upcaster_registry_digest",
+    "event_count",
+    "last_event_id",
+    "last_event_type",
+    "checksum_algorithm",
+    "checksum",
+    "projection_checksums",
+)
+
 
 def _load_report(path: Path) -> dict[str, Any]:
     data: Any = json.loads(path.read_text())
@@ -51,6 +65,10 @@ def replay_state_checksum(report: Mapping[str, Any]) -> str:
 def validate_replay_state_report(report: dict[str, Any]) -> dict[str, Any]:
     failures: list[dict[str, Any]] = []
 
+    for field in REQUIRED_TOP_LEVEL_FIELDS:
+        if field not in report:
+            failures.append({"field": field, "reason": "missing required replay state field"})
+
     supplied_bundle = report.get("projection_checksums")
     if not isinstance(supplied_bundle, dict):
         failures.append({"field": "projection_checksums", "reason": "missing or not an object"})
@@ -68,11 +86,11 @@ def validate_replay_state_report(report: dict[str, Any]) -> dict[str, Any]:
                     }
                 )
 
-    if report.get("checksum_algorithm") not in {None, "sha256"}:
+    if report.get("checksum_algorithm") != "sha256":
         failures.append(
             {
                 "field": "checksum_algorithm",
-                "reason": "unsupported checksum algorithm",
+                "reason": "checksum_algorithm must be sha256",
                 "supplied": report.get("checksum_algorithm"),
             }
         )
