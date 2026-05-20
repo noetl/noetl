@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.74.0](https://github.com/noetl/noetl/compare/v2.73.0...v2.74.0) (2026-05-20)
+
+### Features
+
+* **projector:** label metrics with shard identity ([374736a](https://github.com/noetl/noetl/commit/374736a96ba36b462a5ca04a4a9e0959223d4e29))
+
 ## [2.73.0](https://github.com/noetl/noetl/compare/v2.72.0...v2.73.0) (2026-05-20)
 
 ### Features
