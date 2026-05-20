@@ -771,6 +771,56 @@ def loop_projection_checksum(rows: Iterable[Mapping[str, Any]]) -> str:
     return _canonical_checksum({"loops": list(rows)})
 
 
+def _normalized_execution_projection_row(row: Mapping[str, Any]) -> dict[str, Any]:
+    payload_refs = row.get("payload_refs")
+    if payload_refs is None:
+        execution = row.get("execution")
+        if isinstance(execution, Mapping):
+            payload_refs = execution.get("payload_refs")
+    payload_refs = payload_refs if isinstance(payload_refs, list) else []
+    last_payload_ref = row.get("last_payload_ref")
+    if last_payload_ref is None and payload_refs:
+        last_payload_ref = payload_refs[-1]
+    last_reference = (
+        (last_payload_ref or {}).get("reference")
+        if isinstance(last_payload_ref, Mapping)
+        else last_payload_ref
+    )
+    execution = row.get("execution")
+    execution = execution if isinstance(execution, Mapping) else {}
+    return {
+        "execution_id": int(row.get("execution_id")),
+        "tenant_id": str(row.get("tenant_id") or "default"),
+        "organization_id": str(row.get("organization_id") or "default"),
+        "projection": str(row.get("projection") or "all"),
+        "status": row.get("status") or execution.get("status"),
+        "last_node_name": row.get("last_node_name") or execution.get("last_node_name"),
+        "event_count": int(row.get("event_count") or 0),
+        "last_event_id": (
+            int(row.get("last_event_id")) if row.get("last_event_id") is not None else None
+        ),
+        "last_event_type": row.get("last_event_type"),
+        "payload_ref_count": len(payload_refs),
+        "last_payload_ref_summary": _payload_summary(last_reference),
+        "upcaster_registry_digest": row.get("upcaster_registry_digest"),
+    }
+
+
+def normalize_live_execution_projection(rows: Iterable[Mapping[str, Any]]) -> list[dict[str, Any]]:
+    return sorted(
+        (_normalized_execution_projection_row(row) for row in rows),
+        key=lambda row: row["execution_id"],
+    )
+
+
+def normalize_replayed_execution_projection(state: Mapping[str, Any]) -> list[dict[str, Any]]:
+    return [_normalized_execution_projection_row(state)]
+
+
+def execution_projection_checksum(rows: Iterable[Mapping[str, Any]]) -> str:
+    return _canonical_checksum({"executions": list(rows)})
+
+
 class ReplayService:
     """Read canonical events and fold replay state."""
 

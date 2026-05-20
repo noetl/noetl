@@ -624,3 +624,67 @@ def test_loop_projection_checksum_matches_live_rows_and_replayed_state():
 
     assert replayed_rows == live_rows
     assert loop_projection_checksum(replayed_rows) == loop_projection_checksum(live_rows)
+
+
+def test_execution_projection_checksum_matches_live_rows_and_replayed_state():
+    from noetl.server.api.replay import (
+        execution_projection_checksum,
+        fold_replay_state,
+        normalize_live_execution_projection,
+        normalize_replayed_execution_projection,
+    )
+
+    payload_ref = {
+        "uri": "noetl://tenant/tenant-a/org/org-a/payloads/sha256/final",
+        "sha256": "final",
+        "media_type": "application/json",
+    }
+    events = [
+        {
+            "event_id": 50,
+            "event_type": "execution.started",
+            "status": "RUNNING",
+            "node_name": "start",
+        },
+        {
+            "event_id": 51,
+            "event_type": "command.completed",
+            "status": "COMPLETED",
+            "node_name": "fetch",
+            "payload_ref": payload_ref,
+        },
+        {
+            "event_id": 52,
+            "event_type": "execution.completed",
+            "status": "COMPLETED",
+            "node_name": "end",
+        },
+    ]
+    state = fold_replay_state(
+        events,
+        tenant_id="tenant-a",
+        organization_id="org-a",
+        execution_id=123,
+        upcaster_registry_digest="digest-a",
+    )
+    live_rows = normalize_live_execution_projection(
+        [
+            {
+                "execution_id": 123,
+                "tenant_id": "tenant-a",
+                "organization_id": "org-a",
+                "projection": "all",
+                "status": "COMPLETED",
+                "last_node_name": "end",
+                "event_count": 3,
+                "last_event_id": 52,
+                "last_event_type": "execution.completed",
+                "payload_refs": [{"event_id": 51, "reference": payload_ref}],
+                "upcaster_registry_digest": "digest-a",
+            }
+        ]
+    )
+    replayed_rows = normalize_replayed_execution_projection(state)
+
+    assert replayed_rows == live_rows
+    assert execution_projection_checksum(replayed_rows) == execution_projection_checksum(live_rows)
