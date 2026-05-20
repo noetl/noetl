@@ -72,6 +72,15 @@ def main(argv: list[str] | None = None) -> int:
     for name, command in [
         ("fetch", fetch_command),
         (
+            "state_integrity",
+            [
+                sys.executable,
+                "scripts/check_replay_state_report.py",
+                "--report",
+                str(replay_path),
+            ],
+        ),
+        (
             "projection_parity",
             [
                 sys.executable,
