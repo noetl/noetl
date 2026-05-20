@@ -10,14 +10,13 @@ from __future__ import annotations
 import hashlib
 import json
 import copy
-from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Iterable, Mapping, Optional
 
-from psycopg.rows import dict_row
-
-from noetl.core.db.pool import get_pool_connection
 from noetl.core.replay import default_upcaster_registry
+
+from .event_reader import PostgresReplayEventReader, ReplayEventReader
+from .types import ReplayCutoff, ReplaySnapshotSeed
 
 PROJECTION_CHECKSUM_SURFACES = (
     "execution",
@@ -27,27 +26,6 @@ PROJECTION_CHECKSUM_SURFACES = (
     "business_objects",
     "loops",
 )
-
-
-@dataclass(frozen=True)
-class ReplayCutoff:
-    """Replay cutoff. Exactly one field is normally set."""
-
-    as_of_event_id: Optional[int] = None
-    as_of_position: Optional[int] = None
-    as_of_time: Optional[datetime] = None
-
-
-@dataclass(frozen=True)
-class ReplaySnapshotSeed:
-    """Snapshot state used as replay seed."""
-
-    aggregate_id: str
-    aggregate_type: str
-    version: int
-    checksum: str
-    state: dict[str, Any]
-    meta: dict[str, Any]
 
 
 def _json_default(value: Any) -> str:
@@ -974,25 +952,15 @@ def projection_checksum_parity_report(
 class ReplayService:
     """Read canonical events and fold replay state."""
 
-    @staticmethod
-    async def _event_columns(conn: Any) -> set[str]:
-        async with conn.cursor() as cur:
-            await cur.execute(
-                """
-                SELECT column_name
-                FROM information_schema.columns
-                WHERE table_schema = 'noetl'
-                  AND table_name = 'event'
-                """
-            )
-            rows = await cur.fetchall()
-        return {
-            str(row["column_name"] if isinstance(row, Mapping) else row[0])
-            for row in rows
-        }
+    event_reader: ReplayEventReader = PostgresReplayEventReader()
 
-    @staticmethod
+    @classmethod
+    def configure_event_reader(cls, event_reader: ReplayEventReader) -> None:
+        cls.event_reader = event_reader
+
+    @classmethod
     async def load_events(
+        cls,
         *,
         tenant_id: str,
         organization_id: str,
@@ -1001,88 +969,18 @@ class ReplayService:
         limit: int,
         after_event_id: Optional[int] = None,
     ) -> list[dict[str, Any]]:
-        async with get_pool_connection() as conn:
-            columns = await ReplayService._event_columns(conn)
-            envelope_columns = (
-                "tenant_id",
-                "organization_id",
-                "stream_id",
-                "stream_version",
-                "aggregate_id",
-                "aggregate_type",
-                "schema_name",
-                "schema_version",
-                "event_time",
-                "ingest_time",
-                "producer",
-                "causation_id",
-                "correlation_id",
-                "idempotency_key",
-                "payload_ref",
-                "stage_id",
-                "frame_id",
-                "command_id",
-                "envelope_checksum",
-            )
+        return await cls.event_reader.load_events(
+            tenant_id=tenant_id,
+            organization_id=organization_id,
+            execution_id=execution_id,
+            cutoff=cutoff,
+            limit=limit,
+            after_event_id=after_event_id,
+        )
 
-            predicates = ["execution_id = %s"]
-            params: list[Any] = [execution_id]
-            if "tenant_id" in columns:
-                predicates.append("tenant_id = %s")
-                params.append(tenant_id)
-            elif tenant_id != "default":
-                return []
-            if "organization_id" in columns:
-                predicates.append("organization_id = %s")
-                params.append(organization_id)
-            elif organization_id != "default":
-                return []
-
-            cutoff_event_id = cutoff.as_of_event_id or cutoff.as_of_position
-            if after_event_id is not None:
-                predicates.append("event_id > %s")
-                params.append(int(after_event_id))
-            if cutoff_event_id is not None:
-                predicates.append("event_id <= %s")
-                params.append(int(cutoff_event_id))
-            if cutoff.as_of_time is not None:
-                time_column = "event_time" if "event_time" in columns else "created_at"
-                predicates.append(f"{time_column} <= %s")
-                params.append(cutoff.as_of_time)
-            params.append(limit)
-
-            select_columns = [
-                "event_id",
-                "event_type",
-                "status",
-                "node_name",
-                "result",
-                "meta",
-            ]
-            select_columns.extend(column for column in envelope_columns if column in columns)
-
-            query = f"""
-                SELECT {', '.join(select_columns)}
-                FROM noetl.event
-                WHERE {' AND '.join(predicates)}
-                ORDER BY event_id ASC
-                LIMIT %s
-            """
-
-            async with conn.cursor(row_factory=dict_row) as cur:
-                await cur.execute(query, params)
-                rows = await cur.fetchall()
-
-        events = [dict(row) for row in rows]
-        for event in events:
-            event.setdefault("tenant_id", tenant_id)
-            event.setdefault("organization_id", organization_id)
-            for column in envelope_columns:
-                event.setdefault(column, None)
-        return events
-
-    @staticmethod
+    @classmethod
     async def load_snapshot_seed(
+        cls,
         *,
         tenant_id: str,
         organization_id: str,
@@ -1090,57 +988,17 @@ class ReplayService:
         projection: str,
         cutoff: ReplayCutoff,
     ) -> Optional[ReplaySnapshotSeed]:
-        # Event-id/position snapshots are safe because projection_snapshot.version
-        # records an event position. Time-based snapshot selection needs a separate
-        # event-time index and remains a later release gate.
-        cutoff_event_id = cutoff.as_of_event_id or cutoff.as_of_position
-        if cutoff.as_of_time is not None:
-            return None
-
-        aggregate_id = f"execution/{execution_id}/{projection}"
-        aggregate_type = "replay_state"
-        predicates = [
-            "tenant_id = %s",
-            "organization_id = %s",
-            "aggregate_type = %s",
-            "aggregate_id = %s",
-        ]
-        params: list[Any] = [tenant_id, organization_id, aggregate_type, aggregate_id]
-        if cutoff_event_id is not None:
-            predicates.append("version <= %s")
-            params.append(int(cutoff_event_id))
-
-        try:
-            async with get_pool_connection() as conn:
-                async with conn.cursor(row_factory=dict_row) as cur:
-                    await cur.execute(
-                        f"""
-                        SELECT aggregate_id, aggregate_type, version, snapshot, checksum, meta
-                        FROM noetl.projection_snapshot
-                        WHERE {' AND '.join(predicates)}
-                        ORDER BY version DESC
-                        LIMIT 1
-                        """,
-                        params,
-                    )
-                    row = await cur.fetchone()
-        except Exception:
-            return None
-        if not row:
-            return None
-        snapshot = row["snapshot"] if isinstance(row["snapshot"], dict) else {}
-        meta = row["meta"] if isinstance(row["meta"], dict) else {}
-        return ReplaySnapshotSeed(
-            aggregate_id=str(row["aggregate_id"]),
-            aggregate_type=str(row["aggregate_type"]),
-            version=int(row["version"]),
-            checksum=str(row["checksum"]),
-            state=snapshot,
-            meta=meta,
+        return await cls.event_reader.load_snapshot_seed(
+            tenant_id=tenant_id,
+            organization_id=organization_id,
+            execution_id=execution_id,
+            projection=projection,
+            cutoff=cutoff,
         )
 
-    @staticmethod
+    @classmethod
     async def replay_state(
+        cls,
         *,
         tenant_id: str,
         organization_id: str,
@@ -1148,8 +1006,10 @@ class ReplayService:
         cutoff: ReplayCutoff,
         projection: str,
         limit: int,
+        event_reader: ReplayEventReader | None = None,
     ) -> dict[str, Any]:
-        snapshot_seed = await ReplayService.load_snapshot_seed(
+        reader = event_reader or cls.event_reader
+        snapshot_seed = await reader.load_snapshot_seed(
             tenant_id=tenant_id,
             organization_id=organization_id,
             execution_id=execution_id,
@@ -1157,7 +1017,7 @@ class ReplayService:
             cutoff=cutoff,
         )
         events = default_upcaster_registry.upcast_events(
-            await ReplayService.load_events(
+            await reader.load_events(
                 tenant_id=tenant_id,
                 organization_id=organization_id,
                 execution_id=execution_id,

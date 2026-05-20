@@ -1,3 +1,4 @@
+import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
@@ -153,6 +154,38 @@ def test_fold_replay_state_tracks_execution_frames_loops_and_checksum():
         "business_objects",
         "loops",
     }
+
+
+@pytest.mark.asyncio
+async def test_replay_service_accepts_per_call_event_reader():
+    from noetl.server.api.replay import ReplayCutoff, ReplayService
+
+    class _Reader:
+        async def load_snapshot_seed(self, **kwargs):
+            return None
+
+        async def load_events(self, **kwargs):
+            return [
+                {
+                    "event_id": 2,
+                    "event_type": "execution.failed",
+                    "status": "FAILED",
+                    "execution_id": kwargs["execution_id"],
+                }
+            ]
+
+    state = await ReplayService.replay_state(
+        tenant_id="tenant-a",
+        organization_id="org-a",
+        execution_id=456,
+        cutoff=ReplayCutoff(),
+        projection="all",
+        limit=100,
+        event_reader=_Reader(),
+    )
+
+    assert state["execution_id"] == 456
+    assert state["execution"]["status"] == "FAILED"
     assert all(len(checksum) == 64 for checksum in state["projection_checksums"].values())
 
 
@@ -338,6 +371,55 @@ def test_fold_replay_state_can_resume_from_snapshot_seed():
     assert resumed["frames"]["10"]["row_count"] == 3
     assert resumed["replay_snapshot"]["version"] == 2
     assert resumed["replay_snapshot"]["meta"] == {"projection_code_version": "test"}
+
+
+@pytest.mark.asyncio
+async def test_replay_service_uses_configured_event_reader():
+    from noetl.server.api.replay import ReplayCutoff, ReplayService
+
+    class _Reader:
+        def __init__(self):
+            self.after_event_id = None
+
+        async def load_snapshot_seed(self, **kwargs):
+            return None
+
+        async def load_events(self, **kwargs):
+            self.after_event_id = kwargs["after_event_id"]
+            return [
+                {
+                    "event_id": 1,
+                    "event_type": "execution.completed",
+                    "status": "COMPLETED",
+                    "execution_id": kwargs["execution_id"],
+                }
+            ]
+
+    reader = _Reader()
+    previous_reader = ReplayService.event_reader
+    ReplayService.configure_event_reader(reader)
+    try:
+        state = await ReplayService.replay_state(
+            tenant_id="tenant-a",
+            organization_id="org-a",
+            execution_id=123,
+            cutoff=ReplayCutoff(),
+            projection="all",
+            limit=100,
+        )
+    finally:
+        ReplayService.configure_event_reader(previous_reader)
+
+    assert reader.after_event_id is None
+    assert state["execution"]["status"] == "COMPLETED"
+    assert set(state["projection_checksums"]) == {
+        "execution",
+        "stages",
+        "frames",
+        "commands",
+        "business_objects",
+        "loops",
+    }
 
 
 def test_frame_projection_checksum_matches_live_rows_and_replayed_state():
