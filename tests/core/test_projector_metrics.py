@@ -95,6 +95,12 @@ def test_projector_metrics_record_message_actions():
     assert "noetl_projector_terminated_notifications_total 1.0" in body
     assert "noetl_projector_last_redelivery_delay_seconds 2.5" in body
 
+    summary = metrics.action_summary()
+    assert summary["actions_total"] == 4
+    assert summary["ack_ratio"] == 0.25
+    assert summary["redelivery_ratio"] == 0.5
+    assert summary["termination_ratio"] == 0.25
+
 
 def test_projector_metrics_record_projection_errors():
     from noetl.core.projector.metrics import ProjectorMetrics, render_projector_metrics

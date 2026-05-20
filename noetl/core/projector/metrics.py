@@ -141,6 +141,23 @@ class ProjectorMetrics:
         with self._lock:
             return dict(self._values)
 
+    def action_summary(self) -> dict[str, float]:
+        with self._lock:
+            acknowledged = self._values["acknowledged_notifications_total"]
+            redelivery = self._values["redelivery_requests_total"]
+            terminated = self._values["terminated_notifications_total"]
+            total = acknowledged + redelivery + terminated
+            return {
+                "actions_total": total,
+                "acknowledged_notifications_total": acknowledged,
+                "redelivery_requests_total": redelivery,
+                "delayed_redelivery_requests_total": self._values["delayed_redelivery_requests_total"],
+                "terminated_notifications_total": terminated,
+                "ack_ratio": acknowledged / total if total else 0.0,
+                "redelivery_ratio": redelivery / total if total else 0.0,
+                "termination_ratio": terminated / total if total else 0.0,
+            }
+
 
 def render_projector_metrics(metrics: ProjectorMetrics, *, labels: Optional[Mapping[str, str]] = None) -> str:
     """Render projector metrics using Prometheus text exposition."""
