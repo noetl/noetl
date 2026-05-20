@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.82.0](https://github.com/noetl/noetl/compare/v2.81.0...v2.82.0) (2026-05-20)
+
+### Features
+
+* **projector:** add metrics summary payload ([c979994](https://github.com/noetl/noetl/commit/c979994ba8ed875c49f0c8b409e009cd35b263de))
+* **projector:** expose metrics summary endpoint ([370990d](https://github.com/noetl/noetl/commit/370990d762b21a61b270fe44e734bf03678fa41e))
+
 ## [2.81.0](https://github.com/noetl/noetl/compare/v2.80.0...v2.81.0) (2026-05-20)
 
 ### Features
