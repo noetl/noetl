@@ -196,6 +196,49 @@ def test_run_replay_validation_can_export_live_rows_from_postgres(monkeypatch, t
     ]
 
 
+def test_run_replay_validation_can_write_artifact_index(monkeypatch, tmp_path: Path, capsys):
+    calls = []
+
+    def _run(command):
+        calls.append(command)
+        if any(str(part).endswith("fetch_replay_state_report.py") for part in command):
+            output_path = Path(command[command.index("--output") + 1])
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            output_path.write_text(json.dumps({"projection_checksums": {"execution": "a" * 64}}))
+        if any(str(part).endswith("package_replay_validation_artifacts.py") for part in command):
+            output_path = Path(command[command.index("--output") + 1])
+            output_path.write_text(json.dumps({"schema_version": 1, "matched": True, "artifacts": []}))
+        return 0, json.dumps({"ok": True}), "", 0.01
+
+    monkeypatch.setattr(run_replay_validation, "_run", _run)
+    manifest = tmp_path / "validation.json"
+    artifact_index = tmp_path / "artifact-index.json"
+
+    assert (
+        run_replay_validation.main(
+            [
+                "--base-url",
+                "http://noetl.example",
+                "--execution-id",
+                "123",
+                "--output-dir",
+                str(tmp_path),
+                "--report-output",
+                str(manifest),
+                "--artifact-index-output",
+                str(artifact_index),
+            ]
+        )
+        == 0
+    )
+
+    assert artifact_index.exists()
+    assert any("scripts/package_replay_validation_artifacts.py" in call for call in calls)
+    manifest_payload = json.loads(manifest.read_text())
+    assert manifest_payload["artifacts"]["artifact_index"] == str(artifact_index)
+    assert json.loads(capsys.readouterr().out)["artifacts"]["artifact_index"] == str(artifact_index)
+
+
 def test_run_replay_validation_rejects_multiple_cutoffs(tmp_path: Path):
     try:
         run_replay_validation.main(
@@ -251,6 +294,26 @@ def test_run_replay_validation_rejects_postgres_dsn_without_export(tmp_path: Pat
                 "123",
                 "--postgres-dsn",
                 "postgresql://example",
+                "--output-dir",
+                str(tmp_path),
+            ]
+        )
+    except SystemExit as exc:
+        assert exc.code == 2
+    else:
+        raise AssertionError("expected parser error")
+
+
+def test_run_replay_validation_rejects_artifact_index_without_manifest(tmp_path: Path):
+    try:
+        run_replay_validation.main(
+            [
+                "--base-url",
+                "http://noetl.example",
+                "--execution-id",
+                "123",
+                "--artifact-index-output",
+                str(tmp_path / "artifact-index.json"),
                 "--output-dir",
                 str(tmp_path),
             ]

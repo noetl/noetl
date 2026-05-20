@@ -58,6 +58,7 @@ def _build_report(
             "live_rows": str(live_rows_path) if live_rows_path else None,
             "live_checksums": str(live_checksums_path) if live_checksums_path else None,
             "report": str(args.report_output) if args.report_output else None,
+            "artifact_index": str(args.artifact_index_output) if args.artifact_index_output else None,
         },
         "config": {
             "base_url": args.base_url,
@@ -73,6 +74,7 @@ def _build_report(
             "live_checksums": str(args.live_checksums) if args.live_checksums else None,
             "live_rows": str(args.live_rows) if args.live_rows else None,
             "export_live_rows_postgres": args.export_live_rows_postgres,
+            "artifact_index_output": str(args.artifact_index_output) if args.artifact_index_output else None,
         },
         "steps": steps,
     }
@@ -122,6 +124,11 @@ def main(argv: list[str] | None = None) -> int:
         type=Path,
         help="Optional path to write the validation run manifest JSON",
     )
+    parser.add_argument(
+        "--artifact-index-output",
+        type=Path,
+        help="Optional path to write SHA-256/size index for validation artifacts",
+    )
     args = parser.parse_args(argv)
 
     cutoff_count = sum(
@@ -145,6 +152,8 @@ def main(argv: list[str] | None = None) -> int:
         )
     if args.postgres_dsn and not args.export_live_rows_postgres:
         parser.error("--postgres-dsn requires --export-live-rows-postgres")
+    if args.artifact_index_output and args.report_output is None:
+        parser.error("--artifact-index-output requires --report-output")
 
     started_at = _utc_now()
     output_dir = args.output_dir
@@ -330,6 +339,42 @@ def main(argv: list[str] | None = None) -> int:
         ),
         args.report_output,
     )
+    if args.artifact_index_output:
+        command = [
+            sys.executable,
+            "scripts/package_replay_validation_artifacts.py",
+            "--manifest",
+            str(args.report_output),
+            "--output",
+            str(args.artifact_index_output),
+        ]
+        code, stdout, stderr, duration = _run(command)
+        step = {
+            "name": "artifact_index",
+            "command": command,
+            "returncode": code,
+            "duration_seconds": round(duration, 6),
+            "stdout": stdout,
+            "stderr": stderr,
+        }
+        stdout_json = _parse_json(stdout)
+        if stdout_json is not None:
+            step["stdout_json"] = stdout_json
+        steps.append(step)
+        if code != 0:
+            _emit_report(
+                _build_report(
+                    matched=False,
+                    args=args,
+                    replay_path=replay_path,
+                    live_checksums_path=live_checksums_path,
+                    live_rows_path=live_rows_path,
+                    steps=steps,
+                    started_at=started_at,
+                ),
+                args.report_output,
+            )
+            return code
     return 0
 
 

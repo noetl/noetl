@@ -26,6 +26,7 @@ OPTIONAL_STEP_NAMES = (
     "live_checksums",
     "projection_parity",
     "payload_resolution",
+    "artifact_index",
 )
 
 

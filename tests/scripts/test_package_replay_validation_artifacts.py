@@ -1,0 +1,58 @@
+import json
+from pathlib import Path
+
+from scripts.package_replay_validation_artifacts import main
+
+
+def _manifest(tmp_path: Path) -> Path:
+    replay = tmp_path / "replay.json"
+    replay.write_text("{}")
+    live_rows = tmp_path / "live-rows.json"
+    live_rows.write_text("{}")
+    live_checksums = tmp_path / "live-checksums.json"
+    live_checksums.write_text("{}")
+    manifest = tmp_path / "validation.json"
+    manifest.write_text(
+        json.dumps(
+            {
+                "matched": True,
+                "artifacts": {
+                    "replay": str(replay),
+                    "live_rows": str(live_rows),
+                    "live_checksums": str(live_checksums),
+                    "report": str(manifest),
+                },
+            }
+        )
+    )
+    return manifest
+
+
+def test_package_replay_validation_artifacts_builds_and_checks_index(tmp_path: Path, capsys):
+    manifest = _manifest(tmp_path)
+    output = tmp_path / "artifact-index.json"
+
+    assert main(["--manifest", str(manifest), "--output", str(output)]) == 0
+    created = json.loads(capsys.readouterr().out)
+    assert created["matched"] is True
+    assert created["output"] == str(output)
+
+    index = json.loads(output.read_text())
+    roles = {entry["role"] for entry in index["artifacts"]}
+    assert {"manifest", "replay", "live_rows", "live_checksums", "report"} <= roles
+    assert all(entry["exists"] for entry in index["artifacts"])
+
+    assert main(["--check", str(output)]) == 0
+    assert json.loads(capsys.readouterr().out)["matched"] is True
+
+
+def test_package_replay_validation_artifacts_rejects_digest_drift(tmp_path: Path, capsys):
+    manifest = _manifest(tmp_path)
+    output = tmp_path / "artifact-index.json"
+    assert main(["--manifest", str(manifest), "--output", str(output)]) == 0
+    capsys.readouterr()
+
+    (tmp_path / "replay.json").write_text('{"changed":true}')
+    assert main(["--check", str(output)]) == 1
+    result = json.loads(capsys.readouterr().out)
+    assert any(failure["reason"] == "sha256 drift" for failure in result["failures"])
