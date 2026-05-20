@@ -108,6 +108,43 @@ def test_check_replay_state_report_rejects_invalid_registry_digest_shape(
     assert "upcaster_registry_digest" in fields
 
 
+def test_check_replay_state_report_rejects_invalid_field_types(tmp_path: Path, capsys):
+    state = _replay_state()
+    state["execution_id"] = "not-an-int"
+    state["event_count"] = -1
+    state["tenant_id"] = ""
+    path = tmp_path / "replay.json"
+    path.write_text(json.dumps(state))
+
+    assert main(["--report", str(path)]) == 1
+    output = json.loads(capsys.readouterr().out)
+    assert output["matched"] is False
+    fields = {failure["field"] for failure in output["failures"]}
+    assert {"execution_id", "event_count", "tenant_id"} <= fields
+
+
+def test_check_replay_state_report_rejects_invalid_snapshot_version_without_crashing(
+    tmp_path: Path,
+    capsys,
+):
+    state = _replay_state()
+    state["replay_snapshot"] = {
+        "aggregate_id": "execution/123/all",
+        "aggregate_type": "replay_state",
+        "version": "not-an-int",
+        "checksum": "a" * 64,
+        "meta": {"upcaster_registry_digest": REGISTRY_DIGEST},
+    }
+    path = tmp_path / "replay.json"
+    path.write_text(json.dumps(state))
+
+    assert main(["--report", str(path)]) == 1
+    output = json.loads(capsys.readouterr().out)
+    assert output["matched"] is False
+    fields = {failure["field"] for failure in output["failures"]}
+    assert "replay_snapshot.version" in fields
+
+
 def test_check_replay_state_report_rejects_inconsistent_snapshot(tmp_path: Path, capsys):
     base = _replay_state()
     seed = ReplaySnapshotSeed(
