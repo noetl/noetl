@@ -17,6 +17,7 @@ def _manifest(tmp_path: Path) -> dict:
             "replay": str(replay),
             "live_rows": None,
             "live_checksums": None,
+            "projector_summaries": [],
             "report": None,
             "artifact_index": None,
         },
@@ -34,6 +35,8 @@ def _manifest(tmp_path: Path) -> dict:
             "live_checksums": None,
             "live_rows": None,
             "export_live_rows_postgres": False,
+            "projector_summary": [],
+            "projector_summary_url": [],
         },
         "steps": [
             {
@@ -290,3 +293,76 @@ def test_check_replay_validation_manifest_rejects_orphan_artifact_index_step(
     assert main(["--manifest", str(path), "--check-artifacts"]) == 1
     output = json.loads(capsys.readouterr().out)
     assert "artifacts.artifact_index" in {failure["field"] for failure in output["failures"]}
+
+
+def test_check_replay_validation_manifest_accepts_projector_summary_artifact(
+    tmp_path: Path,
+    capsys,
+):
+    manifest = _manifest(tmp_path)
+    summary = tmp_path / "projector-summary.json"
+    summary.write_text("{}")
+    manifest["artifacts"]["projector_summaries"] = [
+        {"role": "projector_summary_1", "path": str(summary)}
+    ]
+    manifest["steps"].append(
+        {
+            "name": "projector_summary_1_integrity",
+            "command": ["python", "scripts/check_projector_metrics_summary.py"],
+            "returncode": 0,
+            "duration_seconds": 0.1,
+            "stdout": "{}",
+            "stderr": "",
+        }
+    )
+    path = tmp_path / "manifest.json"
+    path.write_text(json.dumps(manifest))
+
+    assert main(["--manifest", str(path), "--check-artifacts"]) == 0
+    assert json.loads(capsys.readouterr().out)["matched"] is True
+
+
+def test_check_replay_validation_manifest_requires_projector_summary_integrity(
+    tmp_path: Path,
+    capsys,
+):
+    manifest = _manifest(tmp_path)
+    summary = tmp_path / "projector-summary.json"
+    summary.write_text("{}")
+    manifest["artifacts"]["projector_summaries"] = [
+        {"role": "projector_summary_1", "path": str(summary)}
+    ]
+    path = tmp_path / "manifest.json"
+    path.write_text(json.dumps(manifest))
+
+    assert main(["--manifest", str(path), "--check-artifacts"]) == 1
+    output = json.loads(capsys.readouterr().out)
+    assert any("projector summary artifacts" in failure["reason"] for failure in output["failures"])
+
+
+def test_check_replay_validation_manifest_rejects_bad_projector_summary_artifact(
+    tmp_path: Path,
+    capsys,
+):
+    manifest = _manifest(tmp_path)
+    manifest["artifacts"]["projector_summaries"] = [
+        {"role": "", "path": str(tmp_path / "missing-summary.json")}
+    ]
+    manifest["steps"].append(
+        {
+            "name": "projector_summary_1_integrity",
+            "command": ["python", "scripts/check_projector_metrics_summary.py"],
+            "returncode": 0,
+            "duration_seconds": 0.1,
+            "stdout": "{}",
+            "stderr": "",
+        }
+    )
+    path = tmp_path / "manifest.json"
+    path.write_text(json.dumps(manifest))
+
+    assert main(["--manifest", str(path), "--check-artifacts"]) == 1
+    output = json.loads(capsys.readouterr().out)
+    fields = {failure["field"] for failure in output["failures"]}
+    assert "artifacts.projector_summaries[0].role" in fields
+    assert "artifacts.projector_summaries[0].path" in fields

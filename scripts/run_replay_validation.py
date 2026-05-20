@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import subprocess
 import sys
 import time
@@ -37,6 +38,22 @@ def _run(command: list[str]) -> tuple[int, str, str, float]:
     return completed.returncode, completed.stdout, completed.stderr, duration
 
 
+def _safe_slug(value: str) -> str:
+    slug = re.sub(r"[^A-Za-z0-9_.-]+", "-", value.strip()).strip("-")
+    return slug or "projector"
+
+
+def _parse_named_value(raw: str, *, flag: str) -> tuple[str, str]:
+    if "=" not in raw:
+        raise ValueError(f"{flag} must use NAME=VALUE")
+    name, value = raw.split("=", 1)
+    name = name.strip()
+    value = value.strip()
+    if not name or not value:
+        raise ValueError(f"{flag} must use NAME=VALUE")
+    return name, value
+
+
 def _build_report(
     *,
     matched: bool,
@@ -44,6 +61,7 @@ def _build_report(
     replay_path: Path,
     live_checksums_path: Path | None,
     live_rows_path: Path | None,
+    projector_summaries: list[dict[str, str]],
     steps: list[dict[str, object]],
     started_at: str,
 ) -> dict[str, object]:
@@ -57,6 +75,7 @@ def _build_report(
             "replay": str(replay_path),
             "live_rows": str(live_rows_path) if live_rows_path else None,
             "live_checksums": str(live_checksums_path) if live_checksums_path else None,
+            "projector_summaries": projector_summaries,
             "report": str(args.report_output) if args.report_output else None,
             "artifact_index": str(args.artifact_index_output) if args.artifact_index_output else None,
         },
@@ -74,6 +93,8 @@ def _build_report(
             "live_checksums": str(args.live_checksums) if args.live_checksums else None,
             "live_rows": str(args.live_rows) if args.live_rows else None,
             "export_live_rows_postgres": args.export_live_rows_postgres,
+            "projector_summary": [str(path) for path in args.projector_summary],
+            "projector_summary_url": list(args.projector_summary_url),
             "artifact_index_output": str(args.artifact_index_output) if args.artifact_index_output else None,
         },
         "steps": steps,
@@ -129,6 +150,20 @@ def main(argv: list[str] | None = None) -> int:
         type=Path,
         help="Optional path to write SHA-256/size index for validation artifacts",
     )
+    parser.add_argument(
+        "--projector-summary",
+        action="append",
+        default=[],
+        type=Path,
+        help="Optional saved projector /summary JSON artifact to validate",
+    )
+    parser.add_argument(
+        "--projector-summary-url",
+        action="append",
+        default=[],
+        metavar="NAME=URL",
+        help="Fetch and validate a live projector summary from NAME=URL",
+    )
     args = parser.parse_args(argv)
 
     cutoff_count = sum(
@@ -154,6 +189,14 @@ def main(argv: list[str] | None = None) -> int:
         parser.error("--postgres-dsn requires --export-live-rows-postgres")
     if args.artifact_index_output and args.report_output is None:
         parser.error("--artifact-index-output requires --report-output")
+    projector_summary_urls: list[tuple[str, str]] = []
+    try:
+        projector_summary_urls = [
+            _parse_named_value(raw, flag="--projector-summary-url")
+            for raw in args.projector_summary_url
+        ]
+    except ValueError as exc:
+        parser.error(str(exc))
 
     started_at = _utc_now()
     output_dir = args.output_dir
@@ -165,6 +208,53 @@ def main(argv: list[str] | None = None) -> int:
         live_rows_path = output_dir / f"live-rows-{args.execution_id}.json"
     if live_rows_path:
         live_checksums_path = output_dir / f"live-checksums-{args.execution_id}.json"
+    projector_summaries: list[dict[str, str]] = []
+    projector_fetch_steps: list[tuple[str, list[str]]] = []
+    projector_check_steps: list[tuple[str, list[str]]] = []
+    for idx, path in enumerate(args.projector_summary, start=1):
+        role = f"projector_summary_{idx}"
+        projector_summaries.append({"role": role, "path": str(path)})
+        projector_check_steps.append(
+            (
+                f"projector_summary_{idx}_integrity",
+                [
+                    sys.executable,
+                    "scripts/check_projector_metrics_summary.py",
+                    "--report",
+                    str(path),
+                ],
+            )
+        )
+    for idx, (name, url) in enumerate(projector_summary_urls, start=1):
+        role = f"projector_summary_url_{idx}_{_safe_slug(name)}"
+        path = output_dir / f"{role}.json"
+        projector_summaries.append({"role": role, "name": name, "url": url, "path": str(path)})
+        projector_fetch_steps.append(
+            (
+                f"{role}_fetch",
+                [
+                    sys.executable,
+                    "scripts/fetch_projector_metrics_summary.py",
+                    "--url",
+                    url,
+                    "--output",
+                    str(path),
+                    "--timeout",
+                    str(args.timeout),
+                ],
+            )
+        )
+        projector_check_steps.append(
+            (
+                f"{role}_integrity",
+                [
+                    sys.executable,
+                    "scripts/check_projector_metrics_summary.py",
+                    "--report",
+                    str(path),
+                ],
+            )
+        )
     fetch_command = [
         sys.executable,
         "scripts/fetch_replay_state_report.py",
@@ -193,7 +283,7 @@ def main(argv: list[str] | None = None) -> int:
         fetch_command.append("--resolve-payloads")
 
     steps: list[dict[str, object]] = []
-    for name, command in [
+    validation_steps = [
         ("fetch", fetch_command),
         (
             "state_integrity",
@@ -272,7 +362,11 @@ def main(argv: list[str] | None = None) -> int:
             if args.resolve_payloads
             else [],
         ),
-    ]:
+    ]
+    validation_steps.extend(projector_fetch_steps)
+    validation_steps.extend(projector_check_steps)
+
+    for name, command in validation_steps:
         if not command:
             steps.append({"name": name, "skipped": True})
             continue
@@ -297,6 +391,7 @@ def main(argv: list[str] | None = None) -> int:
                     replay_path=replay_path,
                     live_checksums_path=live_checksums_path,
                     live_rows_path=live_rows_path,
+                    projector_summaries=projector_summaries,
                     steps=steps,
                     started_at=started_at,
                 ),
@@ -320,6 +415,7 @@ def main(argv: list[str] | None = None) -> int:
                     replay_path=replay_path,
                     live_checksums_path=live_checksums_path,
                     live_rows_path=live_rows_path,
+                    projector_summaries=projector_summaries,
                     steps=steps,
                     started_at=started_at,
                 ),
@@ -337,6 +433,13 @@ def main(argv: list[str] | None = None) -> int:
             "--output",
             str(args.artifact_index_output),
         ]
+        for summary in projector_summaries:
+            artifact_index_command.extend(
+                [
+                    "--artifact",
+                    f"{summary['role']}={summary['path']}",
+                ]
+            )
         steps.append(
             {
                 "name": "artifact_index",
@@ -362,6 +465,7 @@ def main(argv: list[str] | None = None) -> int:
             replay_path=replay_path,
             live_checksums_path=live_checksums_path,
             live_rows_path=live_rows_path,
+            projector_summaries=projector_summaries,
             steps=steps,
             started_at=started_at,
         ),
@@ -388,6 +492,7 @@ def main(argv: list[str] | None = None) -> int:
                     replay_path=replay_path,
                     live_checksums_path=live_checksums_path,
                     live_rows_path=live_rows_path,
+                    projector_summaries=projector_summaries,
                     steps=steps,
                     started_at=started_at,
                 ),
