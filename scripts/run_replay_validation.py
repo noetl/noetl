@@ -108,6 +108,7 @@ def _build_report(
             "projector_summary_url": list(args.projector_summary_url),
             "worker_metrics": [str(path) for path in args.worker_metrics],
             "worker_metrics_url": list(args.worker_metrics_url),
+            "worker_metrics_admission_only": bool(args.worker_metrics_admission_only),
             "artifact_index_output": str(args.artifact_index_output) if args.artifact_index_output else None,
         },
         "steps": steps,
@@ -190,6 +191,14 @@ def main(argv: list[str] | None = None) -> int:
         default=[],
         metavar="NAME=URL",
         help="Fetch and validate a live worker metrics endpoint from NAME=URL",
+    )
+    parser.add_argument(
+        "--worker-metrics-admission-only",
+        action="store_true",
+        help=(
+            "Validate worker metrics as producer-side cursor frame admission "
+            "evidence without requiring downstream IPC reads."
+        ),
     )
     args = parser.parse_args(argv)
 
@@ -296,15 +305,18 @@ def main(argv: list[str] | None = None) -> int:
     for idx, path in enumerate(args.worker_metrics, start=1):
         role = f"worker_metrics_{idx}"
         worker_metrics.append({"role": role, "path": str(path)})
+        check_command = [
+            _validation_python(),
+            "scripts/check_worker_ipc_metrics.py",
+            "--metrics",
+            str(path),
+        ]
+        if args.worker_metrics_admission_only:
+            check_command.append("--require-admission-only")
         worker_check_steps.append(
             (
                 f"worker_metrics_{idx}_integrity",
-                [
-                    _validation_python(),
-                    "scripts/check_worker_ipc_metrics.py",
-                    "--metrics",
-                    str(path),
-                ],
+                check_command,
             )
         )
     for idx, (name, url) in enumerate(worker_metrics_urls, start=1):
@@ -326,15 +338,18 @@ def main(argv: list[str] | None = None) -> int:
                 ],
             )
         )
+        check_command = [
+            _validation_python(),
+            "scripts/check_worker_ipc_metrics.py",
+            "--metrics",
+            str(path),
+        ]
+        if args.worker_metrics_admission_only:
+            check_command.append("--require-admission-only")
         worker_check_steps.append(
             (
                 f"{role}_integrity",
-                [
-                    _validation_python(),
-                    "scripts/check_worker_ipc_metrics.py",
-                    "--metrics",
-                    str(path),
-                ],
+                check_command,
             )
         )
     fetch_command = [

@@ -82,6 +82,72 @@ def test_templated_max_in_flight_resolves_against_workload_context():
     ) == 8
 
 
+@pytest.mark.asyncio
+async def test_cursor_loop_dispatch_renders_cursor_auth(monkeypatch):
+    from jinja2 import Environment
+
+    from noetl.core.dsl.engine.executor.transitions import TransitionMixin
+    from noetl.core.dsl.engine.models.workflow import CursorSpec, Loop, Step
+
+    class DummyState:
+        execution_id = "42"
+        loop_state = {}
+        completed_steps = set()
+        step_results = {}
+        variables = {}
+
+        def get_render_context(self, _event):
+            return {"workload": {"pg_auth": "pg_k8s"}, "execution_id": self.execution_id}
+
+        def init_loop(self, step, collection, iterator, mode, event_id):
+            self.loop_state[step] = {
+                "collection": collection,
+                "iterator": iterator,
+                "mode": mode,
+                "event_id": event_id,
+            }
+
+    class DummyNatsCache:
+        async def set_loop_state(self, *_args, **_kwargs):
+            return None
+
+    class DummyTransitions(TransitionMixin):
+        jinja_env = Environment()
+
+        def _render_template(self, template, context):
+            return self.jinja_env.from_string(template).render(**context)
+
+        async def _open_cursor_runtime_stage(self, **_kwargs):
+            return 7
+
+    async def fake_get_nats_cache():
+        return DummyNatsCache()
+
+    monkeypatch.setattr(
+        "noetl.core.dsl.engine.executor.transitions.get_nats_cache",
+        fake_get_nats_cache,
+    )
+
+    step = Step(
+        step="fetch_rows",
+        loop=Loop(
+            cursor=CursorSpec(
+                kind="postgres",
+                auth="{{ workload.pg_auth }}",
+                claim="select {{ execution_id }}",
+            ),
+            iterator="row",
+            spec={"mode": "cursor", "max_in_flight": 1},
+        ),
+        tool={"kind": "noop"},
+    )
+
+    commands = await DummyTransitions()._issue_cursor_loop_commands(DummyState(), step, {})
+
+    assert commands[0].tool.config["cursor"]["auth"] == "pg_k8s"
+    assert commands[0].tool.config["cursor"]["claim"] == "select 42"
+
+
 def test_templated_max_in_flight_rejects_non_positive_rendered_value():
     from jinja2 import Environment
 
