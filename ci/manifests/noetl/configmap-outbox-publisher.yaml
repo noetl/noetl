@@ -1,0 +1,30 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: noetl-outbox-publisher-config
+  namespace: noetl
+  labels:
+    app: noetl-outbox-publisher
+    component: outbox-publisher
+data:
+  TZ: "UTC"
+  LOG_LEVEL: "INFO"
+  PYTHONPATH: "/opt/noetl"
+  NOETL_RUN_MODE: "outbox-publisher"
+  NOETL_LOG_FORMAT: "json"
+  NATS_URL: "nats://noetl:noetl@nats.nats.svc.cluster.local:4222"
+  NOETL_EVENT_NATS_STREAM: "NOETL_EVENTS"
+  NOETL_EVENT_NATS_SUBJECT_PREFIX: "noetl.events"
+  NOETL_EVENT_NATS_SHARD_COUNT: "1"
+  NOETL_OUTBOX_PUBLISHER_BATCH_SIZE: "100"
+  NOETL_OUTBOX_PUBLISHER_IDLE_SLEEP_SECONDS: "1"
+  NOETL_OUTBOX_PUBLISHER_ERROR_SLEEP_SECONDS: "5"
+  POSTGRES_HOST: "postgres.postgres.svc.cluster.local"
+  POSTGRES_PORT: "5432"
+  NOETL_POSTGRES_DB: "noetl"
+  NOETL_USER: "noetl"
+  NOETL_SCHEMA: "noetl"
+  NOETL_POSTGRES_POOL_MIN_SIZE: "1"
+  NOETL_POSTGRES_POOL_MAX_SIZE: "4"
+  NOETL_POSTGRES_POOL_MAX_WAITING: "50"
+  NOETL_POSTGRES_POOL_TIMEOUT_SECONDS: "30"

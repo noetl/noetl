@@ -1,0 +1,74 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: noetl-projector
+  namespace: noetl
+  labels:
+    app: noetl-projector
+    component: projector
+spec:
+  serviceName: noetl-projector
+  replicas: 1
+  podManagementPolicy: Parallel
+  updateStrategy:
+    type: RollingUpdate
+  selector:
+    matchLabels:
+      app: noetl-projector
+  template:
+    metadata:
+      labels:
+        app: noetl-projector
+        component: projector
+    spec:
+      serviceAccountName: noetl-worker
+      initContainers:
+        - name: wait-for-api
+          image: curlimages/curl:8.7.1
+          imagePullPolicy: IfNotPresent
+          command:
+            - sh
+            - -c
+            - "until curl -sf http://noetl.noetl.svc.cluster.local:8082/api/health; do echo 'Waiting for NoETL API...'; sleep 3; done"
+      containers:
+        - name: projector
+          image: image_name:image_tag
+          imagePullPolicy: Never
+          command:
+            - python
+          args:
+            - -m
+            - noetl.projector
+          ports:
+            - name: metrics
+              containerPort: 9090
+          env:
+            - name: NOETL_PROJECTOR_SHARD_ID
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: NOETL_PROJECTOR_NATS_CONSUMER
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: NOETL_NODE_ID
+              value: "0"
+          envFrom:
+            - configMapRef:
+                name: noetl-projector-config
+            - secretRef:
+                name: noetl-secret
+          volumeMounts:
+            - name: noetl-data
+              mountPath: /opt/noetl/data
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "256Mi"
+            limits:
+              cpu: "1000m"
+              memory: "1Gi"
+      volumes:
+        - name: noetl-data
+          persistentVolumeClaim:
+            claimName: noetl-data-shared

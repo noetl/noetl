@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import subprocess
 import sys
@@ -28,14 +29,22 @@ def _parse_json(value: str) -> object | None:
 
 def _run(command: list[str]) -> tuple[int, str, str, float]:
     started = time.monotonic()
+    env = os.environ.copy()
+    repo_root = str(Path.cwd())
+    env["PYTHONPATH"] = repo_root if not env.get("PYTHONPATH") else f"{repo_root}{os.pathsep}{env['PYTHONPATH']}"
     completed = subprocess.run(
         command,
         check=False,
         text=True,
         capture_output=True,
+        env=env,
     )
     duration = time.monotonic() - started
     return completed.returncode, completed.stdout, completed.stderr, duration
+
+
+def _validation_python() -> str:
+    return os.environ.get("NOETL_VALIDATION_PYTHON") or sys.executable
 
 
 def _safe_slug(value: str) -> str:
@@ -218,7 +227,7 @@ def main(argv: list[str] | None = None) -> int:
             (
                 f"projector_summary_{idx}_integrity",
                 [
-                    sys.executable,
+                    _validation_python(),
                     "scripts/check_projector_metrics_summary.py",
                     "--report",
                     str(path),
@@ -233,7 +242,7 @@ def main(argv: list[str] | None = None) -> int:
             (
                 f"{role}_fetch",
                 [
-                    sys.executable,
+                    _validation_python(),
                     "scripts/fetch_projector_metrics_summary.py",
                     "--url",
                     url,
@@ -248,7 +257,7 @@ def main(argv: list[str] | None = None) -> int:
             (
                 f"{role}_integrity",
                 [
-                    sys.executable,
+                    _validation_python(),
                     "scripts/check_projector_metrics_summary.py",
                     "--report",
                     str(path),
@@ -256,7 +265,7 @@ def main(argv: list[str] | None = None) -> int:
             )
         )
     fetch_command = [
-        sys.executable,
+        _validation_python(),
         "scripts/fetch_replay_state_report.py",
         "--base-url",
         args.base_url,
@@ -288,7 +297,7 @@ def main(argv: list[str] | None = None) -> int:
         (
             "state_integrity",
             [
-                sys.executable,
+                _validation_python(),
                 "scripts/check_replay_state_report.py",
                 "--report",
                 str(replay_path),
@@ -297,7 +306,7 @@ def main(argv: list[str] | None = None) -> int:
         (
             "live_rows_export",
             [
-                sys.executable,
+                _validation_python(),
                 "scripts/export_live_projection_rows_postgres.py",
                 "--execution-id",
                 str(args.execution_id),
@@ -317,7 +326,7 @@ def main(argv: list[str] | None = None) -> int:
         (
             "live_rows_integrity",
             [
-                sys.executable,
+                _validation_python(),
                 "scripts/check_live_projection_rows.py",
                 "--rows",
                 str(live_rows_path),
@@ -328,7 +337,7 @@ def main(argv: list[str] | None = None) -> int:
         (
             "live_checksums",
             [
-                sys.executable,
+                _validation_python(),
                 "scripts/build_live_projection_checksums.py",
                 "--rows",
                 str(live_rows_path),
@@ -341,7 +350,7 @@ def main(argv: list[str] | None = None) -> int:
         (
             "projection_parity",
             [
-                sys.executable,
+                _validation_python(),
                 "scripts/check_replay_parity_report.py",
                 "--replayed",
                 str(replay_path),
@@ -354,7 +363,7 @@ def main(argv: list[str] | None = None) -> int:
         (
             "payload_resolution",
             [
-                sys.executable,
+                _validation_python(),
                 "scripts/check_replay_payload_resolution_report.py",
                 "--report",
                 str(replay_path),
@@ -426,7 +435,7 @@ def main(argv: list[str] | None = None) -> int:
     artifact_index_command: list[str] | None = None
     if args.artifact_index_output:
         artifact_index_command = [
-            sys.executable,
+            _validation_python(),
             "scripts/package_replay_validation_artifacts.py",
             "--manifest",
             str(args.report_output),

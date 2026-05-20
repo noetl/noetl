@@ -1,0 +1,16 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: noetl-projector
+  namespace: noetl
+  labels:
+    app: noetl-projector
+    component: projector
+spec:
+  clusterIP: None
+  selector:
+    app: noetl-projector
+  ports:
+    - name: metrics
+      port: 9090
+      targetPort: 9090
