@@ -3684,6 +3684,7 @@ async def run_worker(
             labels={
                 "worker_pool": os.getenv("NOETL_WORKER_POOL_NAME") or "worker-cpu-01",
                 "runtime": os.getenv("NOETL_WORKER_POOL_RUNTIME") or "cpu",
+                "node_id": os.getenv("NOETL_NODE_ID") or os.getenv("NODE_NAME") or "",
             },
         )
     

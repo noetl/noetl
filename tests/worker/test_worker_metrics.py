@@ -22,12 +22,13 @@ def test_worker_metrics_render_storage_ipc_labels(monkeypatch):
 
     body = worker_metrics.render_worker_metrics(
         worker_id='worker-"a"',
-        labels={"worker_pool": "worker-cpu-01", "runtime": "cpu"},
+        labels={"worker_pool": "worker-cpu-01", "runtime": "cpu", "node_id": "node-a"},
     )
 
     assert 'worker_id="worker-\\"a\\""' in body
     assert 'worker_pool="worker-cpu-01"' in body
     assert 'runtime="cpu"' in body
+    assert 'node_id="node-a"' in body
     assert "noetl_storage_ipc_admit_attempts_total" in body
     assert "noetl_storage_ipc_read_hit_ratio" in body
     assert " 0.75" in body
