@@ -796,6 +796,7 @@ async def test_claim_frames_mints_without_advisory_lock(monkeypatch):
             lease_seconds=60,
             cursor={"worker_slot_id": "slot-1", "frame_index": 0},
             frame_policy={"process": "frame", "max_rows": 50},
+            locality={"node_id": "node-a", "zone": "us-central1-a"},
         ),
     )
 
@@ -803,5 +804,6 @@ async def test_claim_frames_mints_without_advisory_lock(monkeypatch):
     assert response["frames"][0]["frame_id"] == 9
     assert response["frames"][0]["claimed_event_id"] == 102
     assert [item["event_type"] for item in emitted] == ["frame.dispatched"]
+    assert emitted[0]["meta_extra"]["locality"] == {"node_id": "node-a", "zone": "us-central1-a"}
     assert any("ON CONFLICT DO NOTHING" in query for query, _ in cursor.queries)
     assert conn.commits == 1

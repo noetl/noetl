@@ -105,6 +105,26 @@ class _FakeSyncClient:
         return _FakeResponse()
 
 
+def test_worker_locality_hint_uses_topology_env(monkeypatch):
+    from noetl.worker import cursor_worker
+
+    monkeypatch.setenv("NOETL_NODE_ID", "node-a")
+    monkeypatch.setenv("NOETL_CLUSTER_ID", "cluster-a")
+    monkeypatch.setenv("NOETL_REGION", "us-central1")
+    monkeypatch.setenv("NOETL_ZONE", "us-central1-a")
+    monkeypatch.setenv("NOETL_WORKER_POOL_NAME", "worker-cpu-01")
+    monkeypatch.setenv("NOETL_WORKER_POOL_RUNTIME", "cpu")
+
+    assert cursor_worker._worker_locality_hint() == {
+        "node_id": "node-a",
+        "cluster_id": "cluster-a",
+        "region": "us-central1",
+        "zone": "us-central1-a",
+        "worker_pool": "worker-cpu-01",
+        "runtime": "cpu",
+    }
+
+
 @pytest.mark.asyncio
 async def test_start_runtime_frame_emits_running_heartbeat(monkeypatch):
     from noetl.worker import cursor_worker

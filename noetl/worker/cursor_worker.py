@@ -187,6 +187,19 @@ def _runtime_api_base(context: dict[str, Any]) -> str:
     ).rstrip("/")
 
 
+def _worker_locality_hint() -> dict[str, str]:
+    """Return best-effort topology for frame claim placement metadata."""
+    values = {
+        "node_id": os.getenv("NOETL_NODE_ID") or os.getenv("NODE_NAME") or "",
+        "cluster_id": os.getenv("NOETL_CLUSTER_ID") or os.getenv("NOETL_CLUSTER_NAME") or "",
+        "region": os.getenv("NOETL_REGION") or "",
+        "zone": os.getenv("NOETL_ZONE") or "",
+        "worker_pool": os.getenv("NOETL_WORKER_POOL_NAME") or "worker-cpu-01",
+        "runtime": os.getenv("NOETL_WORKER_POOL_RUNTIME") or "cpu",
+    }
+    return {key: value for key, value in values.items() if value}
+
+
 async def _claim_runtime_frame(
     *,
     context: dict[str, Any],
@@ -211,6 +224,7 @@ async def _claim_runtime_frame(
         "requested_count": 1,
         "lease_seconds": lease_seconds,
         "frame_policy": frame_policy or {},
+        "locality": _worker_locality_hint(),
         "cursor": {
             **(cursor or {}),
             "frame_index": frame_index,

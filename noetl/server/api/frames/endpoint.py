@@ -673,6 +673,7 @@ async def claim_frames(stage_id: int, req: FrameClaimRequest) -> dict[str, Any]:
                             "recovery": _frame_recovery_policy(
                                 req.frame_policy or stage.get("frame_policy") or {}
                             ),
+                            "locality": req.locality or {},
                         },
                         event_id=updated.get("claimed_event_id"),
                     )
