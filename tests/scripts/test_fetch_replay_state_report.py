@@ -76,3 +76,29 @@ def test_fetch_replay_state_report_rejects_multiple_cutoffs(tmp_path: Path):
                 str(tmp_path / "replay.json"),
             ]
         )
+
+
+def test_fetch_replay_state_report_rejects_non_object_response(monkeypatch, tmp_path: Path):
+    class _Response:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def read(self):
+            return b"[]"
+
+    monkeypatch.setattr(fetch_replay_state_report, "urlopen", lambda *_args, **_kwargs: _Response())
+
+    with pytest.raises(ValueError, match="JSON object"):
+        fetch_replay_state_report.main(
+            [
+                "--base-url",
+                "http://noetl.example",
+                "--execution-id",
+                "123",
+                "--output",
+                str(tmp_path / "replay.json"),
+            ]
+        )

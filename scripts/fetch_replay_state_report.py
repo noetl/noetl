@@ -59,6 +59,8 @@ def main(argv: list[str] | None = None) -> int:
     with urlopen(request, timeout=args.timeout) as response:
         body = response.read()
     data = json.loads(body.decode("utf-8"))
+    if not isinstance(data, dict):
+        raise ValueError("replay state response must be a JSON object")
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(data, indent=2, sort_keys=True) + "\n")
     print(json.dumps({"output": str(args.output), "bytes": len(body)}, sort_keys=True))
