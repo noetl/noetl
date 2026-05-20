@@ -316,6 +316,40 @@ def test_check_replay_validation_bundle_accepts_worker_ipc_phase3_evidence(
     assert output["phase3_worker_ipc_result"]["matched"] is True
 
 
+def test_check_replay_validation_bundle_accepts_worker_ipc_admission_only_evidence(
+    tmp_path: Path,
+    capsys,
+):
+    manifest, index = _bundle(tmp_path)
+    _add_worker_phase3_evidence(manifest, index, tmp_path)
+    payload = json.loads(manifest.read_text())
+    payload["config"]["worker_metrics_admission_only"] = True
+    metrics_path = Path(payload["artifacts"]["worker_metrics"][0]["path"])
+    metrics_path.write_text(
+        _worker_metrics_body()
+        .replace("noetl_storage_ipc_read_hits_total{node_id=\"node-a\",worker_id=\"worker-a\"} 1", "noetl_storage_ipc_read_hits_total{node_id=\"node-a\",worker_id=\"worker-a\"} 0")
+        .replace("noetl_storage_ipc_fallback_reads_total{node_id=\"node-a\",worker_id=\"worker-a\"} 1", "noetl_storage_ipc_fallback_reads_total{node_id=\"node-a\",worker_id=\"worker-a\"} 0")
+    )
+    manifest.write_text(json.dumps(payload))
+    index.write_text(
+        json.dumps(
+            build_artifact_index(
+                manifest_path=manifest,
+                output_path=index,
+                extra_artifacts=[("worker_metrics_1", metrics_path)],
+            ),
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n"
+    )
+
+    assert main(["--manifest", str(manifest), "--require-worker-ipc-phase3"]) == 0
+    output = json.loads(capsys.readouterr().out)
+    assert output["matched"] is True
+    assert output["phase3_worker_ipc_result"]["worker_metrics_admission_only"] is True
+
+
 def test_check_replay_validation_bundle_rejects_missing_worker_ipc_phase3_evidence(
     tmp_path: Path,
     capsys,

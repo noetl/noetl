@@ -35,6 +35,10 @@ spec:
         - name: worker
           image: image_name:image_tag
           imagePullPolicy: Never
+          ports:
+            - name: metrics
+              containerPort: 9091
+              protocol: TCP
           command:
             - python
           args:
@@ -43,6 +47,11 @@ spec:
           envFrom:
             - configMapRef:
                 name: noetl-worker-config
+          env:
+            - name: NOETL_NODE_ID
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
           volumeMounts:
             - name: noetl-data
               mountPath: /opt/noetl/data

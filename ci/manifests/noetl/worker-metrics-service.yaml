@@ -1,0 +1,16 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: noetl-worker-metrics
+  namespace: noetl
+  labels:
+    app: noetl-worker
+    component: worker
+spec:
+  clusterIP: None
+  selector:
+    app: noetl-worker
+  ports:
+    - name: metrics
+      port: 9091
+      targetPort: metrics
