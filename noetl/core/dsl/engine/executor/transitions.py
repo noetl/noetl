@@ -169,6 +169,18 @@ class TransitionMixin:
 
         # Cursor spec — serialize so the worker receives a plain dict.
         cursor_spec = step_def.loop.cursor.model_dump()
+        auth_template = cursor_spec.get("auth")
+        if isinstance(auth_template, str):
+            try:
+                rendered_auth = self._render_template(auth_template, base_context)
+                if isinstance(rendered_auth, str) and rendered_auth.strip():
+                    cursor_spec["auth"] = rendered_auth.strip()
+            except Exception as exc:
+                logger.warning(
+                    "[CURSOR-LOOP] Pre-render of cursor auth for %s failed (%s); "
+                    "falling back to worker-side value",
+                    step_def.step, exc,
+                )
         # Pre-render the claim SQL against the engine's full render
         # context so any execution-scoped values (e.g. a facility id
         # resolved from a prior step's result) are baked into the

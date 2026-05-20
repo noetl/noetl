@@ -27,6 +27,10 @@ DEFAULT_MINIMUMS = {
     "noetl_storage_ipc_fallback_reads_total": 1.0,
 }
 
+ADMISSION_MINIMUMS = {
+    "noetl_storage_ipc_admit_success_total": 1.0,
+}
+
 DEFAULT_REQUIRED_LABELS = ("worker_id", "node_id")
 
 METRIC_RE = re.compile(
@@ -113,6 +117,14 @@ def main(argv: list[str] | None = None) -> int:
         help="Only require metric family/labels, not non-zero hit/fallback counters",
     )
     parser.add_argument(
+        "--require-admission-only",
+        action="store_true",
+        help=(
+            "Require live cursor frame admission activity, but do not require "
+            "downstream IPC reads. Use for producer-side Phase 3 evidence."
+        ),
+    )
+    parser.add_argument(
         "--require-label",
         action="append",
         default=list(DEFAULT_REQUIRED_LABELS),
@@ -120,9 +132,15 @@ def main(argv: list[str] | None = None) -> int:
     )
     args = parser.parse_args(argv)
 
+    minimums = DEFAULT_MINIMUMS
+    if args.allow_zero_activity:
+        minimums = {}
+    elif args.require_admission_only:
+        minimums = ADMISSION_MINIMUMS
+
     output = validate_worker_ipc_metrics(
         args.metrics.read_text(),
-        minimums={} if args.allow_zero_activity else DEFAULT_MINIMUMS,
+        minimums=minimums,
         required_labels=tuple(args.require_label),
     )
     print(json.dumps(output, indent=2, sort_keys=True))
