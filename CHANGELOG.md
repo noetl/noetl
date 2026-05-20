@@ -2,6 +2,15 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.83.0](https://github.com/noetl/noetl/compare/v2.82.0...v2.83.0) (2026-05-20)
+
+### Features
+
+* **projector:** add metrics summary fetcher ([f70f7cb](https://github.com/noetl/noetl/commit/f70f7cb7a5fe142dd14e720bde51c7d848ec12b1))
+* **validation:** add phase2 projector evidence gate ([eee115b](https://github.com/noetl/noetl/commit/eee115b93a643919a878f89917ee73b380bda22c))
+* **validation:** check projector evidence manifests ([917772b](https://github.com/noetl/noetl/commit/917772ba1fb408d0fbbc1a66b5009f3f1f457a55))
+* **validation:** include projector summaries in replay runs ([bb73f38](https://github.com/noetl/noetl/commit/bb73f382b71357cd5d90a0d7eeff6134dc5a39d8))
+
 ## [2.82.0](https://github.com/noetl/noetl/compare/v2.81.0...v2.82.0) (2026-05-20)
 
 ### Features
