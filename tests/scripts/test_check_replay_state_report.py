@@ -50,6 +50,19 @@ def test_check_replay_state_report_rejects_projection_checksum_drift(tmp_path: P
     assert output["failures"][0]["field"] == "projection_checksums.execution"
 
 
+def test_check_replay_state_report_rejects_state_checksum_drift(tmp_path: Path, capsys):
+    state = _replay_state()
+    state["execution"]["status"] = "FAILED"
+    path = tmp_path / "replay.json"
+    path.write_text(json.dumps(state))
+
+    assert main(["--report", str(path)]) == 1
+    output = json.loads(capsys.readouterr().out)
+    assert output["matched"] is False
+    fields = {failure["field"] for failure in output["failures"]}
+    assert "checksum" in fields
+
+
 def test_check_replay_state_report_rejects_inconsistent_snapshot(tmp_path: Path, capsys):
     base = _replay_state()
     seed = ReplaySnapshotSeed(
@@ -83,4 +96,5 @@ def test_check_replay_state_report_rejects_inconsistent_snapshot(tmp_path: Path,
     assert main(["--report", str(path)]) == 1
     output = json.loads(capsys.readouterr().out)
     assert output["matched"] is False
-    assert output["failures"][0]["field"] == "replay_snapshot.meta.upcaster_registry_digest"
+    fields = {failure["field"] for failure in output["failures"]}
+    assert "replay_snapshot.meta.upcaster_registry_digest" in fields
