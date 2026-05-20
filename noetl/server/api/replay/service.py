@@ -727,6 +727,50 @@ def business_object_projection_checksum(rows: Iterable[Mapping[str, Any]]) -> st
     return _canonical_checksum({"business_objects": list(rows)})
 
 
+def _normalized_loop_projection_row(row: Mapping[str, Any]) -> dict[str, Any]:
+    return {
+        "loop_id": str(row.get("loop_id")),
+        "step_name": row.get("step_name"),
+        "total": int(row.get("total")) if row.get("total") is not None else None,
+        "done": int(row.get("done") or 0),
+        "failed": int(row.get("failed") or 0),
+        "completed": bool(row.get("completed")),
+        "last_event_id": (
+            int(row.get("last_event_id")) if row.get("last_event_id") is not None else None
+        ),
+    }
+
+
+def normalize_live_loop_projection(rows: Iterable[Mapping[str, Any]]) -> list[dict[str, Any]]:
+    return sorted(
+        (_normalized_loop_projection_row(row) for row in rows),
+        key=lambda row: row["loop_id"],
+    )
+
+
+def normalize_replayed_loop_projection(state: Mapping[str, Any]) -> list[dict[str, Any]]:
+    loops = state.get("loops")
+    if not isinstance(loops, Mapping):
+        return []
+    return sorted(
+        (
+            _normalized_loop_projection_row(
+                {
+                    "loop_id": loop.get("loop_id") or loop_id,
+                    **loop,
+                }
+            )
+            for loop_id, loop in loops.items()
+            if isinstance(loop, Mapping)
+        ),
+        key=lambda row: row["loop_id"],
+    )
+
+
+def loop_projection_checksum(rows: Iterable[Mapping[str, Any]]) -> str:
+    return _canonical_checksum({"loops": list(rows)})
+
+
 class ReplayService:
     """Read canonical events and fold replay state."""
 

@@ -8,12 +8,15 @@ from .service import (
     command_projection_checksum,
     fold_replay_state,
     frame_projection_checksum,
+    loop_projection_checksum,
     normalize_live_business_object_projection,
     normalize_live_command_projection,
     normalize_live_frame_projection,
+    normalize_live_loop_projection,
     normalize_replayed_business_object_projection,
     normalize_replayed_command_projection,
     normalize_replayed_frame_projection,
+    normalize_replayed_loop_projection,
 )
 
 __all__ = [
@@ -24,10 +27,13 @@ __all__ = [
     "command_projection_checksum",
     "fold_replay_state",
     "frame_projection_checksum",
+    "loop_projection_checksum",
     "normalize_live_business_object_projection",
     "normalize_live_command_projection",
     "normalize_live_frame_projection",
+    "normalize_live_loop_projection",
     "normalize_replayed_business_object_projection",
     "normalize_replayed_command_projection",
     "normalize_replayed_frame_projection",
+    "normalize_replayed_loop_projection",
 ]
