@@ -80,6 +80,51 @@ class PostgresReplayEventReader:
             for row in rows
         }
 
+    async def _time_cutoff_event_id(
+        self,
+        conn: Any,
+        *,
+        columns: set[str],
+        tenant_id: str,
+        organization_id: str,
+        execution_id: int,
+        cutoff: ReplayCutoff,
+    ) -> Optional[int]:
+        if cutoff.as_of_time is None:
+            return None
+
+        predicates = ["execution_id = %s"]
+        params: list[Any] = [execution_id]
+        if "tenant_id" in columns:
+            predicates.append("tenant_id = %s")
+            params.append(tenant_id)
+        elif tenant_id != "default":
+            return None
+        if "organization_id" in columns:
+            predicates.append("organization_id = %s")
+            params.append(organization_id)
+        elif organization_id != "default":
+            return None
+
+        time_column = "event_time" if "event_time" in columns else "created_at"
+        predicates.append(f"{time_column} <= %s")
+        params.append(cutoff.as_of_time)
+
+        async with conn.cursor(row_factory=dict_row) as cur:
+            await cur.execute(
+                f"""
+                SELECT MAX(event_id) AS cutoff_event_id
+                FROM noetl.event
+                WHERE {' AND '.join(predicates)}
+                """,
+                params,
+            )
+            row = await cur.fetchone()
+        if not row:
+            return None
+        value = row.get("cutoff_event_id") if isinstance(row, Mapping) else row[0]
+        return int(value) if value is not None else None
+
     async def load_events(
         self,
         *,
@@ -158,8 +203,6 @@ class PostgresReplayEventReader:
         cutoff: ReplayCutoff,
     ) -> Optional[ReplaySnapshotSeed]:
         cutoff_event_id = cutoff.as_of_event_id or cutoff.as_of_position
-        if cutoff.as_of_time is not None:
-            return None
 
         aggregate_id = f"execution/{execution_id}/{projection}"
         aggregate_type = "replay_state"
@@ -176,6 +219,21 @@ class PostgresReplayEventReader:
 
         try:
             async with get_pool_connection() as conn:
+                if cutoff.as_of_time is not None:
+                    columns = await self._event_columns(conn)
+                    cutoff_event_id = await self._time_cutoff_event_id(
+                        conn,
+                        columns=columns,
+                        tenant_id=tenant_id,
+                        organization_id=organization_id,
+                        execution_id=execution_id,
+                        cutoff=cutoff,
+                    )
+                    if cutoff_event_id is None:
+                        return None
+                    predicates.append("version <= %s")
+                    params.append(cutoff_event_id)
+
                 async with conn.cursor(row_factory=dict_row) as cur:
                     await cur.execute(
                         f"""

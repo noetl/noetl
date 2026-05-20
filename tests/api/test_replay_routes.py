@@ -1,3 +1,5 @@
+from datetime import datetime, timezone
+
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -564,6 +566,103 @@ async def test_replay_service_uses_configured_event_reader():
         "business_objects",
         "loops",
     }
+
+
+@pytest.mark.asyncio
+async def test_postgres_replay_reader_uses_snapshot_seed_for_time_cutoff(monkeypatch):
+    import noetl.server.api.replay.event_reader as event_reader_module
+
+    from noetl.server.api.replay import ReplayCutoff
+    from noetl.server.api.replay.event_reader import PostgresReplayEventReader
+
+    cutoff_time = datetime(2026, 5, 20, 4, 30, tzinfo=timezone.utc)
+
+    class _Cursor:
+        def __init__(self, conn):
+            self.conn = conn
+            self.kind = None
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        async def execute(self, query, params=None):
+            self.conn.calls.append((query, list(params or [])))
+            if "information_schema.columns" in query:
+                self.kind = "columns"
+            elif "MAX(event_id)" in query:
+                self.kind = "time_cutoff"
+            elif "FROM noetl.projection_snapshot" in query:
+                self.kind = "snapshot"
+            else:  # pragma: no cover - catches unexpected SQL shape
+                raise AssertionError(query)
+
+        async def fetchall(self):
+            assert self.kind == "columns"
+            return [
+                {"column_name": "tenant_id"},
+                {"column_name": "organization_id"},
+                {"column_name": "event_time"},
+            ]
+
+        async def fetchone(self):
+            if self.kind == "time_cutoff":
+                return {"cutoff_event_id": 10}
+            if self.kind == "snapshot":
+                return {
+                    "aggregate_id": "execution/123/all",
+                    "aggregate_type": "replay_state",
+                    "version": 7,
+                    "snapshot": {"event_count": 7},
+                    "checksum": "abc",
+                    "meta": {"projection_code_version": "test"},
+                }
+            raise AssertionError(self.kind)
+
+    class _Conn:
+        def __init__(self):
+            self.calls = []
+
+        def cursor(self, **_kwargs):
+            return _Cursor(self)
+
+    class _ConnCtx:
+        def __init__(self, conn):
+            self.conn = conn
+
+        async def __aenter__(self):
+            return self.conn
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+    conn = _Conn()
+    monkeypatch.setattr(event_reader_module, "get_pool_connection", lambda: _ConnCtx(conn))
+
+    seed = await PostgresReplayEventReader().load_snapshot_seed(
+        tenant_id="tenant-a",
+        organization_id="org-a",
+        execution_id=123,
+        projection="all",
+        cutoff=ReplayCutoff(as_of_time=cutoff_time),
+    )
+
+    assert seed is not None
+    assert seed.version == 7
+    time_query, time_params = conn.calls[1]
+    snapshot_query, snapshot_params = conn.calls[2]
+    assert "event_time <= %s" in time_query
+    assert time_params == [123, "tenant-a", "org-a", cutoff_time]
+    assert "version <= %s" in snapshot_query
+    assert snapshot_params == [
+        "tenant-a",
+        "org-a",
+        "replay_state",
+        "execution/123/all",
+        10,
+    ]
 
 
 def test_frame_projection_checksum_matches_live_rows_and_replayed_state():
