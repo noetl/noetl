@@ -76,7 +76,22 @@ except ImportError:
 
 # Snowflake ID generator (41-bit ms timestamp, 10-bit node id, 12-bit sequence)
 _SNOWFLAKE_EPOCH_MS = int(os.environ.get("NOETL_SNOWFLAKE_EPOCH_MS", str(int(datetime(2024, 1, 1, tzinfo=timezone.utc).timestamp() * 1000))))
-_SNOWFLAKE_NODE_ID = int(os.environ.get("NOETL_NODE_ID", os.environ.get("NOETL_SHARD_ID", "0"))) & 0x3FF  # 10 bits
+
+
+def _snowflake_node_id_from_env(env: Dict[str, str] | None = None) -> int:
+    source = env if env is not None else os.environ
+    raw = source.get("NOETL_SNOWFLAKE_NODE_ID") or source.get("NOETL_SHARD_ID") or "0"
+    try:
+        return int(raw) & 0x3FF
+    except (TypeError, ValueError):
+        logger.warning(
+            "Invalid Snowflake node id %r from NOETL_SNOWFLAKE_NODE_ID/NOETL_SHARD_ID; using 0",
+            raw,
+        )
+        return 0
+
+
+_SNOWFLAKE_NODE_ID = _snowflake_node_id_from_env()  # 10 bits
 _SNOWFLAKE_LOCK = threading.Lock()
 _SNOWFLAKE_LAST_TS = 0
 _SNOWFLAKE_SEQ = 0
