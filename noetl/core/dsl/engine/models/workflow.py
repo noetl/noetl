@@ -62,6 +62,13 @@ class FramePolicy(BaseModel):
             "claimed row; frame runs it once per claimed frame with frame.rows"
         )
     )
+    verify_ipc: bool = Field(
+        default=False,
+        description=(
+            "When true, the cursor worker verifies captured frame rows through "
+            "an IPC read and a durable fallback read for Phase 3 evidence"
+        ),
+    )
     retry_mode: Literal["whole_frame"] = Field(
         default="whole_frame",
         description=(
