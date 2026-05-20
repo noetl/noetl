@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.81.0](https://github.com/noetl/noetl/compare/v2.80.0...v2.81.0) (2026-05-20)
+
+### Features
+
+* **projector:** add batch summary helper ([642f2ea](https://github.com/noetl/noetl/commit/642f2eae65ffb65ef91477126629f2dc3b086f5e))
+* **projector:** add error summary helper ([83ccae6](https://github.com/noetl/noetl/commit/83ccae614622ad4a341c834086716f2615b26396))
+* **projector:** add metrics summary helper ([a478f4f](https://github.com/noetl/noetl/commit/a478f4fa193b0a62fa1823d2b142cecedd8e976d))
+
 ## [2.80.0](https://github.com/noetl/noetl/compare/v2.79.0...v2.80.0) (2026-05-20)
 
 ### Features
