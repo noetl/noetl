@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.61.0](https://github.com/noetl/noetl/compare/v2.60.0...v2.61.0) (2026-05-20)
+
+### Features
+
+* **replay:** add command projection checksums ([66cd4f5](https://github.com/noetl/noetl/commit/66cd4f5da0ba566900c252421d3087046169f401))
+* **replay:** fold business object state ([d18908a](https://github.com/noetl/noetl/commit/d18908ae91b4df9a191cd77b30464fb5a461de28))
+
 ## [2.60.0](https://github.com/noetl/noetl/compare/v2.59.0...v2.60.0) (2026-05-20)
 
 ### Features
