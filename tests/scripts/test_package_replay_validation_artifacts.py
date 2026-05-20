@@ -56,3 +56,56 @@ def test_package_replay_validation_artifacts_rejects_digest_drift(tmp_path: Path
     assert main(["--check", str(output)]) == 1
     result = json.loads(capsys.readouterr().out)
     assert any(failure["reason"] == "sha256 drift" for failure in result["failures"])
+
+
+def test_package_replay_validation_artifacts_rejects_missing_required_role(
+    tmp_path: Path,
+    capsys,
+):
+    output = tmp_path / "artifact-index.json"
+    output.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "generated_at": "2026-05-20T00:00:00Z",
+                "artifacts": [],
+            }
+        )
+    )
+
+    assert main(["--check", str(output)]) == 1
+    result = json.loads(capsys.readouterr().out)
+    assert any(failure.get("role") == "manifest" for failure in result["failures"])
+
+
+def test_package_replay_validation_artifacts_rejects_duplicate_roles(tmp_path: Path, capsys):
+    manifest = _manifest(tmp_path)
+    output = tmp_path / "artifact-index.json"
+    assert main(["--manifest", str(manifest), "--output", str(output)]) == 0
+    index = json.loads(output.read_text())
+    index["artifacts"].append(dict(index["artifacts"][0]))
+    output.write_text(json.dumps(index))
+    capsys.readouterr()
+
+    assert main(["--check", str(output)]) == 1
+    result = json.loads(capsys.readouterr().out)
+    assert any(failure["reason"] == "duplicate artifact role" for failure in result["failures"])
+
+
+def test_package_replay_validation_artifacts_rejects_unpaired_live_roles(
+    tmp_path: Path,
+    capsys,
+):
+    manifest = _manifest(tmp_path)
+    output = tmp_path / "artifact-index.json"
+    assert main(["--manifest", str(manifest), "--output", str(output)]) == 0
+    index = json.loads(output.read_text())
+    index["artifacts"] = [
+        entry for entry in index["artifacts"] if entry["role"] != "live_checksums"
+    ]
+    output.write_text(json.dumps(index))
+    capsys.readouterr()
+
+    assert main(["--check", str(output)]) == 1
+    result = json.loads(capsys.readouterr().out)
+    assert any("paired artifact roles" in failure["reason"] for failure in result["failures"])
