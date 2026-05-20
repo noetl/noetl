@@ -4,10 +4,12 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Mapping
 
 from noetl.server.api.replay import replay_projection_checksum_bundle
 
@@ -17,6 +19,33 @@ def _load_report(path: Path) -> dict[str, Any]:
     if not isinstance(data, dict):
         raise ValueError(f"{path} must contain a JSON object")
     return data
+
+
+def _json_default(value: Any) -> str:
+    if isinstance(value, datetime):
+        if value.tzinfo is None:
+            value = value.replace(tzinfo=timezone.utc)
+        return value.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+    return str(value)
+
+
+def _canonical_checksum(value: Mapping[str, Any]) -> str:
+    payload = json.dumps(
+        value,
+        sort_keys=True,
+        separators=(",", ":"),
+        default=_json_default,
+    ).encode("utf-8")
+    return hashlib.sha256(payload).hexdigest()
+
+
+def replay_state_checksum(report: Mapping[str, Any]) -> str:
+    checksum_input = {
+        key: value
+        for key, value in report.items()
+        if key not in {"checksum", "checksum_algorithm", "projection_checksums"}
+    }
+    return _canonical_checksum(checksum_input)
 
 
 def validate_replay_state_report(report: dict[str, Any]) -> dict[str, Any]:
@@ -47,6 +76,17 @@ def validate_replay_state_report(report: dict[str, Any]) -> dict[str, Any]:
                 "supplied": report.get("checksum_algorithm"),
             }
         )
+    elif report.get("checksum") is not None:
+        computed_checksum = replay_state_checksum(report)
+        if report.get("checksum") != computed_checksum:
+            failures.append(
+                {
+                    "field": "checksum",
+                    "reason": "checksum mismatch",
+                    "supplied": report.get("checksum"),
+                    "computed": computed_checksum,
+                }
+            )
 
     snapshot = report.get("replay_snapshot")
     if snapshot is not None:
