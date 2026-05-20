@@ -83,12 +83,76 @@ def _validate_digest_shape(
         )
 
 
+def _validate_int_field(
+    failures: list[dict[str, Any]],
+    *,
+    field: str,
+    value: Any,
+    required: bool = True,
+    minimum: int | None = None,
+) -> int | None:
+    if value is None:
+        if required:
+            failures.append({"field": field, "reason": "must be an integer"})
+        return None
+    if isinstance(value, bool):
+        failures.append({"field": field, "reason": "must be an integer", "supplied": value})
+        return None
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        failures.append({"field": field, "reason": "must be an integer", "supplied": value})
+        return None
+    if minimum is not None and parsed < minimum:
+        failures.append(
+            {
+                "field": field,
+                "reason": f"must be >= {minimum}",
+                "supplied": value,
+            }
+        )
+    return parsed
+
+
+def _validate_string_field(
+    failures: list[dict[str, Any]],
+    *,
+    field: str,
+    value: Any,
+    required: bool = True,
+) -> None:
+    if value is None:
+        if required:
+            failures.append({"field": field, "reason": "must be a non-empty string"})
+        return
+    if not isinstance(value, str) or not value:
+        failures.append(
+            {
+                "field": field,
+                "reason": "must be a non-empty string",
+                "supplied": value,
+            }
+        )
+
+
 def validate_replay_state_report(report: dict[str, Any]) -> dict[str, Any]:
     failures: list[dict[str, Any]] = []
 
     for field in REQUIRED_TOP_LEVEL_FIELDS:
         if field not in report:
             failures.append({"field": field, "reason": "missing required replay state field"})
+
+    for field in ("tenant_id", "organization_id", "projection", "last_event_type"):
+        _validate_string_field(failures, field=field, value=report.get(field))
+    _validate_int_field(failures, field="execution_id", value=report.get("execution_id"), minimum=0)
+    _validate_int_field(failures, field="event_count", value=report.get("event_count"), minimum=0)
+    last_event_id = _validate_int_field(
+        failures,
+        field="last_event_id",
+        value=report.get("last_event_id"),
+        required=False,
+        minimum=0,
+    )
 
     _validate_digest_shape(
         failures,
@@ -100,18 +164,28 @@ def validate_replay_state_report(report: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(supplied_bundle, dict):
         failures.append({"field": "projection_checksums", "reason": "missing or not an object"})
     else:
-        computed_bundle = replay_projection_checksum_bundle(report)
-        for surface, computed in computed_bundle.items():
-            supplied = supplied_bundle.get(surface)
-            if supplied != computed:
-                failures.append(
-                    {
-                        "field": f"projection_checksums.{surface}",
-                        "reason": "checksum mismatch",
-                        "supplied": supplied,
-                        "computed": computed,
-                    }
-                )
+        try:
+            computed_bundle = replay_projection_checksum_bundle(report)
+        except (TypeError, ValueError) as exc:
+            failures.append(
+                {
+                    "field": "projection_checksums",
+                    "reason": "could not recompute projection checksums",
+                    "error": str(exc),
+                }
+            )
+        else:
+            for surface, computed in computed_bundle.items():
+                supplied = supplied_bundle.get(surface)
+                if supplied != computed:
+                    failures.append(
+                        {
+                            "field": f"projection_checksums.{surface}",
+                            "reason": "checksum mismatch",
+                            "supplied": supplied,
+                            "computed": computed,
+                        }
+                    )
 
     if report.get("checksum_algorithm") != "sha256":
         failures.append(
@@ -138,11 +212,13 @@ def validate_replay_state_report(report: dict[str, Any]) -> dict[str, Any]:
         if not isinstance(snapshot, dict):
             failures.append({"field": "replay_snapshot", "reason": "must be an object"})
         else:
-            snapshot_version = snapshot.get("version")
-            last_event_id = report.get("last_event_id")
-            if snapshot_version is None:
-                failures.append({"field": "replay_snapshot.version", "reason": "missing"})
-            elif last_event_id is not None and int(snapshot_version) > int(last_event_id):
+            snapshot_version = _validate_int_field(
+                failures,
+                field="replay_snapshot.version",
+                value=snapshot.get("version"),
+                minimum=0,
+            )
+            if snapshot_version is not None and last_event_id is not None and snapshot_version > last_event_id:
                 failures.append(
                     {
                         "field": "replay_snapshot.version",
