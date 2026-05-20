@@ -30,7 +30,32 @@ def _payload_resolution_rows(report: dict[str, Any]) -> list[dict[str, Any]]:
         raise ValueError("report does not contain payload_resolution")
     if not isinstance(rows, list):
         raise ValueError("payload_resolution must be a list")
-    return [dict(row) for row in rows if isinstance(row, dict)]
+    return rows
+
+
+def _row_shape_failures(rows: list[Any]) -> list[dict[str, Any]]:
+    failures: list[dict[str, Any]] = []
+    for index, row in enumerate(rows):
+        if not isinstance(row, dict):
+            failures.append(
+                {
+                    "index": index,
+                    "reason": "payload_resolution row must be an object",
+                    "supplied_type": type(row).__name__,
+                }
+            )
+            continue
+        resolution = row.get("resolution")
+        if not isinstance(resolution, dict):
+            failures.append(
+                {
+                    "index": index,
+                    "scope": row.get("scope"),
+                    "reason": "payload_resolution row resolution must be an object",
+                    "supplied_type": type(resolution).__name__,
+                }
+            )
+    return failures
 
 
 def _checksum_shape_failures(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -69,6 +94,16 @@ def main(argv: list[str] | None = None) -> int:
 
     report = _load_report(args.report)
     rows = _payload_resolution_rows(report)
+    row_shape_failures = _row_shape_failures(rows)
+    if row_shape_failures:
+        output = {
+            "matched": False,
+            "reason": "payload_resolution row shape mismatch",
+            "row_shape_failures": row_shape_failures,
+        }
+        print(json.dumps(output, indent=2, sort_keys=True))
+        return 1
+
     checksum_shape_failures = _checksum_shape_failures(rows)
     if checksum_shape_failures:
         output = {
