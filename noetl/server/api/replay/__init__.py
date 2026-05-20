@@ -2,6 +2,12 @@
 
 from .endpoint import router
 from .event_reader import PostgresReplayEventReader, ReplayEventReader
+from .payload_resolver import (
+    ReplayPayloadResolution,
+    ReplayPayloadResolver,
+    TempStoreReplayPayloadResolver,
+    replay_payload_ref_locator,
+)
 from .service import (
     ReplayCutoff,
     ReplayService,
@@ -27,12 +33,19 @@ from .service import (
     normalize_replayed_stage_projection,
     replay_projection_checksum_bundle,
     projection_checksum_parity_report,
+    replay_payload_references,
+    replay_payload_resolution_summary,
+    resolve_replay_payload_references,
 )
 
 __all__ = [
     "router",
     "PostgresReplayEventReader",
     "ReplayEventReader",
+    "ReplayPayloadResolution",
+    "ReplayPayloadResolver",
+    "TempStoreReplayPayloadResolver",
+    "replay_payload_ref_locator",
     "ReplayCutoff",
     "ReplayService",
     "business_object_projection_checksum",
@@ -57,4 +70,7 @@ __all__ = [
     "normalize_replayed_stage_projection",
     "replay_projection_checksum_bundle",
     "projection_checksum_parity_report",
+    "replay_payload_references",
+    "replay_payload_resolution_summary",
+    "resolve_replay_payload_references",
 ]
