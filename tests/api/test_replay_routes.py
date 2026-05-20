@@ -215,6 +215,63 @@ def test_fold_replay_state_tracks_commands_and_topology():
     assert command["placement"]["within_max_distance"] is True
 
 
+def test_fold_replay_state_tracks_business_objects():
+    from noetl.server.api.replay import fold_replay_state
+
+    state = fold_replay_state(
+        [
+            {
+                "event_id": 21,
+                "event_type": "patient.created",
+                "aggregate_type": "business_object",
+                "aggregate_id": "patient/p-1",
+                "status": "ACTIVE",
+                "meta": {
+                    "business_object": {
+                        "state": {"name": "Ada", "risk": "low"},
+                        "version": 3,
+                    }
+                },
+            },
+            {
+                "event_id": 22,
+                "event_type": "patient.updated",
+                "meta": {
+                    "business_object_type": "patient",
+                    "business_object_id": "p-1",
+                    "business_object": {"patch": {"risk": "high"}},
+                },
+                "payload_ref": {
+                    "uri": "noetl://tenant/tenant-a/org/org-a/payloads/sha256/patient",
+                    "sha256": "patient",
+                },
+            },
+            {
+                "event_id": 23,
+                "event_type": "patient.deleted",
+                "aggregate_type": "business_object",
+                "aggregate_id": "business_object/patient/p-1",
+            },
+        ],
+        tenant_id="tenant-a",
+        organization_id="org-a",
+        execution_id=123,
+    )
+
+    patient = state["business_objects"]["patient/p-1"]
+    assert patient["object_type"] == "patient"
+    assert patient["object_id"] == "p-1"
+    assert patient["status"] == "DELETED"
+    assert patient["version"] == 3
+    assert patient["event_count"] == 3
+    assert patient["first_event_id"] == 21
+    assert patient["last_event_id"] == 23
+    assert patient["deleted_event_id"] == 23
+    assert patient["attributes"] == {"name": "Ada", "risk": "high"}
+    assert patient["payload_refs"][0]["summary"]["sha256"] == "patient"
+    assert patient["last_payload_ref"]["event_id"] == 22
+
+
 def test_fold_replay_state_can_resume_from_snapshot_seed():
     from noetl.server.api.replay.service import ReplaySnapshotSeed, fold_replay_state
 

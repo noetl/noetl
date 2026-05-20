@@ -168,6 +168,56 @@ def _command_id(event: Mapping[str, Any]) -> Optional[str]:
     return str(value) if value is not None else None
 
 
+def _business_object_identity(event: Mapping[str, Any]) -> tuple[str, str, str] | None:
+    """Return (object_key, object_type, object_id) for explicitly identified domain objects."""
+    meta = _meta(event)
+    business = meta.get("business_object")
+    business = business if isinstance(business, Mapping) else {}
+
+    object_type = (
+        business.get("object_type")
+        or business.get("type")
+        or meta.get("business_object_type")
+        or meta.get("object_type")
+    )
+    object_id = (
+        business.get("object_id")
+        or business.get("id")
+        or meta.get("business_object_id")
+        or meta.get("object_id")
+    )
+
+    aggregate_type = str(event.get("aggregate_type") or "")
+    aggregate_id = event.get("aggregate_id")
+    if aggregate_type == "business_object" and aggregate_id is not None:
+        parts = [part for part in str(aggregate_id).split("/") if part]
+        if parts[:1] == ["business_object"]:
+            parts = parts[1:]
+        if len(parts) >= 2:
+            object_type = object_type or parts[0]
+            object_id = object_id or "/".join(parts[1:])
+        else:
+            object_type = object_type or "business_object"
+            object_id = object_id or str(aggregate_id)
+
+    if object_type is None or object_id is None:
+        return None
+    object_type = str(object_type)
+    object_id = str(object_id)
+    return f"{object_type}/{object_id}", object_type, object_id
+
+
+def _business_object_status(event_type: str, status: Any) -> str | None:
+    if status is not None:
+        return str(status)
+    lowered = event_type.lower()
+    if lowered.endswith(".deleted") or lowered.endswith(".removed"):
+        return "DELETED"
+    if lowered.endswith(".created") or lowered.endswith(".updated") or lowered.endswith(".upserted"):
+        return "ACTIVE"
+    return None
+
+
 def fold_replay_state(
     events: Iterable[Mapping[str, Any]],
     *,
@@ -198,6 +248,7 @@ def fold_replay_state(
         state.setdefault("stages", {})
         state.setdefault("frames", {})
         state.setdefault("commands", {})
+        state.setdefault("business_objects", {})
         state.setdefault("loops", {})
     else:
         state = {
@@ -217,6 +268,7 @@ def fold_replay_state(
             "stages": {},
             "frames": {},
             "commands": {},
+            "business_objects": {},
             "loops": {},
         }
     if snapshot_seed is not None:
@@ -403,6 +455,60 @@ def fold_replay_state(
                 command["terminal_event_id"] = event_id
             elif event_type.startswith("command.") and status:
                 command["status"] = str(status)
+
+        business_identity = _business_object_identity(event)
+        if business_identity:
+            object_key, object_type, object_id = business_identity
+            business_meta = meta.get("business_object")
+            business_meta = business_meta if isinstance(business_meta, Mapping) else {}
+            business_object = state["business_objects"].setdefault(
+                object_key,
+                {
+                    "object_key": object_key,
+                    "object_type": object_type,
+                    "object_id": object_id,
+                    "status": "UNKNOWN",
+                    "version": 0,
+                    "event_count": 0,
+                    "first_event_id": event_id,
+                    "last_event_id": None,
+                    "deleted_event_id": None,
+                    "last_event_type": None,
+                    "last_payload_ref": None,
+                    "payload_refs": [],
+                    "attributes": {},
+                },
+            )
+            business_object["last_event_id"] = event_id
+            business_object["last_event_type"] = event_type
+            business_object["event_count"] = int(business_object.get("event_count") or 0) + 1
+            business_object["version"] = int(
+                business_meta.get("version")
+                or meta.get("business_object_version")
+                or business_object["event_count"]
+            )
+
+            object_status = _business_object_status(event_type, status)
+            if object_status:
+                business_object["status"] = object_status
+                if object_status == "DELETED":
+                    business_object["deleted_event_id"] = event_id
+
+            state_value = business_meta.get("state")
+            if isinstance(state_value, Mapping):
+                business_object["attributes"] = dict(state_value)
+            patch_value = business_meta.get("patch") or business_meta.get("attributes")
+            if isinstance(patch_value, Mapping):
+                business_object["attributes"].update(dict(patch_value))
+
+            if payload_ref is not None:
+                payload_entry = {
+                    "event_id": event_id,
+                    "reference": payload_ref,
+                    "summary": _payload_summary(payload_ref),
+                }
+                business_object["payload_refs"].append(payload_entry)
+                business_object["last_payload_ref"] = payload_entry
 
         loop_id = _loop_id(event)
         if loop_id:
