@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.84.0](https://github.com/noetl/noetl/compare/v2.83.0...v2.84.0) (2026-05-20)
+
+### Features
+
+* **validation:** add phase2 projector runner ([2f98aa3](https://github.com/noetl/noetl/commit/2f98aa30cf6bc1ec782caa118ac396db9a762e4f))
+* **validation:** render phase2 projector commands ([c8c811b](https://github.com/noetl/noetl/commit/c8c811b8c188752ea75ec4b135113ea40f7151e1))
+* **validation:** require phase2 evidence in bundle checks ([e702b81](https://github.com/noetl/noetl/commit/e702b81466f1d655e7fb6e1c892019ce544ec947))
+
 ## [2.83.0](https://github.com/noetl/noetl/compare/v2.82.0...v2.83.0) (2026-05-20)
 
 ### Features
