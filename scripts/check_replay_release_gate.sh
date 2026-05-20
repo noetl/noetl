@@ -16,6 +16,8 @@ fi
   tests/scripts/test_run_replay_validation.py \
   tests/scripts/test_run_projector_phase2_validation.py \
   tests/scripts/test_render_projector_phase2_command.py \
+  tests/scripts/test_fetch_worker_metrics.py \
+  tests/scripts/test_check_worker_ipc_metrics.py \
   tests/scripts/test_export_live_projection_rows_postgres.py \
   tests/scripts/test_check_live_projection_rows.py \
   tests/scripts/test_package_replay_validation_artifacts.py \

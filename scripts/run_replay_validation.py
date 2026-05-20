@@ -49,7 +49,7 @@ def _validation_python() -> str:
 
 def _safe_slug(value: str) -> str:
     slug = re.sub(r"[^A-Za-z0-9_.-]+", "-", value.strip()).strip("-")
-    return slug or "projector"
+    return slug or "endpoint"
 
 
 def _parse_named_value(raw: str, *, flag: str) -> tuple[str, str]:
@@ -71,6 +71,7 @@ def _build_report(
     live_checksums_path: Path | None,
     live_rows_path: Path | None,
     projector_summaries: list[dict[str, str]],
+    worker_metrics: list[dict[str, str]],
     steps: list[dict[str, object]],
     started_at: str,
 ) -> dict[str, object]:
@@ -85,6 +86,7 @@ def _build_report(
             "live_rows": str(live_rows_path) if live_rows_path else None,
             "live_checksums": str(live_checksums_path) if live_checksums_path else None,
             "projector_summaries": projector_summaries,
+            "worker_metrics": worker_metrics,
             "report": str(args.report_output) if args.report_output else None,
             "artifact_index": str(args.artifact_index_output) if args.artifact_index_output else None,
         },
@@ -104,6 +106,8 @@ def _build_report(
             "export_live_rows_postgres": args.export_live_rows_postgres,
             "projector_summary": [str(path) for path in args.projector_summary],
             "projector_summary_url": list(args.projector_summary_url),
+            "worker_metrics": [str(path) for path in args.worker_metrics],
+            "worker_metrics_url": list(args.worker_metrics_url),
             "artifact_index_output": str(args.artifact_index_output) if args.artifact_index_output else None,
         },
         "steps": steps,
@@ -173,6 +177,20 @@ def main(argv: list[str] | None = None) -> int:
         metavar="NAME=URL",
         help="Fetch and validate a live projector summary from NAME=URL",
     )
+    parser.add_argument(
+        "--worker-metrics",
+        action="append",
+        default=[],
+        type=Path,
+        help="Optional saved worker /metrics text artifact to validate for Phase 3 IPC evidence",
+    )
+    parser.add_argument(
+        "--worker-metrics-url",
+        action="append",
+        default=[],
+        metavar="NAME=URL",
+        help="Fetch and validate a live worker metrics endpoint from NAME=URL",
+    )
     args = parser.parse_args(argv)
 
     cutoff_count = sum(
@@ -203,6 +221,14 @@ def main(argv: list[str] | None = None) -> int:
         projector_summary_urls = [
             _parse_named_value(raw, flag="--projector-summary-url")
             for raw in args.projector_summary_url
+        ]
+    except ValueError as exc:
+        parser.error(str(exc))
+    worker_metrics_urls: list[tuple[str, str]] = []
+    try:
+        worker_metrics_urls = [
+            _parse_named_value(raw, flag="--worker-metrics-url")
+            for raw in args.worker_metrics_url
         ]
     except ValueError as exc:
         parser.error(str(exc))
@@ -260,6 +286,53 @@ def main(argv: list[str] | None = None) -> int:
                     _validation_python(),
                     "scripts/check_projector_metrics_summary.py",
                     "--report",
+                    str(path),
+                ],
+            )
+        )
+    worker_metrics: list[dict[str, str]] = []
+    worker_fetch_steps: list[tuple[str, list[str]]] = []
+    worker_check_steps: list[tuple[str, list[str]]] = []
+    for idx, path in enumerate(args.worker_metrics, start=1):
+        role = f"worker_metrics_{idx}"
+        worker_metrics.append({"role": role, "path": str(path)})
+        worker_check_steps.append(
+            (
+                f"worker_metrics_{idx}_integrity",
+                [
+                    _validation_python(),
+                    "scripts/check_worker_ipc_metrics.py",
+                    "--metrics",
+                    str(path),
+                ],
+            )
+        )
+    for idx, (name, url) in enumerate(worker_metrics_urls, start=1):
+        role = f"worker_metrics_url_{idx}_{_safe_slug(name)}"
+        path = output_dir / f"{role}.prom"
+        worker_metrics.append({"role": role, "name": name, "url": url, "path": str(path)})
+        worker_fetch_steps.append(
+            (
+                f"{role}_fetch",
+                [
+                    _validation_python(),
+                    "scripts/fetch_worker_metrics.py",
+                    "--url",
+                    url,
+                    "--output",
+                    str(path),
+                    "--timeout",
+                    str(args.timeout),
+                ],
+            )
+        )
+        worker_check_steps.append(
+            (
+                f"{role}_integrity",
+                [
+                    _validation_python(),
+                    "scripts/check_worker_ipc_metrics.py",
+                    "--metrics",
                     str(path),
                 ],
             )
@@ -374,6 +447,8 @@ def main(argv: list[str] | None = None) -> int:
     ]
     validation_steps.extend(projector_fetch_steps)
     validation_steps.extend(projector_check_steps)
+    validation_steps.extend(worker_fetch_steps)
+    validation_steps.extend(worker_check_steps)
 
     for name, command in validation_steps:
         if not command:
@@ -401,6 +476,7 @@ def main(argv: list[str] | None = None) -> int:
                     live_checksums_path=live_checksums_path,
                     live_rows_path=live_rows_path,
                     projector_summaries=projector_summaries,
+                    worker_metrics=worker_metrics,
                     steps=steps,
                     started_at=started_at,
                 ),
@@ -425,6 +501,7 @@ def main(argv: list[str] | None = None) -> int:
                     live_checksums_path=live_checksums_path,
                     live_rows_path=live_rows_path,
                     projector_summaries=projector_summaries,
+                    worker_metrics=worker_metrics,
                     steps=steps,
                     started_at=started_at,
                 ),
@@ -447,6 +524,13 @@ def main(argv: list[str] | None = None) -> int:
                 [
                     "--artifact",
                     f"{summary['role']}={summary['path']}",
+                ]
+            )
+        for metrics in worker_metrics:
+            artifact_index_command.extend(
+                [
+                    "--artifact",
+                    f"{metrics['role']}={metrics['path']}",
                 ]
             )
         steps.append(
@@ -475,6 +559,7 @@ def main(argv: list[str] | None = None) -> int:
             live_checksums_path=live_checksums_path,
             live_rows_path=live_rows_path,
             projector_summaries=projector_summaries,
+            worker_metrics=worker_metrics,
             steps=steps,
             started_at=started_at,
         ),
@@ -502,6 +587,7 @@ def main(argv: list[str] | None = None) -> int:
                     live_checksums_path=live_checksums_path,
                     live_rows_path=live_rows_path,
                     projector_summaries=projector_summaries,
+                    worker_metrics=worker_metrics,
                     steps=steps,
                     started_at=started_at,
                 ),

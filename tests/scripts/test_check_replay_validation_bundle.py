@@ -148,6 +148,58 @@ def _add_projector_phase2_evidence(manifest: Path, index: Path, tmp_path: Path) 
     )
 
 
+def _worker_metrics_body() -> str:
+    labels = '{node_id="node-a",worker_id="worker-a"}'
+    return "\n".join(
+        [
+            f"noetl_storage_ipc_admit_attempts_total{labels} 1",
+            f"noetl_storage_ipc_admit_success_total{labels} 1",
+            f"noetl_storage_ipc_admit_failures_total{labels} 0",
+            f"noetl_storage_ipc_read_attempts_total{labels} 2",
+            f"noetl_storage_ipc_read_hits_total{labels} 1",
+            f"noetl_storage_ipc_read_misses_total{labels} 1",
+            f"noetl_storage_ipc_fallback_reads_total{labels} 1",
+            f"noetl_storage_ipc_read_hit_ratio{labels} 0.5",
+            "",
+        ]
+    )
+
+
+def _add_worker_phase3_evidence(manifest: Path, index: Path, tmp_path: Path) -> None:
+    payload = json.loads(manifest.read_text())
+    metrics = tmp_path / "worker.prom"
+    metrics.write_text(_worker_metrics_body())
+    payload["artifacts"]["worker_metrics"] = [
+        {"role": "worker_metrics_1", "path": str(metrics)}
+    ]
+    payload["config"]["worker_metrics"] = [str(metrics)]
+    payload["config"]["worker_metrics_url"] = []
+    payload["steps"].insert(
+        -1,
+        {
+            "name": "worker_metrics_1_integrity",
+            "command": ["python", "scripts/check_worker_ipc_metrics.py"],
+            "returncode": 0,
+            "duration_seconds": 0.1,
+            "stdout": "{}",
+            "stderr": "",
+        },
+    )
+    manifest.write_text(json.dumps(payload))
+    index.write_text(
+        json.dumps(
+            build_artifact_index(
+                manifest_path=manifest,
+                output_path=index,
+                extra_artifacts=[("worker_metrics_1", metrics)],
+            ),
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n"
+    )
+
+
 def test_check_replay_validation_bundle_accepts_manifest_referenced_index(
     tmp_path: Path,
     capsys,
@@ -247,5 +299,32 @@ def test_check_replay_validation_bundle_rejects_missing_projector_phase2_evidenc
     output = json.loads(capsys.readouterr().out)
     assert any(
         failure["field"] == "phase2_projector_evidence"
+        for failure in output["failures"]
+    )
+
+
+def test_check_replay_validation_bundle_accepts_worker_ipc_phase3_evidence(
+    tmp_path: Path,
+    capsys,
+):
+    manifest, index = _bundle(tmp_path)
+    _add_worker_phase3_evidence(manifest, index, tmp_path)
+
+    assert main(["--manifest", str(manifest), "--require-worker-ipc-phase3"]) == 0
+    output = json.loads(capsys.readouterr().out)
+    assert output["matched"] is True
+    assert output["phase3_worker_ipc_result"]["matched"] is True
+
+
+def test_check_replay_validation_bundle_rejects_missing_worker_ipc_phase3_evidence(
+    tmp_path: Path,
+    capsys,
+):
+    manifest, _index = _bundle(tmp_path)
+
+    assert main(["--manifest", str(manifest), "--require-worker-ipc-phase3"]) == 1
+    output = json.loads(capsys.readouterr().out)
+    assert any(
+        failure["field"] == "phase3_worker_ipc_evidence"
         for failure in output["failures"]
     )
