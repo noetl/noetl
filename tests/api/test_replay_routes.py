@@ -147,6 +147,74 @@ def test_fold_replay_state_tracks_execution_frames_loops_and_checksum():
     assert len(state["checksum"]) == 64
 
 
+def test_fold_replay_state_tracks_commands_and_topology():
+    from noetl.server.api.replay import fold_replay_state
+
+    state = fold_replay_state(
+        [
+            {
+                "event_id": 11,
+                "event_type": "command.issued",
+                "status": "PENDING",
+                "command_id": 900,
+                "stage_id": 7,
+                "node_name": "fetch",
+                "meta": {"parent_command_id": "899"},
+            },
+            {
+                "event_id": 12,
+                "event_type": "command.claimed",
+                "status": "CLAIMED",
+                "command_id": 900,
+                "stage_id": 7,
+                "worker_id": "worker-a",
+                "meta": {
+                    "worker_id": "worker-a",
+                    "worker_locator": "noetl://tenant/tenant-a/org/org-a/node/node-a/worker/worker-cpu-01",
+                    "locality": {"node_id": "node-a", "worker_pool": "worker-cpu-01"},
+                    "source_locality": {"node_id": "node-a"},
+                    "placement": {
+                        "distance": "node",
+                        "max_distance": "node",
+                        "within_max_distance": True,
+                    },
+                },
+            },
+            {
+                "event_id": 13,
+                "event_type": "command.started",
+                "status": "RUNNING",
+                "command_id": 900,
+                "stage_id": 7,
+            },
+            {
+                "event_id": 14,
+                "event_type": "command.completed",
+                "status": "COMPLETED",
+                "command_id": 900,
+                "stage_id": 7,
+            },
+        ],
+        tenant_id="tenant-a",
+        organization_id="org-a",
+        execution_id=123,
+    )
+
+    command = state["commands"]["900"]
+    assert command["status"] == "COMPLETED"
+    assert command["stage_id"] == "7"
+    assert command["parent_command_id"] == "899"
+    assert command["worker_id"] == "worker-a"
+    assert command["issued_event_id"] == 11
+    assert command["claimed_event_id"] == 12
+    assert command["started_event_id"] == 13
+    assert command["terminal_event_id"] == 14
+    assert command["worker_locator"].endswith("/node/node-a/worker/worker-cpu-01")
+    assert command["locality"] == {"node_id": "node-a", "worker_pool": "worker-cpu-01"}
+    assert command["source_locality"] == {"node_id": "node-a"}
+    assert command["placement"]["within_max_distance"] is True
+
+
 def test_fold_replay_state_can_resume_from_snapshot_seed():
     from noetl.server.api.replay.service import ReplaySnapshotSeed, fold_replay_state
 
