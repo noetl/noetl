@@ -7,7 +7,7 @@ from psycopg.types.json import Json
 
 from noetl.core.db.pool import get_pool_connection
 
-from .ports import ProjectionRecord, ProjectionSnapshot
+from .ports import ProjectionQuery, ProjectionRecord, ProjectionSnapshot
 
 
 _PROJECTION_DDL = """
@@ -118,6 +118,41 @@ class PostgresProjectionStore:
         if not row:
             return None
         return ProjectionRecord(**dict(row))
+
+    async def query_projections(self, query: ProjectionQuery) -> list[ProjectionRecord]:
+        predicates: list[str] = []
+        params: list[Any] = []
+        if query.tenant_id is not None:
+            predicates.append("tenant_id = %s")
+            params.append(query.tenant_id)
+        if query.organization_id is not None:
+            predicates.append("organization_id = %s")
+            params.append(query.organization_id)
+        if query.projection_type is not None:
+            predicates.append("projection_type = %s")
+            params.append(query.projection_type)
+        if query.execution_id is not None:
+            predicates.append("execution_id = %s")
+            params.append(int(query.execution_id))
+
+        where_clause = f"WHERE {' AND '.join(predicates)}" if predicates else ""
+        params.append(max(1, int(query.limit or 100)))
+
+        async with get_pool_connection() as conn:
+            async with conn.cursor(row_factory=dict_row) as cur:
+                await cur.execute(
+                    f"""
+                    SELECT projection_id, projection_type, tenant_id, organization_id,
+                           execution_id, version, source_event_id, state, checksum, meta
+                    FROM noetl.projection
+                    {where_clause}
+                    ORDER BY updated_at DESC, projection_id ASC
+                    LIMIT %s
+                    """,
+                    params,
+                )
+                rows = await cur.fetchall()
+        return [ProjectionRecord(**dict(row)) for row in rows]
 
     async def save_snapshot(self, snapshot: ProjectionSnapshot) -> bool:
         checksum = snapshot.resolved_checksum()
