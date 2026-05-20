@@ -227,7 +227,113 @@ async def test_nats_projector_worker_projects_owned_event_batch():
     assert snapshot["events_unowned_total"] == 1
     assert snapshot["events_unshardable_total"] == 0
     assert snapshot["projection_records_total"] == 1
+    assert snapshot["projection_stale_records_total"] == 0
     assert snapshot["last_projection_source_event_id"] == 20
+
+
+@pytest.mark.asyncio
+async def test_nats_projector_worker_counts_stale_projection_writes():
+    from noetl.core.projector.metrics import ProjectorMetrics
+    from noetl.core.projector.nats_worker import NATSProjectorWorker, ProjectorWorkerSettings
+
+    metrics = ProjectorMetrics()
+    store = _MemoryProjectionStore()
+    worker = NATSProjectorWorker(
+        projection_store=store,
+        settings=ProjectorWorkerSettings(
+            shard_id="noetl-projector-1",
+            consumer_name="noetl-projector-1",
+            shard_count=2,
+        ),
+        metrics=metrics,
+    )
+
+    assert (
+        await worker.handle_notification(
+            {
+                "event": {
+                    "event_id": 30,
+                    "stream_version": 3,
+                    "tenant_id": "tenant-a",
+                    "organization_id": "org-a",
+                    "execution_id": 7,
+                    "event_type": "workflow.completed",
+                }
+            }
+        )
+        == "ack"
+    )
+    assert (
+        await worker.handle_notification(
+            {
+                "event": {
+                    "event_id": 20,
+                    "stream_version": 1,
+                    "tenant_id": "tenant-a",
+                    "organization_id": "org-a",
+                    "execution_id": 7,
+                    "event_type": "execution.started",
+                }
+            }
+        )
+        == "ack"
+    )
+
+    snapshot = metrics.snapshot()
+    assert snapshot["notifications_total"] == 2
+    assert snapshot["events_owned_total"] == 2
+    assert snapshot["projection_records_total"] == 1
+    assert snapshot["projection_stale_records_total"] == 1
+    assert store.records["execution/7/all"].version == 3
+
+
+@pytest.mark.asyncio
+async def test_nats_projector_worker_does_not_count_same_execution_batch_as_stale():
+    from noetl.core.projector.metrics import ProjectorMetrics
+    from noetl.core.projector.nats_worker import NATSProjectorWorker, ProjectorWorkerSettings
+
+    metrics = ProjectorMetrics()
+    store = _MemoryProjectionStore()
+    worker = NATSProjectorWorker(
+        projection_store=store,
+        settings=ProjectorWorkerSettings(
+            shard_id="noetl-projector-1",
+            consumer_name="noetl-projector-1",
+            shard_count=2,
+        ),
+        metrics=metrics,
+    )
+
+    assert (
+        await worker.handle_notification(
+            {
+                "events": [
+                    {
+                        "event_id": 20,
+                        "stream_version": 1,
+                        "tenant_id": "tenant-a",
+                        "organization_id": "org-a",
+                        "execution_id": 7,
+                        "event_type": "execution.started",
+                    },
+                    {
+                        "event_id": 21,
+                        "stream_version": 2,
+                        "tenant_id": "tenant-a",
+                        "organization_id": "org-a",
+                        "execution_id": 7,
+                        "event_type": "workflow.completed",
+                    },
+                ]
+            }
+        )
+        == "ack"
+    )
+
+    snapshot = metrics.snapshot()
+    assert snapshot["events_owned_total"] == 2
+    assert snapshot["projection_records_total"] == 1
+    assert snapshot["projection_stale_records_total"] == 0
 
 
 def test_projector_notification_decoder_accepts_json_and_arrow_feather():

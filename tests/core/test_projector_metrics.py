@@ -13,6 +13,7 @@ def test_projector_metrics_render_prometheus_labels():
         owned_events=2,
         unowned_events=1,
         unshardable_events=0,
+        stale_projection_records=1,
         projection_records=1,
     )
 
@@ -29,6 +30,7 @@ def test_projector_metrics_render_prometheus_labels():
     assert "noetl_projector_events_unowned_total" in body
     assert "noetl_projector_events_unshardable_total" in body
     assert "noetl_projector_projection_records_total" in body
+    assert "noetl_projector_projection_stale_records_total" in body
     assert " 1.0" in body
 
 
