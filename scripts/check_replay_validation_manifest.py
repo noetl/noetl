@@ -10,6 +10,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from scripts.package_replay_validation_artifacts import validate_artifact_index
+
 REQUIRED_CONFIG_FIELDS = (
     "base_url",
     "execution_id",
@@ -47,7 +49,20 @@ def _valid_timestamp(value: Any) -> bool:
     return True
 
 
-def _validate_manifest(manifest: dict[str, Any], *, require_matched: bool, check_artifacts: bool) -> dict[str, Any]:
+def _artifact_path(value: str, manifest_path: Path | None) -> Path:
+    path = Path(value)
+    if not path.is_absolute() and manifest_path is not None:
+        return (manifest_path.parent / path).resolve()
+    return path
+
+
+def _validate_manifest(
+    manifest: dict[str, Any],
+    *,
+    require_matched: bool,
+    check_artifacts: bool,
+    manifest_path: Path | None = None,
+) -> dict[str, Any]:
     failures: list[dict[str, Any]] = []
 
     if require_matched and manifest.get("matched") is not True:
@@ -89,8 +104,64 @@ def _validate_manifest(manifest: dict[str, Any], *, require_matched: bool, check
                 continue
             if not isinstance(value, str) or not value:
                 failures.append({"field": f"artifacts.{field}", "reason": "artifact path must be a string"})
-            elif not Path(value).exists():
+            elif not _artifact_path(value, manifest_path).exists():
                 failures.append({"field": f"artifacts.{field}", "reason": "artifact path does not exist", "path": value})
+
+        artifact_index = artifacts.get("artifact_index")
+        if isinstance(artifact_index, str) and artifact_index:
+            index_path = _artifact_path(artifact_index, manifest_path)
+            if index_path.exists():
+                try:
+                    index_output = validate_artifact_index(index_path)
+                except (OSError, json.JSONDecodeError, ValueError) as exc:
+                    failures.append(
+                        {
+                            "field": "artifacts.artifact_index",
+                            "reason": "artifact index could not be validated",
+                            "path": artifact_index,
+                            "error": str(exc),
+                        }
+                    )
+                else:
+                    if index_output.get("matched") is not True:
+                        failures.append(
+                            {
+                                "field": "artifacts.artifact_index",
+                                "reason": "artifact index validation failed",
+                                "path": artifact_index,
+                                "failures": index_output.get("failures", []),
+                            }
+                        )
+                    if manifest_path is not None:
+                        try:
+                            index_data = _load_manifest(index_path)
+                            indexed_manifest = index_data.get("manifest")
+                            if not isinstance(indexed_manifest, str) or not indexed_manifest:
+                                failures.append(
+                                    {
+                                        "field": "artifacts.artifact_index",
+                                        "reason": "artifact index manifest path is missing",
+                                        "path": artifact_index,
+                                    }
+                                )
+                            elif _artifact_path(indexed_manifest, index_path) != manifest_path.resolve():
+                                failures.append(
+                                    {
+                                        "field": "artifacts.artifact_index",
+                                        "reason": "artifact index points at a different manifest",
+                                        "path": artifact_index,
+                                        "indexed_manifest": indexed_manifest,
+                                    }
+                                )
+                        except (OSError, json.JSONDecodeError, ValueError) as exc:
+                            failures.append(
+                                {
+                                    "field": "artifacts.artifact_index",
+                                    "reason": "artifact index manifest path could not be checked",
+                                    "path": artifact_index,
+                                    "error": str(exc),
+                                }
+                            )
 
     steps = manifest.get("steps")
     if not isinstance(steps, list):
@@ -143,6 +214,29 @@ def _validate_manifest(manifest: dict[str, Any], *, require_matched: bool, check
                     "reason": "live_rows_integrity must run before live_checksums",
                 }
             )
+    artifacts_index = artifacts.get("artifact_index") if isinstance(artifacts, dict) else None
+    if artifacts_index:
+        if "artifact_index" not in step_names:
+            failures.append(
+                {
+                    "field": "steps",
+                    "reason": "artifact index manifests require artifact_index step",
+                }
+            )
+        elif step_names.index("artifact_index") != len(step_names) - 1:
+            failures.append(
+                {
+                    "field": "steps",
+                    "reason": "artifact_index step must be last",
+                }
+            )
+    elif "artifact_index" in step_names:
+        failures.append(
+            {
+                "field": "artifacts.artifact_index",
+                "reason": "artifact_index step requires artifacts.artifact_index",
+            }
+        )
     for name in step_names:
         if name not in (*REQUIRED_STEP_ORDER, *OPTIONAL_STEP_NAMES, "fetch_artifact"):
             failures.append({"field": "steps", "reason": "unknown validation step", "step": name})
@@ -161,6 +255,7 @@ def main(argv: list[str] | None = None) -> int:
         _load_manifest(args.manifest),
         require_matched=not args.allow_failed,
         check_artifacts=args.check_artifacts,
+        manifest_path=args.manifest,
     )
     print(json.dumps(output, indent=2, sort_keys=True))
     return 0 if output["matched"] else 1

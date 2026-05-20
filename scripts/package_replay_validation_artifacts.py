@@ -12,6 +12,8 @@ from pathlib import Path
 from typing import Any
 
 INDEX_SCHEMA_VERSION = 1
+REQUIRED_ROLES = ("manifest", "replay", "report")
+PAIRED_ROLES = (("live_rows", "live_checksums"),)
 
 
 def _utc_now() -> str:
@@ -103,12 +105,16 @@ def validate_artifact_index(index_path: Path) -> dict[str, Any]:
         failures.append({"field": "artifacts", "reason": "must be a list"})
         artifacts = []
 
+    roles: dict[str, int] = {}
     for idx, entry in enumerate(artifacts):
         if not isinstance(entry, dict):
             failures.append({"field": f"artifacts[{idx}]", "reason": "must be an object"})
             continue
-        if not isinstance(entry.get("role"), str) or not entry.get("role"):
+        role = entry.get("role")
+        if not isinstance(role, str) or not role:
             failures.append({"field": f"artifacts[{idx}].role", "reason": "must be a non-empty string"})
+        else:
+            roles[role] = roles.get(role, 0) + 1
         path_value = entry.get("path")
         if not isinstance(path_value, str) or not path_value:
             failures.append({"field": f"artifacts[{idx}].path", "reason": "must be a non-empty string"})
@@ -146,6 +152,29 @@ def validate_artifact_index(index_path: Path) -> dict[str, Any]:
                     "reason": "sha256 drift",
                     "expected": entry.get("sha256"),
                     "actual": actual_sha,
+                }
+            )
+
+    for role in REQUIRED_ROLES:
+        if roles.get(role, 0) == 0:
+            failures.append({"field": "artifacts", "reason": "missing required artifact role", "role": role})
+    for role, count in sorted(roles.items()):
+        if count > 1:
+            failures.append(
+                {
+                    "field": "artifacts",
+                    "reason": "duplicate artifact role",
+                    "role": role,
+                    "count": count,
+                }
+            )
+    for left, right in PAIRED_ROLES:
+        if bool(roles.get(left)) != bool(roles.get(right)):
+            failures.append(
+                {
+                    "field": "artifacts",
+                    "reason": "paired artifact roles must appear together",
+                    "roles": [left, right],
                 }
             )
 

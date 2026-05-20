@@ -2,6 +2,7 @@ import json
 from pathlib import Path
 
 from scripts.check_replay_validation_manifest import main
+from scripts.package_replay_validation_artifacts import build_artifact_index
 
 
 def _manifest(tmp_path: Path) -> dict:
@@ -68,6 +69,32 @@ def _manifest(tmp_path: Path) -> dict:
             {"name": "payload_resolution", "skipped": True},
         ],
     }
+
+
+def _write_manifest_with_artifact_index(tmp_path: Path) -> Path:
+    manifest = _manifest(tmp_path)
+    report = tmp_path / "validation-report.json"
+    report.write_text("{}")
+    index_path = tmp_path / "artifact-index.json"
+    manifest["artifacts"]["report"] = str(report)
+    manifest["artifacts"]["artifact_index"] = str(index_path)
+    manifest["steps"].append(
+        {
+            "name": "artifact_index",
+            "command": ["python", "scripts/package_replay_validation_artifacts.py"],
+            "returncode": 0,
+            "duration_seconds": 0.1,
+            "stdout": "{}",
+            "stderr": "",
+        }
+    )
+    path = tmp_path / "manifest.json"
+    path.write_text(json.dumps(manifest))
+    index_path.write_text(
+        json.dumps(build_artifact_index(manifest_path=path), indent=2, sort_keys=True)
+        + "\n"
+    )
+    return path
 
 
 def test_check_replay_validation_manifest_accepts_success(tmp_path: Path, capsys):
@@ -182,3 +209,84 @@ def test_check_replay_validation_manifest_rejects_multiple_live_inputs(tmp_path:
     assert main(["--manifest", str(path)]) == 1
     output = json.loads(capsys.readouterr().out)
     assert "config.live_checksums" in {failure["field"] for failure in output["failures"]}
+
+
+def test_check_replay_validation_manifest_validates_artifact_index(tmp_path: Path, capsys):
+    path = _write_manifest_with_artifact_index(tmp_path)
+
+    assert main(["--manifest", str(path), "--check-artifacts"]) == 0
+    assert json.loads(capsys.readouterr().out)["matched"] is True
+
+
+def test_check_replay_validation_manifest_rejects_artifact_index_drift(tmp_path: Path, capsys):
+    path = _write_manifest_with_artifact_index(tmp_path)
+    (tmp_path / "validation-report.json").write_text('{"mutated": true}')
+
+    assert main(["--manifest", str(path), "--check-artifacts"]) == 1
+    output = json.loads(capsys.readouterr().out)
+    assert any(
+        failure["field"] == "artifacts.artifact_index"
+        and failure["reason"] == "artifact index validation failed"
+        for failure in output["failures"]
+    )
+
+
+def test_check_replay_validation_manifest_rejects_artifact_index_for_other_manifest(
+    tmp_path: Path,
+    capsys,
+):
+    path = _write_manifest_with_artifact_index(tmp_path)
+    index_path = tmp_path / "artifact-index.json"
+    index = json.loads(index_path.read_text())
+    other_manifest = tmp_path / "other-manifest.json"
+    other_manifest.write_text("{}")
+    index["manifest"] = str(other_manifest)
+    index_path.write_text(json.dumps(index))
+
+    assert main(["--manifest", str(path), "--check-artifacts"]) == 1
+    output = json.loads(capsys.readouterr().out)
+    assert any(
+        failure["field"] == "artifacts.artifact_index"
+        and failure["reason"] == "artifact index points at a different manifest"
+        for failure in output["failures"]
+    )
+
+
+def test_check_replay_validation_manifest_requires_artifact_index_step(tmp_path: Path, capsys):
+    path = _write_manifest_with_artifact_index(tmp_path)
+    manifest = json.loads(path.read_text())
+    manifest["steps"] = [step for step in manifest["steps"] if step["name"] != "artifact_index"]
+    path.write_text(json.dumps(manifest))
+
+    assert main(["--manifest", str(path), "--check-artifacts"]) == 1
+    output = json.loads(capsys.readouterr().out)
+    assert any("artifact_index step" in failure["reason"] for failure in output["failures"])
+
+
+def test_check_replay_validation_manifest_requires_artifact_index_step_last(
+    tmp_path: Path,
+    capsys,
+):
+    path = _write_manifest_with_artifact_index(tmp_path)
+    manifest = json.loads(path.read_text())
+    artifact_step = manifest["steps"].pop()
+    manifest["steps"].insert(1, artifact_step)
+    path.write_text(json.dumps(manifest))
+
+    assert main(["--manifest", str(path), "--check-artifacts"]) == 1
+    output = json.loads(capsys.readouterr().out)
+    assert any("artifact_index step must be last" in failure["reason"] for failure in output["failures"])
+
+
+def test_check_replay_validation_manifest_rejects_orphan_artifact_index_step(
+    tmp_path: Path,
+    capsys,
+):
+    manifest = _manifest(tmp_path)
+    manifest["steps"].append({"name": "artifact_index", "skipped": True})
+    path = tmp_path / "manifest.json"
+    path.write_text(json.dumps(manifest))
+
+    assert main(["--manifest", str(path), "--check-artifacts"]) == 1
+    output = json.loads(capsys.readouterr().out)
+    assert "artifacts.artifact_index" in {failure["field"] for failure in output["failures"]}
