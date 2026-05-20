@@ -52,6 +52,38 @@ def test_check_replay_state_report_rejects_projection_checksum_drift(tmp_path: P
     assert output["failures"][0]["field"] == "projection_checksums.execution"
 
 
+def test_check_replay_state_report_rejects_missing_projection_checksum_surface(
+    tmp_path: Path,
+    capsys,
+):
+    state = _replay_state()
+    state["projection_checksums"].pop("loops")
+    path = tmp_path / "replay.json"
+    path.write_text(json.dumps(state))
+
+    assert main(["--report", str(path)]) == 1
+    output = json.loads(capsys.readouterr().out)
+    assert output["matched"] is False
+    fields = {failure["field"] for failure in output["failures"]}
+    assert "projection_checksums.loops" in fields
+
+
+def test_check_replay_state_report_rejects_unknown_projection_checksum_surface(
+    tmp_path: Path,
+    capsys,
+):
+    state = _replay_state()
+    state["projection_checksums"]["extra"] = "0" * 64
+    path = tmp_path / "replay.json"
+    path.write_text(json.dumps(state))
+
+    assert main(["--report", str(path)]) == 1
+    output = json.loads(capsys.readouterr().out)
+    assert output["matched"] is False
+    fields = {failure["field"] for failure in output["failures"]}
+    assert "projection_checksums.extra" in fields
+
+
 def test_check_replay_state_report_rejects_state_checksum_drift(tmp_path: Path, capsys):
     state = _replay_state()
     state["execution"]["status"] = "FAILED"
