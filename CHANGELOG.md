@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.85.2](https://github.com/noetl/noetl/compare/v2.85.1...v2.85.2) (2026-05-20)
+
+### Bug Fixes
+
+* **cursor:** render auth and admit IPC evidence ([3d37f10](https://github.com/noetl/noetl/commit/3d37f10e2ef0edb60096fc0feec04201721934d3))
+
 ## [2.85.1](https://github.com/noetl/noetl/compare/v2.85.0...v2.85.1) (2026-05-20)
 
 ### Bug Fixes
