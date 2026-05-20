@@ -44,26 +44,33 @@ def test_projector_metrics_render_prometheus_labels():
     assert "noetl_projector_projection_stale_records_total" in body
     assert "noetl_projector_projection_errors_total" in body
     assert "noetl_projector_decode_errors_total" in body
+    assert "noetl_projector_acknowledged_notifications_total" in body
     assert "noetl_projector_redelivery_requests_total" in body
     assert "noetl_projector_delayed_redelivery_requests_total" in body
+    assert "noetl_projector_terminated_notifications_total" in body
     assert " 1.0" in body
 
 
-def test_projector_metrics_record_redelivery_requests():
+def test_projector_metrics_record_message_actions():
     from noetl.core.projector.metrics import ProjectorMetrics, render_projector_metrics
 
     metrics = ProjectorMetrics()
+    metrics.record_message_action("ack", None)
     metrics.record_message_action("nak", None)
     metrics.record_message_action("nak", 2.5)
-    metrics.record_message_action("ack", None)
+    metrics.record_message_action("term", None)
 
     snapshot = metrics.snapshot()
+    assert snapshot["acknowledged_notifications_total"] == 1
     assert snapshot["redelivery_requests_total"] == 2
     assert snapshot["delayed_redelivery_requests_total"] == 1
+    assert snapshot["terminated_notifications_total"] == 1
 
     body = render_projector_metrics(metrics)
+    assert "noetl_projector_acknowledged_notifications_total 1.0" in body
     assert "noetl_projector_redelivery_requests_total 2.0" in body
     assert "noetl_projector_delayed_redelivery_requests_total 1.0" in body
+    assert "noetl_projector_terminated_notifications_total 1.0" in body
 
 
 def test_projector_metrics_record_projection_errors():
