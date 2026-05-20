@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.67.0](https://github.com/noetl/noetl/compare/v2.66.0...v2.67.0) (2026-05-20)
+
+### Features
+
+* **replay:** emit validation run manifests ([ef54128](https://github.com/noetl/noetl/commit/ef54128bda625c05acd437e33cda6e05b588b2e4))
+
 ## [2.66.0](https://github.com/noetl/noetl/compare/v2.65.0...v2.66.0) (2026-05-20)
 
 ### Features
