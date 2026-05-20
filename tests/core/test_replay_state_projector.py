@@ -224,6 +224,8 @@ async def test_nats_projector_worker_projects_owned_event_batch():
     assert snapshot["notifications_total"] == 1
     assert snapshot["events_extracted_total"] == 2
     assert snapshot["events_owned_total"] == 1
+    assert snapshot["events_unowned_total"] == 1
+    assert snapshot["events_unshardable_total"] == 0
     assert snapshot["projection_records_total"] == 1
     assert snapshot["last_projection_source_event_id"] == 20
 
@@ -291,6 +293,45 @@ async def test_nats_projector_worker_acks_empty_or_unowned_notifications():
     snapshot = metrics.snapshot()
     assert snapshot["notifications_total"] == 2
     assert snapshot["empty_or_unowned_notifications_total"] == 2
+    assert snapshot["events_unowned_total"] == 1
+    assert snapshot["events_unshardable_total"] == 0
+
+
+@pytest.mark.asyncio
+async def test_nats_projector_worker_counts_unshardable_events():
+    from noetl.core.projector.metrics import ProjectorMetrics
+    from noetl.core.projector.nats_worker import NATSProjectorWorker, ProjectorWorkerSettings
+
+    metrics = ProjectorMetrics()
+    store = _MemoryProjectionStore()
+    worker = NATSProjectorWorker(
+        projection_store=store,
+        settings=ProjectorWorkerSettings(
+            shard_id="noetl-projector-0",
+            consumer_name="noetl-projector-0",
+            shard_count=2,
+        ),
+        metrics=metrics,
+    )
+
+    assert await worker.handle_notification({"event": {"event_type": "workflow.completed"}}) == "ack"
+    assert store.records == {}
+    snapshot = metrics.snapshot()
+    assert snapshot["notifications_total"] == 1
+    assert snapshot["events_extracted_total"] == 1
+    assert snapshot["events_unowned_total"] == 0
+    assert snapshot["events_unshardable_total"] == 1
+
+    assert (
+        await worker.handle_notification(
+            {"event": {"execution_id": "not-an-int", "event_type": "workflow.completed"}}
+        )
+        == "ack"
+    )
+    snapshot = metrics.snapshot()
+    assert snapshot["notifications_total"] == 2
+    assert snapshot["events_extracted_total"] == 2
+    assert snapshot["events_unshardable_total"] == 2
 
 
 @pytest.mark.asyncio
