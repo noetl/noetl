@@ -415,6 +415,74 @@ def test_frame_projection_checksum_matches_live_rows_and_replayed_state():
     }
 
 
+def test_stage_projection_checksum_matches_live_rows_and_replayed_state():
+    from noetl.server.api.replay import (
+        fold_replay_state,
+        normalize_live_stage_projection,
+        normalize_replayed_stage_projection,
+        stage_projection_checksum,
+    )
+
+    events = [
+        {
+            "event_id": 60,
+            "event_type": "stage.opened",
+            "aggregate_type": "stage",
+            "aggregate_id": "stage/7",
+            "status": "OPEN",
+            "node_name": "fetch_patients",
+            "meta": {
+                "kind": "loop",
+                "parent_stage_id": "6",
+                "loop_event_id": "loop-1",
+            },
+        },
+        {
+            "event_id": 61,
+            "event_type": "stage.closed",
+            "aggregate_type": "stage",
+            "aggregate_id": "stage/7",
+            "status": "COMPLETED",
+            "node_name": "fetch_patients",
+            "meta": {
+                "frame_count": 3,
+                "row_count": 150,
+                "events_emitted": 6,
+                "failed_count": 1,
+            },
+        },
+    ]
+    state = fold_replay_state(
+        events,
+        tenant_id="tenant-a",
+        organization_id="org-a",
+        execution_id=123,
+    )
+    live_rows = normalize_live_stage_projection(
+        [
+            {
+                "stage_id": 7,
+                "status": "COMPLETED",
+                "kind": "loop",
+                "step_name": "fetch_patients",
+                "parent_stage_id": "6",
+                "loop_event_id": "loop-1",
+                "opened_event_id": 60,
+                "closed_event_id": 61,
+                "frame_count": 3,
+                "row_count": 150,
+                "events_emitted": 6,
+                "failed_count": 1,
+                "last_event_id": 61,
+            }
+        ]
+    )
+    replayed_rows = normalize_replayed_stage_projection(state)
+
+    assert replayed_rows == live_rows
+    assert stage_projection_checksum(replayed_rows) == stage_projection_checksum(live_rows)
+
+
 def test_command_projection_checksum_matches_live_rows_and_replayed_state():
     from noetl.server.api.replay import (
         command_projection_checksum,
