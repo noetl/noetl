@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.69.0](https://github.com/noetl/noetl/compare/v2.68.0...v2.69.0) (2026-05-20)
+
+### Features
+
+* **replay:** export live projection rows ([7f42181](https://github.com/noetl/noetl/commit/7f421817d42647a4091cfd1ddb618f5db0b7816b))
+
 ## [2.68.0](https://github.com/noetl/noetl/compare/v2.67.0...v2.68.0) (2026-05-20)
 
 ### Features
