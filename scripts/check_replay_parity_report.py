@@ -5,11 +5,14 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 from pathlib import Path
 from typing import Any
 
 from noetl.server.api.replay import projection_checksum_parity_report
+
+_SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 
 
 def _load_bundle(path: Path) -> dict[str, str]:
@@ -19,6 +22,21 @@ def _load_bundle(path: Path) -> dict[str, str]:
     if not isinstance(data, dict):
         raise ValueError(f"{path} must contain a checksum object")
     return {str(key): str(value) for key, value in data.items()}
+
+
+def _checksum_shape_report(bundle: dict[str, str], *, label: str) -> list[dict[str, str]]:
+    failures: list[dict[str, str]] = []
+    for surface, checksum in sorted(bundle.items()):
+        if not _SHA256_RE.fullmatch(checksum):
+            failures.append(
+                {
+                    "bundle": label,
+                    "surface": surface,
+                    "checksum": checksum,
+                    "reason": "checksum must be a lowercase sha256 hex digest",
+                }
+            )
+    return failures
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -37,12 +55,26 @@ def main(argv: list[str] | None = None) -> int:
         type=Path,
         help="JSON file containing live projection_checksums or a raw checksum map",
     )
+    parser.add_argument(
+        "--allow-invalid-checksum-shape",
+        action="store_true",
+        help="Skip lowercase sha256 hex validation for legacy ad-hoc reports",
+    )
     args = parser.parse_args(argv)
 
+    replayed = _load_bundle(args.replayed)
+    live = _load_bundle(args.live)
     report = projection_checksum_parity_report(
-        replayed=_load_bundle(args.replayed),
-        live=_load_bundle(args.live),
+        replayed=replayed,
+        live=live,
     )
+    shape_failures: list[dict[str, str]] = []
+    if not args.allow_invalid_checksum_shape:
+        shape_failures.extend(_checksum_shape_report(replayed, label="replayed"))
+        shape_failures.extend(_checksum_shape_report(live, label="live"))
+    if shape_failures:
+        report["matched"] = False
+        report["checksum_shape_failures"] = shape_failures
     print(json.dumps(report, indent=2, sort_keys=True))
     return 0 if report["matched"] else 1
 
