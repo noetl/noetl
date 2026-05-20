@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.70.0](https://github.com/noetl/noetl/compare/v2.69.0...v2.70.0) (2026-05-20)
+
+### Features
+
+* **projector:** split shard skip metrics ([fa6a735](https://github.com/noetl/noetl/commit/fa6a735d98f094b05e4a8e1c24d73550f324165e))
+
 ## [2.69.0](https://github.com/noetl/noetl/compare/v2.68.0...v2.69.0) (2026-05-20)
 
 ### Features
