@@ -479,9 +479,15 @@ class ParserValidationMixin:
                 f"Step '{step_name}': 'loop' must be an object"
             )
 
-        if "in" not in loop_data:
+        has_in = "in" in loop_data and loop_data.get("in") not in (None, "")
+        has_cursor = "cursor" in loop_data and loop_data.get("cursor") not in (None, "")
+        if has_in and has_cursor:
             raise ValueError(
-                f"Step '{step_name}': loop must have 'in' field"
+                f"Step '{step_name}': loop must specify either 'in' or 'cursor', not both"
+            )
+        if not has_in and not has_cursor:
+            raise ValueError(
+                f"Step '{step_name}': loop must have 'in' or 'cursor' field"
             )
 
         if "iterator" not in loop_data:
@@ -496,16 +502,22 @@ class ParserValidationMixin:
                     f"Step '{step_name}': loop.spec must be an object"
                 )
 
-            if "mode" in spec and spec["mode"] not in ("sequential", "parallel"):
+            if "mode" in spec and spec["mode"] not in ("sequential", "parallel", "cursor"):
                 raise ValueError(
-                    f"Step '{step_name}': loop.spec.mode must be 'sequential' or 'parallel'"
+                    f"Step '{step_name}': loop.spec.mode must be 'sequential', 'parallel', or 'cursor'"
                 )
 
             if "max_in_flight" in spec:
                 max_flight = spec["max_in_flight"]
-                if not isinstance(max_flight, int) or max_flight < 1:
+                if isinstance(max_flight, int):
+                    valid_max_flight = max_flight >= 1
+                elif isinstance(max_flight, str):
+                    valid_max_flight = bool(max_flight.strip())
+                else:
+                    valid_max_flight = False
+                if not valid_max_flight:
                     raise ValueError(
-                        f"Step '{step_name}': loop.spec.max_in_flight must be a positive integer"
+                        f"Step '{step_name}': loop.spec.max_in_flight must be a positive integer or renderable expression"
                     )
 
             if "policy" in spec:

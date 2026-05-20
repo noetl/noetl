@@ -276,9 +276,10 @@ class RenderingMixin:
 
         if not collection:
             if step.loop and step.loop.is_cursor:
-                worker_count_fallback = 1
-                if step.loop.spec and step.loop.spec.max_in_flight:
-                    worker_count_fallback = max(1, int(step.loop.spec.max_in_flight))
+                worker_count_fallback = self._get_loop_max_in_flight(
+                    step,
+                    state.get_render_context(event),
+                )
                 collection = list(range(worker_count_fallback))
                 logger.info(
                     "[CURSOR-LOOP] Hydrated synthetic collection (size=%d) for %s epoch=%s",

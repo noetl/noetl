@@ -419,7 +419,12 @@ class CommandCreationMixin:
             if nats_loop_state:
                 completed_count = int(nats_loop_state.get("completed_count", completed_count_local) or completed_count_local)
 
-            max_in_flight = self._get_loop_max_in_flight(step)
+            max_context = locals().get("context")
+            if max_context is None:
+                max_context = state.get_render_context(Event(
+                    execution_id=state.execution_id, step=step.step, name="loop_init", payload={}
+                ))
+            max_in_flight = self._get_loop_max_in_flight(step, max_context)
 
             # Repair invalid distributed metadata from older writes/restarts where
             # collection_size regressed to 0 while local loop collection is valid.
