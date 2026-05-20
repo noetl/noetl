@@ -22,6 +22,7 @@ class ProjectorMetrics:
             "events_unshardable_total": 0.0,
             "projection_records_total": 0.0,
             "projection_stale_records_total": 0.0,
+            "projection_errors_total": 0.0,
             "decode_errors_total": 0.0,
             "empty_or_unowned_notifications_total": 0.0,
             "errors_total": 0.0,
@@ -64,6 +65,7 @@ class ProjectorMetrics:
     def record_error(self) -> None:
         with self._lock:
             self._values["errors_total"] += 1.0
+            self._values["projection_errors_total"] += 1.0
             self._values["last_error_unixtime"] = time.time()
 
     def record_decode_error(self) -> None:
@@ -131,6 +133,9 @@ def render_projector_metrics(metrics: ProjectorMetrics, *, labels: Optional[Mapp
             "noetl_projector_projection_stale_records_total"
             f"{label_text} {snapshot['projection_stale_records_total']}"
         ),
+        "# HELP noetl_projector_projection_errors_total Projector notification projection callback failures.",
+        "# TYPE noetl_projector_projection_errors_total counter",
+        f"noetl_projector_projection_errors_total{label_text} {snapshot['projection_errors_total']}",
         "# HELP noetl_projector_decode_errors_total Projector notification payload decode failures.",
         "# TYPE noetl_projector_decode_errors_total counter",
         f"noetl_projector_decode_errors_total{label_text} {snapshot['decode_errors_total']}",
