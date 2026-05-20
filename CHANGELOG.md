@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.54.0](https://github.com/noetl/noetl/compare/v2.53.0...v2.54.0) (2026-05-20)
+
+### Features
+
+* **metrics:** expose frame backlog gauge ([4d1cc07](https://github.com/noetl/noetl/commit/4d1cc07fb82d606ed6f0f339a0fc2c87e9711035))
+
 ## [2.53.0](https://github.com/noetl/noetl/compare/v2.52.0...v2.53.0) (2026-05-20)
 
 ### Features
