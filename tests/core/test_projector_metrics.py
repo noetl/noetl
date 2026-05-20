@@ -19,11 +19,22 @@ def test_projector_metrics_render_prometheus_labels():
 
     body = render_projector_metrics(
         metrics,
-        labels={"shard_id": "noetl-projector-0", "consumer": "consumer-a"},
+        labels={
+            "shard_id": "noetl-projector-0",
+            "shard_index": "0",
+            "shard_count": "2",
+            "consumer": "consumer-a",
+            "stream": "NOETL_EVENTS",
+            "subject": "noetl.events.>",
+        },
     )
 
     assert 'consumer="consumer-a"' in body
+    assert 'shard_count="2"' in body
     assert 'shard_id="noetl-projector-0"' in body
+    assert 'shard_index="0"' in body
+    assert 'stream="NOETL_EVENTS"' in body
+    assert 'subject="noetl.events.>"' in body
     assert "noetl_projector_notifications_total" in body
     assert "noetl_projector_events_extracted_total" in body
     assert "noetl_projector_events_owned_total" in body
