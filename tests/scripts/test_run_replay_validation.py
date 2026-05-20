@@ -236,6 +236,11 @@ def test_run_replay_validation_can_write_artifact_index(monkeypatch, tmp_path: P
     assert any("scripts/package_replay_validation_artifacts.py" in call for call in calls)
     manifest_payload = json.loads(manifest.read_text())
     assert manifest_payload["artifacts"]["artifact_index"] == str(artifact_index)
+    assert manifest_payload["steps"][-1]["name"] == "artifact_index"
+    assert manifest_payload["steps"][-1]["stdout_json"] == {
+        "matched": True,
+        "output": str(artifact_index),
+    }
     assert json.loads(capsys.readouterr().out)["artifacts"]["artifact_index"] == str(artifact_index)
 
 
