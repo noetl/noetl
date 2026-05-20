@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.60.0](https://github.com/noetl/noetl/compare/v2.59.0...v2.60.0) (2026-05-20)
+
+### Features
+
+* **replay:** fold command projection state ([71b133a](https://github.com/noetl/noetl/commit/71b133aaa9fc793dc4b3b78c2584ece0c9253328))
+
 ## [2.59.0](https://github.com/noetl/noetl/compare/v2.58.0...v2.59.0) (2026-05-20)
 
 ### Features
