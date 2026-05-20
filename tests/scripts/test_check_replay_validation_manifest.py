@@ -55,6 +55,14 @@ def _manifest(tmp_path: Path) -> dict:
                 "name": "live_rows_export",
                 "skipped": True,
             },
+            {
+                "name": "live_rows_integrity",
+                "skipped": True,
+            },
+            {
+                "name": "live_checksums",
+                "skipped": True,
+            },
             {"name": "projection_parity", "skipped": True},
             {"name": "payload_resolution", "skipped": True},
         ],
@@ -126,6 +134,41 @@ def test_check_replay_validation_manifest_checks_live_rows_artifact(tmp_path: Pa
 
     assert main(["--manifest", str(path), "--check-artifacts"]) == 0
     assert json.loads(capsys.readouterr().out)["matched"] is True
+
+
+def test_check_replay_validation_manifest_requires_live_rows_integrity(tmp_path: Path, capsys):
+    manifest = _manifest(tmp_path)
+    live_rows = tmp_path / "live-rows.json"
+    live_rows.write_text("{}")
+    manifest["artifacts"]["live_rows"] = str(live_rows)
+    manifest["steps"] = [
+        step for step in manifest["steps"] if step["name"] != "live_rows_integrity"
+    ]
+    path = tmp_path / "manifest.json"
+    path.write_text(json.dumps(manifest))
+
+    assert main(["--manifest", str(path), "--check-artifacts"]) == 1
+    output = json.loads(capsys.readouterr().out)
+    assert any("live_rows_integrity" in failure["reason"] for failure in output["failures"])
+
+
+def test_check_replay_validation_manifest_requires_live_rows_integrity_before_checksums(
+    tmp_path: Path,
+    capsys,
+):
+    manifest = _manifest(tmp_path)
+    manifest["config"]["live_rows"] = "live-rows.json"
+    live_integrity = next(step for step in manifest["steps"] if step["name"] == "live_rows_integrity")
+    manifest["steps"] = [
+        step for step in manifest["steps"] if step["name"] != "live_rows_integrity"
+    ]
+    manifest["steps"].append(live_integrity)
+    path = tmp_path / "manifest.json"
+    path.write_text(json.dumps(manifest))
+
+    assert main(["--manifest", str(path)]) == 1
+    output = json.loads(capsys.readouterr().out)
+    assert any("before live_checksums" in failure["reason"] for failure in output["failures"])
 
 
 def test_check_replay_validation_manifest_rejects_multiple_live_inputs(tmp_path: Path, capsys):

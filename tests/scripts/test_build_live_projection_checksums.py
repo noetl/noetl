@@ -63,6 +63,17 @@ def test_build_live_projection_checksums_accepts_nested_rows(tmp_path: Path):
     )
 
 
+def test_build_live_projection_checksums_rejects_nested_row_count_drift(tmp_path: Path):
+    rows_path = tmp_path / "live-rows.json"
+    output_path = tmp_path / "live-checksums.json"
+    rows_path.write_text(json.dumps({"rows": _rows(), "row_counts": {"execution": 2}}))
+
+    with pytest.raises(ValueError, match="row_counts.execution"):
+        build_live_projection_checksums.main(
+            ["--rows", str(rows_path), "--output", str(output_path)]
+        )
+
+
 def test_build_live_projection_checksums_rejects_unknown_surface(tmp_path: Path):
     rows = {**_rows(), "extra": []}
     rows_path = tmp_path / "live-rows.json"

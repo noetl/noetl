@@ -216,6 +216,17 @@ def main(argv: list[str] | None = None) -> int:
             else [],
         ),
         (
+            "live_rows_integrity",
+            [
+                sys.executable,
+                "scripts/check_live_projection_rows.py",
+                "--rows",
+                str(live_rows_path),
+            ]
+            if live_rows_path
+            else [],
+        ),
+        (
             "live_checksums",
             [
                 sys.executable,

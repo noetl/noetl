@@ -22,6 +22,7 @@ REQUIRED_CONFIG_FIELDS = (
 REQUIRED_STEP_ORDER = ("fetch", "state_integrity")
 OPTIONAL_STEP_NAMES = (
     "live_rows_export",
+    "live_rows_integrity",
     "live_checksums",
     "projection_parity",
     "payload_resolution",
@@ -121,6 +122,26 @@ def _validate_manifest(manifest: dict[str, Any], *, require_matched: bool, check
     for expected_index, name in enumerate(REQUIRED_STEP_ORDER):
         if len(step_names) <= expected_index or step_names[expected_index] != name:
             failures.append({"field": "steps", "reason": f"required step {name} missing or out of order"})
+    artifacts_live_rows = artifacts.get("live_rows") if isinstance(artifacts, dict) else None
+    config_live_rows = config.get("live_rows") if isinstance(config, dict) else None
+    export_live_rows = (
+        config.get("export_live_rows_postgres") if isinstance(config, dict) else False
+    )
+    if artifacts_live_rows or config_live_rows or export_live_rows:
+        if "live_rows_integrity" not in step_names:
+            failures.append(
+                {
+                    "field": "steps",
+                    "reason": "live row manifests require live_rows_integrity step",
+                }
+            )
+        elif "live_checksums" in step_names and step_names.index("live_rows_integrity") > step_names.index("live_checksums"):
+            failures.append(
+                {
+                    "field": "steps",
+                    "reason": "live_rows_integrity must run before live_checksums",
+                }
+            )
     for name in step_names:
         if name not in (*REQUIRED_STEP_ORDER, *OPTIONAL_STEP_NAMES, "fetch_artifact"):
             failures.append({"field": "steps", "reason": "unknown validation step", "step": name})

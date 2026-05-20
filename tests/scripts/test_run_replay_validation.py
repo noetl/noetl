@@ -187,10 +187,11 @@ def test_run_replay_validation_can_export_live_rows_from_postgres(monkeypatch, t
     assert output["config"]["export_live_rows_postgres"] is True
     assert output["artifacts"]["live_rows"].endswith("live-rows-123.json")
     assert output["artifacts"]["live_checksums"].endswith("live-checksums-123.json")
-    assert [step["name"] for step in output["steps"][:4]] == [
+    assert [step["name"] for step in output["steps"][:5]] == [
         "fetch",
         "state_integrity",
         "live_rows_export",
+        "live_rows_integrity",
         "live_checksums",
     ]
 
