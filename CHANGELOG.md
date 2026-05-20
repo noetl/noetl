@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.68.0](https://github.com/noetl/noetl/compare/v2.67.0...v2.68.0) (2026-05-20)
+
+### Features
+
+* **replay:** build live checksum artifacts ([4108fc7](https://github.com/noetl/noetl/commit/4108fc7fe13b79734753a7d4638e6a739581d8e4))
+
 ## [2.67.0](https://github.com/noetl/noetl/compare/v2.66.0...v2.67.0) (2026-05-20)
 
 ### Features
