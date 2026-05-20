@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.50.0](https://github.com/noetl/noetl/compare/v2.49.0...v2.50.0) (2026-05-20)
+
+### Features
+
+* **storage:** add node identity to ipc hints ([556ab8e](https://github.com/noetl/noetl/commit/556ab8e284b5e0f0be7e7dcbdb1ff9888a337683))
+
 ## [2.49.0](https://github.com/noetl/noetl/compare/v2.48.0...v2.49.0) (2026-05-20)
 
 ### Features
