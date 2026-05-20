@@ -15,6 +15,14 @@ from typing import Any, Mapping
 from noetl.server.api.replay import replay_projection_checksum_bundle
 
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
+REQUIRED_PROJECTION_SURFACES = (
+    "execution",
+    "stages",
+    "frames",
+    "commands",
+    "business_objects",
+    "loops",
+)
 
 REQUIRED_TOP_LEVEL_FIELDS = (
     "tenant_id",
@@ -79,6 +87,28 @@ def _validate_digest_shape(
                 "field": field,
                 "reason": "digest must be a lowercase sha256 hex value",
                 "supplied": value,
+            }
+        )
+
+
+def _validate_projection_surface_shape(
+    failures: list[dict[str, Any]],
+    *,
+    bundle: dict[str, Any],
+) -> None:
+    for surface in REQUIRED_PROJECTION_SURFACES:
+        if surface not in bundle:
+            failures.append(
+                {
+                    "field": f"projection_checksums.{surface}",
+                    "reason": "missing required projection checksum surface",
+                }
+            )
+    for surface in sorted(set(bundle) - set(REQUIRED_PROJECTION_SURFACES)):
+        failures.append(
+            {
+                "field": f"projection_checksums.{surface}",
+                "reason": "unknown projection checksum surface",
             }
         )
 
@@ -160,6 +190,7 @@ def validate_replay_state_report(report: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(supplied_bundle, dict):
         failures.append({"field": "projection_checksums", "reason": "missing or not an object"})
     else:
+        _validate_projection_surface_shape(failures, bundle=supplied_bundle)
         try:
             computed_bundle = replay_projection_checksum_bundle(report)
         except (TypeError, ValueError) as exc:
