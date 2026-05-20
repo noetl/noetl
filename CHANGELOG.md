@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.49.0](https://github.com/noetl/noetl/compare/v2.48.0...v2.49.0) (2026-05-20)
+
+### Features
+
+* **storage:** resolve arrow result refs via ipc ([959a34f](https://github.com/noetl/noetl/commit/959a34fcbb6799fef44f74dd429652f800ec4f77))
+
 ## [2.48.0](https://github.com/noetl/noetl/compare/v2.47.0...v2.48.0) (2026-05-20)
 
 ### Features
