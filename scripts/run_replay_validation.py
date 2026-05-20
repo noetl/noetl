@@ -392,6 +392,15 @@ def main(argv: list[str] | None = None) -> int:
             ],
         ),
         (
+            "runtime_locator_state",
+            [
+                _validation_python(),
+                "scripts/check_runtime_locator_surfaces.py",
+                "--replay-report",
+                str(replay_path),
+            ],
+        ),
+        (
             "live_rows_export",
             [
                 _validation_python(),
@@ -417,6 +426,17 @@ def main(argv: list[str] | None = None) -> int:
                 _validation_python(),
                 "scripts/check_live_projection_rows.py",
                 "--rows",
+                str(live_rows_path),
+            ]
+            if live_rows_path
+            else [],
+        ),
+        (
+            "runtime_locator_live_rows",
+            [
+                _validation_python(),
+                "scripts/check_runtime_locator_surfaces.py",
+                "--live-rows",
                 str(live_rows_path),
             ]
             if live_rows_path
