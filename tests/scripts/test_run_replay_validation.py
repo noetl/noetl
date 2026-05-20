@@ -40,11 +40,12 @@ def test_run_replay_validation_fetches_and_runs_selected_gates(monkeypatch, tmp_
         == 0
     )
 
-    assert len(calls) == 3
+    assert len(calls) == 4
     assert "scripts/fetch_replay_state_report.py" in calls[0]
     assert "--resolve-payloads" in calls[0]
-    assert "scripts/check_replay_parity_report.py" in calls[1]
-    assert "scripts/check_replay_payload_resolution_report.py" in calls[2]
+    assert "scripts/check_replay_state_report.py" in calls[1]
+    assert "scripts/check_replay_parity_report.py" in calls[2]
+    assert "scripts/check_replay_payload_resolution_report.py" in calls[3]
     output = json.loads(capsys.readouterr().out)
     assert output["matched"] is True
     assert output["replay"].endswith("replay-123.json")
