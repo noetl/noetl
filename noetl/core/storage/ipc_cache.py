@@ -42,6 +42,7 @@ class ArrowIpcSharedMemoryCache:
         budget_bytes: Optional[int] = None,
         default_lease_seconds: float = 60.0,
         producer: Optional[str] = None,
+        node_id: Optional[str] = None,
     ) -> None:
         self.namespace = _sanitize(namespace)[:32] or "noetl"
         self.budget_bytes = int(
@@ -51,6 +52,7 @@ class ArrowIpcSharedMemoryCache:
         )
         self.default_lease_seconds = float(default_lease_seconds)
         self.producer = producer or os.getenv("HOSTNAME") or "unknown"
+        self.node_id = node_id or _detect_node_id()
         self._entries: dict[str, IpcCacheEntry] = {}
 
     @property
@@ -101,6 +103,7 @@ class ArrowIpcSharedMemoryCache:
             byte_length=len(payload_bytes),
             row_count=row_count,
             producer=self.producer,
+            node_id=self.node_id,
             lease_expires_at=lease_expires_at,
             media_type=media_type,
         )
@@ -108,6 +111,10 @@ class ArrowIpcSharedMemoryCache:
     def get(self, hint: IpcHint) -> bytes:
         if hint.is_expired():
             raise KeyError(f"IPC hint expired: {hint.shm_name}")
+        if hint.node_id and self.node_id and hint.node_id != self.node_id:
+            raise KeyError(
+                f"IPC hint belongs to node {hint.node_id}; local node is {self.node_id}"
+            )
         shm = shared_memory.SharedMemory(name=hint.shm_name, create=False)
         try:
             return bytes(shm.buf[: hint.byte_length])
@@ -151,6 +158,16 @@ class ArrowIpcSharedMemoryCache:
 
 def _sanitize(value: str) -> str:
     return _SAFE_NAME.sub("_", value)
+
+
+def _detect_node_id() -> str:
+    return (
+        os.getenv("NOETL_NODE_ID")
+        or os.getenv("NODE_NAME")
+        or os.getenv("K8S_NODE_NAME")
+        or os.getenv("HOSTNAME")
+        or "unknown"
+    )
 
 
 __all__ = ["ArrowIpcSharedMemoryCache", "IpcCacheEntry"]

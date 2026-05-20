@@ -1035,6 +1035,7 @@ class TempStore:
             return ArrowIpcSharedMemoryCache(
                 namespace=os.getenv("NOETL_CURSOR_FRAME_IPC_NAMESPACE", "noetl_frame"),
                 producer=os.getenv("HOSTNAME") or "resolver",
+                node_id=os.getenv("NOETL_NODE_ID") or os.getenv("NODE_NAME"),
             )
         except Exception as exc:
             logger.debug("TEMP: IPC cache unavailable for %s: %s", temp_ref.ref, exc)

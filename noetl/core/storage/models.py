@@ -99,6 +99,10 @@ class IpcHint(BaseModel):
     byte_length: int = Field(..., ge=0)
     row_count: Optional[int] = Field(default=None, ge=0)
     producer: Optional[str] = Field(default=None)
+    node_id: Optional[str] = Field(
+        default=None,
+        description="Producer node identity; consumers skip IPC attach when it differs from their node",
+    )
     lease_expires_at: Optional[datetime] = Field(default=None)
     media_type: str = Field(default="application/vnd.apache.arrow.stream")
 

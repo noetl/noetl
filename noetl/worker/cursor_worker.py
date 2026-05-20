@@ -114,6 +114,7 @@ def _frame_ipc_cache() -> Optional[ArrowIpcSharedMemoryCache]:
         _FRAME_IPC_CACHE = ArrowIpcSharedMemoryCache(
             namespace=os.getenv("NOETL_CURSOR_FRAME_IPC_NAMESPACE", "noetl_frame"),
             producer=os.getenv("HOSTNAME") or "cursor-worker",
+            node_id=os.getenv("NOETL_NODE_ID") or os.getenv("NODE_NAME"),
         )
     return _FRAME_IPC_CACHE
 
