@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.86.0](https://github.com/noetl/noetl/compare/v2.85.2...v2.86.0) (2026-05-20)
+
+### Features
+
+* **storage:** add pluggable backend registry ([b366705](https://github.com/noetl/noetl/commit/b366705810a857efd8004945af7594b5ceb0bbcd))
+
 ## [2.85.2](https://github.com/noetl/noetl/compare/v2.85.1...v2.85.2) (2026-05-20)
 
 ### Bug Fixes
