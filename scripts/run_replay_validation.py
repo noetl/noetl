@@ -327,6 +327,34 @@ def main(argv: list[str] | None = None) -> int:
             )
             return 1
 
+    artifact_index_command: list[str] | None = None
+    if args.artifact_index_output:
+        artifact_index_command = [
+            sys.executable,
+            "scripts/package_replay_validation_artifacts.py",
+            "--manifest",
+            str(args.report_output),
+            "--output",
+            str(args.artifact_index_output),
+        ]
+        steps.append(
+            {
+                "name": "artifact_index",
+                "command": artifact_index_command,
+                "returncode": 0,
+                "duration_seconds": 0.0,
+                "stdout": json.dumps(
+                    {"output": str(args.artifact_index_output), "matched": True},
+                    sort_keys=True,
+                ),
+                "stderr": "",
+                "stdout_json": {
+                    "output": str(args.artifact_index_output),
+                    "matched": True,
+                },
+            }
+        )
+
     _emit_report(
         _build_report(
             matched=True,
@@ -339,29 +367,20 @@ def main(argv: list[str] | None = None) -> int:
         ),
         args.report_output,
     )
-    if args.artifact_index_output:
-        command = [
-            sys.executable,
-            "scripts/package_replay_validation_artifacts.py",
-            "--manifest",
-            str(args.report_output),
-            "--output",
-            str(args.artifact_index_output),
-        ]
-        code, stdout, stderr, duration = _run(command)
-        step = {
-            "name": "artifact_index",
-            "command": command,
-            "returncode": code,
-            "duration_seconds": round(duration, 6),
-            "stdout": stdout,
-            "stderr": stderr,
-        }
-        stdout_json = _parse_json(stdout)
-        if stdout_json is not None:
-            step["stdout_json"] = stdout_json
-        steps.append(step)
+    if artifact_index_command:
+        code, stdout, stderr, duration = _run(artifact_index_command)
         if code != 0:
+            steps[-1] = {
+                "name": "artifact_index",
+                "command": artifact_index_command,
+                "returncode": code,
+                "duration_seconds": round(duration, 6),
+                "stdout": stdout,
+                "stderr": stderr,
+            }
+            stdout_json = _parse_json(stdout)
+            if stdout_json is not None:
+                steps[-1]["stdout_json"] = stdout_json
             _emit_report(
                 _build_report(
                     matched=False,
