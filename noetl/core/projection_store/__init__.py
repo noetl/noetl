@@ -2,6 +2,7 @@
 
 from .ports import (
     ProjectionConflict,
+    ProjectionQuery,
     ProjectionRecord,
     ProjectionSnapshot,
     ProjectionStore,
@@ -11,6 +12,7 @@ from .postgres import PostgresProjectionStore
 
 __all__ = [
     "ProjectionConflict",
+    "ProjectionQuery",
     "ProjectionRecord",
     "ProjectionSnapshot",
     "ProjectionStore",

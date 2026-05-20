@@ -61,12 +61,24 @@ class ProjectionSnapshot:
         return self.checksum or projection_checksum(self.snapshot)
 
 
+@dataclass(frozen=True)
+class ProjectionQuery:
+    tenant_id: Optional[str] = None
+    organization_id: Optional[str] = None
+    projection_type: Optional[str] = None
+    execution_id: Optional[int] = None
+    limit: int = 100
+
+
 class ProjectionStore(Protocol):
     async def save_projection(self, record: ProjectionRecord) -> bool:
         """Save a projection. Return True when state changed."""
 
     async def load_projection(self, projection_id: str) -> Optional[ProjectionRecord]:
         """Load the current projection state."""
+
+    async def query_projections(self, query: ProjectionQuery) -> list[ProjectionRecord]:
+        """Query projections by tenant, type, execution, or backend-supported indexes."""
 
     async def save_snapshot(self, snapshot: ProjectionSnapshot) -> bool:
         """Save an aggregate snapshot. Return True when state changed."""
