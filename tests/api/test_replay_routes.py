@@ -190,6 +190,53 @@ async def test_replay_service_accepts_per_call_event_reader():
 
 
 @pytest.mark.asyncio
+async def test_replay_service_accepts_per_call_upcaster_registry():
+    from noetl.server.api.replay import EventUpcasterRegistry, ReplayCutoff, ReplayService
+
+    class _Reader:
+        async def load_snapshot_seed(self, **kwargs):
+            return None
+
+        async def load_events(self, **kwargs):
+            return [
+                {
+                    "event_id": 1,
+                    "event_type": "legacy.execution.finished",
+                    "schema_name": "noetl.event",
+                    "schema_version": 1,
+                    "execution_id": kwargs["execution_id"],
+                }
+            ]
+
+    registry = EventUpcasterRegistry()
+    registry.register(
+        "noetl.event",
+        1,
+        lambda event: {
+            **event,
+            "schema_version": 2,
+            "event_type": "execution.completed",
+            "status": "COMPLETED",
+        },
+    )
+
+    state = await ReplayService.replay_state(
+        tenant_id="tenant-a",
+        organization_id="org-a",
+        execution_id=789,
+        cutoff=ReplayCutoff(),
+        projection="all",
+        limit=100,
+        event_reader=_Reader(),
+        upcaster_registry=registry,
+    )
+
+    assert state["execution"]["status"] == "COMPLETED"
+    assert state["last_event_type"] == "execution.completed"
+    assert state["upcaster_registry_digest"] == registry.digest()
+
+
+@pytest.mark.asyncio
 async def test_replay_service_resolves_payload_refs_with_adapter():
     from noetl.server.api.replay import (
         ReplayCutoff,
