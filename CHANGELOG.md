@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.65.0](https://github.com/noetl/noetl/compare/v2.64.0...v2.65.0) (2026-05-20)
+
+### Features
+
+* **replay:** add projection checksum bundle ([dd7a14f](https://github.com/noetl/noetl/commit/dd7a14ff3af403d20c1caecf777e568457076859))
+
 ## [2.64.0](https://github.com/noetl/noetl/compare/v2.63.0...v2.64.0) (2026-05-20)
 
 ### Features
