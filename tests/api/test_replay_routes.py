@@ -565,3 +565,62 @@ def test_business_object_projection_checksum_matches_live_rows_and_replayed_stat
 
     assert replayed_rows == live_rows
     assert business_object_projection_checksum(replayed_rows) == business_object_projection_checksum(live_rows)
+
+
+def test_loop_projection_checksum_matches_live_rows_and_replayed_state():
+    from noetl.server.api.replay import (
+        fold_replay_state,
+        loop_projection_checksum,
+        normalize_live_loop_projection,
+        normalize_replayed_loop_projection,
+    )
+
+    events = [
+        {
+            "event_id": 40,
+            "event_type": "stage.opened",
+            "node_name": "fetch_patients",
+            "meta": {"loop_id": "loop-1", "total": 3},
+        },
+        {
+            "event_id": 41,
+            "event_type": "command.completed",
+            "node_name": "fetch_patients",
+            "meta": {"loop_id": "loop-1"},
+        },
+        {
+            "event_id": 42,
+            "event_type": "command.failed",
+            "node_name": "fetch_patients",
+            "meta": {"loop_id": "loop-1"},
+        },
+        {
+            "event_id": 43,
+            "event_type": "loop.done",
+            "node_name": "fetch_patients",
+            "meta": {"loop_id": "loop-1"},
+        },
+    ]
+    state = fold_replay_state(
+        events,
+        tenant_id="tenant-a",
+        organization_id="org-a",
+        execution_id=123,
+    )
+    live_rows = normalize_live_loop_projection(
+        [
+            {
+                "loop_id": "loop-1",
+                "step_name": "fetch_patients",
+                "total": 3,
+                "done": 1,
+                "failed": 1,
+                "completed": True,
+                "last_event_id": 43,
+            }
+        ]
+    )
+    replayed_rows = normalize_replayed_loop_projection(state)
+
+    assert replayed_rows == live_rows
+    assert loop_projection_checksum(replayed_rows) == loop_projection_checksum(live_rows)
