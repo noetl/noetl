@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.78.0](https://github.com/noetl/noetl/compare/v2.77.0...v2.78.0) (2026-05-20)
+
+### Features
+
+* **projector:** expose redelivery metrics ([4cade00](https://github.com/noetl/noetl/commit/4cade005660d08bc14b2b9e59b28978d6f3baf79))
+
 ## [2.77.0](https://github.com/noetl/noetl/compare/v2.76.0...v2.77.0) (2026-05-20)
 
 ### Features
