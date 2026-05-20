@@ -7,17 +7,73 @@ import argparse
 import json
 import subprocess
 import sys
+import time
+from datetime import datetime, timezone
 from pathlib import Path
 
 
-def _run(command: list[str]) -> tuple[int, str, str]:
+def _utc_now() -> str:
+    return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def _parse_json(value: str) -> object | None:
+    if not value.strip():
+        return None
+    try:
+        return json.loads(value)
+    except json.JSONDecodeError:
+        return None
+
+
+def _run(command: list[str]) -> tuple[int, str, str, float]:
+    started = time.monotonic()
     completed = subprocess.run(
         command,
         check=False,
         text=True,
         capture_output=True,
     )
-    return completed.returncode, completed.stdout, completed.stderr
+    duration = time.monotonic() - started
+    return completed.returncode, completed.stdout, completed.stderr, duration
+
+
+def _build_report(
+    *,
+    matched: bool,
+    args: argparse.Namespace,
+    replay_path: Path,
+    steps: list[dict[str, object]],
+    started_at: str,
+) -> dict[str, object]:
+    finished_at = _utc_now()
+    return {
+        "matched": matched,
+        "started_at": started_at,
+        "finished_at": finished_at,
+        "replay": str(replay_path),
+        "config": {
+            "base_url": args.base_url,
+            "execution_id": args.execution_id,
+            "tenant_id": args.tenant_id,
+            "organization_id": args.organization_id,
+            "projection": args.projection,
+            "limit": args.limit,
+            "as_of_event_id": args.as_of_event_id,
+            "as_of_position": args.as_of_position,
+            "as_of_time": args.as_of_time,
+            "resolve_payloads": args.resolve_payloads,
+            "live_checksums": str(args.live_checksums) if args.live_checksums else None,
+        },
+        "steps": steps,
+    }
+
+
+def _emit_report(report: dict[str, object], report_output: Path | None) -> None:
+    rendered = json.dumps(report, indent=2, sort_keys=True)
+    if report_output is not None:
+        report_output.parent.mkdir(parents=True, exist_ok=True)
+        report_output.write_text(rendered + "\n")
+    print(rendered)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -37,9 +93,23 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--output-dir", required=True, type=Path)
     parser.add_argument("--timeout", default=60.0, type=float)
     parser.add_argument("--live-checksums", type=Path)
+    parser.add_argument(
+        "--report-output",
+        type=Path,
+        help="Optional path to write the validation run manifest JSON",
+    )
     args = parser.parse_args(argv)
 
+    cutoff_count = sum(
+        value is not None
+        for value in (args.as_of_event_id, args.as_of_position, args.as_of_time)
+    )
+    if cutoff_count > 1:
+        parser.error("use only one replay cutoff")
+
+    started_at = _utc_now()
     output_dir = args.output_dir
+    output_dir.mkdir(parents=True, exist_ok=True)
     replay_path = output_dir / f"replay-{args.execution_id}.json"
     fetch_command = [
         sys.executable,
@@ -108,21 +178,63 @@ def main(argv: list[str] | None = None) -> int:
         if not command:
             steps.append({"name": name, "skipped": True})
             continue
-        code, stdout, stderr = _run(command)
-        steps.append(
-            {
-                "name": name,
-                "command": command,
-                "returncode": code,
-                "stdout": stdout,
-                "stderr": stderr,
-            }
-        )
+        code, stdout, stderr, duration = _run(command)
+        step = {
+            "name": name,
+            "command": command,
+            "returncode": code,
+            "duration_seconds": round(duration, 6),
+            "stdout": stdout,
+            "stderr": stderr,
+        }
+        stdout_json = _parse_json(stdout)
+        if stdout_json is not None:
+            step["stdout_json"] = stdout_json
+        steps.append(step)
         if code != 0:
-            print(json.dumps({"matched": False, "replay": str(replay_path), "steps": steps}, indent=2))
+            _emit_report(
+                _build_report(
+                    matched=False,
+                    args=args,
+                    replay_path=replay_path,
+                    steps=steps,
+                    started_at=started_at,
+                ),
+                args.report_output,
+            )
             return code
+        if name == "fetch" and not replay_path.exists():
+            steps.append(
+                {
+                    "name": "fetch_artifact",
+                    "returncode": 1,
+                    "duration_seconds": 0.0,
+                    "stdout": "",
+                    "stderr": f"fetch step did not create replay report: {replay_path}",
+                }
+            )
+            _emit_report(
+                _build_report(
+                    matched=False,
+                    args=args,
+                    replay_path=replay_path,
+                    steps=steps,
+                    started_at=started_at,
+                ),
+                args.report_output,
+            )
+            return 1
 
-    print(json.dumps({"matched": True, "replay": str(replay_path), "steps": steps}, indent=2))
+    _emit_report(
+        _build_report(
+            matched=True,
+            args=args,
+            replay_path=replay_path,
+            steps=steps,
+            started_at=started_at,
+        ),
+        args.report_output,
+    )
     return 0
 
 

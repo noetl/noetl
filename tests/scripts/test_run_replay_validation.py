@@ -9,11 +9,11 @@ def test_run_replay_validation_fetches_and_runs_selected_gates(monkeypatch, tmp_
 
     def _run(command):
         calls.append(command)
-        if "fetch_replay_state_report.py" in command:
+        if any(str(part).endswith("fetch_replay_state_report.py") for part in command):
             output_path = Path(command[command.index("--output") + 1])
             output_path.parent.mkdir(parents=True, exist_ok=True)
             output_path.write_text(json.dumps({"projection_checksums": {"execution": "a" * 64}}))
-        return 0, json.dumps({"ok": True}), ""
+        return 0, json.dumps({"ok": True}), "", 0.01
 
     monkeypatch.setattr(run_replay_validation, "_run", _run)
     live_path = tmp_path / "live.json"
@@ -35,6 +35,8 @@ def test_run_replay_validation_fetches_and_runs_selected_gates(monkeypatch, tmp_
                 str(live_path),
                 "--output-dir",
                 str(tmp_path / "reports"),
+                "--report-output",
+                str(tmp_path / "reports" / "manifest.json"),
             ]
         )
         == 0
@@ -49,16 +51,21 @@ def test_run_replay_validation_fetches_and_runs_selected_gates(monkeypatch, tmp_
     output = json.loads(capsys.readouterr().out)
     assert output["matched"] is True
     assert output["replay"].endswith("replay-123.json")
+    assert output["config"]["execution_id"] == 123
+    assert output["steps"][0]["stdout_json"] == {"ok": True}
+    assert output["steps"][0]["duration_seconds"] == 0.01
+    manifest_path = tmp_path / "reports" / "manifest.json"
+    assert json.loads(manifest_path.read_text())["matched"] is True
 
 
 def test_run_replay_validation_stops_on_gate_failure(monkeypatch, tmp_path: Path, capsys):
     def _run(command):
-        if "fetch_replay_state_report.py" in command:
+        if any(str(part).endswith("fetch_replay_state_report.py") for part in command):
             output_path = Path(command[command.index("--output") + 1])
             output_path.parent.mkdir(parents=True, exist_ok=True)
             output_path.write_text("{}")
-            return 0, "", ""
-        return 1, "", "failed"
+            return 0, "", "", 0.01
+        return 1, "", "failed", 0.02
 
     monkeypatch.setattr(run_replay_validation, "_run", _run)
     live_path = tmp_path / "live.json"
@@ -82,3 +89,54 @@ def test_run_replay_validation_stops_on_gate_failure(monkeypatch, tmp_path: Path
     output = json.loads(capsys.readouterr().out)
     assert output["matched"] is False
     assert output["steps"][-1]["stderr"] == "failed"
+    assert output["steps"][-1]["duration_seconds"] == 0.02
+
+
+def test_run_replay_validation_rejects_multiple_cutoffs(tmp_path: Path):
+    try:
+        run_replay_validation.main(
+            [
+                "--base-url",
+                "http://noetl.example",
+                "--execution-id",
+                "123",
+                "--as-of-event-id",
+                "1",
+                "--as-of-position",
+                "1",
+                "--output-dir",
+                str(tmp_path),
+            ]
+        )
+    except SystemExit as exc:
+        assert exc.code == 2
+    else:
+        raise AssertionError("expected parser error")
+
+
+def test_run_replay_validation_fails_when_fetch_does_not_write_report(
+    monkeypatch,
+    tmp_path: Path,
+    capsys,
+):
+    def _run(_command):
+        return 0, json.dumps({"ok": True}), "", 0.01
+
+    monkeypatch.setattr(run_replay_validation, "_run", _run)
+
+    assert (
+        run_replay_validation.main(
+            [
+                "--base-url",
+                "http://noetl.example",
+                "--execution-id",
+                "123",
+                "--output-dir",
+                str(tmp_path),
+            ]
+        )
+        == 1
+    )
+    output = json.loads(capsys.readouterr().out)
+    assert output["matched"] is False
+    assert output["steps"][-1]["name"] == "fetch_artifact"
