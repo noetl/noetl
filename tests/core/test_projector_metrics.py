@@ -70,10 +70,13 @@ def test_projector_metrics_record_decode_errors():
     metrics.record_decode_error()
 
     snapshot = metrics.snapshot()
+    assert snapshot["errors_total"] == 1
     assert snapshot["decode_errors_total"] == 1
+    assert snapshot["projection_errors_total"] == 0
     assert snapshot["last_error_unixtime"] > 0
 
     body = render_projector_metrics(metrics)
+    assert "noetl_projector_errors_total 1.0" in body
     assert "noetl_projector_decode_errors_total 1.0" in body
 
 

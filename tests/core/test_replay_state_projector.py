@@ -428,7 +428,9 @@ def test_nats_projector_worker_records_decode_errors():
         worker._decode_notification(b"not-json-or-arrow")
 
     snapshot = metrics.snapshot()
+    assert snapshot["errors_total"] == 1
     assert snapshot["decode_errors_total"] == 1
+    assert snapshot["projection_errors_total"] == 0
     assert snapshot["last_error_unixtime"] > 0
 
 
