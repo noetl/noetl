@@ -22,6 +22,7 @@ fi
   tests/scripts/test_check_replay_state_report.py \
   tests/scripts/test_check_replay_parity_report.py \
   tests/scripts/test_check_replay_payload_resolution_report.py \
+  tests/scripts/test_check_projector_metrics_summary.py \
   tests/api/test_replay_routes.py \
   tests/core/test_replay_upcasters.py \
   tests/core/test_replay_state_projector.py \
