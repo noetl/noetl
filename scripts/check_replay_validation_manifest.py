@@ -10,7 +10,10 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from scripts.package_replay_validation_artifacts import validate_artifact_index
+from scripts.package_replay_validation_artifacts import (
+    resolve_indexed_path,
+    validate_artifact_index,
+)
 
 REQUIRED_CONFIG_FIELDS = (
     "base_url",
@@ -144,7 +147,7 @@ def _validate_manifest(
                                         "path": artifact_index,
                                     }
                                 )
-                            elif _artifact_path(indexed_manifest, index_path) != manifest_path.resolve():
+                            elif resolve_indexed_path(indexed_manifest, index_path=index_path) != manifest_path.resolve():
                                 failures.append(
                                     {
                                         "field": "artifacts.artifact_index",
