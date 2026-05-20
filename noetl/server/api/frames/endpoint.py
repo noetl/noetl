@@ -15,7 +15,7 @@ from noetl.core.event_store.ports import canonical_event_checksum
 from noetl.core.logger import setup_logger
 from noetl.core.messaging import NATSEventPublisher
 from noetl.core.outbox import enqueue_outbox, publish_outbox_batch
-from noetl.core.runtime.topology import worker_locator
+from noetl.core.runtime.topology import placement_evaluation, worker_locator
 
 from noetl.server.api.core.db import _next_snowflake_id
 
@@ -41,6 +41,31 @@ def _event_meta(*, frame: dict[str, Any], worker_id: str, extra: dict[str, Any] 
     if extra:
         meta.update(extra)
     return meta
+
+
+def _source_locality_from_cursor(cursor: dict[str, Any] | None) -> dict[str, Any]:
+    if not isinstance(cursor, dict):
+        return {}
+    for key in ("source_locality", "producer_locality"):
+        value = cursor.get(key)
+        if isinstance(value, dict):
+            return value
+    return {}
+
+
+def _claim_locality_metadata(*, frame: dict[str, Any], request_locality: dict[str, Any]) -> dict[str, Any]:
+    source_locality = _source_locality_from_cursor(frame.get("cursor") or {})
+    if not source_locality:
+        return {}
+    max_distance = str(request_locality.get("max_distance") or "any")
+    return {
+        "source_locality": source_locality,
+        "placement": placement_evaluation(
+            source=source_locality,
+            target=request_locality,
+            max_distance=max_distance,
+        ),
+    }
 
 
 async def _load_stage(cur: Any, stage_id: int) -> dict[str, Any]:
@@ -663,6 +688,10 @@ async def claim_frames(stage_id: int, req: FrameClaimRequest) -> dict[str, Any]:
                     updated["step_name"] = stage["step_name"]
                     updated["catalog_id"] = stage["catalog_id"]
                     locality = req.locality or {}
+                    locality_metadata = _claim_locality_metadata(
+                        frame=updated,
+                        request_locality=locality,
+                    )
                     event = await _insert_frame_event(
                         cur,
                         frame=updated,
@@ -676,6 +705,7 @@ async def claim_frames(stage_id: int, req: FrameClaimRequest) -> dict[str, Any]:
                                 req.frame_policy or stage.get("frame_policy") or {}
                             ),
                             "locality": locality,
+                            **locality_metadata,
                             "worker_locator": worker_locator(
                                 tenant_id=stage.get("tenant_id"),
                                 organization_id=stage.get("organization_id"),
