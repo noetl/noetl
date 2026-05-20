@@ -24,6 +24,8 @@ class ProjectorMetrics:
             "projection_stale_records_total": 0.0,
             "projection_errors_total": 0.0,
             "decode_errors_total": 0.0,
+            "redelivery_requests_total": 0.0,
+            "delayed_redelivery_requests_total": 0.0,
             "empty_or_unowned_notifications_total": 0.0,
             "errors_total": 0.0,
             "last_success_unixtime": 0.0,
@@ -73,6 +75,14 @@ class ProjectorMetrics:
             self._values["errors_total"] += 1.0
             self._values["decode_errors_total"] += 1.0
             self._values["last_error_unixtime"] = time.time()
+
+    def record_message_action(self, action: str, delay_seconds: Optional[float] = None) -> None:
+        if action != "nak":
+            return
+        with self._lock:
+            self._values["redelivery_requests_total"] += 1.0
+            if delay_seconds is not None and delay_seconds > 0:
+                self._values["delayed_redelivery_requests_total"] += 1.0
 
     def record_projection_checkpoints(self, records: Iterable[Any]) -> None:
         with self._lock:
@@ -140,6 +150,15 @@ def render_projector_metrics(metrics: ProjectorMetrics, *, labels: Optional[Mapp
         "# HELP noetl_projector_decode_errors_total Projector notification payload decode failures.",
         "# TYPE noetl_projector_decode_errors_total counter",
         f"noetl_projector_decode_errors_total{label_text} {snapshot['decode_errors_total']}",
+        "# HELP noetl_projector_redelivery_requests_total Projector notifications NAKed for redelivery.",
+        "# TYPE noetl_projector_redelivery_requests_total counter",
+        f"noetl_projector_redelivery_requests_total{label_text} {snapshot['redelivery_requests_total']}",
+        "# HELP noetl_projector_delayed_redelivery_requests_total Projector notifications NAKed for delayed redelivery.",
+        "# TYPE noetl_projector_delayed_redelivery_requests_total counter",
+        (
+            "noetl_projector_delayed_redelivery_requests_total"
+            f"{label_text} {snapshot['delayed_redelivery_requests_total']}"
+        ),
         "# HELP noetl_projector_empty_or_unowned_notifications_total Notifications with no owned events.",
         "# TYPE noetl_projector_empty_or_unowned_notifications_total counter",
         (
