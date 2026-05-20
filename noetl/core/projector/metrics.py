@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import time
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -316,6 +317,19 @@ def render_projector_metrics(metrics: ProjectorMetrics, *, labels: Optional[Mapp
     return "\n".join(lines) + "\n"
 
 
+def projector_metrics_summary(
+    metrics: ProjectorMetrics,
+    *,
+    labels: Optional[Mapping[str, str]] = None,
+) -> dict[str, Any]:
+    """Return a JSON-friendly projector metrics summary payload."""
+
+    return {
+        "labels": _filtered_labels(labels or {}),
+        "summary": metrics.summary(),
+    }
+
+
 def start_projector_metrics_server(
     metrics: ProjectorMetrics,
     *,
@@ -332,6 +346,21 @@ def start_projector_metrics_server(
                 self.send_header("Content-Type", "text/plain; charset=utf-8")
                 self.end_headers()
                 self.wfile.write(b"ok\n")
+                return
+            if self.path == "/summary":
+                body = (
+                    json.dumps(
+                        projector_metrics_summary(metrics, labels=labels),
+                        sort_keys=True,
+                        separators=(",", ":"),
+                    )
+                    + "\n"
+                ).encode("utf-8")
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json; charset=utf-8")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
                 return
             if self.path != "/metrics":
                 self.send_response(404)
@@ -354,11 +383,15 @@ def start_projector_metrics_server(
 
 
 def _format_labels(labels: Mapping[str, str]) -> str:
-    filtered = {key: value for key, value in labels.items() if value}
+    filtered = _filtered_labels(labels)
     if not filtered:
         return ""
     body = ",".join(f'{key}="{_escape_label(value)}"' for key, value in sorted(filtered.items()))
     return "{" + body + "}"
+
+
+def _filtered_labels(labels: Mapping[str, str]) -> dict[str, str]:
+    return {str(key): str(value) for key, value in labels.items() if value}
 
 
 def _escape_label(value: str) -> str:
@@ -453,6 +486,7 @@ def _coerce_datetime_unixtime(value: Any) -> Optional[float]:
 
 __all__ = [
     "ProjectorMetrics",
+    "projector_metrics_summary",
     "render_projector_metrics",
     "start_projector_metrics_server",
 ]
