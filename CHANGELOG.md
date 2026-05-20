@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.62.0](https://github.com/noetl/noetl/compare/v2.61.0...v2.62.0) (2026-05-20)
+
+### Features
+
+* **replay:** add business object checksums ([b3c3671](https://github.com/noetl/noetl/commit/b3c3671ce740b9fff80d3235754b7e4127e01fbe))
+
 ## [2.61.0](https://github.com/noetl/noetl/compare/v2.60.0...v2.61.0) (2026-05-20)
 
 ### Features
