@@ -11,6 +11,7 @@ def test_ipc_cache_round_trips_arrow_ipc_bytes():
         budget_bytes=1024,
         default_lease_seconds=30,
         producer="worker-a",
+        node_id="node-a",
     )
     hint = cache.put_arrow_ipc(
         b"arrow-stream-bytes",
@@ -20,11 +21,33 @@ def test_ipc_cache_round_trips_arrow_ipc_bytes():
     try:
         assert hint.kind == "arrow_ipc"
         assert hint.producer == "worker-a"
+        assert hint.node_id == "node-a"
         assert hint.byte_length == len(b"arrow-stream-bytes")
         assert hint.row_count == 3
         assert cache.get(hint) == b"arrow-stream-bytes"
     finally:
         cache.delete(hint)
+
+
+def test_ipc_cache_treats_foreign_node_hint_as_miss():
+    from noetl.core.storage import ArrowIpcSharedMemoryCache
+
+    producer_cache = ArrowIpcSharedMemoryCache(
+        namespace="noetl-test",
+        budget_bytes=1024,
+        node_id="node-a",
+    )
+    consumer_cache = ArrowIpcSharedMemoryCache(
+        namespace="noetl-test",
+        budget_bytes=1024,
+        node_id="node-b",
+    )
+    hint = producer_cache.put_arrow_ipc(b"payload", schema_digest="schema-1")
+    try:
+        with pytest.raises(KeyError, match="belongs to node node-a"):
+            consumer_cache.get(hint)
+    finally:
+        producer_cache.delete(hint)
 
 
 def test_ipc_cache_rejects_payload_over_budget():

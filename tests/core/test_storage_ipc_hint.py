@@ -10,6 +10,7 @@ def test_result_ref_serializes_optional_ipc_hint():
         byte_length=4096,
         row_count=10,
         producer="worker-a",
+        node_id="node-a",
         lease_expires_at=datetime.now(timezone.utc) + timedelta(seconds=30),
     )
     ref = ResultRef.create(
@@ -31,6 +32,7 @@ def test_result_ref_serializes_optional_ipc_hint():
     encoded = ref.model_dump(mode="json")
 
     assert encoded["ipc"]["kind"] == "arrow_ipc"
+    assert encoded["ipc"]["node_id"] == "node-a"
     assert encoded["ipc"]["schema_digest"] == "sha256:abc"
     assert encoded["meta"]["row_count"] == 10
     assert encoded["store"] == "s3"
