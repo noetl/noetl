@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.85.1](https://github.com/noetl/noetl/compare/v2.85.0...v2.85.1) (2026-05-20)
+
+### Bug Fixes
+
+* **runtime:** separate topology node id from snowflake id ([e439bfd](https://github.com/noetl/noetl/commit/e439bfd828dbdc4ca2dd993bfb30466bd637f9f0))
+
 ## [2.85.0](https://github.com/noetl/noetl/compare/v2.84.0...v2.85.0) (2026-05-20)
 
 ### Features
