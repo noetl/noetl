@@ -11,6 +11,7 @@ from .service import (
     frame_projection_checksum,
     loop_projection_checksum,
     stage_projection_checksum,
+    live_projection_checksum_bundle,
     normalize_live_business_object_projection,
     normalize_live_command_projection,
     normalize_live_execution_projection,
@@ -23,6 +24,8 @@ from .service import (
     normalize_replayed_frame_projection,
     normalize_replayed_loop_projection,
     normalize_replayed_stage_projection,
+    replay_projection_checksum_bundle,
+    projection_checksum_parity_report,
 )
 
 __all__ = [
@@ -36,6 +39,7 @@ __all__ = [
     "frame_projection_checksum",
     "loop_projection_checksum",
     "stage_projection_checksum",
+    "live_projection_checksum_bundle",
     "normalize_live_business_object_projection",
     "normalize_live_command_projection",
     "normalize_live_execution_projection",
@@ -48,4 +52,6 @@ __all__ = [
     "normalize_replayed_frame_projection",
     "normalize_replayed_loop_projection",
     "normalize_replayed_stage_projection",
+    "replay_projection_checksum_bundle",
+    "projection_checksum_parity_report",
 ]

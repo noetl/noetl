@@ -19,6 +19,15 @@ from psycopg.rows import dict_row
 from noetl.core.db.pool import get_pool_connection
 from noetl.core.replay import default_upcaster_registry
 
+PROJECTION_CHECKSUM_SURFACES = (
+    "execution",
+    "stages",
+    "frames",
+    "commands",
+    "business_objects",
+    "loops",
+)
+
 
 @dataclass(frozen=True)
 class ReplayCutoff:
@@ -236,6 +245,7 @@ def fold_replay_state(
         state = copy.deepcopy(dict(base_state))
         state.pop("checksum", None)
         state.pop("checksum_algorithm", None)
+        state.pop("projection_checksums", None)
         state["tenant_id"] = tenant_id
         state["organization_id"] = organization_id
         state["execution_id"] = execution_id
@@ -539,6 +549,7 @@ def fold_replay_state(
     }
     state["checksum_algorithm"] = "sha256"
     state["checksum"] = _canonical_checksum(checksum_input)
+    state["projection_checksums"] = replay_projection_checksum_bundle(state)
     return state
 
 
@@ -877,6 +888,87 @@ def normalize_replayed_execution_projection(state: Mapping[str, Any]) -> list[di
 
 def execution_projection_checksum(rows: Iterable[Mapping[str, Any]]) -> str:
     return _canonical_checksum({"executions": list(rows)})
+
+
+def replay_projection_checksum_bundle(state: Mapping[str, Any]) -> dict[str, str]:
+    """Return deterministic checksums for every replay parity surface."""
+    return {
+        "execution": execution_projection_checksum(
+            normalize_replayed_execution_projection(state)
+        ),
+        "stages": stage_projection_checksum(
+            normalize_replayed_stage_projection(state)
+        ),
+        "frames": frame_projection_checksum(
+            normalize_replayed_frame_projection(state)
+        ),
+        "commands": command_projection_checksum(
+            normalize_replayed_command_projection(state)
+        ),
+        "business_objects": business_object_projection_checksum(
+            normalize_replayed_business_object_projection(state)
+        ),
+        "loops": loop_projection_checksum(
+            normalize_replayed_loop_projection(state)
+        ),
+    }
+
+
+def live_projection_checksum_bundle(
+    *,
+    execution_rows: Iterable[Mapping[str, Any]] | None = None,
+    stage_rows: Iterable[Mapping[str, Any]] | None = None,
+    frame_rows: Iterable[Mapping[str, Any]] | None = None,
+    command_rows: Iterable[Mapping[str, Any]] | None = None,
+    business_object_rows: Iterable[Mapping[str, Any]] | None = None,
+    loop_rows: Iterable[Mapping[str, Any]] | None = None,
+) -> dict[str, str]:
+    """Return deterministic checksums for live projection rows from any storage adapter."""
+    return {
+        "execution": execution_projection_checksum(
+            normalize_live_execution_projection(execution_rows or [])
+        ),
+        "stages": stage_projection_checksum(
+            normalize_live_stage_projection(stage_rows or [])
+        ),
+        "frames": frame_projection_checksum(
+            normalize_live_frame_projection(frame_rows or [])
+        ),
+        "commands": command_projection_checksum(
+            normalize_live_command_projection(command_rows or [])
+        ),
+        "business_objects": business_object_projection_checksum(
+            normalize_live_business_object_projection(business_object_rows or [])
+        ),
+        "loops": loop_projection_checksum(
+            normalize_live_loop_projection(loop_rows or [])
+        ),
+    }
+
+
+def projection_checksum_parity_report(
+    *,
+    replayed: Mapping[str, str],
+    live: Mapping[str, str],
+) -> dict[str, Any]:
+    """Compare replayed and live projection checksum bundles without storage assumptions."""
+    surfaces: dict[str, dict[str, Any]] = {}
+    for surface in PROJECTION_CHECKSUM_SURFACES:
+        replayed_checksum = replayed.get(surface)
+        live_checksum = live.get(surface)
+        surfaces[surface] = {
+            "replayed": replayed_checksum,
+            "live": live_checksum,
+            "matched": (
+                replayed_checksum is not None
+                and live_checksum is not None
+                and replayed_checksum == live_checksum
+            ),
+        }
+    return {
+        "matched": all(surface["matched"] for surface in surfaces.values()),
+        "surfaces": surfaces,
+    }
 
 
 class ReplayService:
