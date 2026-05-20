@@ -131,6 +131,7 @@ class NATSProjectorWorker:
             fetch_timeout=self.settings.fetch_timeout_seconds,
             fetch_heartbeat=self.settings.fetch_heartbeat_seconds,
             message_decoder=self._decode_notification,
+            message_action_observer=self.metrics.record_message_action,
         )
         await self._subscriber.connect()
         logger.info(

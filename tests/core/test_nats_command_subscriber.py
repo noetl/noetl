@@ -148,6 +148,34 @@ def test_parse_callback_action_caps_large_delayed_nak():
     assert delay == pytest.approx(3600.0)
 
 
+def test_message_action_observer_records_actions():
+    observed = []
+    subscriber = NATSCommandSubscriber(
+        consumer_name="test-consumer",
+        stream_name="NOETL_COMMANDS",
+        max_ack_pending=64,
+        max_inflight=1,
+        message_action_observer=lambda action, delay: observed.append((action, delay)),
+    )
+
+    subscriber._record_message_action("nak", 2.5)
+    subscriber._record_message_action("ack", None)
+
+    assert observed == [("nak", 2.5), ("ack", None)]
+
+
+def test_message_action_observer_failure_is_ignored():
+    subscriber = NATSCommandSubscriber(
+        consumer_name="test-consumer",
+        stream_name="NOETL_COMMANDS",
+        max_ack_pending=64,
+        max_inflight=1,
+        message_action_observer=lambda _action, _delay: (_ for _ in ()).throw(RuntimeError("boom")),
+    )
+
+    subscriber._record_message_action("nak", None)
+
+
 class _FakeMsg:
     def __init__(self):
         self.in_progress_calls = 0

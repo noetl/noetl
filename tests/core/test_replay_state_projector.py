@@ -562,6 +562,7 @@ async def test_nats_projector_worker_tolerates_projection_schema_permission(monk
         def __init__(self, **kwargs):
             calls.append(("init", kwargs["consumer_name"]))
             assert callable(kwargs["message_decoder"])
+            assert callable(kwargs["message_action_observer"])
 
         async def connect(self):
             calls.append(("connect", None))

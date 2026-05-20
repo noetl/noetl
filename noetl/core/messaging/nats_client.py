@@ -287,6 +287,7 @@ class NATSCommandSubscriber:
         fetch_heartbeat: Optional[float] = None,
         callback_timeout_seconds: Optional[float] = None,
         message_decoder: Optional[Callable[[bytes], dict[str, Any]]] = None,
+        message_action_observer: Optional[Callable[[str, Optional[float]], None]] = None,
     ):
         from noetl.core.config import get_worker_settings
         ws = get_worker_settings()
@@ -312,12 +313,21 @@ class NATSCommandSubscriber:
             min(30.0, self.callback_timeout_seconds / 4.0),
         )
         self._message_decoder = message_decoder or self._decode_json_message
+        self._message_action_observer = message_action_observer
         self._nc: Optional[NATSClient] = None
         self._js: Optional[JetStreamContext] = None
         self._subscription = None
         self._background_tasks: set = set()
         self._inflight_semaphore = asyncio.Semaphore(self.max_inflight)
         self._throttle_hits = 0
+
+    def _record_message_action(self, action: str, delay_seconds: Optional[float] = None) -> None:
+        if self._message_action_observer is None:
+            return
+        try:
+            self._message_action_observer(action, delay_seconds)
+        except Exception:
+            logger.debug("Ignoring NATS message action observer failure", exc_info=True)
 
     @staticmethod
     def _decode_json_message(payload: bytes) -> dict[str, Any]:
@@ -635,6 +645,7 @@ class NATSCommandSubscriber:
                         await msg.term()
                     else:
                         await msg.ack()
+                    self._record_message_action(callback_action, callback_nak_delay_seconds)
                 except Exception as ack_error:
                     logger.warning("Failed to send %s for message: %s", callback_action, ack_error)
                 self._inflight_semaphore.release()
@@ -704,6 +715,7 @@ class NATSCommandSubscriber:
                             logger.error(f"Error handling message: {e}")
                             try:
                                 await msg.nak()
+                                self._record_message_action("nak", None)
                             except:
                                 pass
 
