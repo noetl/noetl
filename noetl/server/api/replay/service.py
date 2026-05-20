@@ -35,6 +35,31 @@ PROJECTION_CHECKSUM_SURFACES = (
 DEFAULT_REPLAY_PAYLOAD_RESOLVER = TempStoreReplayPayloadResolver()
 
 
+def replay_snapshot_upcaster_registry_digest(snapshot_seed: ReplaySnapshotSeed | None) -> Optional[str]:
+    """Return the upcaster registry digest recorded by a replay snapshot seed."""
+    if snapshot_seed is None:
+        return None
+    state_digest = snapshot_seed.state.get("upcaster_registry_digest")
+    if state_digest is not None:
+        return str(state_digest)
+    meta_digest = snapshot_seed.meta.get("upcaster_registry_digest")
+    if meta_digest is not None:
+        return str(meta_digest)
+    return None
+
+
+def replay_snapshot_is_compatible(
+    snapshot_seed: ReplaySnapshotSeed | None,
+    *,
+    upcaster_registry_digest: str,
+) -> bool:
+    """Snapshots are accelerators; ignore seeds produced by a different registry."""
+    if snapshot_seed is None:
+        return False
+    snapshot_digest = replay_snapshot_upcaster_registry_digest(snapshot_seed)
+    return snapshot_digest == upcaster_registry_digest
+
+
 def _json_default(value: Any) -> str:
     if isinstance(value, datetime):
         if value.tzinfo is None:
@@ -1145,6 +1170,12 @@ class ReplayService:
             projection=projection,
             cutoff=cutoff,
         )
+        registry_digest = registry.digest()
+        if not replay_snapshot_is_compatible(
+            snapshot_seed,
+            upcaster_registry_digest=registry_digest,
+        ):
+            snapshot_seed = None
         events = registry.upcast_events(
             await reader.load_events(
                 tenant_id=tenant_id,
@@ -1161,7 +1192,7 @@ class ReplayService:
             organization_id=organization_id,
             execution_id=execution_id,
             projection=projection,
-            upcaster_registry_digest=registry.digest(),
+            upcaster_registry_digest=registry_digest,
             base_state=snapshot_seed.state if snapshot_seed else None,
             snapshot_seed=snapshot_seed,
         )
