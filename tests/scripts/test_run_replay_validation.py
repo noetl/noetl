@@ -280,6 +280,85 @@ def test_run_replay_validation_can_write_artifact_index(monkeypatch, tmp_path: P
     assert json.loads(capsys.readouterr().out)["artifacts"]["artifact_index"] == str(artifact_index)
 
 
+def test_run_replay_validation_indexes_all_saved_phase_artifacts(
+    monkeypatch,
+    tmp_path: Path,
+    capsys,
+):
+    calls = []
+
+    def _run(command):
+        calls.append(command)
+        if any(str(part).endswith("fetch_replay_state_report.py") for part in command):
+            output_path = Path(command[command.index("--output") + 1])
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            output_path.write_text(json.dumps({"projection_checksums": {"execution": "a" * 64}}))
+        if any(str(part).endswith("package_replay_validation_artifacts.py") for part in command):
+            output_path = Path(command[command.index("--output") + 1])
+            output_path.write_text(
+                json.dumps({"schema_version": 1, "matched": True, "artifacts": []})
+            )
+        return 0, json.dumps({"ok": True}), "", 0.01
+
+    monkeypatch.setattr(run_replay_validation, "_run", _run)
+    manifest = tmp_path / "validation.json"
+    artifact_index = tmp_path / "artifact-index.json"
+    projector_summary = tmp_path / "projector-summary.json"
+    projector_summary.write_text("{}")
+    worker_metrics = tmp_path / "worker.prom"
+    worker_metrics.write_text("noetl_storage_ipc_admit_success_total 1\n")
+    storage_report = tmp_path / "storage-phase5-report.json"
+    storage_report.write_text("{}")
+    fanout_report = tmp_path / "fanout-phase6-report.json"
+    fanout_report.write_text("{}")
+
+    assert (
+        run_replay_validation.main(
+            [
+                "--base-url",
+                "http://noetl.example",
+                "--execution-id",
+                "123",
+                "--projector-summary",
+                str(projector_summary),
+                "--worker-metrics",
+                str(worker_metrics),
+                "--storage-backend-registry-report",
+                str(storage_report),
+                "--fanout-reduce-planner-report",
+                str(fanout_report),
+                "--output-dir",
+                str(tmp_path),
+                "--report-output",
+                str(manifest),
+                "--artifact-index-output",
+                str(artifact_index),
+            ]
+        )
+        == 0
+    )
+
+    package_call = next(
+        call for call in calls if "scripts/package_replay_validation_artifacts.py" in call
+    )
+    artifact_args = [
+        package_call[idx + 1]
+        for idx, value in enumerate(package_call)
+        if value == "--artifact"
+    ]
+    assert artifact_args == [
+        f"projector_summary_1={projector_summary}",
+        f"worker_metrics_1={worker_metrics}",
+        f"storage_backend_registry_1={storage_report}",
+        f"fanout_reduce_planner_1={fanout_report}",
+    ]
+    output = json.loads(capsys.readouterr().out)
+    assert output["artifacts"]["projector_summaries"][0]["role"] == "projector_summary_1"
+    assert output["artifacts"]["worker_metrics"][0]["role"] == "worker_metrics_1"
+    assert output["artifacts"]["storage_backend_registry"][0]["role"] == "storage_backend_registry_1"
+    assert output["artifacts"]["fanout_reduce_planner"][0]["role"] == "fanout_reduce_planner_1"
+
+
 def test_run_replay_validation_validates_saved_projector_summary(
     monkeypatch,
     tmp_path: Path,
