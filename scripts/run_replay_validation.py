@@ -13,6 +13,7 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
+from scripts.replay_validation_artifacts import artifact_cli_args
 from scripts.validation_stdout import parse_json_output
 
 
@@ -702,34 +703,10 @@ def main(argv: list[str] | None = None) -> int:
             "--output",
             str(args.artifact_index_output),
         ]
-        for summary in projector_summaries:
-            artifact_index_command.extend(
-                [
-                    "--artifact",
-                    f"{summary['role']}={summary['path']}",
-                ]
-            )
-        for metrics in worker_metrics:
-            artifact_index_command.extend(
-                [
-                    "--artifact",
-                    f"{metrics['role']}={metrics['path']}",
-                ]
-            )
-        for report in storage_backend_registry:
-            artifact_index_command.extend(
-                [
-                    "--artifact",
-                    f"{report['role']}={report['path']}",
-                ]
-            )
-        for report in fanout_reduce_planner:
-            artifact_index_command.extend(
-                [
-                    "--artifact",
-                    f"{report['role']}={report['path']}",
-                ]
-            )
+        artifact_index_command.extend(artifact_cli_args(projector_summaries))
+        artifact_index_command.extend(artifact_cli_args(worker_metrics))
+        artifact_index_command.extend(artifact_cli_args(storage_backend_registry))
+        artifact_index_command.extend(artifact_cli_args(fanout_reduce_planner))
         steps.append(
             {
                 "name": "artifact_index",
