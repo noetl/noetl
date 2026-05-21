@@ -17,10 +17,7 @@ from scripts.check_replay_fanout_reduce_report import validate_replay_fanout_red
 from scripts.check_replay_validation_manifest import _load_manifest, _validate_manifest
 from scripts.check_storage_phase5_evidence import validate_storage_phase5_evidence
 from scripts.check_worker_ipc_phase3_evidence import validate_worker_ipc_phase3_evidence
-from scripts.package_replay_validation_artifacts import (
-    resolve_indexed_path,
-    validate_artifact_index,
-)
+from scripts.package_replay_validation_artifacts import validate_artifact_index
 from scripts.replay_validation_artifacts import (
     artifact_index_path_value,
     artifact_result_entry,
