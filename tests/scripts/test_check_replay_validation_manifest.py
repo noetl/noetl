@@ -340,6 +340,42 @@ def test_check_replay_validation_manifest_requires_indexed_phase_artifact_roles(
     )
 
 
+@pytest.mark.parametrize(
+    ("artifact_field", "role", "filename"),
+    [
+        ("projector_summaries", "projector_summary_1", "projector-summary.json"),
+        ("worker_metrics", "worker_metrics_1", "worker.prom"),
+        ("storage_backend_registry", "storage_backend_registry", "storage-phase5-report.json"),
+        ("fanout_reduce_planner", "fanout_reduce_planner", "fanout-phase6-report.json"),
+    ],
+)
+def test_check_replay_validation_manifest_rejects_duplicate_phase_artifact_roles(
+    tmp_path: Path,
+    capsys,
+    artifact_field: str,
+    role: str,
+    filename: str,
+):
+    manifest = _manifest(tmp_path)
+    artifact = tmp_path / filename
+    artifact.write_text("{}")
+    manifest["artifacts"][artifact_field] = [
+        {"role": role, "path": str(artifact)},
+        {"role": role, "path": str(artifact)},
+    ]
+    path = tmp_path / "manifest.json"
+    path.write_text(json.dumps(manifest))
+
+    assert main(["--manifest", str(path), "--check-artifacts"]) == 1
+    output = json.loads(capsys.readouterr().out)
+    assert any(
+        failure["field"] == f"artifacts.{artifact_field}"
+        and failure["reason"] == "artifact roles must be unique"
+        and failure["roles"] == [role]
+        for failure in output["failures"]
+    )
+
+
 def test_check_replay_validation_manifest_requires_artifact_index_step(tmp_path: Path, capsys):
     path = _write_manifest_with_artifact_index(tmp_path)
     manifest = json.loads(path.read_text())

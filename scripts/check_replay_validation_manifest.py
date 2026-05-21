@@ -14,7 +14,10 @@ from scripts.package_replay_validation_artifacts import (
     resolve_indexed_path,
     validate_artifact_index,
 )
-from scripts.replay_validation_artifacts import phase_artifact_roles
+from scripts.replay_validation_artifacts import (
+    duplicate_artifact_roles,
+    phase_artifact_roles,
+)
 
 REQUIRED_CONFIG_FIELDS = (
     "base_url",
@@ -114,6 +117,16 @@ def _validate_artifact_list(
     if not isinstance(value, list):
         failures.append({"field": field, "reason": "must be a list"})
         return
+    artifact_field = field.removeprefix("artifacts.")
+    duplicates = duplicate_artifact_roles({artifact_field: value}, artifact_field)
+    if duplicates:
+        failures.append(
+            {
+                "field": field,
+                "reason": "artifact roles must be unique",
+                "roles": duplicates,
+            }
+        )
     for index, entry in enumerate(value):
         if not isinstance(entry, dict):
             failures.append(

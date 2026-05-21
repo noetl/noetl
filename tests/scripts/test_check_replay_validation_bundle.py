@@ -514,6 +514,31 @@ def test_check_replay_validation_bundle_requires_indexed_projector_phase2_eviden
     )
 
 
+def test_check_replay_validation_bundle_rejects_duplicate_projector_phase2_roles(
+    tmp_path: Path,
+    capsys,
+):
+    manifest, index = _bundle(tmp_path)
+    _add_projector_phase2_evidence(manifest, index, tmp_path)
+    payload = json.loads(manifest.read_text())
+    payload["artifacts"]["projector_summaries"].append(
+        dict(payload["artifacts"]["projector_summaries"][0])
+    )
+    manifest.write_text(json.dumps(payload))
+
+    assert main(["--manifest", str(manifest), "--require-projector-phase2"]) == 1
+    output = json.loads(capsys.readouterr().out)
+    assert any(
+        failure["field"] == "manifest"
+        and any(
+            nested_failure["reason"] == "artifact roles must be unique"
+            and nested_failure["roles"] == ["projector_summary_1"]
+            for nested_failure in failure.get("failures", [])
+        )
+        for failure in output["failures"]
+    )
+
+
 def test_check_replay_validation_bundle_accepts_worker_ipc_phase3_evidence(
     tmp_path: Path,
     capsys,
