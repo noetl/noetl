@@ -12,15 +12,16 @@ PHASE_ARTIFACT_FIELDS = (
 )
 
 
-def artifact_roles(artifacts: dict[str, Any], field: str) -> list[str]:
+def artifact_entries(artifacts: dict[str, Any], field: str) -> list[dict[str, Any]]:
     value = artifacts.get(field)
     if not isinstance(value, list):
         return []
+    return [entry for entry in value if isinstance(entry, dict)]
 
+
+def artifact_roles(artifacts: dict[str, Any], field: str) -> list[str]:
     roles: list[str] = []
-    for entry in value:
-        if not isinstance(entry, dict):
-            continue
+    for entry in artifact_entries(artifacts, field):
         role = entry.get("role")
         if isinstance(role, str) and role:
             roles.append(role)
@@ -40,7 +41,7 @@ def phase_artifact_roles(
 
 def artifact_cli_args(entries: list[dict[str, Any]]) -> list[str]:
     args: list[str] = []
-    for entry in entries:
+    for entry in [item for item in entries if isinstance(item, dict)]:
         role = entry.get("role")
         path = entry.get("path")
         if not isinstance(role, str) or not role:

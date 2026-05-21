@@ -1,5 +1,6 @@
 from scripts.replay_validation_artifacts import (
     artifact_cli_args,
+    artifact_entries,
     artifact_roles,
     phase_artifact_roles,
 )
@@ -16,6 +17,24 @@ def test_artifact_roles_ignores_malformed_entries():
     }
 
     assert artifact_roles(artifacts, "projector_summaries") == ["projector_summary_1"]
+
+
+def test_artifact_entries_returns_only_object_entries():
+    artifacts = {
+        "worker_metrics": [
+            {"role": "worker_metrics_1", "path": "worker.prom"},
+            "not-an-entry",
+        ]
+    }
+
+    assert artifact_entries(artifacts, "worker_metrics") == [
+        {"role": "worker_metrics_1", "path": "worker.prom"}
+    ]
+
+
+def test_artifact_entries_returns_empty_for_missing_or_non_list_field():
+    assert artifact_entries({}, "worker_metrics") == []
+    assert artifact_entries({"worker_metrics": "worker.prom"}, "worker_metrics") == []
 
 
 def test_phase_artifact_roles_collects_unique_sorted_roles():
