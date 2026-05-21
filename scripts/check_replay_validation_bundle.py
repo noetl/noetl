@@ -21,7 +21,7 @@ from scripts.package_replay_validation_artifacts import (
     resolve_indexed_path,
     validate_artifact_index,
 )
-from scripts.replay_validation_artifacts import phase_artifact_roles
+from scripts.replay_validation_artifacts import indexed_artifact_entries, phase_artifact_roles
 
 
 def _artifact_index_from_manifest(manifest: dict[str, Any]) -> str | None:
@@ -285,9 +285,10 @@ def _validate_fanout_phase6_evidence(
         )
 
     report_results: list[dict[str, Any]] = []
-    for index, entry in enumerate(reports):
-        if not isinstance(entry, dict):
-            continue
+    for index, entry in indexed_artifact_entries(
+        {"fanout_reduce_planner": reports},
+        "fanout_reduce_planner",
+    ):
         path_value = entry.get("path")
         if not isinstance(path_value, str) or not path_value:
             continue
