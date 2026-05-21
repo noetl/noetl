@@ -16,6 +16,7 @@ from scripts.package_replay_validation_artifacts import (
 )
 from scripts.replay_validation_artifacts import (
     duplicate_artifact_roles,
+    missing_indexed_artifact_roles,
     phase_artifact_roles,
 )
 
@@ -272,13 +273,10 @@ def _validate_manifest(
                                 "failures": index_output.get("failures", []),
                             }
                         )
-                    indexed_roles = index_output.get("roles")
-                    indexed_roles = indexed_roles if isinstance(indexed_roles, list) else []
-                    missing_phase_roles = [
-                        role
-                        for role in phase_artifact_roles(artifacts)
-                        if role not in indexed_roles
-                    ]
+                    missing_phase_roles = missing_indexed_artifact_roles(
+                        phase_artifact_roles(artifacts),
+                        index_output.get("roles"),
+                    )
                     if missing_phase_roles:
                         failures.append(
                             {

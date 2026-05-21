@@ -63,6 +63,15 @@ def phase_artifact_roles(
     return sorted(set(roles))
 
 
+def missing_indexed_artifact_roles(
+    required_roles: list[str],
+    indexed_roles: Any,
+) -> list[str]:
+    if not isinstance(indexed_roles, list):
+        indexed_roles = []
+    return [role for role in required_roles if role not in indexed_roles]
+
+
 def artifact_cli_args(entries: list[dict[str, Any]]) -> list[str]:
     args: list[str] = []
     for entry in [item for item in entries if isinstance(item, dict)]:
