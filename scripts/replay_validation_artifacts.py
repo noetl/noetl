@@ -93,6 +93,10 @@ def artifact_result_entry(
     return {"role": entry.get("role"), "path": path, "result": result}
 
 
+def result_matched(result: dict[str, Any] | None) -> bool:
+    return isinstance(result, dict) and result.get("matched") is True
+
+
 def artifact_cli_args(entries: list[dict[str, Any]]) -> list[str]:
     args: list[str] = []
     for entry in [item for item in entries if isinstance(item, dict)]:
