@@ -4,6 +4,7 @@ from scripts.replay_validation_artifacts import (
     artifact_roles,
     duplicate_artifact_roles,
     indexed_artifact_entries,
+    missing_indexed_artifact_roles,
     phase_artifact_roles,
 )
 
@@ -93,6 +94,20 @@ def test_phase_artifact_roles_can_limit_fields():
     assert phase_artifact_roles(artifacts, fields=("worker_metrics",)) == [
         "worker_metrics_1"
     ]
+
+
+def test_missing_indexed_artifact_roles_returns_unmatched_required_roles():
+    assert missing_indexed_artifact_roles(
+        ["projector_summary_1", "worker_metrics_1"],
+        ["worker_metrics_1"],
+    ) == ["projector_summary_1"]
+
+
+def test_missing_indexed_artifact_roles_treats_malformed_index_roles_as_empty():
+    assert missing_indexed_artifact_roles(
+        ["projector_summary_1"],
+        "projector_summary_1",
+    ) == ["projector_summary_1"]
 
 
 def test_artifact_cli_args_renders_role_path_pairs():
