@@ -8,10 +8,53 @@ gate are caught without standing up Postgres.
 
 from __future__ import annotations
 
+from contextlib import asynccontextmanager
+
 import pytest
 from fastapi import HTTPException
 
+from noetl.server.api.catalog import service as catalog_service_module
 from noetl.server.api.catalog.service import CatalogService
+
+
+class _FakeCursor:
+    def __init__(self):
+        self.executed = []
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb):
+        return False
+
+    async def execute(self, query, params=None):
+        self.executed.append((query, params))
+
+    async def fetchone(self):
+        query = self.executed[-1][0]
+        if "next_version" in query:
+            return {"next_version": 7}
+        if "RETURNING catalog_id" in query:
+            return {"catalog_id": 123, "version": 7}
+        return None
+
+
+class _FakeConnection:
+    def __init__(self, cursor):
+        self._cursor = cursor
+        self.commit_count = 0
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb):
+        return False
+
+    def cursor(self, **_kwargs):
+        return self._cursor
+
+    async def commit(self):
+        self.commit_count += 1
 
 
 # ---------------------------------------------------------------------------
@@ -168,6 +211,54 @@ def test_validate_payload_accepts_valid_playbook():
         payload=_valid_playbook_dict(),
         path="tests/fixtures/test_pb",
     )
+
+
+@pytest.mark.asyncio
+async def test_register_resource_allocates_version_under_catalog_path_lock(monkeypatch):
+    """Concurrent registrations for the same path must serialize version allocation."""
+    cursor = _FakeCursor()
+    conn = _FakeConnection(cursor)
+
+    @asynccontextmanager
+    async def fake_pool_connection():
+        yield conn
+
+    monkeypatch.setattr(catalog_service_module, "get_pool_connection", fake_pool_connection)
+
+    result = await CatalogService.register_resource(
+        """
+apiVersion: noetl.io/v2
+kind: Playbook
+metadata:
+  name: lock_test
+  path: tests/fixtures/lock_test
+workflow:
+  - step: start
+    tool:
+      kind: noop
+    next:
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
+  - step: end
+    tool:
+      kind: noop
+""",
+        "Playbook",
+    )
+
+    queries = [query for query, _params in cursor.executed]
+    lock_index = next(i for i, query in enumerate(queries) if "pg_advisory_xact_lock" in query)
+    version_index = next(i for i, query in enumerate(queries) if "next_version" in query)
+    insert_index = next(i for i, query in enumerate(queries) if "INSERT INTO noetl.catalog" in query)
+
+    assert lock_index < version_index < insert_index
+    assert cursor.executed[lock_index][1] == {"path": "tests/fixtures/lock_test"}
+    assert cursor.executed[insert_index][1]["version"] == 7
+    assert result["version"] == 7
+    assert result["catalog_id"] == 123
+    assert conn.commit_count == 1
 
 
 def test_validate_payload_rejects_deprecated_list_form_next():

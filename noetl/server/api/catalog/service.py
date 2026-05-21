@@ -504,12 +504,24 @@ class CatalogService:
                 })
                 resource_data["workflow"] = workflow
 
-        # Get the latest version for this resource and increment it
-        latest_version = await CatalogService.get_latest_version(path)
-        new_version = latest_version + 1
-
         async with get_pool_connection() as conn:
             async with conn.cursor(row_factory=dict_row) as cursor:
+                await cursor.execute(
+                    "SELECT pg_advisory_xact_lock(hashtext(%(path)s))",
+                    {"path": str(path)},
+                )
+
+                await cursor.execute(
+                    """
+                    SELECT COALESCE(MAX(version), 0) + 1 AS next_version
+                    FROM noetl.catalog
+                    WHERE path = %(path)s
+                    """,
+                    {"path": path},
+                )
+                version_row = await cursor.fetchone()
+                new_version = int(version_row["next_version"]) if version_row else 1
+
                 await cursor.execute(
                     """
                     INSERT INTO noetl.resource (name, meta)

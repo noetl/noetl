@@ -1,24 +1,21 @@
 import { test, expect, type Page } from '@playwright/test';
-import { execSync } from 'child_process';
+import { registerPlaybook, skipUnlessUiE2EEnabled } from './support/noetl';
 
-const NOETL_HOST = process.env.NOETL_HOST;
-const NOETL_PORT = process.env.NOETL_PORT;
-const BASE_URL = `http://${NOETL_HOST}:${NOETL_PORT}`;
-
-const CATALOG_URL = `${BASE_URL}/catalog`;
+const CATALOG_URL = `/catalog`;
 const EXECUTION_URL_PATTERN = '**/execution*';
 
 const PLAYBOOK_NAME = 'save_delegation_test';
-const PLAYBOOK_PATH = `tests/fixtures/playbooks/save_storage_test/${PLAYBOOK_NAME}.yaml`;
-const PLAYBOOK_CATALOG_NODE = `tests/fixtures/playbooks/save_storage_test/${PLAYBOOK_NAME}`;
+const PLAYBOOK_PATH = `../e2e/fixtures/playbooks/save_storage_test/${PLAYBOOK_NAME}.yaml`;
+const PLAYBOOK_CATALOG_NODE = `fixtures/playbooks/save_storage_test/${PLAYBOOK_NAME}`;
 const LOADING_EXECUTIONS_TEXT = 'Loading executions...';
 const viewHeaders = ['Event Type', 'Node Name', 'Status', 'Timestamp', 'Duration'] as const;
 
 
 test.describe('Save delegation test', () => {
+    skipUnlessUiE2EEnabled();
     test.beforeAll(() => {
         console.log(`Registering ${PLAYBOOK_NAME}...`);
-        execSync(`noetl register "${PLAYBOOK_PATH}" --host ${NOETL_HOST} --port ${NOETL_PORT}`, { stdio: 'inherit' });
+        registerPlaybook(PLAYBOOK_PATH);
     });
 
     test('should open catalog page', async ({ page }) => {

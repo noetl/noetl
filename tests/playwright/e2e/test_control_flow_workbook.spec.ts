@@ -1,23 +1,21 @@
 import { test, expect } from '@playwright/test';
-import { execSync } from 'child_process';
+import { registerPlaybook, skipUnlessUiE2EEnabled } from './support/noetl';
 
-const NOETL_HOST = process.env.NOETL_HOST;
-const NOETL_PORT = process.env.NOETL_PORT;
-const BASE_URL = `http://${NOETL_HOST}:${NOETL_PORT}`;
-
-const CATALOG_URL = `${BASE_URL}/catalog`;
+const CATALOG_URL = `/catalog`;
 
 const PLAYBOOK_NAME = 'control_flow_workbook';
-const PLAYBOOK_PATH = `tests/fixtures/playbooks/${PLAYBOOK_NAME}/${PLAYBOOK_NAME}.yaml`;
+const PLAYBOOK_PATH = `../e2e/fixtures/playbooks/${PLAYBOOK_NAME}/${PLAYBOOK_NAME}.yaml`;
+const PLAYBOOK_CATALOG_NODE = `fixtures/playbooks/${PLAYBOOK_NAME}`;
 
 const LOADING_EXECUTIONS_TEXT = 'Loading executions...';
 
 const viewHeaders = ['Event Type', 'Node Name', 'Status', 'Timestamp', 'Duration'] as const;
 
 test.describe('Control flow workbook', () => {
+    skipUnlessUiE2EEnabled();
     test.beforeAll(() => {
         console.log(`Registering ${PLAYBOOK_NAME}...`);
-        execSync(`noetl register ${PLAYBOOK_PATH} --host ${NOETL_HOST} --port ${NOETL_PORT}`, { stdio: 'inherit' });
+        registerPlaybook(PLAYBOOK_PATH);
     });
 
     test('should open catalog page', async ({ page }) => {
@@ -69,7 +67,7 @@ test.describe('Control flow workbook', () => {
                     (status ? r['Status'] === status : true)
                 );
 
-            expect(hasEvent('playbook.initialized', `tests/fixtures/playbooks/${PLAYBOOK_NAME}`, 'INITIALIZED')).toBeTruthy();
+            expect(hasEvent('playbook.initialized', PLAYBOOK_CATALOG_NODE, 'INITIALIZED')).toBeTruthy();
             expect(hasEvent('workflow.initialized', 'workflow', 'INITIALIZED')).toBeTruthy();
 
             expect(hasEvent('step.enter', 'start', 'STARTED')).toBeTruthy();
@@ -87,7 +85,7 @@ test.describe('Control flow workbook', () => {
             expect(hasEvent('step.exit', 'hot_task_b', 'COMPLETED')).toBeTruthy();
 
             expect(hasEvent('workflow.completed', 'workflow', 'COMPLETED')).toBeTruthy();
-            expect(hasEvent('playbook.completed', `tests/fixtures/playbooks/${PLAYBOOK_NAME}`, 'COMPLETED')).toBeTruthy();
+            expect(hasEvent('playbook.completed', PLAYBOOK_CATALOG_NODE, 'COMPLETED')).toBeTruthy();
         });
     });
 });
