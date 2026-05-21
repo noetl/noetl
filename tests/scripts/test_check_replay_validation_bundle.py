@@ -200,6 +200,55 @@ def _add_worker_phase3_evidence(manifest: Path, index: Path, tmp_path: Path) -> 
     )
 
 
+def _storage_phase5_report() -> dict:
+    return {
+        "registered_backends": ["disk", "gcs", "kv", "memory", "s3"],
+        "consumer_paths": {
+            "result_store": True,
+            "artifact_executor": True,
+            "agent_disk_fallback": True,
+        },
+        "direct_backend_construction": {
+            "matched": True,
+            "unexpected": [],
+        },
+    }
+
+
+def _add_storage_phase5_evidence(manifest: Path, index: Path, tmp_path: Path) -> None:
+    payload = json.loads(manifest.read_text())
+    report = tmp_path / "storage-phase5-report.json"
+    report.write_text(json.dumps(_storage_phase5_report(), indent=2, sort_keys=True))
+    payload["artifacts"]["storage_backend_registry"] = [
+        {"role": "storage_backend_registry", "path": str(report)}
+    ]
+    payload["config"]["storage_backend_registry_report"] = str(report)
+    payload["steps"].insert(
+        -1,
+        {
+            "name": "storage_backend_registry_integrity",
+            "command": ["python", "scripts/check_storage_phase5_evidence.py"],
+            "returncode": 0,
+            "duration_seconds": 0.1,
+            "stdout": "{}",
+            "stderr": "",
+        },
+    )
+    manifest.write_text(json.dumps(payload))
+    index.write_text(
+        json.dumps(
+            build_artifact_index(
+                manifest_path=manifest,
+                output_path=index,
+                extra_artifacts=[("storage_backend_registry", report)],
+            ),
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n"
+    )
+
+
 def test_check_replay_validation_bundle_accepts_manifest_referenced_index(
     tmp_path: Path,
     capsys,
@@ -360,5 +409,32 @@ def test_check_replay_validation_bundle_rejects_missing_worker_ipc_phase3_eviden
     output = json.loads(capsys.readouterr().out)
     assert any(
         failure["field"] == "phase3_worker_ipc_evidence"
+        for failure in output["failures"]
+    )
+
+
+def test_check_replay_validation_bundle_accepts_storage_phase5_evidence(
+    tmp_path: Path,
+    capsys,
+):
+    manifest, index = _bundle(tmp_path)
+    _add_storage_phase5_evidence(manifest, index, tmp_path)
+
+    assert main(["--manifest", str(manifest), "--require-storage-phase5"]) == 0
+    output = json.loads(capsys.readouterr().out)
+    assert output["matched"] is True
+    assert output["phase5_storage_result"]["matched"] is True
+
+
+def test_check_replay_validation_bundle_rejects_missing_storage_phase5_evidence(
+    tmp_path: Path,
+    capsys,
+):
+    manifest, _index = _bundle(tmp_path)
+
+    assert main(["--manifest", str(manifest), "--require-storage-phase5"]) == 1
+    output = json.loads(capsys.readouterr().out)
+    assert any(
+        failure["field"] == "phase5_storage_evidence"
         for failure in output["failures"]
     )
