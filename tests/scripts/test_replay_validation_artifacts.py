@@ -2,6 +2,7 @@ from scripts.replay_validation_artifacts import (
     artifact_cli_args,
     artifact_entries,
     artifact_roles,
+    duplicate_artifact_roles,
     indexed_artifact_entries,
     phase_artifact_roles,
 )
@@ -18,6 +19,22 @@ def test_artifact_roles_ignores_malformed_entries():
     }
 
     assert artifact_roles(artifacts, "projector_summaries") == ["projector_summary_1"]
+
+
+def test_duplicate_artifact_roles_returns_sorted_duplicates():
+    artifacts = {
+        "projector_summaries": [
+            {"role": "projector_summary_2", "path": "summary-2.json"},
+            {"role": "projector_summary_1", "path": "summary-1-a.json"},
+            {"role": "projector_summary_1", "path": "summary-1-b.json"},
+            {"role": "projector_summary_2", "path": "summary-2-b.json"},
+        ]
+    }
+
+    assert duplicate_artifact_roles(artifacts, "projector_summaries") == [
+        "projector_summary_1",
+        "projector_summary_2",
+    ]
 
 
 def test_artifact_entries_returns_only_object_entries():

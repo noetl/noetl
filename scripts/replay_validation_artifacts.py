@@ -42,6 +42,16 @@ def artifact_roles(artifacts: dict[str, Any], field: str) -> list[str]:
     return roles
 
 
+def duplicate_artifact_roles(artifacts: dict[str, Any], field: str) -> list[str]:
+    seen: set[str] = set()
+    duplicates: set[str] = set()
+    for role in artifact_roles(artifacts, field):
+        if role in seen:
+            duplicates.add(role)
+        seen.add(role)
+    return sorted(duplicates)
+
+
 def phase_artifact_roles(
     artifacts: dict[str, Any],
     *,
