@@ -23,6 +23,7 @@ from scripts.package_replay_validation_artifacts import (
 )
 from scripts.replay_validation_artifacts import (
     indexed_artifact_entries,
+    indexed_artifact_paths,
     missing_indexed_artifact_roles,
     phase_artifact_roles,
 )
@@ -288,13 +289,10 @@ def _validate_fanout_phase6_evidence(
         )
 
     report_results: list[dict[str, Any]] = []
-    for index, entry in indexed_artifact_entries(
+    for index, entry, path_value in indexed_artifact_paths(
         {"fanout_reduce_planner": reports},
         "fanout_reduce_planner",
     ):
-        path_value = entry.get("path")
-        if not isinstance(path_value, str) or not path_value:
-            continue
         path = resolve_indexed_path(path_value, index_path=manifest_path)
         try:
             report = json.loads(path.read_text())
