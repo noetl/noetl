@@ -182,6 +182,32 @@ def main(argv: list[str] | None = None) -> int:
         )
         _emit(report, args.report_output)
         return int(steps[-1]["returncode"])
+    missing_replay_artifacts = [
+        str(path)
+        for path in (manifest_path, artifact_index_path)
+        if not path.exists()
+    ]
+    if missing_replay_artifacts:
+        steps.append(
+            {
+                "name": "replay_validation_artifacts",
+                "returncode": 1,
+                "duration_seconds": 0.0,
+                "stdout": "",
+                "stderr": "replay validation did not create required artifacts: "
+                + ", ".join(missing_replay_artifacts),
+            }
+        )
+        report = _build_report(
+            matched=False,
+            started_at=started_at,
+            manifest_path=manifest_path,
+            artifact_index_path=artifact_index_path,
+            steps=steps,
+            args=args,
+        )
+        _emit(report, args.report_output)
+        return 1
 
     phase_gate_command = [
         _validation_python(),

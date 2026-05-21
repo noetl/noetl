@@ -110,6 +110,11 @@ def test_run_projector_phase2_validation_passes_projector_summary_urls(
 
     def _run(command):
         calls.append(command)
+        if "scripts/run_replay_validation.py" in command:
+            manifest_path = Path(command[command.index("--report-output") + 1])
+            artifact_index_path = Path(command[command.index("--artifact-index-output") + 1])
+            manifest_path.write_text(json.dumps({"matched": True}))
+            artifact_index_path.write_text(json.dumps({"matched": True}))
         return 0, json.dumps({"matched": True}), "", 0.01
 
     monkeypatch.setattr(run_projector_phase2_validation, "_run", _run)
@@ -173,6 +178,46 @@ def test_run_projector_phase2_validation_stops_when_replay_validation_fails(
     output = json.loads(capsys.readouterr().out)
     assert output["matched"] is False
     assert output["steps"][0]["stderr"] == "failed"
+
+
+def test_run_projector_phase2_validation_fails_when_replay_artifacts_are_missing(
+    monkeypatch,
+    tmp_path: Path,
+    capsys,
+):
+    calls = []
+
+    def _run(command):
+        calls.append(command)
+        return 0, json.dumps({"matched": True}), "", 0.01
+
+    monkeypatch.setattr(run_projector_phase2_validation, "_run", _run)
+    summary = tmp_path / "projector-summary.json"
+    summary.write_text("{}")
+
+    assert (
+        run_projector_phase2_validation.main(
+            [
+                "--base-url",
+                "http://noetl.example",
+                "--execution-id",
+                "123",
+                "--projector-summary",
+                str(summary),
+                "--output-dir",
+                str(tmp_path),
+            ]
+        )
+        == 1
+    )
+
+    assert len(calls) == 1
+    output = json.loads(capsys.readouterr().out)
+    assert output["matched"] is False
+    assert output["steps"][-1]["name"] == "replay_validation_artifacts"
+    assert output["steps"][-1]["stderr"].startswith(
+        "replay validation did not create required artifacts:"
+    )
 
 
 def test_run_projector_phase2_validation_requires_projector_evidence(tmp_path: Path):
