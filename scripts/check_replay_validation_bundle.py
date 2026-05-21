@@ -17,10 +17,7 @@ from scripts.check_replay_fanout_reduce_report import validate_replay_fanout_red
 from scripts.check_replay_validation_manifest import _load_manifest, _validate_manifest
 from scripts.check_storage_phase5_evidence import validate_storage_phase5_evidence
 from scripts.check_worker_ipc_phase3_evidence import validate_worker_ipc_phase3_evidence
-from scripts.package_replay_validation_artifacts import (
-    resolve_indexed_path,
-    validate_artifact_index,
-)
+from scripts.package_replay_validation_artifacts import validate_artifact_index
 from scripts.replay_validation_artifacts import (
     artifact_index_path_value,
     artifact_result_entry,
@@ -30,6 +27,7 @@ from scripts.replay_validation_artifacts import (
     manifest_step_names,
     missing_indexed_artifact_roles,
     phase_artifact_roles,
+    resolve_manifest_artifact_path,
     result_matched,
 )
 
@@ -172,16 +170,16 @@ def validate_bundle(
             )
             resolved_index_path = None
         else:
-            resolved_index_path = resolve_indexed_path(
+            resolved_index_path = resolve_manifest_artifact_path(
                 manifest_index,
-                index_path=manifest_path,
+                manifest_path=manifest_path,
             )
     else:
         resolved_index_path = artifact_index_path
         if manifest_index is not None:
-            manifest_resolved_index = resolve_indexed_path(
+            manifest_resolved_index = resolve_manifest_artifact_path(
                 manifest_index,
-                index_path=manifest_path,
+                manifest_path=manifest_path,
             )
             if manifest_resolved_index != artifact_index_path.resolve():
                 failures.append(
@@ -282,7 +280,7 @@ def _validate_fanout_phase6_evidence(
         {"fanout_reduce_planner": reports},
         "fanout_reduce_planner",
     ):
-        path = resolve_indexed_path(path_value, index_path=manifest_path)
+        path = resolve_manifest_artifact_path(path_value, manifest_path=manifest_path)
         try:
             report = json.loads(path.read_text())
             if not isinstance(report, dict):
@@ -345,7 +343,7 @@ def _validate_replay_fanout_phase6_evidence(
             }
         )
 
-    path = resolve_indexed_path(replay_path, index_path=manifest_path)
+    path = resolve_manifest_artifact_path(replay_path, manifest_path=manifest_path)
     try:
         report = json.loads(path.read_text())
         if not isinstance(report, dict):

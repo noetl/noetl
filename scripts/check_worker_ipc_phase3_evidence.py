@@ -10,12 +10,12 @@ from pathlib import Path
 from typing import Any
 
 from scripts.check_worker_ipc_metrics import validate_worker_ipc_metrics
-from scripts.package_replay_validation_artifacts import resolve_indexed_path
 from scripts.replay_validation_artifacts import (
     artifact_result_entry,
     indexed_artifact_paths,
     manifest_artifacts,
     manifest_step_names,
+    resolve_manifest_artifact_path,
     result_matched,
 )
 
@@ -32,9 +32,7 @@ def _load_manifest(path: Path) -> dict[str, Any]:
 
 
 def _resolve(value: str, *, manifest_path: Path | None) -> Path:
-    if manifest_path is None:
-        return Path(value)
-    return resolve_indexed_path(value, index_path=manifest_path)
+    return resolve_manifest_artifact_path(value, manifest_path=manifest_path)
 
 
 def validate_worker_ipc_phase3_evidence(

@@ -11,6 +11,7 @@ from scripts.replay_validation_artifacts import (
     manifest_step_names,
     missing_indexed_artifact_roles,
     phase_artifact_roles,
+    resolve_manifest_artifact_path,
     result_matched,
 )
 
@@ -88,6 +89,23 @@ def test_indexed_artifact_paths_preserves_indexes_and_path_values():
     assert indexed_artifact_paths(artifacts, "worker_metrics") == [
         (1, {"role": "worker_metrics_2", "path": "worker.prom"}, "worker.prom")
     ]
+
+
+def test_resolve_manifest_artifact_path_resolves_relative_to_manifest_dir(tmp_path):
+    manifest = tmp_path / "reports" / "manifest.json"
+    manifest.parent.mkdir()
+
+    assert resolve_manifest_artifact_path(
+        "worker.prom",
+        manifest_path=manifest,
+    ) == manifest.parent / "worker.prom"
+
+
+def test_resolve_manifest_artifact_path_preserves_absolute_or_unanchored_paths(tmp_path):
+    absolute = tmp_path / "worker.prom"
+
+    assert resolve_manifest_artifact_path(str(absolute), manifest_path=None) == absolute
+    assert resolve_manifest_artifact_path("worker.prom", manifest_path=None).as_posix() == "worker.prom"
 
 
 def test_phase_artifact_roles_collects_unique_sorted_roles():

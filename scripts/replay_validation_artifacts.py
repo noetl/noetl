@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
 PHASE_ARTIFACT_FIELDS = (
@@ -43,6 +44,13 @@ def indexed_artifact_paths(
         if isinstance(path, str) and path:
             paths.append((index, entry, path))
     return paths
+
+
+def resolve_manifest_artifact_path(value: str, *, manifest_path: Path | None) -> Path:
+    path = Path(value)
+    if path.is_absolute() or manifest_path is None:
+        return path
+    return (manifest_path.parent / path).resolve()
 
 
 def artifact_roles(artifacts: dict[str, Any], field: str) -> list[str]:
