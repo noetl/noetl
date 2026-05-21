@@ -14,6 +14,7 @@ from scripts.package_replay_validation_artifacts import (
     resolve_indexed_path,
     validate_artifact_index,
 )
+from scripts.replay_validation_artifacts import phase_artifact_roles
 
 REQUIRED_CONFIG_FIELDS = (
     "base_url",
@@ -145,32 +146,6 @@ def _validate_artifact_list(
             )
 
 
-def _artifact_roles(artifacts: dict[str, Any], field: str) -> list[str]:
-    value = artifacts.get(field)
-    if not isinstance(value, list):
-        return []
-    roles: list[str] = []
-    for entry in value:
-        if not isinstance(entry, dict):
-            continue
-        role = entry.get("role")
-        if isinstance(role, str) and role:
-            roles.append(role)
-    return roles
-
-
-def _phase_artifact_roles(artifacts: dict[str, Any]) -> list[str]:
-    roles: list[str] = []
-    for field in (
-        "projector_summaries",
-        "worker_metrics",
-        "storage_backend_registry",
-        "fanout_reduce_planner",
-    ):
-        roles.extend(_artifact_roles(artifacts, field))
-    return sorted(set(roles))
-
-
 def _validate_manifest(
     manifest: dict[str, Any],
     *,
@@ -288,7 +263,7 @@ def _validate_manifest(
                     indexed_roles = indexed_roles if isinstance(indexed_roles, list) else []
                     missing_phase_roles = [
                         role
-                        for role in _phase_artifact_roles(artifacts)
+                        for role in phase_artifact_roles(artifacts)
                         if role not in indexed_roles
                     ]
                     if missing_phase_roles:

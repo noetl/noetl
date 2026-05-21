@@ -21,6 +21,7 @@ from scripts.package_replay_validation_artifacts import (
     resolve_indexed_path,
     validate_artifact_index,
 )
+from scripts.replay_validation_artifacts import phase_artifact_roles
 
 
 def _artifact_index_from_manifest(manifest: dict[str, Any]) -> str | None:
@@ -33,24 +34,6 @@ def _artifact_index_from_manifest(manifest: dict[str, Any]) -> str | None:
     return value
 
 
-def _artifact_roles(manifest: dict[str, Any], artifact_name: str) -> list[str]:
-    artifacts = manifest.get("artifacts")
-    if not isinstance(artifacts, dict):
-        return []
-    entries = artifacts.get(artifact_name)
-    if not isinstance(entries, list):
-        return []
-
-    roles: list[str] = []
-    for entry in entries:
-        if not isinstance(entry, dict):
-            continue
-        role = entry.get("role")
-        if isinstance(role, str) and role:
-            roles.append(role)
-    return roles
-
-
 def _required_index_roles(
     manifest: dict[str, Any],
     *,
@@ -59,16 +42,19 @@ def _required_index_roles(
     require_storage_phase5: bool,
     require_fanout_phase6: bool,
 ) -> list[str]:
-    roles: list[str] = []
+    artifacts = manifest.get("artifacts")
+    if not isinstance(artifacts, dict):
+        return []
+    fields: list[str] = []
     if require_projector_phase2:
-        roles.extend(_artifact_roles(manifest, "projector_summaries"))
+        fields.append("projector_summaries")
     if require_worker_ipc_phase3:
-        roles.extend(_artifact_roles(manifest, "worker_metrics"))
+        fields.append("worker_metrics")
     if require_storage_phase5:
-        roles.extend(_artifact_roles(manifest, "storage_backend_registry"))
+        fields.append("storage_backend_registry")
     if require_fanout_phase6:
-        roles.extend(_artifact_roles(manifest, "fanout_reduce_planner"))
-    return sorted(set(roles))
+        fields.append("fanout_reduce_planner")
+    return phase_artifact_roles(artifacts, fields=tuple(fields))
 
 
 def validate_bundle(
