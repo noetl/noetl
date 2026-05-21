@@ -84,6 +84,16 @@ def missing_indexed_artifact_roles(
     return [role for role in required_roles if role not in indexed_roles]
 
 
+def artifact_index_path_value(manifest: dict[str, Any]) -> str | None:
+    artifacts = manifest.get("artifacts")
+    if not isinstance(artifacts, dict):
+        return None
+    value = artifacts.get("artifact_index")
+    if not isinstance(value, str) or not value:
+        return None
+    return value
+
+
 def artifact_result_entry(
     entry: dict[str, Any],
     *,

@@ -15,9 +15,12 @@ from scripts.package_replay_validation_artifacts import (
     validate_artifact_index,
 )
 from scripts.replay_validation_artifacts import (
+    PHASE_ARTIFACT_FIELDS,
+    artifact_index_path_value,
     duplicate_artifact_roles,
     missing_indexed_artifact_roles,
     phase_artifact_roles,
+    result_matched,
 )
 
 REQUIRED_CONFIG_FIELDS = (
@@ -204,37 +207,10 @@ def _validate_manifest(
         failures.append({"field": "artifacts", "reason": "must be an object"})
     elif isinstance(artifacts, dict):
         for field, value in artifacts.items():
-            if field == "projector_summaries":
+            if field in PHASE_ARTIFACT_FIELDS:
                 _validate_artifact_list(
                     failures,
-                    field="artifacts.projector_summaries",
-                    value=value,
-                    manifest_path=manifest_path,
-                    check_artifacts=check_artifacts,
-                )
-                continue
-            if field == "worker_metrics":
-                _validate_artifact_list(
-                    failures,
-                    field="artifacts.worker_metrics",
-                    value=value,
-                    manifest_path=manifest_path,
-                    check_artifacts=check_artifacts,
-                )
-                continue
-            if field == "storage_backend_registry":
-                _validate_artifact_list(
-                    failures,
-                    field="artifacts.storage_backend_registry",
-                    value=value,
-                    manifest_path=manifest_path,
-                    check_artifacts=check_artifacts,
-                )
-                continue
-            if field == "fanout_reduce_planner":
-                _validate_artifact_list(
-                    failures,
-                    field="artifacts.fanout_reduce_planner",
+                    field=f"artifacts.{field}",
                     value=value,
                     manifest_path=manifest_path,
                     check_artifacts=check_artifacts,
@@ -248,8 +224,8 @@ def _validate_manifest(
                 check_artifacts=check_artifacts,
             )
 
-        artifact_index = artifacts.get("artifact_index")
-        if isinstance(artifact_index, str) and artifact_index:
+        artifact_index = artifact_index_path_value(manifest)
+        if artifact_index is not None:
             index_path = _artifact_path(artifact_index, manifest_path)
             if index_path.exists():
                 try:
@@ -264,7 +240,7 @@ def _validate_manifest(
                         }
                     )
                 else:
-                    if index_output.get("matched") is not True:
+                    if not result_matched(index_output):
                         failures.append(
                             {
                                 "field": "artifacts.artifact_index",
