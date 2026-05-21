@@ -1,6 +1,8 @@
 import json
 from pathlib import Path
 
+import pytest
+
 from scripts.check_replay_validation_manifest import main
 from scripts.package_replay_validation_artifacts import build_artifact_index
 
@@ -255,25 +257,56 @@ def test_check_replay_validation_manifest_rejects_artifact_index_for_other_manif
     )
 
 
+@pytest.mark.parametrize(
+    ("artifact_field", "role", "filename", "integrity_step"),
+    [
+        (
+            "projector_summaries",
+            "projector_summary_1",
+            "projector-summary.json",
+            "projector_summary_1_integrity",
+        ),
+        (
+            "worker_metrics",
+            "worker_metrics_1",
+            "worker.prom",
+            "worker_metrics_1_integrity",
+        ),
+        (
+            "storage_backend_registry",
+            "storage_backend_registry",
+            "storage-phase5-report.json",
+            "storage_backend_registry_integrity",
+        ),
+        (
+            "fanout_reduce_planner",
+            "fanout_reduce_planner",
+            "fanout-phase6-report.json",
+            "fanout_reduce_planner_integrity",
+        ),
+    ],
+)
 def test_check_replay_validation_manifest_requires_indexed_phase_artifact_roles(
     tmp_path: Path,
     capsys,
+    artifact_field: str,
+    role: str,
+    filename: str,
+    integrity_step: str,
 ):
     manifest = _manifest(tmp_path)
-    summary = tmp_path / "projector-summary.json"
-    summary.write_text("{}")
+    artifact = tmp_path / filename
+    artifact.write_text("{}")
     report = tmp_path / "validation-report.json"
     report.write_text("{}")
     index_path = tmp_path / "artifact-index.json"
     manifest["artifacts"]["report"] = str(report)
     manifest["artifacts"]["artifact_index"] = str(index_path)
-    manifest["artifacts"]["projector_summaries"] = [
-        {"role": "projector_summary_1", "path": str(summary)}
-    ]
+    manifest["artifacts"][artifact_field] = [{"role": role, "path": str(artifact)}]
     manifest["steps"].append(
         {
-            "name": "projector_summary_1_integrity",
-            "command": ["python", "scripts/check_projector_metrics_summary.py"],
+            "name": integrity_step,
+            "command": ["python", "scripts/check_phase_artifact.py"],
             "returncode": 0,
             "duration_seconds": 0.1,
             "stdout": "{}",
@@ -302,7 +335,7 @@ def test_check_replay_validation_manifest_requires_indexed_phase_artifact_roles(
     assert any(
         failure["field"] == "artifacts.artifact_index"
         and failure["reason"] == "artifact index missing phase artifact roles"
-        and failure["roles"] == ["projector_summary_1"]
+        and failure["roles"] == [role]
         for failure in output["failures"]
     )
 
