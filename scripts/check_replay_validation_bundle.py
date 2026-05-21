@@ -33,6 +33,44 @@ def _artifact_index_from_manifest(manifest: dict[str, Any]) -> str | None:
     return value
 
 
+def _artifact_roles(manifest: dict[str, Any], artifact_name: str) -> list[str]:
+    artifacts = manifest.get("artifacts")
+    if not isinstance(artifacts, dict):
+        return []
+    entries = artifacts.get(artifact_name)
+    if not isinstance(entries, list):
+        return []
+
+    roles: list[str] = []
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        role = entry.get("role")
+        if isinstance(role, str) and role:
+            roles.append(role)
+    return roles
+
+
+def _required_index_roles(
+    manifest: dict[str, Any],
+    *,
+    require_projector_phase2: bool,
+    require_worker_ipc_phase3: bool,
+    require_storage_phase5: bool,
+    require_fanout_phase6: bool,
+) -> list[str]:
+    roles: list[str] = []
+    if require_projector_phase2:
+        roles.extend(_artifact_roles(manifest, "projector_summaries"))
+    if require_worker_ipc_phase3:
+        roles.extend(_artifact_roles(manifest, "worker_metrics"))
+    if require_storage_phase5:
+        roles.extend(_artifact_roles(manifest, "storage_backend_registry"))
+    if require_fanout_phase6:
+        roles.extend(_artifact_roles(manifest, "fanout_reduce_planner"))
+    return sorted(set(roles))
+
+
 def validate_bundle(
     *,
     manifest_path: Path,
@@ -190,6 +228,26 @@ def validate_bundle(
                         "reason": "artifact index validation failed",
                         "path": str(resolved_index_path),
                         "failures": index_result.get("failures", []),
+                    }
+                )
+            required_index_roles = _required_index_roles(
+                manifest,
+                require_projector_phase2=require_projector_phase2,
+                require_worker_ipc_phase3=require_worker_ipc_phase3,
+                require_storage_phase5=require_storage_phase5,
+                require_fanout_phase6=require_fanout_phase6,
+            )
+            indexed_roles = index_result.get("roles")
+            indexed_roles = indexed_roles if isinstance(indexed_roles, list) else []
+            missing_index_roles = [
+                role for role in required_index_roles if role not in indexed_roles
+            ]
+            if missing_index_roles:
+                failures.append(
+                    {
+                        "field": "artifact_index",
+                        "reason": "artifact index missing required phase evidence roles",
+                        "roles": missing_index_roles,
                     }
                 )
 

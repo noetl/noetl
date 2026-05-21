@@ -224,7 +224,11 @@ def validate_artifact_index(index_path: Path) -> dict[str, Any]:
         for entry in artifacts
         if isinstance(entry, dict) and entry.get("required", True)
     )
-    return {"matched": matched, "failures": failures}
+    return {
+        "matched": matched,
+        "roles": sorted(roles),
+        "failures": failures,
+    }
 
 
 def main(argv: list[str] | None = None) -> int:

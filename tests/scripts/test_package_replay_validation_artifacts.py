@@ -47,7 +47,11 @@ def test_package_replay_validation_artifacts_builds_and_checks_index(tmp_path: P
     assert all(not Path(entry["path"]).is_absolute() for entry in index["artifacts"])
 
     assert main(["--check", str(output)]) == 0
-    assert json.loads(capsys.readouterr().out)["matched"] is True
+    result = json.loads(capsys.readouterr().out)
+    assert result["matched"] is True
+    assert {"manifest", "replay", "live_rows", "live_checksums", "report"} <= set(
+        result["roles"]
+    )
 
 
 def test_package_replay_validation_artifacts_checks_relative_paths_from_index_dir(
