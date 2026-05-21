@@ -36,3 +36,16 @@ def phase_artifact_roles(
     for field in fields:
         roles.extend(artifact_roles(artifacts, field))
     return sorted(set(roles))
+
+
+def artifact_cli_args(entries: list[dict[str, Any]]) -> list[str]:
+    args: list[str] = []
+    for entry in entries:
+        role = entry.get("role")
+        path = entry.get("path")
+        if not isinstance(role, str) or not role:
+            continue
+        if not isinstance(path, str) or not path:
+            continue
+        args.extend(["--artifact", f"{role}={path}"])
+    return args
