@@ -1,4 +1,6 @@
 import json
+import subprocess
+import sys
 from pathlib import Path
 
 from scripts.check_replay_validation_bundle import main
@@ -226,6 +228,17 @@ def _add_storage_phase5_evidence(manifest: Path, index: Path, tmp_path: Path) ->
     payload["steps"].insert(
         -1,
         {
+            "name": "storage_backend_registry_report",
+            "command": ["python", "scripts/build_storage_phase5_report.py"],
+            "returncode": 0,
+            "duration_seconds": 0.1,
+            "stdout": "{}",
+            "stderr": "",
+        },
+    )
+    payload["steps"].insert(
+        -1,
+        {
             "name": "storage_backend_registry_integrity",
             "command": ["python", "scripts/check_storage_phase5_evidence.py"],
             "returncode": 0,
@@ -424,6 +437,29 @@ def test_check_replay_validation_bundle_accepts_storage_phase5_evidence(
     output = json.loads(capsys.readouterr().out)
     assert output["matched"] is True
     assert output["phase5_storage_result"]["matched"] is True
+
+
+def test_check_replay_validation_bundle_cli_runs_from_repo_root(tmp_path: Path):
+    manifest, index = _bundle(tmp_path)
+    _add_storage_phase5_evidence(manifest, index, tmp_path)
+    repo_root = Path(__file__).resolve().parents[2]
+
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "scripts/check_replay_validation_bundle.py",
+            "--manifest",
+            str(manifest),
+            "--require-storage-phase5",
+        ],
+        cwd=repo_root,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert completed.returncode == 0
+    assert json.loads(completed.stdout)["matched"] is True
 
 
 def test_check_replay_validation_bundle_rejects_missing_storage_phase5_evidence(

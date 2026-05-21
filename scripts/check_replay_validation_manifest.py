@@ -31,7 +31,10 @@ OPTIONAL_STEP_NAMES = (
     "live_checksums",
     "projection_parity",
     "payload_resolution",
+    "runtime_locator_live_rows",
+    "runtime_locator_state",
     "artifact_index",
+    "storage_backend_registry_report",
 )
 
 
