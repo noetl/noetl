@@ -33,6 +33,18 @@ def indexed_artifact_entries(
     ]
 
 
+def indexed_artifact_paths(
+    artifacts: dict[str, Any],
+    field: str,
+) -> list[tuple[int, dict[str, Any], str]]:
+    paths: list[tuple[int, dict[str, Any], str]] = []
+    for index, entry in indexed_artifact_entries(artifacts, field):
+        path = entry.get("path")
+        if isinstance(path, str) and path:
+            paths.append((index, entry, path))
+    return paths
+
+
 def artifact_roles(artifacts: dict[str, Any], field: str) -> list[str]:
     roles: list[str] = []
     for entry in artifact_entries(artifacts, field):
