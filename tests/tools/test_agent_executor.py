@@ -1,13 +1,22 @@
 import sys
 import types
+from typing import Any, Dict, Optional
 
 import pytest
 from jinja2 import Environment
 
 # Avoid import-order circulars in legacy package init path.
 import noetl.worker.auth_resolver  # noqa: F401
+from noetl.core.storage.backends import StorageBackend, clear_registered_backends, register_backend
 from noetl.tools.agent import execute_agent_task
 from noetl.tools.agent import executor as agent_executor
+
+
+@pytest.fixture(autouse=True)
+def _clear_storage_backend_registry():
+    clear_registered_backends()
+    yield
+    clear_registered_backends()
 
 
 @pytest.mark.asyncio
@@ -72,6 +81,38 @@ async def test_agent_executor_langchain_factory_mode():
         assert result["data"] == {"result": "ok:validate"}
     finally:
         sys.modules.pop(module_name, None)
+
+
+def test_agent_direct_disk_reference_resolve_uses_backend_registry():
+    calls = []
+
+    class AgentDiskBackend(StorageBackend):
+        async def put(
+            self,
+            key: str,
+            data: bytes,
+            metadata: Optional[Dict[str, Any]] = None,
+        ) -> str:
+            return f"disk://{key}"
+
+        async def get(self, key: str) -> bytes:
+            calls.append(key)
+            return b'{"status": "ok", "source": "registry"}'
+
+        async def delete(self, key: str) -> bool:
+            return True
+
+        async def exists(self, key: str) -> bool:
+            return True
+
+    register_backend("disk", AgentDiskBackend, replace=True)
+
+    resolved = agent_executor._resolve_disk_result_reference_sync(
+        {"kind": "result_ref", "store": "disk", "ref": "noetl://exec-1/step-a"}
+    )
+
+    assert resolved == {"status": "ok", "source": "registry"}
+    assert calls == ["exec-1_step-a"]
 
 
 @pytest.mark.asyncio

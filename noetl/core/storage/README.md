@@ -31,6 +31,7 @@ built-in tier intentionally, call `register_backend("s3", factory,
 replace=True)` or set the corresponding environment variable, for example
 `NOETL_STORAGE_BACKEND_S3=package.module:factory`.
 
-`TempStore` and `artifact.get` resolve KV/S3/GCS/DISK access through the
-registry, so plugin backends participate in normal result storage,
-resolution, cleanup, and `nats-kv://` artifact reads.
+`TempStore`, `artifact.get`, and agent result fallback resolution resolve
+KV/S3/GCS/DISK access through the registry, so plugin backends participate in
+normal result storage, resolution, cleanup, `nats-kv://` artifact reads, and
+direct disk ref hydration.
