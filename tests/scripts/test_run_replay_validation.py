@@ -4,6 +4,26 @@ from pathlib import Path
 from scripts import run_replay_validation
 
 
+def test_parse_json_accepts_plain_json():
+    assert run_replay_validation._parse_json('{"matched": true}') == {"matched": True}
+
+
+def test_parse_json_accepts_log_prefixed_json_object():
+    output = "2026-05-20T20:48:51 [INFO] config validated\n{\"matched\": true, \"failures\": []}\n"
+
+    assert run_replay_validation._parse_json(output) == {"matched": True, "failures": []}
+
+
+def test_parse_json_accepts_log_prefixed_json_array():
+    output = "INFO warmup complete\n[{\"name\": \"fetch\"}]\n"
+
+    assert run_replay_validation._parse_json(output) == [{"name": "fetch"}]
+
+
+def test_parse_json_rejects_non_json_output():
+    assert run_replay_validation._parse_json("INFO only\nnot-json") is None
+
+
 def test_run_replay_validation_fetches_and_runs_selected_gates(monkeypatch, tmp_path: Path, capsys):
     calls = []
 
@@ -60,6 +80,40 @@ def test_run_replay_validation_fetches_and_runs_selected_gates(monkeypatch, tmp_
     assert output["steps"][0]["duration_seconds"] == 0.01
     manifest_path = tmp_path / "reports" / "manifest.json"
     assert json.loads(manifest_path.read_text())["matched"] is True
+
+
+def test_run_replay_validation_captures_log_prefixed_step_json(monkeypatch, tmp_path: Path, capsys):
+    calls = []
+
+    def _run(command):
+        calls.append(command)
+        if any(str(part).endswith("fetch_replay_state_report.py") for part in command):
+            output_path = Path(command[command.index("--output") + 1])
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            output_path.write_text(json.dumps({"projection_checksums": {"execution": "a" * 64}}))
+        if any(str(part).endswith("check_replay_state_report.py") for part in command):
+            return 0, 'INFO validated env\n{"matched": true, "failures": []}\n', "", 0.01
+        return 0, json.dumps({"ok": True}), "", 0.01
+
+    monkeypatch.setattr(run_replay_validation, "_run", _run)
+
+    assert (
+        run_replay_validation.main(
+            [
+                "--base-url",
+                "http://noetl.example",
+                "--execution-id",
+                "123",
+                "--output-dir",
+                str(tmp_path),
+            ]
+        )
+        == 0
+    )
+
+    output = json.loads(capsys.readouterr().out)
+    assert output["steps"][1]["name"] == "state_integrity"
+    assert output["steps"][1]["stdout_json"] == {"matched": True, "failures": []}
 
 
 def test_run_replay_validation_stops_on_gate_failure(monkeypatch, tmp_path: Path, capsys):

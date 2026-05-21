@@ -4,6 +4,12 @@ from pathlib import Path
 from scripts import run_projector_phase2_validation
 
 
+def test_projector_phase2_parse_json_accepts_log_prefixed_output():
+    output = "INFO warmed projector gate\n{\"matched\": true}\n"
+
+    assert run_projector_phase2_validation._parse_json(output) == {"matched": True}
+
+
 def test_run_projector_phase2_validation_runs_replay_then_phase_gate(
     monkeypatch,
     tmp_path: Path,
@@ -58,6 +64,47 @@ def test_run_projector_phase2_validation_runs_replay_then_phase_gate(
     assert output["artifacts"]["manifest"].endswith("phase2-replay-validation-123.json")
     assert output["steps"][0]["name"] == "replay_validation"
     assert output["steps"][1]["name"] == "phase2_evidence"
+
+
+def test_run_projector_phase2_validation_captures_log_prefixed_step_json(
+    monkeypatch,
+    tmp_path: Path,
+    capsys,
+):
+    calls = []
+
+    def _run(command):
+        calls.append(command)
+        if "scripts/run_replay_validation.py" in command:
+            manifest_path = Path(command[command.index("--report-output") + 1])
+            artifact_index_path = Path(command[command.index("--artifact-index-output") + 1])
+            manifest_path.write_text(json.dumps({"matched": True}))
+            artifact_index_path.write_text(json.dumps({"matched": True}))
+        return 0, 'INFO gate emitted a preface\n{"matched": true}\n', "", 0.01
+
+    monkeypatch.setattr(run_projector_phase2_validation, "_run", _run)
+    summary = tmp_path / "projector-summary.json"
+    summary.write_text("{}")
+
+    assert (
+        run_projector_phase2_validation.main(
+            [
+                "--base-url",
+                "http://noetl.example",
+                "--execution-id",
+                "123",
+                "--projector-summary",
+                str(summary),
+                "--output-dir",
+                str(tmp_path),
+            ]
+        )
+        == 0
+    )
+
+    output = json.loads(capsys.readouterr().out)
+    assert output["steps"][0]["stdout_json"] == {"matched": True}
+    assert output["steps"][1]["stdout_json"] == {"matched": True}
 
 
 def test_run_projector_phase2_validation_passes_projector_summary_urls(

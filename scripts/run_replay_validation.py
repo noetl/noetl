@@ -19,12 +19,24 @@ def _utc_now() -> str:
 
 
 def _parse_json(value: str) -> object | None:
-    if not value.strip():
+    text = value.strip()
+    if not text:
         return None
+    candidates = [text]
+    for marker in ("\n{", "\n["):
+        index = text.rfind(marker)
+        if index >= 0:
+            candidates.append(text[index + 1 :])
     try:
-        return json.loads(value)
+        return json.loads(text)
     except json.JSONDecodeError:
-        return None
+        pass
+    for candidate in candidates[1:]:
+        try:
+            return json.loads(candidate)
+        except json.JSONDecodeError:
+            continue
+    return None
 
 
 def _run(command: list[str]) -> tuple[int, str, str, float]:
