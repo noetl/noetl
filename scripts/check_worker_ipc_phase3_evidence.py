@@ -11,6 +11,7 @@ from typing import Any
 
 from scripts.check_worker_ipc_metrics import validate_worker_ipc_metrics
 from scripts.package_replay_validation_artifacts import resolve_indexed_path
+from scripts.replay_validation_artifacts import indexed_artifact_entries
 
 ADMISSION_ONLY_MINIMUMS = {
     "noetl_storage_ipc_admit_success_total": 1.0,
@@ -73,9 +74,10 @@ def validate_worker_ipc_phase3_evidence(
 
     metric_results: list[dict[str, Any]] = []
     if check_artifacts:
-        for index, entry in enumerate(worker_metrics):
-            if not isinstance(entry, dict):
-                continue
+        for index, entry in indexed_artifact_entries(
+            {"worker_metrics": worker_metrics},
+            "worker_metrics",
+        ):
             path_value = entry.get("path")
             if not isinstance(path_value, str) or not path_value:
                 continue

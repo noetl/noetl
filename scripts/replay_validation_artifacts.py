@@ -19,6 +19,20 @@ def artifact_entries(artifacts: dict[str, Any], field: str) -> list[dict[str, An
     return [entry for entry in value if isinstance(entry, dict)]
 
 
+def indexed_artifact_entries(
+    artifacts: dict[str, Any],
+    field: str,
+) -> list[tuple[int, dict[str, Any]]]:
+    value = artifacts.get(field)
+    if not isinstance(value, list):
+        return []
+    return [
+        (index, entry)
+        for index, entry in enumerate(value)
+        if isinstance(entry, dict)
+    ]
+
+
 def artifact_roles(artifacts: dict[str, Any], field: str) -> list[str]:
     roles: list[str] = []
     for entry in artifact_entries(artifacts, field):

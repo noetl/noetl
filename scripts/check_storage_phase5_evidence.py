@@ -12,6 +12,7 @@ from typing import Any
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from scripts.package_replay_validation_artifacts import resolve_indexed_path
+from scripts.replay_validation_artifacts import indexed_artifact_entries
 
 REQUIRED_BACKENDS = {"disk", "gcs", "kv", "memory", "s3"}
 REQUIRED_CONSUMERS = {
@@ -118,9 +119,10 @@ def validate_storage_phase5_evidence(
 
     report_results: list[dict[str, Any]] = []
     if check_artifacts:
-        for index, entry in enumerate(reports):
-            if not isinstance(entry, dict):
-                continue
+        for index, entry in indexed_artifact_entries(
+            {"storage_backend_registry": reports},
+            "storage_backend_registry",
+        ):
             path_value = entry.get("path")
             if not isinstance(path_value, str) or not path_value:
                 continue

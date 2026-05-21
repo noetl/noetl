@@ -2,6 +2,7 @@ from scripts.replay_validation_artifacts import (
     artifact_cli_args,
     artifact_entries,
     artifact_roles,
+    indexed_artifact_entries,
     phase_artifact_roles,
 )
 
@@ -35,6 +36,19 @@ def test_artifact_entries_returns_only_object_entries():
 def test_artifact_entries_returns_empty_for_missing_or_non_list_field():
     assert artifact_entries({}, "worker_metrics") == []
     assert artifact_entries({"worker_metrics": "worker.prom"}, "worker_metrics") == []
+
+
+def test_indexed_artifact_entries_preserves_original_indexes():
+    artifacts = {
+        "worker_metrics": [
+            "not-an-entry",
+            {"role": "worker_metrics_1", "path": "worker.prom"},
+        ]
+    }
+
+    assert indexed_artifact_entries(artifacts, "worker_metrics") == [
+        (1, {"role": "worker_metrics_1", "path": "worker.prom"})
+    ]
 
 
 def test_phase_artifact_roles_collects_unique_sorted_roles():
