@@ -394,7 +394,17 @@ def test_fold_replay_state_tracks_commands_and_topology():
                 "command_id": 900,
                 "stage_id": 7,
                 "node_name": "fetch",
-                "meta": {"parent_command_id": "899"},
+                "meta": {
+                    "parent_command_id": "899",
+                    "fanout_reduce": {
+                        "planner_version": 1,
+                        "fanout_step": "start",
+                        "fanout_targets": ["fetch", "transform"],
+                        "target_step": "fetch",
+                        "target_index": 0,
+                        "reduce_steps": ["join"],
+                    },
+                },
             },
             {
                 "event_id": 12,
@@ -448,6 +458,14 @@ def test_fold_replay_state_tracks_commands_and_topology():
     assert command["locality"] == {"node_id": "node-a", "worker_pool": "worker-cpu-01"}
     assert command["source_locality"] == {"node_id": "node-a"}
     assert command["placement"]["within_max_distance"] is True
+    assert command["fanout_reduce"] == {
+        "planner_version": 1,
+        "fanout_step": "start",
+        "fanout_targets": ["fetch", "transform"],
+        "target_step": "fetch",
+        "target_index": 0,
+        "reduce_steps": ["join"],
+    }
 
 
 def test_fold_replay_state_tracks_business_objects():
@@ -953,7 +971,17 @@ def test_command_projection_checksum_matches_live_rows_and_replayed_state():
             "command_id": 900,
             "stage_id": 7,
             "frame_id": 42,
-            "meta": {"parent_command_id": "899"},
+            "meta": {
+                "parent_command_id": "899",
+                "fanout_reduce": {
+                    "planner_version": 1,
+                    "fanout_step": "start",
+                    "fanout_targets": ["fetch", "transform"],
+                    "target_step": "fetch",
+                    "target_index": 0,
+                    "reduce_steps": ["join"],
+                },
+            },
         },
         {
             "event_id": 21,
@@ -1005,6 +1033,14 @@ def test_command_projection_checksum_matches_live_rows_and_replayed_state():
                     "distance": "node",
                     "max_distance": "node",
                     "within_max_distance": True,
+                },
+                "fanout_reduce": {
+                    "planner_version": 1,
+                    "fanout_step": "start",
+                    "fanout_targets": ["fetch", "transform"],
+                    "target_step": "fetch",
+                    "target_index": 0,
+                    "reduce_steps": ["join"],
                 },
                 "status": "COMPLETED",
                 "issued_event_id": 20,

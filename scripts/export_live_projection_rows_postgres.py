@@ -156,6 +156,7 @@ SELECT
     COALESCE(c.meta->'locality', '{}'::jsonb) AS locality,
     COALESCE(c.meta->'source_locality', '{}'::jsonb) AS source_locality,
     COALESCE(c.meta->'placement', '{}'::jsonb) AS placement,
+    COALESCE(c.meta->'fanout_reduce', '{}'::jsonb) AS fanout_reduce,
     c.status,
     c.event_id AS issued_event_id,
     ce.claimed_event_id,

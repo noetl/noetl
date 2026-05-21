@@ -432,6 +432,7 @@ def fold_replay_state(
                     "locality": {},
                     "source_locality": {},
                     "placement": {},
+                    "fanout_reduce": {},
                     "status": "UNKNOWN",
                     "issued_event_id": None,
                     "claimed_event_id": None,
@@ -460,6 +461,8 @@ def fold_replay_state(
                 command["source_locality"] = dict(meta["source_locality"])
             if isinstance(meta.get("placement"), Mapping):
                 command["placement"] = dict(meta["placement"])
+            if isinstance(meta.get("fanout_reduce"), Mapping):
+                command["fanout_reduce"] = dict(meta["fanout_reduce"])
 
             if event_type == "command.issued":
                 command["status"] = status or "PENDING"
@@ -702,6 +705,7 @@ def _normalized_command_projection_row(row: Mapping[str, Any]) -> dict[str, Any]
         "locality": row.get("locality") or {},
         "source_locality": row.get("source_locality") or {},
         "placement": row.get("placement") or {},
+        "fanout_reduce": row.get("fanout_reduce") or {},
         "status": row.get("status"),
         "issued_event_id": (
             int(row.get("issued_event_id")) if row.get("issued_event_id") is not None else None
