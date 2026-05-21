@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.88.1](https://github.com/noetl/noetl/compare/v2.88.0...v2.88.1) (2026-05-21)
+
+### Bug Fixes
+
+* **replay:** normalize explicit artifact index paths ([44408fe](https://github.com/noetl/noetl/commit/44408fec71939419a885aa1f627f0296fbd32f76))
+
 ## [2.88.0](https://github.com/noetl/noetl/compare/v2.87.0...v2.88.0) (2026-05-21)
 
 ### Features
