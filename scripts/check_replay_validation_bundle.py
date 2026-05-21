@@ -11,6 +11,7 @@ from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from scripts.check_fanout_phase6_evidence import validate_fanout_phase6_report
 from scripts.check_projector_phase2_evidence import validate_projector_phase2_evidence
 from scripts.check_replay_validation_manifest import _load_manifest, _validate_manifest
 from scripts.check_storage_phase5_evidence import validate_storage_phase5_evidence
@@ -40,6 +41,7 @@ def validate_bundle(
     require_projection_parity: bool = False,
     require_worker_ipc_phase3: bool = False,
     require_storage_phase5: bool = False,
+    require_fanout_phase6: bool = False,
 ) -> dict[str, Any]:
     failures: list[dict[str, Any]] = []
     manifest = _load_manifest(manifest_path)
@@ -102,6 +104,20 @@ def validate_bundle(
                     "field": "phase5_storage_evidence",
                     "reason": "Phase 5 storage registry evidence validation failed",
                     "failures": phase5_result.get("failures", []),
+                }
+            )
+    phase6_result: dict[str, Any] | None = None
+    if require_fanout_phase6:
+        phase6_result = _validate_fanout_phase6_evidence(
+            manifest,
+            manifest_path=manifest_path,
+        )
+        if phase6_result.get("matched") is not True:
+            failures.append(
+                {
+                    "field": "phase6_fanout_evidence",
+                    "reason": "Phase 6 fan-out/reduce planner evidence validation failed",
+                    "failures": phase6_result.get("failures", []),
                 }
             )
 
@@ -169,7 +185,84 @@ def validate_bundle(
         "phase2_projector_result": phase2_result,
         "phase3_worker_ipc_result": phase3_result,
         "phase5_storage_result": phase5_result,
+        "phase6_fanout_result": phase6_result,
         "artifact_index_result": index_result,
+        "failures": failures,
+    }
+
+
+def _validate_fanout_phase6_evidence(
+    manifest: dict[str, Any],
+    *,
+    manifest_path: Path,
+) -> dict[str, Any]:
+    failures: list[dict[str, Any]] = []
+    artifacts = manifest.get("artifacts")
+    artifacts = artifacts if isinstance(artifacts, dict) else {}
+    reports = artifacts.get("fanout_reduce_planner")
+    if not isinstance(reports, list) or not reports:
+        failures.append(
+            {
+                "field": "artifacts.fanout_reduce_planner",
+                "reason": "Phase 6 evidence requires at least one fan-out/reduce planner report",
+            }
+        )
+        reports = []
+
+    steps = manifest.get("steps")
+    step_names = [
+        step.get("name")
+        for step in (steps if isinstance(steps, list) else [])
+        if isinstance(step, dict)
+    ]
+    if "fanout_reduce_planner_integrity" not in step_names:
+        failures.append(
+            {
+                "field": "steps",
+                "reason": "Phase 6 evidence requires a fan-out/reduce planner integrity step",
+            }
+        )
+
+    report_results: list[dict[str, Any]] = []
+    for index, entry in enumerate(reports):
+        if not isinstance(entry, dict):
+            continue
+        path_value = entry.get("path")
+        if not isinstance(path_value, str) or not path_value:
+            continue
+        path = resolve_indexed_path(path_value, index_path=manifest_path)
+        try:
+            report = json.loads(path.read_text())
+            if not isinstance(report, dict):
+                raise ValueError(f"{path} must contain a JSON object")
+            result = validate_fanout_phase6_report(
+                report,
+                require_fanout=True,
+                require_reduce=True,
+            )
+        except (OSError, json.JSONDecodeError, ValueError) as exc:
+            failures.append(
+                {
+                    "field": f"artifacts.fanout_reduce_planner[{index}].path",
+                    "reason": "fan-out/reduce planner report could not be read",
+                    "path": path_value,
+                    "error": str(exc),
+                }
+            )
+            continue
+        report_results.append({"role": entry.get("role"), "path": str(path), "result": result})
+        if result.get("matched") is not True:
+            failures.append(
+                {
+                    "field": f"artifacts.fanout_reduce_planner[{index}]",
+                    "reason": "fan-out/reduce planner report validation failed",
+                    "failures": result.get("failures", []),
+                }
+            )
+
+    return {
+        "matched": not failures,
+        "report_results": report_results,
         "failures": failures,
     }
 
@@ -199,6 +292,11 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="Require Phase 5 storage backend registry evidence in the manifest",
     )
+    parser.add_argument(
+        "--require-fanout-phase6",
+        action="store_true",
+        help="Require Phase 6 fan-out/reduce planner evidence in the manifest",
+    )
     args = parser.parse_args(argv)
 
     output = validate_bundle(
@@ -209,6 +307,7 @@ def main(argv: list[str] | None = None) -> int:
         require_projection_parity=args.require_projection_parity,
         require_worker_ipc_phase3=args.require_worker_ipc_phase3,
         require_storage_phase5=args.require_storage_phase5,
+        require_fanout_phase6=args.require_fanout_phase6,
     )
     print(json.dumps(output, indent=2, sort_keys=True))
     return 0 if output["matched"] else 1

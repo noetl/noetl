@@ -140,6 +140,84 @@ workflow:
 
 
 @pytest.mark.asyncio
+async def test_inclusive_transition_commands_carry_fanout_reduce_metadata(engine_setup):
+    engine, _playbook_repo, _state_store = engine_setup
+    playbook = DSLParser().parse(
+        """
+apiVersion: noetl.io/v2
+kind: Playbook
+metadata:
+  name: fanout_runtime_metadata
+
+workflow:
+  - step: start
+    tool:
+      kind: python
+      code: "def main(): return {}"
+    next:
+      spec:
+        mode: inclusive
+      arcs:
+        - step: branch_a
+        - step: branch_b
+
+  - step: branch_a
+    tool:
+      kind: python
+      code: "def main(): return {}"
+    next:
+      spec:
+        mode: exclusive
+      arcs:
+        - step: join
+
+  - step: branch_b
+    tool:
+      kind: python
+      code: "def main(): return {}"
+    next:
+      spec:
+        mode: exclusive
+      arcs:
+        - step: join
+
+  - step: join
+    tool:
+      kind: python
+      code: "def main(): return {}"
+"""
+    )
+    state = ExecutionState(execution_id="1002", playbook=playbook, payload={})
+    start_step = state.get_step("start")
+    event = Event(
+        execution_id="1002",
+        step="start",
+        name="call.done",
+        payload={"result": {"data": {"ok": True}}},
+    )
+
+    commands, matched, raised = await engine._evaluate_next_transitions_with_status(
+        state,
+        start_step,
+        event,
+    )
+
+    assert matched is True
+    assert raised is False
+    assert [command.step for command in commands] == ["branch_a", "branch_b"]
+    assert commands[0].metadata["fanout_reduce"] == {
+        "planner_version": 1,
+        "fanout_step": "start",
+        "fanout_targets": ["branch_a", "branch_b"],
+        "target_step": "branch_a",
+        "target_index": 0,
+        "reduce_steps": ["join"],
+    }
+    assert commands[1].metadata["fanout_reduce"]["target_step"] == "branch_b"
+    assert commands[1].metadata["fanout_reduce"]["target_index"] == 1
+
+
+@pytest.mark.asyncio
 async def test_first_persisted_duplicate_call_done_still_orchestrates(engine_setup, monkeypatch):
     """Async batch ingestion may persist duplicates before orchestration; the earliest copy must still drive routing."""
     engine, playbook_repo, state_store = engine_setup

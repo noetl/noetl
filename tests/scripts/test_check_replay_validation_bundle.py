@@ -217,6 +217,34 @@ def _storage_phase5_report() -> dict:
     }
 
 
+def _fanout_phase6_report() -> dict:
+    return {
+        "planner_version": 1,
+        "summary": {"playbooks": 1, "fanouts": 1, "reduces": 1},
+        "playbooks": [
+            {
+                "path": "tests/fixtures/playbooks/fanout.yaml",
+                "name": "fanout",
+                "planner": {
+                    "fanouts": [
+                        {
+                            "step": "start",
+                            "arcs": ["a", "b"],
+                            "reduce_steps": ["join"],
+                        }
+                    ],
+                    "reduces": [
+                        {
+                            "step": "join",
+                            "upstream_steps": ["a", "b"],
+                        }
+                    ],
+                },
+            }
+        ],
+    }
+
+
 def _add_storage_phase5_evidence(manifest: Path, index: Path, tmp_path: Path) -> None:
     payload = json.loads(manifest.read_text())
     report = tmp_path / "storage-phase5-report.json"
@@ -254,6 +282,51 @@ def _add_storage_phase5_evidence(manifest: Path, index: Path, tmp_path: Path) ->
                 manifest_path=manifest,
                 output_path=index,
                 extra_artifacts=[("storage_backend_registry", report)],
+            ),
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n"
+    )
+
+
+def _add_fanout_phase6_evidence(manifest: Path, index: Path, tmp_path: Path) -> None:
+    payload = json.loads(manifest.read_text())
+    report = tmp_path / "fanout-phase6-report.json"
+    report.write_text(json.dumps(_fanout_phase6_report(), indent=2, sort_keys=True))
+    payload["artifacts"]["fanout_reduce_planner"] = [
+        {"role": "fanout_reduce_planner", "path": str(report)}
+    ]
+    payload["config"]["fanout_reduce_planner_report"] = str(report)
+    payload["steps"].insert(
+        -1,
+        {
+            "name": "fanout_reduce_planner_report",
+            "command": ["python", "scripts/build_fanout_phase6_report.py"],
+            "returncode": 0,
+            "duration_seconds": 0.1,
+            "stdout": "{}",
+            "stderr": "",
+        },
+    )
+    payload["steps"].insert(
+        -1,
+        {
+            "name": "fanout_reduce_planner_integrity",
+            "command": ["python", "scripts/check_fanout_phase6_evidence.py"],
+            "returncode": 0,
+            "duration_seconds": 0.1,
+            "stdout": "{}",
+            "stderr": "",
+        },
+    )
+    manifest.write_text(json.dumps(payload))
+    index.write_text(
+        json.dumps(
+            build_artifact_index(
+                manifest_path=manifest,
+                output_path=index,
+                extra_artifacts=[("fanout_reduce_planner", report)],
             ),
             indent=2,
             sort_keys=True,
@@ -472,5 +545,32 @@ def test_check_replay_validation_bundle_rejects_missing_storage_phase5_evidence(
     output = json.loads(capsys.readouterr().out)
     assert any(
         failure["field"] == "phase5_storage_evidence"
+        for failure in output["failures"]
+    )
+
+
+def test_check_replay_validation_bundle_accepts_fanout_phase6_evidence(
+    tmp_path: Path,
+    capsys,
+):
+    manifest, index = _bundle(tmp_path)
+    _add_fanout_phase6_evidence(manifest, index, tmp_path)
+
+    assert main(["--manifest", str(manifest), "--require-fanout-phase6"]) == 0
+    output = json.loads(capsys.readouterr().out)
+    assert output["matched"] is True
+    assert output["phase6_fanout_result"]["matched"] is True
+
+
+def test_check_replay_validation_bundle_rejects_missing_fanout_phase6_evidence(
+    tmp_path: Path,
+    capsys,
+):
+    manifest, _index = _bundle(tmp_path)
+
+    assert main(["--manifest", str(manifest), "--require-fanout-phase6"]) == 1
+    output = json.loads(capsys.readouterr().out)
+    assert any(
+        failure["field"] == "phase6_fanout_evidence"
         for failure in output["failures"]
     )
