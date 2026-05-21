@@ -15,6 +15,7 @@ from scripts.package_replay_validation_artifacts import (
     validate_artifact_index,
 )
 from scripts.replay_validation_artifacts import (
+    PHASE_ARTIFACT_FIELDS,
     duplicate_artifact_roles,
     missing_indexed_artifact_roles,
     phase_artifact_roles,
@@ -204,37 +205,10 @@ def _validate_manifest(
         failures.append({"field": "artifacts", "reason": "must be an object"})
     elif isinstance(artifacts, dict):
         for field, value in artifacts.items():
-            if field == "projector_summaries":
+            if field in PHASE_ARTIFACT_FIELDS:
                 _validate_artifact_list(
                     failures,
-                    field="artifacts.projector_summaries",
-                    value=value,
-                    manifest_path=manifest_path,
-                    check_artifacts=check_artifacts,
-                )
-                continue
-            if field == "worker_metrics":
-                _validate_artifact_list(
-                    failures,
-                    field="artifacts.worker_metrics",
-                    value=value,
-                    manifest_path=manifest_path,
-                    check_artifacts=check_artifacts,
-                )
-                continue
-            if field == "storage_backend_registry":
-                _validate_artifact_list(
-                    failures,
-                    field="artifacts.storage_backend_registry",
-                    value=value,
-                    manifest_path=manifest_path,
-                    check_artifacts=check_artifacts,
-                )
-                continue
-            if field == "fanout_reduce_planner":
-                _validate_artifact_list(
-                    failures,
-                    field="artifacts.fanout_reduce_planner",
+                    field=f"artifacts.{field}",
                     value=value,
                     manifest_path=manifest_path,
                     check_artifacts=check_artifacts,
