@@ -62,6 +62,40 @@ def test_run_replay_validation_fetches_and_runs_selected_gates(monkeypatch, tmp_
     assert json.loads(manifest_path.read_text())["matched"] is True
 
 
+def test_run_replay_validation_captures_log_prefixed_step_json(monkeypatch, tmp_path: Path, capsys):
+    calls = []
+
+    def _run(command):
+        calls.append(command)
+        if any(str(part).endswith("fetch_replay_state_report.py") for part in command):
+            output_path = Path(command[command.index("--output") + 1])
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            output_path.write_text(json.dumps({"projection_checksums": {"execution": "a" * 64}}))
+        if any(str(part).endswith("check_replay_state_report.py") for part in command):
+            return 0, 'INFO validated env\n{"matched": true, "failures": []}\n', "", 0.01
+        return 0, json.dumps({"ok": True}), "", 0.01
+
+    monkeypatch.setattr(run_replay_validation, "_run", _run)
+
+    assert (
+        run_replay_validation.main(
+            [
+                "--base-url",
+                "http://noetl.example",
+                "--execution-id",
+                "123",
+                "--output-dir",
+                str(tmp_path),
+            ]
+        )
+        == 0
+    )
+
+    output = json.loads(capsys.readouterr().out)
+    assert output["steps"][1]["name"] == "state_integrity"
+    assert output["steps"][1]["stdout_json"] == {"matched": True, "failures": []}
+
+
 def test_run_replay_validation_stops_on_gate_failure(monkeypatch, tmp_path: Path, capsys):
     def _run(command):
         if any(str(part).endswith("fetch_replay_state_report.py") for part in command):

@@ -13,18 +13,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from scripts.validation_stdout import parse_json_output
+
 
 def _utc_now() -> str:
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
-
-
-def _parse_json(value: str) -> object | None:
-    if not value.strip():
-        return None
-    try:
-        return json.loads(value)
-    except json.JSONDecodeError:
-        return None
 
 
 def _run(command: list[str]) -> tuple[int, str, str, float]:
@@ -52,7 +45,7 @@ def _step(name: str, command: list[str]) -> dict[str, Any]:
         "stdout": stdout,
         "stderr": stderr,
     }
-    stdout_json = _parse_json(stdout)
+    stdout_json = parse_json_output(stdout)
     if stdout_json is not None:
         step["stdout_json"] = stdout_json
     return step
@@ -189,6 +182,32 @@ def main(argv: list[str] | None = None) -> int:
         )
         _emit(report, args.report_output)
         return int(steps[-1]["returncode"])
+    missing_replay_artifacts = [
+        str(path)
+        for path in (manifest_path, artifact_index_path)
+        if not path.exists()
+    ]
+    if missing_replay_artifacts:
+        steps.append(
+            {
+                "name": "replay_validation_artifacts",
+                "returncode": 1,
+                "duration_seconds": 0.0,
+                "stdout": "",
+                "stderr": "replay validation did not create required artifacts: "
+                + ", ".join(missing_replay_artifacts),
+            }
+        )
+        report = _build_report(
+            matched=False,
+            started_at=started_at,
+            manifest_path=manifest_path,
+            artifact_index_path=artifact_index_path,
+            steps=steps,
+            args=args,
+        )
+        _emit(report, args.report_output)
+        return 1
 
     phase_gate_command = [
         _validation_python(),
