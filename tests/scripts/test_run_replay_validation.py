@@ -4,26 +4,6 @@ from pathlib import Path
 from scripts import run_replay_validation
 
 
-def test_parse_json_accepts_plain_json():
-    assert run_replay_validation._parse_json('{"matched": true}') == {"matched": True}
-
-
-def test_parse_json_accepts_log_prefixed_json_object():
-    output = "2026-05-20T20:48:51 [INFO] config validated\n{\"matched\": true, \"failures\": []}\n"
-
-    assert run_replay_validation._parse_json(output) == {"matched": True, "failures": []}
-
-
-def test_parse_json_accepts_log_prefixed_json_array():
-    output = "INFO warmup complete\n[{\"name\": \"fetch\"}]\n"
-
-    assert run_replay_validation._parse_json(output) == [{"name": "fetch"}]
-
-
-def test_parse_json_rejects_non_json_output():
-    assert run_replay_validation._parse_json("INFO only\nnot-json") is None
-
-
 def test_run_replay_validation_fetches_and_runs_selected_gates(monkeypatch, tmp_path: Path, capsys):
     calls = []
 

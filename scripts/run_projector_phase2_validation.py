@@ -13,30 +13,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from scripts.validation_stdout import parse_json_output
+
 
 def _utc_now() -> str:
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
-
-
-def _parse_json(value: str) -> object | None:
-    text = value.strip()
-    if not text:
-        return None
-    candidates = [text]
-    for marker in ("\n{", "\n["):
-        index = text.rfind(marker)
-        if index >= 0:
-            candidates.append(text[index + 1 :])
-    try:
-        return json.loads(text)
-    except json.JSONDecodeError:
-        pass
-    for candidate in candidates[1:]:
-        try:
-            return json.loads(candidate)
-        except json.JSONDecodeError:
-            continue
-    return None
 
 
 def _run(command: list[str]) -> tuple[int, str, str, float]:
@@ -64,7 +45,7 @@ def _step(name: str, command: list[str]) -> dict[str, Any]:
         "stdout": stdout,
         "stderr": stderr,
     }
-    stdout_json = _parse_json(stdout)
+    stdout_json = parse_json_output(stdout)
     if stdout_json is not None:
         step["stdout_json"] = stdout_json
     return step

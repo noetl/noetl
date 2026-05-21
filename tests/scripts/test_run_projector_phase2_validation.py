@@ -4,12 +4,6 @@ from pathlib import Path
 from scripts import run_projector_phase2_validation
 
 
-def test_projector_phase2_parse_json_accepts_log_prefixed_output():
-    output = "INFO warmed projector gate\n{\"matched\": true}\n"
-
-    assert run_projector_phase2_validation._parse_json(output) == {"matched": True}
-
-
 def test_run_projector_phase2_validation_runs_replay_then_phase_gate(
     monkeypatch,
     tmp_path: Path,
