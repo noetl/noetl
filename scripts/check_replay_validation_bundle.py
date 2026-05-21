@@ -27,6 +27,7 @@ from scripts.replay_validation_artifacts import (
     indexed_artifact_paths,
     missing_indexed_artifact_roles,
     phase_artifact_roles,
+    result_matched,
 )
 
 
@@ -84,7 +85,7 @@ def validate_bundle(
         check_artifacts=True,
         manifest_path=manifest_path,
     )
-    if manifest_result.get("matched") is not True:
+    if not result_matched(manifest_result):
         failures.append(
             {
                 "field": "manifest",
@@ -100,7 +101,7 @@ def validate_bundle(
             check_artifacts=True,
             manifest_path=manifest_path,
         )
-        if phase2_result.get("matched") is not True:
+        if not result_matched(phase2_result):
             failures.append(
                 {
                     "field": "phase2_projector_evidence",
@@ -115,7 +116,7 @@ def validate_bundle(
             check_artifacts=True,
             manifest_path=manifest_path,
         )
-        if phase3_result.get("matched") is not True:
+        if not result_matched(phase3_result):
             failures.append(
                 {
                     "field": "phase3_worker_ipc_evidence",
@@ -130,7 +131,7 @@ def validate_bundle(
             check_artifacts=True,
             manifest_path=manifest_path,
         )
-        if phase5_result.get("matched") is not True:
+        if not result_matched(phase5_result):
             failures.append(
                 {
                     "field": "phase5_storage_evidence",
@@ -144,7 +145,7 @@ def validate_bundle(
             manifest,
             manifest_path=manifest_path,
         )
-        if phase6_result.get("matched") is not True:
+        if not result_matched(phase6_result):
             failures.append(
                 {
                     "field": "phase6_fanout_evidence",
@@ -158,7 +159,7 @@ def validate_bundle(
             manifest,
             manifest_path=manifest_path,
         )
-        if replay_phase6_result.get("matched") is not True:
+        if not result_matched(replay_phase6_result):
             failures.append(
                 {
                     "field": "phase6_replay_fanout_evidence",
@@ -213,7 +214,7 @@ def validate_bundle(
                 }
             )
         else:
-            if index_result.get("matched") is not True:
+            if not result_matched(index_result):
                 failures.append(
                     {
                         "field": "artifact_index",
@@ -315,7 +316,7 @@ def _validate_fanout_phase6_evidence(
             )
             continue
         report_results.append(artifact_result_entry(entry, path=str(path), result=result))
-        if result.get("matched") is not True:
+        if not result_matched(result):
             failures.append(
                 {
                     "field": f"artifacts.fanout_reduce_planner[{index}]",
@@ -380,7 +381,7 @@ def _validate_replay_fanout_phase6_evidence(
         )
         return {"matched": False, "result": None, "failures": failures}
 
-    if result.get("matched") is not True:
+    if not result_matched(result):
         failures.append(
             {
                 "field": "artifacts.replay",

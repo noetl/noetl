@@ -8,6 +8,7 @@ from scripts.replay_validation_artifacts import (
     indexed_artifact_paths,
     missing_indexed_artifact_roles,
     phase_artifact_roles,
+    result_matched,
 )
 
 
@@ -139,6 +140,13 @@ def test_artifact_result_entry_preserves_role_path_and_result():
         "path": "/tmp/worker.prom",
         "result": result,
     }
+
+
+def test_result_matched_requires_explicit_true_match():
+    assert result_matched({"matched": True}) is True
+    assert result_matched({"matched": False}) is False
+    assert result_matched({"matched": "true"}) is False
+    assert result_matched(None) is False
 
 
 def test_artifact_cli_args_renders_role_path_pairs():

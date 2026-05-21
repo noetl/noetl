@@ -15,6 +15,7 @@ from scripts.package_replay_validation_artifacts import resolve_indexed_path
 from scripts.replay_validation_artifacts import (
     artifact_result_entry,
     indexed_artifact_paths,
+    result_matched,
 )
 
 REQUIRED_BACKENDS = {"disk", "gcs", "kv", "memory", "s3"}
@@ -70,7 +71,7 @@ def validate_storage_phase5_report(report: dict[str, Any]) -> dict[str, Any]:
 
     direct_scan = report.get("direct_backend_construction")
     direct_scan = direct_scan if isinstance(direct_scan, dict) else {}
-    if direct_scan.get("matched") is not True:
+    if not result_matched(direct_scan):
         failures.append(
             {
                 "field": "direct_backend_construction",
@@ -140,7 +141,7 @@ def validate_storage_phase5_evidence(
                 )
                 continue
             report_results.append(artifact_result_entry(entry, path=str(path), result=result))
-            if result.get("matched") is not True:
+            if not result_matched(result):
                 failures.append(
                     {
                         "field": f"artifacts.storage_backend_registry[{index}]",

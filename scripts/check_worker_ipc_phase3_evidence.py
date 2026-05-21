@@ -14,6 +14,7 @@ from scripts.package_replay_validation_artifacts import resolve_indexed_path
 from scripts.replay_validation_artifacts import (
     artifact_result_entry,
     indexed_artifact_paths,
+    result_matched,
 )
 
 ADMISSION_ONLY_MINIMUMS = {
@@ -98,7 +99,7 @@ def validate_worker_ipc_phase3_evidence(
                 )
                 continue
             metric_results.append(artifact_result_entry(entry, path=str(path), result=result))
-            if result.get("matched") is not True:
+            if not result_matched(result):
                 failures.append(
                     {
                         "field": f"artifacts.worker_metrics[{index}]",
