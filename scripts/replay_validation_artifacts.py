@@ -75,6 +75,24 @@ def phase_artifact_roles(
     return sorted(set(roles))
 
 
+def manifest_artifacts(manifest: dict[str, Any]) -> dict[str, Any]:
+    artifacts = manifest.get("artifacts")
+    if not isinstance(artifacts, dict):
+        return {}
+    return artifacts
+
+
+def manifest_step_names(manifest: dict[str, Any]) -> list[str]:
+    steps = manifest.get("steps")
+    if not isinstance(steps, list):
+        return []
+    return [
+        step["name"]
+        for step in steps
+        if isinstance(step, dict) and isinstance(step.get("name"), str)
+    ]
+
+
 def missing_indexed_artifact_roles(
     required_roles: list[str],
     indexed_roles: Any,
@@ -85,9 +103,7 @@ def missing_indexed_artifact_roles(
 
 
 def artifact_index_path_value(manifest: dict[str, Any]) -> str | None:
-    artifacts = manifest.get("artifacts")
-    if not isinstance(artifacts, dict):
-        return None
+    artifacts = manifest_artifacts(manifest)
     value = artifacts.get("artifact_index")
     if not isinstance(value, str) or not value:
         return None
