@@ -14,6 +14,8 @@ from scripts.package_replay_validation_artifacts import resolve_indexed_path
 from scripts.replay_validation_artifacts import (
     artifact_result_entry,
     indexed_artifact_paths,
+    manifest_artifacts,
+    manifest_step_names,
     result_matched,
 )
 
@@ -42,8 +44,7 @@ def validate_worker_ipc_phase3_evidence(
     manifest_path: Path | None = None,
 ) -> dict[str, Any]:
     failures: list[dict[str, Any]] = []
-    artifacts = manifest.get("artifacts")
-    artifacts = artifacts if isinstance(artifacts, dict) else {}
+    artifacts = manifest_artifacts(manifest)
     config = manifest.get("config")
     config = config if isinstance(config, dict) else {}
     admission_only = bool(config.get("worker_metrics_admission_only"))
@@ -57,12 +58,7 @@ def validate_worker_ipc_phase3_evidence(
         )
         worker_metrics = []
 
-    steps = manifest.get("steps")
-    step_names = [
-        step.get("name")
-        for step in (steps if isinstance(steps, list) else [])
-        if isinstance(step, dict)
-    ]
+    step_names = manifest_step_names(manifest)
     if not any(
         isinstance(name, str)
         and name.startswith("worker_metrics_")

@@ -7,6 +7,8 @@ from scripts.replay_validation_artifacts import (
     duplicate_artifact_roles,
     indexed_artifact_entries,
     indexed_artifact_paths,
+    manifest_artifacts,
+    manifest_step_names,
     missing_indexed_artifact_roles,
     phase_artifact_roles,
     result_matched,
@@ -113,6 +115,28 @@ def test_phase_artifact_roles_can_limit_fields():
     assert phase_artifact_roles(artifacts, fields=("worker_metrics",)) == [
         "worker_metrics_1"
     ]
+
+
+def test_manifest_artifacts_returns_artifact_mapping_or_empty():
+    artifacts = {"replay": "replay.json"}
+
+    assert manifest_artifacts({"artifacts": artifacts}) == artifacts
+    assert manifest_artifacts({"artifacts": []}) == {}
+    assert manifest_artifacts({}) == {}
+
+
+def test_manifest_step_names_returns_named_steps_only():
+    assert manifest_step_names(
+        {
+            "steps": [
+                {"name": "fetch"},
+                {"name": ""},
+                {"name": 123},
+                "not-a-step",
+            ]
+        }
+    ) == ["fetch", ""]
+    assert manifest_step_names({"steps": {}}) == []
 
 
 def test_missing_indexed_artifact_roles_returns_unmatched_required_roles():

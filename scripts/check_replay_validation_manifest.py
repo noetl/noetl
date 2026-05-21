@@ -18,6 +18,7 @@ from scripts.replay_validation_artifacts import (
     PHASE_ARTIFACT_FIELDS,
     artifact_index_path_value,
     duplicate_artifact_roles,
+    manifest_artifacts,
     missing_indexed_artifact_roles,
     phase_artifact_roles,
     result_matched,
@@ -202,10 +203,11 @@ def _validate_manifest(
                 }
             )
 
-    artifacts = manifest.get("artifacts")
-    if artifacts is not None and not isinstance(artifacts, dict):
+    artifact_value = manifest.get("artifacts")
+    artifacts = manifest_artifacts(manifest)
+    if artifact_value is not None and not isinstance(artifact_value, dict):
         failures.append({"field": "artifacts", "reason": "must be an object"})
-    elif isinstance(artifacts, dict):
+    elif artifacts:
         for field, value in artifacts.items():
             if field in PHASE_ARTIFACT_FIELDS:
                 _validate_artifact_list(

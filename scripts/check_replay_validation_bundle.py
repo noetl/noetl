@@ -26,6 +26,8 @@ from scripts.replay_validation_artifacts import (
     artifact_result_entry,
     indexed_artifact_entries,
     indexed_artifact_paths,
+    manifest_artifacts,
+    manifest_step_names,
     missing_indexed_artifact_roles,
     phase_artifact_roles,
     result_matched,
@@ -40,8 +42,8 @@ def _required_index_roles(
     require_storage_phase5: bool,
     require_fanout_phase6: bool,
 ) -> list[str]:
-    artifacts = manifest.get("artifacts")
-    if not isinstance(artifacts, dict):
+    artifacts = manifest_artifacts(manifest)
+    if not artifacts:
         return []
     fields: list[str] = []
     if require_projector_phase2:
@@ -255,8 +257,7 @@ def _validate_fanout_phase6_evidence(
     manifest_path: Path,
 ) -> dict[str, Any]:
     failures: list[dict[str, Any]] = []
-    artifacts = manifest.get("artifacts")
-    artifacts = artifacts if isinstance(artifacts, dict) else {}
+    artifacts = manifest_artifacts(manifest)
     reports = artifacts.get("fanout_reduce_planner")
     if not isinstance(reports, list) or not reports:
         failures.append(
@@ -267,12 +268,7 @@ def _validate_fanout_phase6_evidence(
         )
         reports = []
 
-    steps = manifest.get("steps")
-    step_names = [
-        step.get("name")
-        for step in (steps if isinstance(steps, list) else [])
-        if isinstance(step, dict)
-    ]
+    step_names = manifest_step_names(manifest)
     if "fanout_reduce_planner_integrity" not in step_names:
         failures.append(
             {
@@ -329,8 +325,7 @@ def _validate_replay_fanout_phase6_evidence(
     manifest_path: Path,
 ) -> dict[str, Any]:
     failures: list[dict[str, Any]] = []
-    artifacts = manifest.get("artifacts")
-    artifacts = artifacts if isinstance(artifacts, dict) else {}
+    artifacts = manifest_artifacts(manifest)
     replay_path = artifacts.get("replay")
     if not isinstance(replay_path, str) or not replay_path:
         failures.append(
@@ -341,12 +336,7 @@ def _validate_replay_fanout_phase6_evidence(
         )
         return {"matched": False, "result": None, "failures": failures}
 
-    steps = manifest.get("steps")
-    step_names = [
-        step.get("name")
-        for step in (steps if isinstance(steps, list) else [])
-        if isinstance(step, dict)
-    ]
+    step_names = manifest_step_names(manifest)
     if "replay_fanout_reduce_integrity" not in step_names:
         failures.append(
             {
