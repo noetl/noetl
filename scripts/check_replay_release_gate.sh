@@ -22,6 +22,7 @@ fi
   tests/scripts/test_export_live_projection_rows_postgres.py \
   tests/scripts/test_check_live_projection_rows.py \
   tests/scripts/test_check_runtime_locator_surfaces.py \
+  tests/scripts/test_replay_validation_artifacts.py \
   tests/scripts/test_package_replay_validation_artifacts.py \
   tests/scripts/test_check_replay_validation_bundle.py \
   tests/scripts/test_check_replay_validation_manifest.py \
