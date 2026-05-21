@@ -1,6 +1,7 @@
 from scripts.replay_validation_artifacts import (
     artifact_cli_args,
     artifact_entries,
+    artifact_index_path_value,
     artifact_result_entry,
     artifact_roles,
     duplicate_artifact_roles,
@@ -126,6 +127,18 @@ def test_missing_indexed_artifact_roles_treats_malformed_index_roles_as_empty():
         ["projector_summary_1"],
         "projector_summary_1",
     ) == ["projector_summary_1"]
+
+
+def test_artifact_index_path_value_returns_non_empty_manifest_index():
+    assert artifact_index_path_value(
+        {"artifacts": {"artifact_index": "artifact-index.json"}}
+    ) == "artifact-index.json"
+
+
+def test_artifact_index_path_value_ignores_missing_or_malformed_values():
+    assert artifact_index_path_value({"artifacts": {"artifact_index": ""}}) is None
+    assert artifact_index_path_value({"artifacts": {"artifact_index": 123}}) is None
+    assert artifact_index_path_value({"artifacts": []}) is None
 
 
 def test_artifact_result_entry_preserves_role_path_and_result():
