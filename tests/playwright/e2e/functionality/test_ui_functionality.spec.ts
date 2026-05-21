@@ -1,18 +1,17 @@
 import { test, expect } from '@playwright/test';
-import { execSync } from 'child_process';
+import { registerPlaybook, skipUnlessUiE2EEnabled } from '../support/noetl';
 
 test.describe('Hello World', () => {
+    skipUnlessUiE2EEnabled();
+
     test.beforeAll(() => {
         console.log('Registering hello world...');
-        execSync(
-            'noetl register tests/fixtures/playbooks/hello_world/hello_world.yaml --host localhost --port 8082',
-            { stdio: 'inherit' }
-        );
+        registerPlaybook('../e2e/fixtures/playbooks/hello_world/hello_world.yaml');
     });
 
     test('/catalog: Execute', async ({ page }) => {
         await test.step('Open Catalog', async () => {
-            await page.goto('http://localhost:8082/catalog');
+            await page.goto('/catalog');
             await expect(page).toHaveTitle('NoETL Dashboard');
         });
 
@@ -36,7 +35,7 @@ test.describe('Hello World', () => {
 
     test('/catalog: Payload', async ({ page }) => {
         await test.step('Open Catalog', async () => {
-            await page.goto('http://localhost:8082/catalog');
+            await page.goto('/catalog');
             await expect(page).toHaveTitle('NoETL Dashboard');
         });
 
@@ -49,7 +48,7 @@ test.describe('Hello World', () => {
 
         await test.step('Validate Payload modal UI', async () => {
             const payloadModal = page.locator(
-                '//*[@class="ant-modal-title"][text()="Execute Playbook with Payload: tests/fixtures/playbooks/hello_world"]'
+                '//*[@class="ant-modal-title"][text()="Execute Playbook with Payload: fixtures/playbooks/hello_world"]'
             );
             await expect(payloadModal).toBeVisible();
 
@@ -59,13 +58,13 @@ test.describe('Hello World', () => {
             const executeButton = page.locator('//button[span[text()="Execute with Payload"]]');
             await expect(executeButton).toBeVisible();
             //TODO: add file upload test
-            //TODO: add payload execution test, assert Executing playbook "tests/fixtures/playbooks/hello_world/hello_world"...
+            //TODO: add payload execution test, assert Executing playbook "fixtures/playbooks/hello_world/hello_world"...
         });
     });
 
     test('/catalog: Edit', async ({ page }) => {
         await test.step('Open Catalog', async () => {
-            await page.goto('http://localhost:8082/catalog');
+            await page.goto('/catalog');
             await expect(page).toHaveTitle('NoETL Dashboard');
         });
 
@@ -78,13 +77,13 @@ test.describe('Hello World', () => {
 
         await test.step('Validate navigation to Editor page', async () => {
             await expect(page).toHaveURL(/\/editor/);
-            await expect(page.url()).toContain('/editor?id=tests/fixtures/playbooks/hello_world');
+            await expect(page.url()).toContain('/editor?id=fixtures/playbooks/hello_world');
         });
     });
 
     test('/catalog: View', async ({ page }) => {
         await test.step('Open Catalog', async () => {
-            await page.goto('http://localhost:8082/catalog');
+            await page.goto('/catalog');
             await expect(page).toHaveTitle('NoETL Dashboard');
         });
 
@@ -107,14 +106,11 @@ test.describe('Hello World', () => {
 
     test('/catalog: Search', async ({ page }) => {
         await test.step('Register control_flow_workbook (for negative filter check)', async () => {
-            execSync(
-                'noetl register tests/fixtures/playbooks/control_flow_workbook/control_flow_workbook.yaml --host localhost --port 8082',
-                { stdio: 'inherit' }
-            );
+            registerPlaybook('../e2e/fixtures/playbooks/control_flow_workbook/control_flow_workbook.yaml');
         });
 
         await test.step('Open Catalog', async () => {
-            await page.goto('http://localhost:8082/catalog');
+            await page.goto('/catalog');
             await expect(page).toHaveTitle('NoETL Dashboard');
         });
 
@@ -139,7 +135,7 @@ test.describe('Hello World', () => {
 
     test('/editor: Validate', async ({ page }) => {
         await test.step('Open Editor', async () => {
-            await page.goto('http://localhost:8082/editor');
+            await page.goto('/editor');
             await expect(page).toHaveTitle('NoETL Dashboard');
         });
 
@@ -152,7 +148,7 @@ test.describe('Hello World', () => {
 
     test('/editor: Show Workflow', async ({ page }) => {
         await test.step('Open Editor', async () => {
-            await page.goto('http://localhost:8082/editor');
+            await page.goto('/editor');
             await expect(page).toHaveTitle('NoETL Dashboard');
         });
 
@@ -172,7 +168,7 @@ test.describe('Hello World', () => {
 
     test('/editor: Save', async ({ page }) => {
         await test.step('Open Editor', async () => {
-            await page.goto('http://localhost:8082/editor');
+            await page.goto('/editor');
             await expect(page).toHaveTitle('NoETL Dashboard');
         });
 
@@ -190,7 +186,7 @@ test.describe('Hello World', () => {
 
     test('/editor: Execute', async ({ page }) => {
         await test.step('Open Editor', async () => {
-            await page.goto('http://localhost:8082/editor');
+            await page.goto('/editor');
             await expect(page).toHaveTitle('NoETL Dashboard');
         });
 
@@ -203,7 +199,7 @@ test.describe('Hello World', () => {
 
     test('/execution: Refresh', async ({ page }) => {
         await test.step('Open Execution page', async () => {
-            await page.goto('http://localhost:8082/execution');
+            await page.goto('/execution');
             await expect(page).toHaveTitle('NoETL Dashboard');
         });
 

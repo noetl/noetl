@@ -1,21 +1,18 @@
 import { test, expect, type Page } from '@playwright/test';
-import { execSync } from 'child_process';
+import { registerPlaybook, skipUnlessUiE2EEnabled } from './support/noetl';
 
-const NOETL_HOST = process.env.NOETL_HOST;
-const NOETL_PORT = process.env.NOETL_PORT;
-const BASE_URL = `http://${NOETL_HOST}:${NOETL_PORT}`;
-
-const CATALOG_URL = `${BASE_URL}/catalog`;
+const CATALOG_URL = `/catalog`;
 const PLAYBOOK_NAME = 'duckdb_query';
-const PLAYBOOK_PATH = `tests/retry/${PLAYBOOK_NAME}.yaml`;
+const PLAYBOOK_PATH = `../e2e/fixtures/playbooks/retry_test/duckdb_retry_query.yaml`;
 const PLAYBOOK_CATALOG_NODE = `tests/retry/${PLAYBOOK_NAME}`;
 const LOADING_EXECUTIONS_TEXT = 'Loading executions...';
 const viewHeaders = ['Event Type', 'Node Name', 'Status', 'Timestamp', 'Duration'] as const;
 
 test.describe('HTTP DuckDB to Postgres', () => {
+    skipUnlessUiE2EEnabled();
     test.beforeAll(() => {
         console.log(`Registering ${PLAYBOOK_NAME}...`);
-        execSync(`noetl register ${PLAYBOOK_PATH} --host ${NOETL_HOST} --port ${NOETL_PORT}`, { stdio: 'inherit' });
+        registerPlaybook(PLAYBOOK_PATH);
     });
 
     test('should open catalog page', async ({ page }) => {
