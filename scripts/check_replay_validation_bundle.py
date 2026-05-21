@@ -21,7 +21,11 @@ from scripts.package_replay_validation_artifacts import (
     resolve_indexed_path,
     validate_artifact_index,
 )
-from scripts.replay_validation_artifacts import indexed_artifact_entries, phase_artifact_roles
+from scripts.replay_validation_artifacts import (
+    indexed_artifact_entries,
+    missing_indexed_artifact_roles,
+    phase_artifact_roles,
+)
 
 
 def _artifact_index_from_manifest(manifest: dict[str, Any]) -> str | None:
@@ -223,11 +227,10 @@ def validate_bundle(
                 require_storage_phase5=require_storage_phase5,
                 require_fanout_phase6=require_fanout_phase6,
             )
-            indexed_roles = index_result.get("roles")
-            indexed_roles = indexed_roles if isinstance(indexed_roles, list) else []
-            missing_index_roles = [
-                role for role in required_index_roles if role not in indexed_roles
-            ]
+            missing_index_roles = missing_indexed_artifact_roles(
+                required_index_roles,
+                index_result.get("roles"),
+            )
             if missing_index_roles:
                 failures.append(
                     {
