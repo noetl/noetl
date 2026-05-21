@@ -12,7 +12,10 @@ from typing import Any
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from scripts.package_replay_validation_artifacts import resolve_indexed_path
-from scripts.replay_validation_artifacts import indexed_artifact_paths
+from scripts.replay_validation_artifacts import (
+    artifact_result_entry,
+    indexed_artifact_paths,
+)
 
 REQUIRED_BACKENDS = {"disk", "gcs", "kv", "memory", "s3"}
 REQUIRED_CONSUMERS = {
@@ -136,7 +139,7 @@ def validate_storage_phase5_evidence(
                     }
                 )
                 continue
-            report_results.append({"role": entry.get("role"), "path": str(path), "result": result})
+            report_results.append(artifact_result_entry(entry, path=str(path), result=result))
             if result.get("matched") is not True:
                 failures.append(
                     {

@@ -11,7 +11,10 @@ from typing import Any
 
 from scripts.check_worker_ipc_metrics import validate_worker_ipc_metrics
 from scripts.package_replay_validation_artifacts import resolve_indexed_path
-from scripts.replay_validation_artifacts import indexed_artifact_paths
+from scripts.replay_validation_artifacts import (
+    artifact_result_entry,
+    indexed_artifact_paths,
+)
 
 ADMISSION_ONLY_MINIMUMS = {
     "noetl_storage_ipc_admit_success_total": 1.0,
@@ -94,7 +97,7 @@ def validate_worker_ipc_phase3_evidence(
                     }
                 )
                 continue
-            metric_results.append({"role": entry.get("role"), "path": str(path), "result": result})
+            metric_results.append(artifact_result_entry(entry, path=str(path), result=result))
             if result.get("matched") is not True:
                 failures.append(
                     {
