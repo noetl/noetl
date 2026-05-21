@@ -15,6 +15,8 @@ from scripts.package_replay_validation_artifacts import resolve_indexed_path
 from scripts.replay_validation_artifacts import (
     artifact_result_entry,
     indexed_artifact_paths,
+    manifest_artifacts,
+    manifest_step_names,
     result_matched,
 )
 
@@ -95,8 +97,7 @@ def validate_storage_phase5_evidence(
     manifest_path: Path | None = None,
 ) -> dict[str, Any]:
     failures: list[dict[str, Any]] = []
-    artifacts = manifest.get("artifacts")
-    artifacts = artifacts if isinstance(artifacts, dict) else {}
+    artifacts = manifest_artifacts(manifest)
     reports = artifacts.get("storage_backend_registry")
     if not isinstance(reports, list) or not reports:
         failures.append(
@@ -107,12 +108,7 @@ def validate_storage_phase5_evidence(
         )
         reports = []
 
-    steps = manifest.get("steps")
-    step_names = [
-        step.get("name")
-        for step in (steps if isinstance(steps, list) else [])
-        if isinstance(step, dict)
-    ]
+    step_names = manifest_step_names(manifest)
     if "storage_backend_registry_integrity" not in step_names:
         failures.append(
             {

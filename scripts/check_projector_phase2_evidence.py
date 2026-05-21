@@ -10,17 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from scripts.check_replay_validation_manifest import _load_manifest, _validate_manifest
-
-
-def _step_names(manifest: dict[str, Any]) -> list[str]:
-    steps = manifest.get("steps")
-    if not isinstance(steps, list):
-        return []
-    names: list[str] = []
-    for step in steps:
-        if isinstance(step, dict) and isinstance(step.get("name"), str):
-            names.append(step["name"])
-    return names
+from scripts.replay_validation_artifacts import manifest_artifacts, manifest_step_names
 
 
 def validate_projector_phase2_evidence(
@@ -37,7 +27,7 @@ def validate_projector_phase2_evidence(
         manifest_path=manifest_path,
     )
     failures: list[dict[str, Any]] = list(base.get("failures", []))
-    artifacts = manifest.get("artifacts") if isinstance(manifest.get("artifacts"), dict) else {}
+    artifacts = manifest_artifacts(manifest)
     projector_summaries = artifacts.get("projector_summaries")
     if not isinstance(projector_summaries, list) or not projector_summaries:
         failures.append(
@@ -47,7 +37,7 @@ def validate_projector_phase2_evidence(
             }
         )
 
-    names = _step_names(manifest)
+    names = manifest_step_names(manifest)
     if not any(name.startswith("projector_summary_") and name.endswith("_integrity") for name in names):
         failures.append(
             {
