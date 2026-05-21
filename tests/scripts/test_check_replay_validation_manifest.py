@@ -255,6 +255,58 @@ def test_check_replay_validation_manifest_rejects_artifact_index_for_other_manif
     )
 
 
+def test_check_replay_validation_manifest_requires_indexed_phase_artifact_roles(
+    tmp_path: Path,
+    capsys,
+):
+    manifest = _manifest(tmp_path)
+    summary = tmp_path / "projector-summary.json"
+    summary.write_text("{}")
+    report = tmp_path / "validation-report.json"
+    report.write_text("{}")
+    index_path = tmp_path / "artifact-index.json"
+    manifest["artifacts"]["report"] = str(report)
+    manifest["artifacts"]["artifact_index"] = str(index_path)
+    manifest["artifacts"]["projector_summaries"] = [
+        {"role": "projector_summary_1", "path": str(summary)}
+    ]
+    manifest["steps"].append(
+        {
+            "name": "projector_summary_1_integrity",
+            "command": ["python", "scripts/check_projector_metrics_summary.py"],
+            "returncode": 0,
+            "duration_seconds": 0.1,
+            "stdout": "{}",
+            "stderr": "",
+        }
+    )
+    manifest["steps"].append(
+        {
+            "name": "artifact_index",
+            "command": ["python", "scripts/package_replay_validation_artifacts.py"],
+            "returncode": 0,
+            "duration_seconds": 0.1,
+            "stdout": "{}",
+            "stderr": "",
+        }
+    )
+    path = tmp_path / "manifest.json"
+    path.write_text(json.dumps(manifest))
+    index_path.write_text(
+        json.dumps(build_artifact_index(manifest_path=path, output_path=index_path))
+        + "\n"
+    )
+
+    assert main(["--manifest", str(path), "--check-artifacts"]) == 1
+    output = json.loads(capsys.readouterr().out)
+    assert any(
+        failure["field"] == "artifacts.artifact_index"
+        and failure["reason"] == "artifact index missing phase artifact roles"
+        and failure["roles"] == ["projector_summary_1"]
+        for failure in output["failures"]
+    )
+
+
 def test_check_replay_validation_manifest_requires_artifact_index_step(tmp_path: Path, capsys):
     path = _write_manifest_with_artifact_index(tmp_path)
     manifest = json.loads(path.read_text())
