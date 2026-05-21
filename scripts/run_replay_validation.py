@@ -73,6 +73,7 @@ def _build_report(
     projector_summaries: list[dict[str, str]],
     worker_metrics: list[dict[str, str]],
     storage_backend_registry: list[dict[str, str]],
+    fanout_reduce_planner: list[dict[str, str]],
     steps: list[dict[str, object]],
     started_at: str,
 ) -> dict[str, object]:
@@ -89,6 +90,7 @@ def _build_report(
             "projector_summaries": projector_summaries,
             "worker_metrics": worker_metrics,
             "storage_backend_registry": storage_backend_registry,
+            "fanout_reduce_planner": fanout_reduce_planner,
             "report": str(args.report_output) if args.report_output else None,
             "artifact_index": str(args.artifact_index_output) if args.artifact_index_output else None,
         },
@@ -117,6 +119,11 @@ def _build_report(
             "build_storage_backend_registry_report": bool(
                 args.build_storage_backend_registry_report
             ),
+            "fanout_reduce_planner_report": [
+                str(path) for path in args.fanout_reduce_planner_report
+            ],
+            "fanout_reduce_playbook": [str(path) for path in args.fanout_reduce_playbook],
+            "check_replay_fanout_reduce": bool(args.check_replay_fanout_reduce),
             "artifact_index_output": str(args.artifact_index_output) if args.artifact_index_output else None,
         },
         "steps": steps,
@@ -219,6 +226,25 @@ def main(argv: list[str] | None = None) -> int:
         "--build-storage-backend-registry-report",
         action="store_true",
         help="Build and validate a Phase 5 storage backend registry evidence report",
+    )
+    parser.add_argument(
+        "--fanout-reduce-planner-report",
+        action="append",
+        default=[],
+        type=Path,
+        help="Optional saved Phase 6 fan-out/reduce planner evidence report",
+    )
+    parser.add_argument(
+        "--fanout-reduce-playbook",
+        action="append",
+        default=[],
+        type=Path,
+        help="Playbook to include in a generated Phase 6 fan-out/reduce planner report",
+    )
+    parser.add_argument(
+        "--check-replay-fanout-reduce",
+        action="store_true",
+        help="Validate Phase 6 fan-out/reduce command metadata in the fetched replay report",
     )
     args = parser.parse_args(argv)
 
@@ -417,6 +443,51 @@ def main(argv: list[str] | None = None) -> int:
                 ],
             )
         )
+    fanout_reduce_planner: list[dict[str, str]] = []
+    fanout_report_steps: list[tuple[str, list[str]]] = []
+    fanout_check_steps: list[tuple[str, list[str]]] = []
+    for idx, path in enumerate(args.fanout_reduce_planner_report, start=1):
+        role = f"fanout_reduce_planner_{idx}"
+        fanout_reduce_planner.append({"role": role, "path": str(path)})
+        fanout_check_steps.append(
+            (
+                "fanout_reduce_planner_integrity",
+                [
+                    _validation_python(),
+                    "scripts/check_fanout_phase6_evidence.py",
+                    "--report",
+                    str(path),
+                    "--require-fanout",
+                    "--require-reduce",
+                ],
+            )
+        )
+    if args.fanout_reduce_playbook:
+        role = "fanout_reduce_planner_generated"
+        path = output_dir / "fanout-phase6-report.json"
+        fanout_reduce_planner.append({"role": role, "path": str(path)})
+        report_command = [
+            _validation_python(),
+            "scripts/build_fanout_phase6_report.py",
+            "--output",
+            str(path),
+        ]
+        for playbook_path in args.fanout_reduce_playbook:
+            report_command.extend(["--playbook", str(playbook_path)])
+        fanout_report_steps.append(("fanout_reduce_planner_report", report_command))
+        fanout_check_steps.append(
+            (
+                "fanout_reduce_planner_integrity",
+                [
+                    _validation_python(),
+                    "scripts/check_fanout_phase6_evidence.py",
+                    "--report",
+                    str(path),
+                    "--require-fanout",
+                    "--require-reduce",
+                ],
+            )
+        )
     fetch_command = [
         _validation_python(),
         "scripts/fetch_replay_state_report.py",
@@ -544,6 +615,17 @@ def main(argv: list[str] | None = None) -> int:
             if args.resolve_payloads
             else [],
         ),
+        (
+            "replay_fanout_reduce_integrity",
+            [
+                _validation_python(),
+                "scripts/check_replay_fanout_reduce_report.py",
+                "--report",
+                str(replay_path),
+            ]
+            if args.check_replay_fanout_reduce
+            else [],
+        ),
     ]
     validation_steps.extend(projector_fetch_steps)
     validation_steps.extend(projector_check_steps)
@@ -551,6 +633,8 @@ def main(argv: list[str] | None = None) -> int:
     validation_steps.extend(worker_check_steps)
     validation_steps.extend(storage_report_steps)
     validation_steps.extend(storage_check_steps)
+    validation_steps.extend(fanout_report_steps)
+    validation_steps.extend(fanout_check_steps)
 
     for name, command in validation_steps:
         if not command:
@@ -580,6 +664,7 @@ def main(argv: list[str] | None = None) -> int:
                     projector_summaries=projector_summaries,
                     worker_metrics=worker_metrics,
                     storage_backend_registry=storage_backend_registry,
+                    fanout_reduce_planner=fanout_reduce_planner,
                     steps=steps,
                     started_at=started_at,
                 ),
@@ -606,6 +691,7 @@ def main(argv: list[str] | None = None) -> int:
                     projector_summaries=projector_summaries,
                     worker_metrics=worker_metrics,
                     storage_backend_registry=storage_backend_registry,
+                    fanout_reduce_planner=fanout_reduce_planner,
                     steps=steps,
                     started_at=started_at,
                 ),
@@ -644,6 +730,13 @@ def main(argv: list[str] | None = None) -> int:
                     f"{report['role']}={report['path']}",
                 ]
             )
+        for report in fanout_reduce_planner:
+            artifact_index_command.extend(
+                [
+                    "--artifact",
+                    f"{report['role']}={report['path']}",
+                ]
+            )
         steps.append(
             {
                 "name": "artifact_index",
@@ -672,6 +765,7 @@ def main(argv: list[str] | None = None) -> int:
             projector_summaries=projector_summaries,
             worker_metrics=worker_metrics,
             storage_backend_registry=storage_backend_registry,
+            fanout_reduce_planner=fanout_reduce_planner,
             steps=steps,
             started_at=started_at,
         ),
@@ -701,12 +795,42 @@ def main(argv: list[str] | None = None) -> int:
                     projector_summaries=projector_summaries,
                     worker_metrics=worker_metrics,
                     storage_backend_registry=storage_backend_registry,
+                    fanout_reduce_planner=fanout_reduce_planner,
                     steps=steps,
                     started_at=started_at,
                 ),
                 args.report_output,
             )
             return code
+        if not args.artifact_index_output.exists():
+            steps[-1] = {
+                "name": "artifact_index",
+                "command": artifact_index_command,
+                "returncode": 1,
+                "duration_seconds": round(duration, 6),
+                "stdout": stdout,
+                "stderr": f"artifact index step did not create artifact index: {args.artifact_index_output}",
+            }
+            stdout_json = _parse_json(stdout)
+            if stdout_json is not None:
+                steps[-1]["stdout_json"] = stdout_json
+            _emit_report(
+                _build_report(
+                    matched=False,
+                    args=args,
+                    replay_path=replay_path,
+                    live_checksums_path=live_checksums_path,
+                    live_rows_path=live_rows_path,
+                    projector_summaries=projector_summaries,
+                    worker_metrics=worker_metrics,
+                    storage_backend_registry=storage_backend_registry,
+                    fanout_reduce_planner=fanout_reduce_planner,
+                    steps=steps,
+                    started_at=started_at,
+                ),
+                args.report_output,
+            )
+            return 1
     return 0
 
 

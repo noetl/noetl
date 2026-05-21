@@ -5,6 +5,7 @@ from .outbox import drain_executor_outbox, enqueue_executor_outbox
 from .state import ExecutionState
 from .store import PlaybookRepo, StateStore
 from noetl.core.event_store.ports import canonical_event_checksum
+from noetl.core.dsl.engine.planner import build_fanout_reduce_plan
 from noetl.core.dsl.render import render_template
 
 class TransitionMixin:
@@ -722,6 +723,7 @@ class TransitionMixin:
 
         any_matched = False
         any_raised = False
+        issued_records: list[tuple[str, Command]] = []
 
         for idx, next_target in enumerate(next_items):
             target_step = next_target.step
@@ -787,6 +789,7 @@ class TransitionMixin:
             issued_cmds = await self._issue_loop_commands(state, target_step_def, {}, conn=conn)
             if issued_cmds:
                 commands.extend(issued_cmds)
+                issued_records.extend((target_step, command) for command in issued_cmds)
                 # Steps can be revisited in loopback workflows; clear old completion marker
                 # so pending tracking reflects the new in-flight invocation.
                 state.completed_steps.discard(target_step)
@@ -811,7 +814,46 @@ class TransitionMixin:
                 event.step,
             )
 
+        if next_mode == "inclusive":
+            self._annotate_fanout_reduce_commands(state, step_def, issued_records)
+
         return commands, any_matched, any_raised
+
+    def _annotate_fanout_reduce_commands(
+        self,
+        state: ExecutionState,
+        source_step: Step,
+        issued_records: list[tuple[str, Command]],
+    ) -> None:
+        """Attach static Phase 6 planner intent to commands from a real fan-out."""
+        target_order: list[str] = []
+        for target_step, _command in issued_records:
+            if target_step not in target_order:
+                target_order.append(target_step)
+        if len(target_order) < 2:
+            return
+
+        plan = build_fanout_reduce_plan(state.playbook)
+        fanout = next(
+            (item for item in plan.fanouts if item.step == source_step.step),
+            None,
+        )
+        if fanout is None:
+            return
+
+        target_index = {target: idx for idx, target in enumerate(target_order)}
+        for target_step, command in issued_records:
+            command.metadata.setdefault("fanout_reduce", {})
+            command.metadata["fanout_reduce"].update(
+                {
+                    "planner_version": 1,
+                    "fanout_step": source_step.step,
+                    "fanout_targets": target_order,
+                    "target_step": target_step,
+                    "target_index": target_index[target_step],
+                    "reduce_steps": list(fanout.reduce_steps),
+                }
+            )
 
     def _has_matching_next_transition(
         self,

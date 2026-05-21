@@ -24,6 +24,12 @@ from .models import (
     TaskSpec,
     ToolOutcome,
 )
+from .planner import (
+    FanoutReducePlan,
+    PlannedFanout,
+    PlannedReduce,
+    build_fanout_reduce_plan,
+)
 
 __all__ = [
     # Event & Command models
@@ -51,4 +57,8 @@ __all__ = [
     "TaskPolicy",
     "TaskSpec",
     "ToolOutcome",
+    "FanoutReducePlan",
+    "PlannedFanout",
+    "PlannedReduce",
+    "build_fanout_reduce_plan",
 ]

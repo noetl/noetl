@@ -33,8 +33,10 @@ OPTIONAL_STEP_NAMES = (
     "payload_resolution",
     "runtime_locator_live_rows",
     "runtime_locator_state",
+    "replay_fanout_reduce_integrity",
     "artifact_index",
     "storage_backend_registry_report",
+    "fanout_reduce_planner_report",
 )
 
 
@@ -94,6 +96,10 @@ def _is_worker_metrics_step(name: str) -> bool:
 
 def _is_storage_backend_registry_step(name: str) -> bool:
     return name == "storage_backend_registry_integrity"
+
+
+def _is_fanout_reduce_planner_step(name: str) -> bool:
+    return name == "fanout_reduce_planner_integrity"
 
 
 def _validate_artifact_list(
@@ -205,6 +211,15 @@ def _validate_manifest(
                 _validate_artifact_list(
                     failures,
                     field="artifacts.storage_backend_registry",
+                    value=value,
+                    manifest_path=manifest_path,
+                    check_artifacts=check_artifacts,
+                )
+                continue
+            if field == "fanout_reduce_planner":
+                _validate_artifact_list(
+                    failures,
+                    field="artifacts.fanout_reduce_planner",
                     value=value,
                     manifest_path=manifest_path,
                     check_artifacts=check_artifacts,
@@ -354,6 +369,14 @@ def _validate_manifest(
                 "reason": "storage backend registry artifacts require an integrity step",
             }
         )
+    fanout_reduce_planner = artifacts.get("fanout_reduce_planner") if isinstance(artifacts, dict) else None
+    if fanout_reduce_planner and "fanout_reduce_planner_integrity" not in step_names:
+        failures.append(
+            {
+                "field": "steps",
+                "reason": "fan-out/reduce planner artifacts require an integrity step",
+            }
+        )
     if artifacts_index:
         if "artifact_index" not in step_names:
             failures.append(
@@ -382,6 +405,8 @@ def _validate_manifest(
         if _is_worker_metrics_step(name):
             continue
         if _is_storage_backend_registry_step(name):
+            continue
+        if _is_fanout_reduce_planner_step(name):
             continue
         if name not in (*REQUIRED_STEP_ORDER, *OPTIONAL_STEP_NAMES, "fetch_artifact"):
             failures.append({"field": "steps", "reason": "unknown validation step", "step": name})

@@ -156,6 +156,7 @@ def test_run_replay_validation_can_export_live_rows_from_postgres(monkeypatch, t
         return 0, json.dumps({"ok": True}), "", 0.01
 
     monkeypatch.setattr(run_replay_validation, "_run", _run)
+    manifest = tmp_path / "validation.json"
 
     assert (
         run_replay_validation.main(
@@ -561,6 +562,160 @@ def test_run_replay_validation_builds_and_indexes_storage_phase5_report(
     ]
 
 
+def test_run_replay_validation_builds_and_indexes_fanout_phase6_report(
+    monkeypatch,
+    tmp_path: Path,
+    capsys,
+):
+    calls = []
+
+    def _run(command):
+        calls.append(command)
+        if any(str(part).endswith("fetch_replay_state_report.py") for part in command):
+            output_path = Path(command[command.index("--output") + 1])
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            output_path.write_text(json.dumps({"projection_checksums": {"execution": "a" * 64}}))
+        if any(str(part).endswith("build_fanout_phase6_report.py") for part in command):
+            output_path = Path(command[command.index("--output") + 1])
+            output_path.write_text(
+                json.dumps(
+                    {
+                        "planner_version": 1,
+                        "summary": {"playbooks": 1, "fanouts": 1, "reduces": 1},
+                        "playbooks": [
+                            {
+                                "path": "fanout.yaml",
+                                "name": "fanout",
+                                "planner": {
+                                    "fanouts": [
+                                        {
+                                            "step": "start",
+                                            "arcs": ["a", "b"],
+                                            "reduce_steps": ["join"],
+                                        }
+                                    ],
+                                    "reduces": [
+                                        {
+                                            "step": "join",
+                                            "upstream_steps": ["a", "b"],
+                                        }
+                                    ],
+                                },
+                            }
+                        ],
+                    }
+                )
+            )
+        if any(str(part).endswith("package_replay_validation_artifacts.py") for part in command):
+            artifact_args = [
+                command[idx + 1]
+                for idx, value in enumerate(command)
+                if value == "--artifact"
+            ]
+            assert any(arg.startswith("fanout_reduce_planner_generated=") for arg in artifact_args)
+            output_path = Path(command[command.index("--output") + 1])
+            output_path.write_text(json.dumps({"schema_version": 1, "matched": True, "artifacts": []}))
+        return 0, json.dumps({"ok": True}), "", 0.01
+
+    monkeypatch.setattr(run_replay_validation, "_run", _run)
+    manifest = tmp_path / "validation.json"
+    artifact_index = tmp_path / "artifact-index.json"
+    playbook = tmp_path / "fanout.yaml"
+    playbook.write_text("apiVersion: noetl.io/v2\nkind: Playbook\nmetadata: {name: fanout}\nworkflow: []\n")
+
+    assert (
+        run_replay_validation.main(
+            [
+                "--base-url",
+                "http://noetl.example",
+                "--execution-id",
+                "123",
+                "--fanout-reduce-playbook",
+                str(playbook),
+                "--output-dir",
+                str(tmp_path),
+                "--report-output",
+                str(manifest),
+                "--artifact-index-output",
+                str(artifact_index),
+            ]
+        )
+        == 0
+    )
+
+    assert any("scripts/build_fanout_phase6_report.py" in call for call in calls)
+    assert any("scripts/check_fanout_phase6_evidence.py" in call for call in calls)
+    output = json.loads(capsys.readouterr().out)
+    reports = output["artifacts"]["fanout_reduce_planner"]
+    assert reports == [
+        {
+            "role": "fanout_reduce_planner_generated",
+            "path": str(tmp_path / "fanout-phase6-report.json"),
+        }
+    ]
+    assert "fanout_reduce_planner_integrity" in [
+        step["name"] for step in output["steps"]
+    ]
+
+
+def test_run_replay_validation_can_check_replay_fanout_reduce_metadata(
+    monkeypatch,
+    tmp_path: Path,
+    capsys,
+):
+    calls = []
+
+    def _run(command):
+        calls.append(command)
+        if any(str(part).endswith("fetch_replay_state_report.py") for part in command):
+            output_path = Path(command[command.index("--output") + 1])
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            output_path.write_text(
+                json.dumps(
+                    {
+                        "projection_checksums": {"execution": "a" * 64},
+                        "commands": {
+                            "10": {
+                                "command_id": "10",
+                                "fanout_reduce": {
+                                    "planner_version": 1,
+                                    "fanout_step": "start",
+                                    "fanout_targets": ["a", "b"],
+                                    "target_step": "a",
+                                    "target_index": 0,
+                                    "reduce_steps": ["join"],
+                                },
+                            }
+                        },
+                    }
+                )
+            )
+        return 0, json.dumps({"ok": True}), "", 0.01
+
+    monkeypatch.setattr(run_replay_validation, "_run", _run)
+    manifest = tmp_path / "validation.json"
+
+    assert (
+        run_replay_validation.main(
+            [
+                "--base-url",
+                "http://noetl.example",
+                "--execution-id",
+                "123",
+                "--check-replay-fanout-reduce",
+                "--output-dir",
+                str(tmp_path),
+            ]
+        )
+        == 0
+    )
+
+    assert any("scripts/check_replay_fanout_reduce_report.py" in call for call in calls)
+    output = json.loads(capsys.readouterr().out)
+    assert output["config"]["check_replay_fanout_reduce"] is True
+    assert "replay_fanout_reduce_integrity" in [step["name"] for step in output["steps"]]
+
+
 def test_run_replay_validation_rejects_invalid_worker_metrics_url(tmp_path: Path):
     try:
         run_replay_validation.main(
@@ -675,6 +830,7 @@ def test_run_replay_validation_fails_when_fetch_does_not_write_report(
         return 0, json.dumps({"ok": True}), "", 0.01
 
     monkeypatch.setattr(run_replay_validation, "_run", _run)
+    manifest = tmp_path / "validation.json"
 
     assert (
         run_replay_validation.main(
@@ -692,3 +848,42 @@ def test_run_replay_validation_fails_when_fetch_does_not_write_report(
     output = json.loads(capsys.readouterr().out)
     assert output["matched"] is False
     assert output["steps"][-1]["name"] == "fetch_artifact"
+
+
+def test_run_replay_validation_fails_when_artifact_index_is_not_written(
+    monkeypatch,
+    tmp_path: Path,
+    capsys,
+):
+    def _run(command):
+        if any(str(part).endswith("fetch_replay_state_report.py") for part in command):
+            output_path = Path(command[command.index("--output") + 1])
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            output_path.write_text(json.dumps({"projection_checksums": {"execution": "a" * 64}}))
+        return 0, json.dumps({"ok": True}), "", 0.01
+
+    monkeypatch.setattr(run_replay_validation, "_run", _run)
+    manifest = tmp_path / "validation.json"
+
+    assert (
+        run_replay_validation.main(
+            [
+                "--base-url",
+                "http://noetl.example",
+                "--execution-id",
+                "123",
+                "--output-dir",
+                str(tmp_path),
+                "--report-output",
+                str(manifest),
+                "--artifact-index-output",
+                str(tmp_path / "artifact-index.json"),
+            ]
+        )
+        == 1
+    )
+    capsys.readouterr()
+    output = json.loads(manifest.read_text())
+    assert output["matched"] is False
+    assert output["steps"][-1]["name"] == "artifact_index"
+    assert output["steps"][-1]["stderr"].startswith("artifact index step did not create artifact index:")
