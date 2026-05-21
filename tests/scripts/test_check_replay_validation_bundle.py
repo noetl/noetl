@@ -94,6 +94,53 @@ def _bundle(tmp_path: Path) -> tuple[Path, Path]:
     return manifest, index
 
 
+def _add_replay_fanout_phase6_evidence(manifest: Path, index: Path) -> None:
+    payload = json.loads(manifest.read_text())
+    replay = Path(payload["artifacts"]["replay"])
+    replay.write_text(
+        json.dumps(
+            {
+                "commands": {
+                    "10": {
+                        "command_id": "10",
+                        "fanout_reduce": {
+                            "planner_version": 1,
+                            "fanout_step": "start",
+                            "fanout_targets": ["a", "b"],
+                            "target_step": "a",
+                            "target_index": 0,
+                            "reduce_steps": ["join"],
+                        },
+                    }
+                }
+            },
+            indent=2,
+            sort_keys=True,
+        )
+    )
+    payload["config"]["check_replay_fanout_reduce"] = True
+    payload["steps"].insert(
+        -1,
+        {
+            "name": "replay_fanout_reduce_integrity",
+            "command": ["python", "scripts/check_replay_fanout_reduce_report.py"],
+            "returncode": 0,
+            "duration_seconds": 0.1,
+            "stdout": "{}",
+            "stderr": "",
+        },
+    )
+    manifest.write_text(json.dumps(payload))
+    index.write_text(
+        json.dumps(
+            build_artifact_index(manifest_path=manifest, output_path=index),
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n"
+    )
+
+
 def _add_projector_phase2_evidence(manifest: Path, index: Path, tmp_path: Path) -> None:
     payload = json.loads(manifest.read_text())
     summary = tmp_path / "projector-summary.json"
@@ -572,5 +619,32 @@ def test_check_replay_validation_bundle_rejects_missing_fanout_phase6_evidence(
     output = json.loads(capsys.readouterr().out)
     assert any(
         failure["field"] == "phase6_fanout_evidence"
+        for failure in output["failures"]
+    )
+
+
+def test_check_replay_validation_bundle_accepts_replay_fanout_phase6_evidence(
+    tmp_path: Path,
+    capsys,
+):
+    manifest, index = _bundle(tmp_path)
+    _add_replay_fanout_phase6_evidence(manifest, index)
+
+    assert main(["--manifest", str(manifest), "--require-replay-fanout-phase6"]) == 0
+    output = json.loads(capsys.readouterr().out)
+    assert output["matched"] is True
+    assert output["phase6_replay_fanout_result"]["matched"] is True
+
+
+def test_check_replay_validation_bundle_rejects_missing_replay_fanout_phase6_evidence(
+    tmp_path: Path,
+    capsys,
+):
+    manifest, _index = _bundle(tmp_path)
+
+    assert main(["--manifest", str(manifest), "--require-replay-fanout-phase6"]) == 1
+    output = json.loads(capsys.readouterr().out)
+    assert any(
+        failure["field"] == "phase6_replay_fanout_evidence"
         for failure in output["failures"]
     )

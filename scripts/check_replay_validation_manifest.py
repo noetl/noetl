@@ -33,6 +33,7 @@ OPTIONAL_STEP_NAMES = (
     "payload_resolution",
     "runtime_locator_live_rows",
     "runtime_locator_state",
+    "replay_fanout_reduce_integrity",
     "artifact_index",
     "storage_backend_registry_report",
     "fanout_reduce_planner_report",

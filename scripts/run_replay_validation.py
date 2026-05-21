@@ -123,6 +123,7 @@ def _build_report(
                 str(path) for path in args.fanout_reduce_planner_report
             ],
             "fanout_reduce_playbook": [str(path) for path in args.fanout_reduce_playbook],
+            "check_replay_fanout_reduce": bool(args.check_replay_fanout_reduce),
             "artifact_index_output": str(args.artifact_index_output) if args.artifact_index_output else None,
         },
         "steps": steps,
@@ -239,6 +240,11 @@ def main(argv: list[str] | None = None) -> int:
         default=[],
         type=Path,
         help="Playbook to include in a generated Phase 6 fan-out/reduce planner report",
+    )
+    parser.add_argument(
+        "--check-replay-fanout-reduce",
+        action="store_true",
+        help="Validate Phase 6 fan-out/reduce command metadata in the fetched replay report",
     )
     args = parser.parse_args(argv)
 
@@ -607,6 +613,17 @@ def main(argv: list[str] | None = None) -> int:
                 str(replay_path),
             ]
             if args.resolve_payloads
+            else [],
+        ),
+        (
+            "replay_fanout_reduce_integrity",
+            [
+                _validation_python(),
+                "scripts/check_replay_fanout_reduce_report.py",
+                "--report",
+                str(replay_path),
+            ]
+            if args.check_replay_fanout_reduce
             else [],
         ),
     ]

@@ -13,6 +13,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from scripts.check_fanout_phase6_evidence import validate_fanout_phase6_report
 from scripts.check_projector_phase2_evidence import validate_projector_phase2_evidence
+from scripts.check_replay_fanout_reduce_report import validate_replay_fanout_reduce_report
 from scripts.check_replay_validation_manifest import _load_manifest, _validate_manifest
 from scripts.check_storage_phase5_evidence import validate_storage_phase5_evidence
 from scripts.check_worker_ipc_phase3_evidence import validate_worker_ipc_phase3_evidence
@@ -42,6 +43,7 @@ def validate_bundle(
     require_worker_ipc_phase3: bool = False,
     require_storage_phase5: bool = False,
     require_fanout_phase6: bool = False,
+    require_replay_fanout_phase6: bool = False,
 ) -> dict[str, Any]:
     failures: list[dict[str, Any]] = []
     manifest = _load_manifest(manifest_path)
@@ -120,6 +122,20 @@ def validate_bundle(
                     "failures": phase6_result.get("failures", []),
                 }
             )
+    replay_phase6_result: dict[str, Any] | None = None
+    if require_replay_fanout_phase6:
+        replay_phase6_result = _validate_replay_fanout_phase6_evidence(
+            manifest,
+            manifest_path=manifest_path,
+        )
+        if replay_phase6_result.get("matched") is not True:
+            failures.append(
+                {
+                    "field": "phase6_replay_fanout_evidence",
+                    "reason": "Phase 6 replay fan-out/reduce evidence validation failed",
+                    "failures": replay_phase6_result.get("failures", []),
+                }
+            )
 
     manifest_index = _artifact_index_from_manifest(manifest)
     if artifact_index_path is None:
@@ -186,6 +202,7 @@ def validate_bundle(
         "phase3_worker_ipc_result": phase3_result,
         "phase5_storage_result": phase5_result,
         "phase6_fanout_result": phase6_result,
+        "phase6_replay_fanout_result": replay_phase6_result,
         "artifact_index_result": index_result,
         "failures": failures,
     }
@@ -267,6 +284,71 @@ def _validate_fanout_phase6_evidence(
     }
 
 
+def _validate_replay_fanout_phase6_evidence(
+    manifest: dict[str, Any],
+    *,
+    manifest_path: Path,
+) -> dict[str, Any]:
+    failures: list[dict[str, Any]] = []
+    artifacts = manifest.get("artifacts")
+    artifacts = artifacts if isinstance(artifacts, dict) else {}
+    replay_path = artifacts.get("replay")
+    if not isinstance(replay_path, str) or not replay_path:
+        failures.append(
+            {
+                "field": "artifacts.replay",
+                "reason": "Phase 6 replay evidence requires a replay artifact",
+            }
+        )
+        return {"matched": False, "result": None, "failures": failures}
+
+    steps = manifest.get("steps")
+    step_names = [
+        step.get("name")
+        for step in (steps if isinstance(steps, list) else [])
+        if isinstance(step, dict)
+    ]
+    if "replay_fanout_reduce_integrity" not in step_names:
+        failures.append(
+            {
+                "field": "steps",
+                "reason": "Phase 6 replay evidence requires replay_fanout_reduce_integrity step",
+            }
+        )
+
+    path = resolve_indexed_path(replay_path, index_path=manifest_path)
+    try:
+        report = json.loads(path.read_text())
+        if not isinstance(report, dict):
+            raise ValueError(f"{path} must contain a JSON object")
+        result = validate_replay_fanout_reduce_report(report)
+    except (OSError, json.JSONDecodeError, ValueError) as exc:
+        failures.append(
+            {
+                "field": "artifacts.replay",
+                "reason": "replay artifact could not be read for Phase 6 evidence",
+                "path": replay_path,
+                "error": str(exc),
+            }
+        )
+        return {"matched": False, "result": None, "failures": failures}
+
+    if result.get("matched") is not True:
+        failures.append(
+            {
+                "field": "artifacts.replay",
+                "reason": "replay fan-out/reduce metadata validation failed",
+                "failures": result.get("failures", []),
+            }
+        )
+
+    return {
+        "matched": not failures,
+        "result": result,
+        "failures": failures,
+    }
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Validate a replay validation evidence bundle")
     parser.add_argument("--manifest", required=True, type=Path)
@@ -297,6 +379,11 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="Require Phase 6 fan-out/reduce planner evidence in the manifest",
     )
+    parser.add_argument(
+        "--require-replay-fanout-phase6",
+        action="store_true",
+        help="Require Phase 6 fan-out/reduce metadata in the replay artifact",
+    )
     args = parser.parse_args(argv)
 
     output = validate_bundle(
@@ -308,6 +395,7 @@ def main(argv: list[str] | None = None) -> int:
         require_worker_ipc_phase3=args.require_worker_ipc_phase3,
         require_storage_phase5=args.require_storage_phase5,
         require_fanout_phase6=args.require_fanout_phase6,
+        require_replay_fanout_phase6=args.require_replay_fanout_phase6,
     )
     print(json.dumps(output, indent=2, sort_keys=True))
     return 0 if output["matched"] else 1

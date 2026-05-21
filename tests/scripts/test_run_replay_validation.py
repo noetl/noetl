@@ -657,6 +657,63 @@ def test_run_replay_validation_builds_and_indexes_fanout_phase6_report(
     ]
 
 
+def test_run_replay_validation_can_check_replay_fanout_reduce_metadata(
+    monkeypatch,
+    tmp_path: Path,
+    capsys,
+):
+    calls = []
+
+    def _run(command):
+        calls.append(command)
+        if any(str(part).endswith("fetch_replay_state_report.py") for part in command):
+            output_path = Path(command[command.index("--output") + 1])
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            output_path.write_text(
+                json.dumps(
+                    {
+                        "projection_checksums": {"execution": "a" * 64},
+                        "commands": {
+                            "10": {
+                                "command_id": "10",
+                                "fanout_reduce": {
+                                    "planner_version": 1,
+                                    "fanout_step": "start",
+                                    "fanout_targets": ["a", "b"],
+                                    "target_step": "a",
+                                    "target_index": 0,
+                                    "reduce_steps": ["join"],
+                                },
+                            }
+                        },
+                    }
+                )
+            )
+        return 0, json.dumps({"ok": True}), "", 0.01
+
+    monkeypatch.setattr(run_replay_validation, "_run", _run)
+
+    assert (
+        run_replay_validation.main(
+            [
+                "--base-url",
+                "http://noetl.example",
+                "--execution-id",
+                "123",
+                "--check-replay-fanout-reduce",
+                "--output-dir",
+                str(tmp_path),
+            ]
+        )
+        == 0
+    )
+
+    assert any("scripts/check_replay_fanout_reduce_report.py" in call for call in calls)
+    output = json.loads(capsys.readouterr().out)
+    assert output["config"]["check_replay_fanout_reduce"] is True
+    assert "replay_fanout_reduce_integrity" in [step["name"] for step in output["steps"]]
+
+
 def test_run_replay_validation_rejects_invalid_worker_metrics_url(tmp_path: Path):
     try:
         run_replay_validation.main(
