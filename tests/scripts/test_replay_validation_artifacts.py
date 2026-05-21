@@ -4,6 +4,7 @@ from scripts.replay_validation_artifacts import (
     artifact_roles,
     duplicate_artifact_roles,
     indexed_artifact_entries,
+    indexed_artifact_paths,
     missing_indexed_artifact_roles,
     phase_artifact_roles,
 )
@@ -66,6 +67,21 @@ def test_indexed_artifact_entries_preserves_original_indexes():
 
     assert indexed_artifact_entries(artifacts, "worker_metrics") == [
         (1, {"role": "worker_metrics_1", "path": "worker.prom"})
+    ]
+
+
+def test_indexed_artifact_paths_preserves_indexes_and_path_values():
+    artifacts = {
+        "worker_metrics": [
+            {"role": "worker_metrics_1", "path": ""},
+            {"role": "worker_metrics_2", "path": "worker.prom"},
+            {"role": "worker_metrics_3"},
+            "not-an-entry",
+        ]
+    }
+
+    assert indexed_artifact_paths(artifacts, "worker_metrics") == [
+        (1, {"role": "worker_metrics_2", "path": "worker.prom"}, "worker.prom")
     ]
 
 
