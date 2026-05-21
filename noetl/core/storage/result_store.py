@@ -42,6 +42,7 @@ from noetl.core.storage.models import (
 from noetl.core.storage.arrow_ipc import ARROW_STREAM_MEDIA_TYPE, arrow_ipc_to_rows
 from noetl.core.storage.router import StorageRouter, default_router
 from noetl.core.storage.extractor import create_preview
+from noetl.core.storage.backends import get_backend
 from noetl.core.logger import setup_logger
 
 logger = setup_logger(__name__, include_location=True)
@@ -109,6 +110,7 @@ class TempStore:
 
         self._memory_cache: "OrderedDict[str, bytes]" = OrderedDict()
         self._ref_cache: "OrderedDict[str, TempRef]" = OrderedDict()
+        self._backend_cache: Dict[str, Any] = {}
         self._ipc_stats: Dict[str, int] = {
             "admit_attempts": 0,
             "admit_success": 0,
@@ -226,6 +228,26 @@ class TempStore:
             evicted_ref, _ = self._ref_cache.popitem(last=False)
             self._memory_cache.pop(evicted_ref, None)
             logger.debug("TEMP: Evicted ref cache entry %s due to capacity", evicted_ref)
+
+    def _backend_for_tier(self, tier: StoreTier | str, **kwargs):
+        """Return a cached backend instance resolved through the backend registry."""
+        tier_name = tier.value if isinstance(tier, StoreTier) else str(tier)
+        cache_key = tier_name.lower()
+        legacy_attr = f"_{cache_key}_backend"
+        if cache_key == "kv":
+            legacy_attr = "_kv_backend"
+        if hasattr(self, legacy_attr):
+            self._backend_cache[cache_key] = getattr(self, legacy_attr)
+        if cache_key not in self._backend_cache:
+            self._backend_cache[cache_key] = get_backend(tier_name, **kwargs)
+        return self._backend_cache[cache_key]
+
+    def _has_cached_or_legacy_backend(self, tier: StoreTier | str) -> bool:
+        tier_name = tier.value if isinstance(tier, StoreTier) else str(tier)
+        cache_key = tier_name.lower()
+        if cache_key in self._backend_cache:
+            return True
+        return hasattr(self, f"_{cache_key}_backend")
 
     async def _get_nats(self):
         """Get or initialize NATS client."""
@@ -653,10 +675,7 @@ class TempStore:
 
         # Try NATS KV first (default tier)
         try:
-            from noetl.core.storage.backends import NATSKVBackend
-            if not hasattr(self, '_kv_backend'):
-                self._kv_backend = NATSKVBackend()
-            data_bytes = await self._kv_backend.get(key)
+            data_bytes = await self._backend_for_tier(StoreTier.KV).get(key)
 
             # Decompress if gzipped
             if data_bytes and len(data_bytes) >= 2 and data_bytes[:2] == b'\x1f\x8b':
@@ -673,10 +692,7 @@ class TempStore:
         import os
         if os.getenv("NOETL_S3_BUCKET"):
             try:
-                from noetl.core.storage.backends import S3Backend
-                if not hasattr(self, '_s3_backend'):
-                    self._s3_backend = S3Backend()
-                data_bytes = await self._s3_backend.get(key)
+                data_bytes = await self._backend_for_tier(StoreTier.S3).get(key)
 
                 # Decompress if gzipped
                 if data_bytes and len(data_bytes) >= 2 and data_bytes[:2] == b'\x1f\x8b':
@@ -693,10 +709,7 @@ class TempStore:
         import os
         if os.getenv("NOETL_GCS_BUCKET"):
             try:
-                from noetl.core.storage.backends import GCSBackend
-                if not hasattr(self, '_gcs_backend'):
-                    self._gcs_backend = GCSBackend()
-                data_bytes = await self._gcs_backend.get(key)
+                data_bytes = await self._backend_for_tier(StoreTier.GCS).get(key)
 
                 # Decompress if gzipped
                 if data_bytes and len(data_bytes) >= 2 and data_bytes[:2] == b'\x1f\x8b':
@@ -730,10 +743,7 @@ class TempStore:
 
         elif store == StoreTier.KV:
             try:
-                from noetl.core.storage.backends import NATSKVBackend
-                if not hasattr(self, '_kv_backend'):
-                    self._kv_backend = NATSKVBackend()
-                uri = await self._kv_backend.put(key, data_bytes)
+                uri = await self._backend_for_tier(StoreTier.KV).put(key, data_bytes)
                 return uri
             except Exception as e:
                 logger.warning(f"TEMP: KV store failed, falling back to memory: {e}")
@@ -762,10 +772,7 @@ class TempStore:
 
         elif store == StoreTier.S3:
             try:
-                from noetl.core.storage.backends import S3Backend
-                if not hasattr(self, '_s3_backend'):
-                    self._s3_backend = S3Backend()
-                uri = await self._s3_backend.put(key, data_bytes)
+                uri = await self._backend_for_tier(StoreTier.S3).put(key, data_bytes)
                 return uri
             except Exception as e:
                 logger.warning(f"TEMP: S3 store failed, falling back to KV: {e}")
@@ -773,10 +780,7 @@ class TempStore:
 
         elif store == StoreTier.GCS:
             try:
-                from noetl.core.storage.backends import GCSBackend
-                if not hasattr(self, '_gcs_backend'):
-                    self._gcs_backend = GCSBackend()
-                uri = await self._gcs_backend.put(key, data_bytes)
+                uri = await self._backend_for_tier(StoreTier.GCS).put(key, data_bytes)
                 return uri
             except Exception as e:
                 logger.warning(f"TEMP: GCS store failed, falling back to KV: {e}")
@@ -801,27 +805,17 @@ class TempStore:
         """Return a lazily-initialized DiskCacheBackend wired with the configured cloud spill target."""
         if hasattr(self, "_disk_backend"):
             return self._disk_backend
-        from noetl.core.storage.backends import (
-            DiskCacheBackend,
-            S3Backend,
-            GCSBackend,
-        )
-        from noetl.core.storage.router import default_router
-
         # Pick the cloud backend used as the spill target. S3-compatible
         # deployments use S3Backend with NOETL_S3_ENDPOINT honored by the
         # existing env plumbing.
         cloud_backend = None
         try:
-            cloud_tier = default_router.default_cloud_tier
-            if cloud_tier == StoreTier.GCS:
-                cloud_backend = GCSBackend()
-            else:
-                cloud_backend = S3Backend()
+            cloud_tier = self.router.default_cloud_tier
+            cloud_backend = self._backend_for_tier(cloud_tier)
         except Exception as e:
             logger.debug(f"TEMP: disk-cache cloud spill disabled: {e}")
 
-        self._disk_backend = DiskCacheBackend(cloud_backend=cloud_backend)
+        self._disk_backend = self._backend_for_tier(StoreTier.DISK, cloud_backend=cloud_backend)
         return self._disk_backend
 
     async def _retrieve_data(self, temp_ref: TempRef) -> Any:
@@ -842,10 +836,7 @@ class TempStore:
 
         elif store == StoreTier.KV:
             try:
-                from noetl.core.storage.backends import NATSKVBackend
-                if not hasattr(self, '_kv_backend'):
-                    self._kv_backend = NATSKVBackend()
-                data_bytes = await self._kv_backend.get(key)
+                data_bytes = await self._backend_for_tier(StoreTier.KV).get(key)
             except KeyError:
                 raise
             except Exception as e:
@@ -866,10 +857,7 @@ class TempStore:
 
         elif store == StoreTier.S3:
             try:
-                from noetl.core.storage.backends import S3Backend
-                if not hasattr(self, '_s3_backend'):
-                    self._s3_backend = S3Backend()
-                data_bytes = await self._s3_backend.get(key)
+                data_bytes = await self._backend_for_tier(StoreTier.S3).get(key)
             except KeyError:
                 raise
             except Exception as e:
@@ -877,10 +865,7 @@ class TempStore:
 
         elif store == StoreTier.GCS:
             try:
-                from noetl.core.storage.backends import GCSBackend
-                if not hasattr(self, '_gcs_backend'):
-                    self._gcs_backend = GCSBackend()
-                data_bytes = await self._gcs_backend.get(key)
+                data_bytes = await self._backend_for_tier(StoreTier.GCS).get(key)
             except KeyError:
                 raise
             except Exception as e:
@@ -908,10 +893,7 @@ class TempStore:
 
         elif store == StoreTier.KV:
             try:
-                from noetl.core.storage.backends import NATSKVBackend
-                if not hasattr(self, '_kv_backend'):
-                    self._kv_backend = NATSKVBackend()
-                await self._kv_backend.delete(key)
+                await self._backend_for_tier(StoreTier.KV).delete(key)
             except Exception as e:
                 logger.warning(f"TEMP: Failed to delete from KV: {e}")
 
@@ -926,19 +908,13 @@ class TempStore:
 
         elif store == StoreTier.S3:
             try:
-                from noetl.core.storage.backends import S3Backend
-                if not hasattr(self, '_s3_backend'):
-                    self._s3_backend = S3Backend()
-                await self._s3_backend.delete(key)
+                await self._backend_for_tier(StoreTier.S3).delete(key)
             except Exception as e:
                 logger.warning(f"TEMP: Failed to delete from S3: {e}")
 
         elif store == StoreTier.GCS:
             try:
-                from noetl.core.storage.backends import GCSBackend
-                if not hasattr(self, '_gcs_backend'):
-                    self._gcs_backend = GCSBackend()
-                await self._gcs_backend.delete(key)
+                await self._backend_for_tier(StoreTier.GCS).delete(key)
             except Exception as e:
                 logger.warning(f"TEMP: Failed to delete from GCS: {e}")
 
@@ -959,28 +935,21 @@ class TempStore:
         deleted = False
 
         try:
-            from noetl.core.storage.backends import NATSKVBackend
-            if not hasattr(self, '_kv_backend'):
-                self._kv_backend = NATSKVBackend()
-            deleted = await self._kv_backend.delete(key) or deleted
+            deleted = await self._backend_for_tier(StoreTier.KV).delete(key) or deleted
         except Exception:
             pass
 
-        try:
-            from noetl.core.storage.backends import S3Backend
-            if not hasattr(self, '_s3_backend'):
-                self._s3_backend = S3Backend()
-            deleted = await self._s3_backend.delete(key) or deleted
-        except Exception:
-            pass
+        if os.getenv("NOETL_S3_BUCKET") or self._has_cached_or_legacy_backend(StoreTier.S3):
+            try:
+                deleted = await self._backend_for_tier(StoreTier.S3).delete(key) or deleted
+            except Exception:
+                pass
 
-        try:
-            from noetl.core.storage.backends import GCSBackend
-            if not hasattr(self, '_gcs_backend'):
-                self._gcs_backend = GCSBackend()
-            deleted = await self._gcs_backend.delete(key) or deleted
-        except Exception:
-            pass
+        if os.getenv("NOETL_GCS_BUCKET") or self._has_cached_or_legacy_backend(StoreTier.GCS):
+            try:
+                deleted = await self._backend_for_tier(StoreTier.GCS).delete(key) or deleted
+            except Exception:
+                pass
 
         return deleted
 

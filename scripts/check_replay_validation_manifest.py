@@ -31,7 +31,10 @@ OPTIONAL_STEP_NAMES = (
     "live_checksums",
     "projection_parity",
     "payload_resolution",
+    "runtime_locator_live_rows",
+    "runtime_locator_state",
     "artifact_index",
+    "storage_backend_registry_report",
 )
 
 
@@ -87,6 +90,10 @@ def _is_worker_metrics_step(name: str) -> bool:
         name.startswith("worker_metrics_")
         and (name.endswith("_integrity") or name.endswith("_fetch"))
     )
+
+
+def _is_storage_backend_registry_step(name: str) -> bool:
+    return name == "storage_backend_registry_integrity"
 
 
 def _validate_artifact_list(
@@ -189,6 +196,15 @@ def _validate_manifest(
                 _validate_artifact_list(
                     failures,
                     field="artifacts.worker_metrics",
+                    value=value,
+                    manifest_path=manifest_path,
+                    check_artifacts=check_artifacts,
+                )
+                continue
+            if field == "storage_backend_registry":
+                _validate_artifact_list(
+                    failures,
+                    field="artifacts.storage_backend_registry",
                     value=value,
                     manifest_path=manifest_path,
                     check_artifacts=check_artifacts,
@@ -330,6 +346,14 @@ def _validate_manifest(
                     "reason": "worker metrics artifacts require matching integrity steps",
                 }
             )
+    storage_backend_registry = artifacts.get("storage_backend_registry") if isinstance(artifacts, dict) else None
+    if storage_backend_registry and "storage_backend_registry_integrity" not in step_names:
+        failures.append(
+            {
+                "field": "steps",
+                "reason": "storage backend registry artifacts require an integrity step",
+            }
+        )
     if artifacts_index:
         if "artifact_index" not in step_names:
             failures.append(
@@ -356,6 +380,8 @@ def _validate_manifest(
         if _is_projector_summary_step(name):
             continue
         if _is_worker_metrics_step(name):
+            continue
+        if _is_storage_backend_registry_step(name):
             continue
         if name not in (*REQUIRED_STEP_ORDER, *OPTIONAL_STEP_NAMES, "fetch_artifact"):
             failures.append({"field": "steps", "reason": "unknown validation step", "step": name})

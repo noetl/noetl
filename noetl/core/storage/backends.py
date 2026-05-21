@@ -912,6 +912,11 @@ def unregister_backend(name: str) -> None:
     _REGISTERED_BACKENDS.pop(_normalize_backend_name(name), None)
 
 
+def clear_registered_backends() -> None:
+    """Remove all in-process backend registrations."""
+    _REGISTERED_BACKENDS.clear()
+
+
 def registered_backend_names(*, include_builtin: bool = True) -> tuple[str, ...]:
     """Return known backend names in deterministic order."""
     names = set(_REGISTERED_BACKENDS)
@@ -967,6 +972,7 @@ __all__ = [
     "S3Backend",
     "GCSBackend",
     "StorageNotImplementedError",
+    "clear_registered_backends",
     "get_backend",
     "register_backend",
     "registered_backend_names",

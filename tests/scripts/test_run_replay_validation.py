@@ -477,6 +477,90 @@ def test_run_replay_validation_passes_worker_metrics_admission_only_flag(
     assert output["config"]["worker_metrics_admission_only"] is True
 
 
+def test_run_replay_validation_builds_and_indexes_storage_phase5_report(
+    monkeypatch,
+    tmp_path: Path,
+    capsys,
+):
+    calls = []
+
+    def _run(command):
+        calls.append(command)
+        if any(str(part).endswith("fetch_replay_state_report.py") for part in command):
+            output_path = Path(command[command.index("--output") + 1])
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            output_path.write_text(json.dumps({"projection_checksums": {"execution": "a" * 64}}))
+        if any(str(part).endswith("build_storage_phase5_report.py") for part in command):
+            output_path = Path(command[command.index("--output") + 1])
+            output_path.write_text(
+                json.dumps(
+                    {
+                        "registered_backends": ["disk", "gcs", "kv", "memory", "s3"],
+                        "consumer_paths": {
+                            "result_store": True,
+                            "artifact_executor": True,
+                            "agent_disk_fallback": True,
+                        },
+                        "direct_backend_construction": {
+                            "matched": True,
+                            "unexpected": [],
+                        },
+                    }
+                )
+            )
+        if any(str(part).endswith("package_replay_validation_artifacts.py") for part in command):
+            artifact_args = [
+                command[idx + 1]
+                for idx, value in enumerate(command)
+                if value == "--artifact"
+            ]
+            assert any(
+                arg.startswith("storage_backend_registry_generated=")
+                for arg in artifact_args
+            )
+            output_path = Path(command[command.index("--output") + 1])
+            output_path.write_text(json.dumps({"schema_version": 1, "matched": True, "artifacts": []}))
+        return 0, json.dumps({"ok": True}), "", 0.01
+
+    monkeypatch.setattr(run_replay_validation, "_run", _run)
+    manifest = tmp_path / "validation.json"
+    artifact_index = tmp_path / "artifact-index.json"
+
+    assert (
+        run_replay_validation.main(
+            [
+                "--base-url",
+                "http://noetl.example",
+                "--execution-id",
+                "123",
+                "--build-storage-backend-registry-report",
+                "--output-dir",
+                str(tmp_path),
+                "--report-output",
+                str(manifest),
+                "--artifact-index-output",
+                str(artifact_index),
+            ]
+        )
+        == 0
+    )
+
+    assert any("scripts/build_storage_phase5_report.py" in call for call in calls)
+    assert any("scripts/check_storage_phase5_evidence.py" in call for call in calls)
+    output = json.loads(capsys.readouterr().out)
+    reports = output["artifacts"]["storage_backend_registry"]
+    assert reports == [
+        {
+            "role": "storage_backend_registry_generated",
+            "path": str(tmp_path / "storage-phase5-report.json"),
+        }
+    ]
+    assert output["config"]["build_storage_backend_registry_report"] is True
+    assert "storage_backend_registry_integrity" in [
+        step["name"] for step in output["steps"]
+    ]
+
+
 def test_run_replay_validation_rejects_invalid_worker_metrics_url(tmp_path: Path):
     try:
         run_replay_validation.main(

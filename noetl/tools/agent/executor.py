@@ -225,10 +225,10 @@ def _resolve_disk_result_reference_sync(ref: Dict[str, Any]) -> Any:
     async def _resolve() -> Any:
         import gzip
         import json
-        from noetl.core.storage.backends import DiskCacheBackend
+        from noetl.core.storage.backends import get_backend
 
         key = ref_uri.replace("noetl://", "").replace("/", "_")
-        data_bytes = await DiskCacheBackend().get(key)
+        data_bytes = await get_backend("disk").get(key)
         if data_bytes and len(data_bytes) >= 2 and data_bytes[:2] == b"\x1f\x8b":
             data_bytes = gzip.decompress(data_bytes)
         return json.loads(data_bytes.decode("utf-8"))
