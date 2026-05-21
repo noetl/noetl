@@ -13,6 +13,7 @@ fi
   tests/core/test_replay_golden_corpus.py \
   tests/core/test_replay_payload_resolver.py \
   tests/scripts/test_fetch_replay_state_report.py \
+  tests/scripts/test_validation_stdout.py \
   tests/scripts/test_run_replay_validation.py \
   tests/scripts/test_run_projector_phase2_validation.py \
   tests/scripts/test_render_projector_phase2_command.py \
