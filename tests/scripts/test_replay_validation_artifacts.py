@@ -1,6 +1,7 @@
 from scripts.replay_validation_artifacts import (
     artifact_cli_args,
     artifact_entries,
+    artifact_result_entry,
     artifact_roles,
     duplicate_artifact_roles,
     indexed_artifact_entries,
@@ -124,6 +125,20 @@ def test_missing_indexed_artifact_roles_treats_malformed_index_roles_as_empty():
         ["projector_summary_1"],
         "projector_summary_1",
     ) == ["projector_summary_1"]
+
+
+def test_artifact_result_entry_preserves_role_path_and_result():
+    result = {"matched": True}
+
+    assert artifact_result_entry(
+        {"role": "worker_metrics_1"},
+        path="/tmp/worker.prom",
+        result=result,
+    ) == {
+        "role": "worker_metrics_1",
+        "path": "/tmp/worker.prom",
+        "result": result,
+    }
 
 
 def test_artifact_cli_args_renders_role_path_pairs():

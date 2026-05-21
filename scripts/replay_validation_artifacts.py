@@ -84,6 +84,15 @@ def missing_indexed_artifact_roles(
     return [role for role in required_roles if role not in indexed_roles]
 
 
+def artifact_result_entry(
+    entry: dict[str, Any],
+    *,
+    path: str,
+    result: dict[str, Any],
+) -> dict[str, Any]:
+    return {"role": entry.get("role"), "path": path, "result": result}
+
+
 def artifact_cli_args(entries: list[dict[str, Any]]) -> list[str]:
     args: list[str] = []
     for entry in [item for item in entries if isinstance(item, dict)]:
