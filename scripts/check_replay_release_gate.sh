@@ -24,6 +24,9 @@ fi
   tests/scripts/test_package_replay_validation_artifacts.py \
   tests/scripts/test_check_replay_validation_bundle.py \
   tests/scripts/test_check_replay_validation_manifest.py \
+  tests/scripts/test_build_fanout_phase6_report.py \
+  tests/scripts/test_check_fanout_phase6_evidence.py \
+  tests/scripts/test_check_replay_fanout_reduce_report.py \
   tests/scripts/test_check_replay_state_report.py \
   tests/scripts/test_check_replay_parity_report.py \
   tests/scripts/test_check_replay_payload_resolution_report.py \
@@ -42,4 +45,6 @@ fi
   tests/api/test_frame_routes.py \
   tests/core/test_arrow_ipc_serialization.py \
   tests/core/test_storage_ipc_hint.py \
-  tests/core/test_storage_ipc_cache.py
+  tests/core/test_storage_ipc_cache.py \
+  tests/unit/dsl/engine/test_fanout_reduce_planner.py \
+  tests/unit/dsl/engine/test_engine.py::test_inclusive_transition_commands_carry_fanout_reduce_metadata
