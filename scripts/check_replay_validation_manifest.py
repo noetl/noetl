@@ -19,6 +19,7 @@ from scripts.replay_validation_artifacts import (
     duplicate_artifact_roles,
     missing_indexed_artifact_roles,
     phase_artifact_roles,
+    result_matched,
 )
 
 REQUIRED_CONFIG_FIELDS = (
@@ -238,7 +239,7 @@ def _validate_manifest(
                         }
                     )
                 else:
-                    if index_output.get("matched") is not True:
+                    if not result_matched(index_output):
                         failures.append(
                             {
                                 "field": "artifacts.artifact_index",
