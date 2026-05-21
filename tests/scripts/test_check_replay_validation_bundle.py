@@ -416,6 +416,32 @@ def test_check_replay_validation_bundle_accepts_explicit_matching_index(
     assert json.loads(capsys.readouterr().out)["matched"] is True
 
 
+def test_check_replay_validation_bundle_accepts_equivalent_resolved_index_path(
+    tmp_path: Path,
+    capsys,
+):
+    manifest, index = _bundle(tmp_path)
+    link = tmp_path.parent / f"{tmp_path.name}-link"
+    try:
+        link.symlink_to(tmp_path, target_is_directory=True)
+    except OSError as exc:
+        pytest.skip(f"symlink unavailable: {exc}")
+    payload = json.loads(manifest.read_text())
+    payload["artifacts"]["artifact_index"] = str(link / index.name)
+    manifest.write_text(json.dumps(payload))
+    index.write_text(
+        json.dumps(
+            build_artifact_index(manifest_path=manifest, output_path=index),
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n"
+    )
+
+    assert main(["--manifest", str(manifest), "--artifact-index", str(index)]) == 0
+    assert json.loads(capsys.readouterr().out)["matched"] is True
+
+
 def test_check_replay_validation_bundle_rejects_different_explicit_index(
     tmp_path: Path,
     capsys,
