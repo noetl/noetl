@@ -3,6 +3,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 from scripts.check_replay_validation_bundle import main
 from scripts.package_replay_validation_artifacts import build_artifact_index
 
@@ -382,6 +384,16 @@ def _add_fanout_phase6_evidence(manifest: Path, index: Path, tmp_path: Path) -> 
     )
 
 
+def _drop_index_role(index: Path, role: str) -> None:
+    payload = json.loads(index.read_text())
+    payload["artifacts"] = [
+        entry
+        for entry in payload["artifacts"]
+        if not (isinstance(entry, dict) and entry.get("role") == role)
+    ]
+    index.write_text(json.dumps(payload))
+
+
 def test_check_replay_validation_bundle_accepts_manifest_referenced_index(
     tmp_path: Path,
     capsys,
@@ -481,6 +493,23 @@ def test_check_replay_validation_bundle_rejects_missing_projector_phase2_evidenc
     output = json.loads(capsys.readouterr().out)
     assert any(
         failure["field"] == "phase2_projector_evidence"
+        for failure in output["failures"]
+    )
+
+
+def test_check_replay_validation_bundle_requires_indexed_projector_phase2_evidence(
+    tmp_path: Path,
+    capsys,
+):
+    manifest, index = _bundle(tmp_path)
+    _add_projector_phase2_evidence(manifest, index, tmp_path)
+    _drop_index_role(index, "projector_summary_1")
+
+    assert main(["--manifest", str(manifest), "--require-projector-phase2"]) == 1
+    output = json.loads(capsys.readouterr().out)
+    assert any(
+        failure["reason"] == "artifact index missing required phase evidence roles"
+        and failure["roles"] == ["projector_summary_1"]
         for failure in output["failures"]
     )
 
@@ -646,5 +675,33 @@ def test_check_replay_validation_bundle_rejects_missing_replay_fanout_phase6_evi
     output = json.loads(capsys.readouterr().out)
     assert any(
         failure["field"] == "phase6_replay_fanout_evidence"
+        for failure in output["failures"]
+    )
+
+
+@pytest.mark.parametrize(
+    ("add_evidence", "role", "flag"),
+    [
+        (_add_worker_phase3_evidence, "worker_metrics_1", "--require-worker-ipc-phase3"),
+        (_add_storage_phase5_evidence, "storage_backend_registry", "--require-storage-phase5"),
+        (_add_fanout_phase6_evidence, "fanout_reduce_planner", "--require-fanout-phase6"),
+    ],
+)
+def test_check_replay_validation_bundle_requires_indexed_phase_evidence_roles(
+    tmp_path: Path,
+    capsys,
+    add_evidence,
+    role: str,
+    flag: str,
+):
+    manifest, index = _bundle(tmp_path)
+    add_evidence(manifest, index, tmp_path)
+    _drop_index_role(index, role)
+
+    assert main(["--manifest", str(manifest), flag]) == 1
+    output = json.loads(capsys.readouterr().out)
+    assert any(
+        failure["reason"] == "artifact index missing required phase evidence roles"
+        and failure["roles"] == [role]
         for failure in output["failures"]
     )
