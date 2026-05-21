@@ -24,17 +24,27 @@ def render_command(args: argparse.Namespace) -> list[str]:
         args.organization_id,
         "--projection",
         args.projection,
+        "--limit",
+        str(args.limit),
         "--output-dir",
         str(args.output_dir),
+        "--timeout",
+        str(args.timeout),
     ]
+    if args.resolve_payloads:
+        command.append("--resolve-payloads")
     if args.live_rows:
         command.extend(["--live-rows", str(args.live_rows)])
     if args.live_checksums:
         command.extend(["--live-checksums", str(args.live_checksums)])
     if args.export_live_rows_postgres:
         command.append("--export-live-rows-postgres")
+    if args.postgres_dsn:
+        command.extend(["--postgres-dsn", args.postgres_dsn])
     if args.require_projection_parity:
         command.append("--require-projection-parity")
+    if args.report_output:
+        command.extend(["--report-output", str(args.report_output)])
     for url in args.projector_summary_url:
         command.extend(["--projector-summary-url", url])
     for path in args.projector_summary:
@@ -49,13 +59,18 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--tenant-id", default="default")
     parser.add_argument("--organization-id", default="default")
     parser.add_argument("--projection", default="all")
+    parser.add_argument("--limit", default=100000, type=int)
     parser.add_argument("--output-dir", required=True, type=Path)
+    parser.add_argument("--timeout", default=60.0, type=float)
+    parser.add_argument("--resolve-payloads", action="store_true")
     parser.add_argument("--live-rows", type=Path)
     parser.add_argument("--live-checksums", type=Path)
     parser.add_argument("--export-live-rows-postgres", action="store_true")
+    parser.add_argument("--postgres-dsn")
     parser.add_argument("--projector-summary-url", action="append", default=[], metavar="NAME=URL")
     parser.add_argument("--projector-summary", action="append", default=[], type=Path)
     parser.add_argument("--require-projection-parity", action="store_true")
+    parser.add_argument("--report-output", type=Path)
     parser.add_argument("--json", action="store_true", help="Emit JSON with argv and shell fields")
     args = parser.parse_args(argv)
 
@@ -70,6 +85,8 @@ def main(argv: list[str] | None = None) -> int:
     )
     if live_inputs > 1:
         parser.error("use only one live parity input")
+    if args.postgres_dsn and not args.export_live_rows_postgres:
+        parser.error("--postgres-dsn requires --export-live-rows-postgres")
     if not args.projector_summary and not args.projector_summary_url:
         parser.error("provide at least one projector summary source")
 
