@@ -1,0 +1,50 @@
+apiVersion: noetl.io/v2
+kind: Playbook
+metadata:
+  name: fanout_reduce_phase6
+  path: tests/fixtures/fanout_reduce_phase6
+
+workflow:
+  - step: start
+    tool:
+      kind: python
+      code: |
+        def main():
+            return {"status": "ok"}
+    next:
+      spec:
+        mode: inclusive
+      arcs:
+        - step: normalize_customer
+        - step: enrich_customer
+
+  - step: normalize_customer
+    tool:
+      kind: python
+      code: |
+        def main():
+            return {"normalized": True}
+    next:
+      spec:
+        mode: exclusive
+      arcs:
+        - step: reduce_customer
+
+  - step: enrich_customer
+    tool:
+      kind: python
+      code: |
+        def main():
+            return {"enriched": True}
+    next:
+      spec:
+        mode: exclusive
+      arcs:
+        - step: reduce_customer
+
+  - step: reduce_customer
+    tool:
+      kind: python
+      code: |
+        def main():
+            return {"reduced": True}

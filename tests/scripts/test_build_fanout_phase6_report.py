@@ -1,6 +1,29 @@
 import json
+from pathlib import Path
 
 from scripts.build_fanout_phase6_report import build_fanout_phase6_report
+
+
+def test_build_fanout_phase6_report_from_repo_fixture():
+    playbook = Path("tests/fixtures/playbooks/fanout_reduce/fanout_reduce_phase6.yaml")
+
+    report = build_fanout_phase6_report([playbook])
+
+    assert report["summary"] == {"playbooks": 1, "fanouts": 1, "reduces": 1}
+    planner = report["playbooks"][0]["planner"]
+    assert planner["fanouts"] == [
+        {
+            "step": "start",
+            "arcs": ["normalize_customer", "enrich_customer"],
+            "reduce_steps": ["reduce_customer"],
+        }
+    ]
+    assert planner["reduces"] == [
+        {
+            "step": "reduce_customer",
+            "upstream_steps": ["normalize_customer", "enrich_customer"],
+        }
+    ]
 
 
 def test_build_fanout_phase6_report_counts_planned_boundaries(tmp_path):
