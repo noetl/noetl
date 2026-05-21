@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.87.0](https://github.com/noetl/noetl/compare/v2.86.0...v2.87.0) (2026-05-21)
+
+### Features
+
+* **storage:** route agent disk fallback through registry ([6675bbb](https://github.com/noetl/noetl/commit/6675bbbb7f9dc22ea1e1f5d0032551378d134ebe))
+* **storage:** route artifact kv reads through registry ([e09d0c8](https://github.com/noetl/noetl/commit/e09d0c88a2ef9af225753875e9cb43fd5a79d722))
+* **storage:** route result store through backend registry ([adbd5c2](https://github.com/noetl/noetl/commit/adbd5c2a8329cf69f3bfecebc86d1207e12cc6d0))
+
 ## [2.86.0](https://github.com/noetl/noetl/compare/v2.85.2...v2.86.0) (2026-05-20)
 
 ### Features
