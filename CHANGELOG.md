@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.88.0](https://github.com/noetl/noetl/compare/v2.87.0...v2.88.0) (2026-05-21)
+
+### Features
+
+* **engine:** add phase6 fanout reduce planner ([8ac19d7](https://github.com/noetl/noetl/commit/8ac19d7d373f76e1da9afe917123a36213907545))
+* **replay:** preserve fanout reduce command metadata ([1efe967](https://github.com/noetl/noetl/commit/1efe967cbca75cc963c8640924d97aeb16ea57cc))
+
 ## [2.87.0](https://github.com/noetl/noetl/compare/v2.86.0...v2.87.0) (2026-05-21)
 
 ### Features
