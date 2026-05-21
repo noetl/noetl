@@ -173,16 +173,16 @@ def validate_bundle(
             )
             resolved_index_path = None
         else:
-            resolved_index_path = resolve_indexed_path(
+            resolved_index_path = resolve_manifest_artifact_path(
                 manifest_index,
-                index_path=manifest_path,
+                manifest_path=manifest_path,
             )
     else:
         resolved_index_path = artifact_index_path
         if manifest_index is not None:
-            manifest_resolved_index = resolve_indexed_path(
+            manifest_resolved_index = resolve_manifest_artifact_path(
                 manifest_index,
-                index_path=manifest_path,
+                manifest_path=manifest_path,
             )
             if manifest_resolved_index != artifact_index_path.resolve():
                 failures.append(
