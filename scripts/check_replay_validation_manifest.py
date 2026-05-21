@@ -16,6 +16,7 @@ from scripts.package_replay_validation_artifacts import (
 )
 from scripts.replay_validation_artifacts import (
     PHASE_ARTIFACT_FIELDS,
+    artifact_index_path_value,
     duplicate_artifact_roles,
     missing_indexed_artifact_roles,
     phase_artifact_roles,
@@ -223,8 +224,8 @@ def _validate_manifest(
                 check_artifacts=check_artifacts,
             )
 
-        artifact_index = artifacts.get("artifact_index")
-        if isinstance(artifact_index, str) and artifact_index:
+        artifact_index = artifact_index_path_value(manifest)
+        if artifact_index is not None:
             index_path = _artifact_path(artifact_index, manifest_path)
             if index_path.exists():
                 try:

@@ -22,6 +22,7 @@ from scripts.package_replay_validation_artifacts import (
     validate_artifact_index,
 )
 from scripts.replay_validation_artifacts import (
+    artifact_index_path_value,
     artifact_result_entry,
     indexed_artifact_entries,
     indexed_artifact_paths,
@@ -29,16 +30,6 @@ from scripts.replay_validation_artifacts import (
     phase_artifact_roles,
     result_matched,
 )
-
-
-def _artifact_index_from_manifest(manifest: dict[str, Any]) -> str | None:
-    artifacts = manifest.get("artifacts")
-    if not isinstance(artifacts, dict):
-        return None
-    value = artifacts.get("artifact_index")
-    if not isinstance(value, str) or not value:
-        return None
-    return value
 
 
 def _required_index_roles(
@@ -168,7 +159,7 @@ def validate_bundle(
                 }
             )
 
-    manifest_index = _artifact_index_from_manifest(manifest)
+    manifest_index = artifact_index_path_value(manifest)
     if artifact_index_path is None:
         if manifest_index is None:
             failures.append(
