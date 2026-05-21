@@ -181,7 +181,7 @@ def validate_bundle(
                 manifest_index,
                 manifest_path=manifest_path,
             )
-            if manifest_resolved_index != artifact_index_path.resolve():
+            if manifest_resolved_index.resolve() != artifact_index_path.resolve():
                 failures.append(
                     {
                         "field": "artifact_index",
