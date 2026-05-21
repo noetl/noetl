@@ -156,6 +156,7 @@ def test_run_replay_validation_can_export_live_rows_from_postgres(monkeypatch, t
         return 0, json.dumps({"ok": True}), "", 0.01
 
     monkeypatch.setattr(run_replay_validation, "_run", _run)
+    manifest = tmp_path / "validation.json"
 
     assert (
         run_replay_validation.main(
@@ -692,6 +693,7 @@ def test_run_replay_validation_can_check_replay_fanout_reduce_metadata(
         return 0, json.dumps({"ok": True}), "", 0.01
 
     monkeypatch.setattr(run_replay_validation, "_run", _run)
+    manifest = tmp_path / "validation.json"
 
     assert (
         run_replay_validation.main(
@@ -828,6 +830,7 @@ def test_run_replay_validation_fails_when_fetch_does_not_write_report(
         return 0, json.dumps({"ok": True}), "", 0.01
 
     monkeypatch.setattr(run_replay_validation, "_run", _run)
+    manifest = tmp_path / "validation.json"
 
     assert (
         run_replay_validation.main(
@@ -845,3 +848,42 @@ def test_run_replay_validation_fails_when_fetch_does_not_write_report(
     output = json.loads(capsys.readouterr().out)
     assert output["matched"] is False
     assert output["steps"][-1]["name"] == "fetch_artifact"
+
+
+def test_run_replay_validation_fails_when_artifact_index_is_not_written(
+    monkeypatch,
+    tmp_path: Path,
+    capsys,
+):
+    def _run(command):
+        if any(str(part).endswith("fetch_replay_state_report.py") for part in command):
+            output_path = Path(command[command.index("--output") + 1])
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            output_path.write_text(json.dumps({"projection_checksums": {"execution": "a" * 64}}))
+        return 0, json.dumps({"ok": True}), "", 0.01
+
+    monkeypatch.setattr(run_replay_validation, "_run", _run)
+    manifest = tmp_path / "validation.json"
+
+    assert (
+        run_replay_validation.main(
+            [
+                "--base-url",
+                "http://noetl.example",
+                "--execution-id",
+                "123",
+                "--output-dir",
+                str(tmp_path),
+                "--report-output",
+                str(manifest),
+                "--artifact-index-output",
+                str(tmp_path / "artifact-index.json"),
+            ]
+        )
+        == 1
+    )
+    capsys.readouterr()
+    output = json.loads(manifest.read_text())
+    assert output["matched"] is False
+    assert output["steps"][-1]["name"] == "artifact_index"
+    assert output["steps"][-1]["stderr"].startswith("artifact index step did not create artifact index:")

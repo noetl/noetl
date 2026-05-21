@@ -802,6 +802,35 @@ def main(argv: list[str] | None = None) -> int:
                 args.report_output,
             )
             return code
+        if not args.artifact_index_output.exists():
+            steps[-1] = {
+                "name": "artifact_index",
+                "command": artifact_index_command,
+                "returncode": 1,
+                "duration_seconds": round(duration, 6),
+                "stdout": stdout,
+                "stderr": f"artifact index step did not create artifact index: {args.artifact_index_output}",
+            }
+            stdout_json = _parse_json(stdout)
+            if stdout_json is not None:
+                steps[-1]["stdout_json"] = stdout_json
+            _emit_report(
+                _build_report(
+                    matched=False,
+                    args=args,
+                    replay_path=replay_path,
+                    live_checksums_path=live_checksums_path,
+                    live_rows_path=live_rows_path,
+                    projector_summaries=projector_summaries,
+                    worker_metrics=worker_metrics,
+                    storage_backend_registry=storage_backend_registry,
+                    fanout_reduce_planner=fanout_reduce_planner,
+                    steps=steps,
+                    started_at=started_at,
+                ),
+                args.report_output,
+            )
+            return 1
     return 0
 
 
