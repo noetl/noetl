@@ -21,6 +21,7 @@ from scripts.replay_validation_artifacts import (
     manifest_artifacts,
     missing_indexed_artifact_roles,
     phase_artifact_roles,
+    resolve_manifest_artifact_path,
     result_matched,
 )
 
@@ -67,10 +68,7 @@ def _valid_timestamp(value: Any) -> bool:
 
 
 def _artifact_path(value: str, manifest_path: Path | None) -> Path:
-    path = Path(value)
-    if not path.is_absolute() and manifest_path is not None:
-        return (manifest_path.parent / path).resolve()
-    return path
+    return resolve_manifest_artifact_path(value, manifest_path=manifest_path)
 
 
 def _validate_artifact_path(
