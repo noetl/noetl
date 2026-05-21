@@ -219,6 +219,19 @@ def main(argv: list[str] | None = None) -> int:
     if args.require_projection_parity:
         phase_gate_command.append("--require-projection-parity")
     steps.append(_step("phase2_evidence", phase_gate_command))
+    if steps[-1]["returncode"] == 0:
+        bundle_gate_command = [
+            _validation_python(),
+            "scripts/check_replay_validation_bundle.py",
+            "--manifest",
+            str(manifest_path),
+            "--artifact-index",
+            str(artifact_index_path),
+            "--require-projector-phase2",
+        ]
+        if args.require_projection_parity:
+            bundle_gate_command.append("--require-projection-parity")
+        steps.append(_step("bundle_evidence", bundle_gate_command))
 
     matched = steps[-1]["returncode"] == 0
     report = _build_report(
