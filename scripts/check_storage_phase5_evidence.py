@@ -71,7 +71,7 @@ def validate_storage_phase5_report(report: dict[str, Any]) -> dict[str, Any]:
 
     direct_scan = report.get("direct_backend_construction")
     direct_scan = direct_scan if isinstance(direct_scan, dict) else {}
-    if direct_scan.get("matched") is not True:
+    if not result_matched(direct_scan):
         failures.append(
             {
                 "field": "direct_backend_construction",
