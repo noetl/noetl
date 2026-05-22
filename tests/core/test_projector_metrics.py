@@ -58,6 +58,10 @@ def test_projector_metrics_render_prometheus_labels():
     assert "noetl_projector_last_batch_unowned_events" in body
     assert "noetl_projector_last_batch_unshardable_events" in body
     assert "noetl_projector_last_batch_stale_projection_records" in body
+    assert "noetl_projector_frame_projection_records_total" in body
+    assert "noetl_projector_frame_projection_stale_records_total" in body
+    assert "noetl_projector_last_batch_frame_projection_records" in body
+    assert "noetl_projector_last_batch_frame_stale_projection_records" in body
     assert " 1.0" in body
 
     snapshot = metrics.snapshot()
@@ -75,11 +79,48 @@ def test_projector_metrics_render_prometheus_labels():
     assert summary["unshardable_events"] == 0
     assert summary["projection_records"] == 1
     assert summary["stale_projection_records"] == 1
+    assert summary["frame_projection_records"] == 0
+    assert summary["frame_stale_projection_records"] == 0
     assert summary["owned_ratio"] == 2 / 3
     assert summary["unowned_ratio"] == 1 / 3
     assert summary["unshardable_ratio"] == 0
     assert summary["projection_record_ratio"] == 0.5
     assert summary["stale_projection_ratio"] == 1.0
+    assert summary["frame_projection_record_ratio"] == 0
+    assert summary["frame_stale_projection_ratio"] == 0
+
+
+def test_projector_metrics_record_notification_tracks_frame_counters():
+    """Frame-specific counters increment when record_notification is called with them."""
+    from noetl.core.projector.metrics import ProjectorMetrics, render_projector_metrics
+
+    metrics = ProjectorMetrics()
+    metrics.record_notification(
+        extracted_events=5,
+        owned_events=4,
+        projection_records=1,
+        stale_projection_records=0,
+        frame_projection_records=3,
+        frame_stale_projection_records=1,
+    )
+
+    snapshot = metrics.snapshot()
+    assert snapshot["frame_projection_records_total"] == 3
+    assert snapshot["frame_projection_stale_records_total"] == 1
+    assert snapshot["last_batch_frame_projection_records"] == 3
+    assert snapshot["last_batch_frame_stale_projection_records"] == 1
+
+    body = render_projector_metrics(metrics)
+    assert "noetl_projector_frame_projection_records_total 3.0" in body
+    assert "noetl_projector_frame_projection_stale_records_total 1.0" in body
+    assert "noetl_projector_last_batch_frame_projection_records 3.0" in body
+    assert "noetl_projector_last_batch_frame_stale_projection_records 1.0" in body
+
+    summary = metrics.batch_summary()
+    assert summary["frame_projection_records"] == 3
+    assert summary["frame_stale_projection_records"] == 1
+    assert summary["frame_projection_record_ratio"] == 0.75
+    assert summary["frame_stale_projection_ratio"] == 1 / 3
 
 
 def test_projector_metrics_batch_summary_handles_empty_batches():
