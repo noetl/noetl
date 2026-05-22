@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.94.0](https://github.com/noetl/noetl/compare/v2.93.0...v2.94.0) (2026-05-22)
+
+### Features
+
+* **payload-store:** add S3 adapter + compliance suite ([4250e6c](https://github.com/noetl/noetl/commit/4250e6c323566a6051bdf3984313f9de29516def))
+
 ## [2.93.0](https://github.com/noetl/noetl/compare/v2.92.0...v2.93.0) (2026-05-22)
 
 ### Features
