@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.96.0](https://github.com/noetl/noetl/compare/v2.95.0...v2.96.0) (2026-05-22)
+
+### Features
+
+* **payload-store:** add Azure Blob adapter ([415451d](https://github.com/noetl/noetl/commit/415451d45da84878a4e164d4ea1f3f479b5ca8a9))
+
 ## [2.95.0](https://github.com/noetl/noetl/compare/v2.94.0...v2.95.0) (2026-05-22)
 
 ### Features
