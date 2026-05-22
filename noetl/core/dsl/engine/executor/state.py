@@ -2,9 +2,12 @@ from __future__ import annotations
 
 from .common import *
 
+from noetl.core.dsl.engine.planner import FanoutReducePlan, build_fanout_reduce_plan
+
+
 class ExecutionState:
     """Tracks state of a playbook execution."""
-    
+
     def __init__(self, execution_id: str, playbook: Playbook, payload: dict[str, Any], catalog_id: Optional[int] = None, parent_execution_id: Optional[int] = None):
         self.execution_id = execution_id
         self.playbook = playbook
@@ -12,6 +15,9 @@ class ExecutionState:
         self.catalog_id = catalog_id  # Store catalog_id for event persistence
         self.parent_execution_id = parent_execution_id  # Track parent execution for sub-playbooks
         self.current_step: Optional[str] = None
+        # Phase 6: cache the static fan-out/reduce plan once per execution so
+        # transition evaluation doesn't re-run the planner on every fan-out.
+        self._fanout_reduce_plan: Optional[FanoutReducePlan] = None
         self.variables: dict[str, Any] = {}
         self.last_event_id: Optional[int] = None  # Track last persisted event ID
         self.step_event_ids: dict[str, int] = {}  # Track last event per step
@@ -156,6 +162,19 @@ class ExecutionState:
         state.pagination_state = data.get("pagination_state", {})
         state.pending_next_actions = data.get("pending_next_actions", {})
         return state
+
+    @property
+    def fanout_reduce_plan(self) -> FanoutReducePlan:
+        """Static fan-out/reduce plan derived from the playbook.
+
+        The plan is a pure function of ``self.playbook``; cache it once per
+        execution so transition evaluation doesn't re-run the planner on
+        every fan-out boundary. See
+        :func:`noetl.core.dsl.engine.planner.build_fanout_reduce_plan`.
+        """
+        if self._fanout_reduce_plan is None:
+            self._fanout_reduce_plan = build_fanout_reduce_plan(self.playbook)
+        return self._fanout_reduce_plan
 
     def get_step(self, step_name: str) -> Optional[Step]:
         """Get step by name."""
