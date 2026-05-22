@@ -21,6 +21,7 @@ from .ports import (
     PayloadStore,
     content_hash,
 )
+from .s3 import S3PayloadStore
 
 __all__ = [
     "PayloadStore",
@@ -28,4 +29,5 @@ __all__ = [
     "PayloadNotFound",
     "content_hash",
     "FilesystemPayloadStore",
+    "S3PayloadStore",
 ]
