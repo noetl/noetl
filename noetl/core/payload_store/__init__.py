@@ -14,6 +14,7 @@ Cloud adapters (S3 / GCS / Azure Blob / SeaweedFS) land in subsequent
 rounds.
 """
 
+from .azure import AzureBlobPayloadStore
 from .filesystem import FilesystemPayloadStore
 from .gcs import GCSPayloadStore
 from .ports import (
@@ -32,4 +33,5 @@ __all__ = [
     "FilesystemPayloadStore",
     "S3PayloadStore",
     "GCSPayloadStore",
+    "AzureBlobPayloadStore",
 ]
