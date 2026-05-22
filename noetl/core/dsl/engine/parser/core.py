@@ -3,6 +3,11 @@ from __future__ import annotations
 from .common import *
 from .validation import ParserValidationMixin
 
+from noetl.core.dsl.engine.planner import validate_fanout_reduce_plan
+from noetl.core.logger import setup_logger
+
+_planner_logger = setup_logger("noetl.core.dsl.engine.planner", include_location=True)
+
 
 class DSLParser(ParserValidationMixin):
     """
@@ -16,6 +21,13 @@ class DSLParser(ParserValidationMixin):
     - step.spec.policy.admit.rules for admission (rejects step.when)
     - loop.spec.mode for iteration
     - Rejects case blocks, expr, eval, step.when, root vars
+
+    After structural validation + Pydantic construction succeed, runs the
+    advisory fan-out/reduce planner lint
+    (:func:`noetl.core.dsl.engine.planner.validate_fanout_reduce_plan`)
+    and surfaces warnings via the
+    ``noetl.core.dsl.engine.planner`` logger. Warnings never block
+    parsing.
     """
 
     def __init__(self):
@@ -45,11 +57,22 @@ class DSLParser(ParserValidationMixin):
 
         self._validate_canonical_v10(data)
         playbook = Playbook(**data)
+        self._emit_planner_warnings(playbook)
 
         if cache_key:
             self._cache[cache_key] = playbook
 
         return playbook
+
+    def _emit_planner_warnings(self, playbook: Playbook) -> None:
+        """Log planner-derived advisory warnings (never raises)."""
+        try:
+            warnings = validate_fanout_reduce_plan(playbook)
+        except Exception:  # pragma: no cover - defensive; planner is pure
+            _planner_logger.exception("[DSL.PLANNER] validation crashed")
+            return
+        for warning in warnings:
+            _planner_logger.warning("[DSL.PLANNER] %s", warning)
 
     def parse_file(self, file_path: str | Path, use_cache: bool = True) -> Playbook:
         """

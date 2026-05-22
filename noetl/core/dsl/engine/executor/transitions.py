@@ -5,7 +5,7 @@ from .outbox import drain_executor_outbox, enqueue_executor_outbox
 from .state import ExecutionState
 from .store import PlaybookRepo, StateStore
 from noetl.core.event_store.ports import canonical_event_checksum
-from noetl.core.dsl.engine.planner import build_fanout_reduce_plan
+# Plan access is now cached on ExecutionState; planner module is referenced via state.fanout_reduce_plan
 from noetl.core.dsl.render import render_template
 
 class TransitionMixin:
@@ -817,6 +817,11 @@ class TransitionMixin:
         if next_mode == "inclusive":
             self._annotate_fanout_reduce_commands(state, step_def, issued_records)
 
+        # Phase 6: reducer-bound annotation runs regardless of next.spec.mode.
+        # Reduce boundaries are static plan information — they don't depend on
+        # whether the upstream router fans out or branches conditionally.
+        self._annotate_reducer_commands(state, step_def, issued_records)
+
         return commands, any_matched, any_raised
 
     def _annotate_fanout_reduce_commands(
@@ -833,7 +838,7 @@ class TransitionMixin:
         if len(target_order) < 2:
             return
 
-        plan = build_fanout_reduce_plan(state.playbook)
+        plan = state.fanout_reduce_plan
         fanout = next(
             (item for item in plan.fanouts if item.step == source_step.step),
             None,
@@ -852,6 +857,39 @@ class TransitionMixin:
                     "target_step": target_step,
                     "target_index": target_index[target_step],
                     "reduce_steps": list(fanout.reduce_steps),
+                }
+            )
+
+    def _annotate_reducer_commands(
+        self,
+        state: ExecutionState,
+        source_step: Step,
+        issued_records: list[tuple[str, Command]],
+    ) -> None:
+        """Attach planner_reducer metadata to commands targeting a planned reducer.
+
+        Reduce boundaries are static — a step is a reducer iff the planner
+        identified it as having ≥2 upstream steps. Annotating reducer-bound
+        commands lets replay tooling, dashboards, and future scheduler
+        integration see the planned join shape without re-running the
+        planner.
+        """
+        plan = state.fanout_reduce_plan
+        if not plan.reduces:
+            return
+        reduces_by_step = {item.step: item for item in plan.reduces}
+
+        for target_step, command in issued_records:
+            reducer = reduces_by_step.get(target_step)
+            if reducer is None:
+                continue
+            command.metadata.setdefault("planner_reducer", {})
+            command.metadata["planner_reducer"].update(
+                {
+                    "planner_version": 1,
+                    "reducer_step": reducer.step,
+                    "upstream_steps": list(reducer.upstream_steps),
+                    "source_step": source_step.step,
                 }
             )
 

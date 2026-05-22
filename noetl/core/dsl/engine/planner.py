@@ -136,3 +136,43 @@ def _reachable_reduces(
                 stack.append(target)
 
     return found
+
+
+def validate_fanout_reduce_plan(playbook: Playbook) -> list[str]:
+    """Lint a playbook's fan-out/reduce shape for register-time warnings.
+
+    Returns a list of advisory warning strings (empty for a clean plan).
+    Never raises — register-time validation should fail playbooks for
+    structural / schema errors, not for advisory plan observations.
+
+    Detected categories (stable ``[code] message`` shape so callers can
+    grep / filter):
+
+    - ``[fanout_no_reducer] fan-out '<step>' has no reachable reducer``
+      — ``next.spec.mode: inclusive`` with multiple targets but no
+      join step. Often intentional (parallel fire-and-forget) but
+      worth flagging so authors confirm.
+    - ``[reducer_orphan] reducer '<step>' has fewer than 2 upstream
+      steps`` — guard against callers that synthesize ``PlannedReduce``
+      records by hand; the planner itself only emits ``PlannedReduce``
+      when ``|upstream| > 1``.
+    """
+    plan = build_fanout_reduce_plan(playbook)
+    warnings: list[str] = []
+
+    if plan.is_empty():
+        return warnings
+
+    for fanout in plan.fanouts:
+        if not fanout.reduce_steps:
+            warnings.append(
+                f"[fanout_no_reducer] fan-out '{fanout.step}' has no reachable reducer"
+            )
+
+    for reducer in plan.reduces:
+        if len(reducer.upstream_steps) < 2:
+            warnings.append(
+                f"[reducer_orphan] reducer '{reducer.step}' has fewer than 2 upstream steps"
+            )
+
+    return warnings
