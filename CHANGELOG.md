@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.95.0](https://github.com/noetl/noetl/compare/v2.94.0...v2.95.0) (2026-05-22)
+
+### Features
+
+* **payload-store:** add GCS adapter ([bb9d925](https://github.com/noetl/noetl/commit/bb9d925eb44806c672bb70c4cd8a604e18100ddc))
+
 ## [2.94.0](https://github.com/noetl/noetl/compare/v2.93.0...v2.94.0) (2026-05-22)
 
 ### Features
