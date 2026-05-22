@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.92.0](https://github.com/noetl/noetl/compare/v2.91.0...v2.92.0) (2026-05-22)
+
+### Features
+
+* **observability:** expose IPC Tier 1.5 stats via projector metrics ([2007131](https://github.com/noetl/noetl/commit/2007131632ce1cc1e8529fb8ce983c835ab39435))
+
 ## [2.91.0](https://github.com/noetl/noetl/compare/v2.90.0...v2.91.0) (2026-05-22)
 
 ### Features
