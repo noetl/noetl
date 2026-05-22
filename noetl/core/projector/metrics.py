@@ -189,7 +189,67 @@ class ProjectorMetrics:
                 "actions": action_summary,
                 "batch": batch_summary,
                 "errors": error_summary,
+                "ipc": _ipc_summary(_fetch_ipc_stats()),
             }
+
+
+def _fetch_ipc_stats() -> dict[str, int]:
+    """Pull a snapshot of the default TempStore's IPC Tier 1.5 counters.
+
+    Imported lazily so the metrics module stays importable in contexts
+    that don't bootstrap the full storage stack (unit tests, lint
+    tooling). On import failure, returns zero counters.
+    """
+    try:
+        from noetl.core.storage import default_ipc_stats
+    except Exception:  # pragma: no cover - defensive
+        return _zero_ipc_stats()
+    try:
+        snapshot = default_ipc_stats() or {}
+    except Exception:  # pragma: no cover - defensive
+        return _zero_ipc_stats()
+    base = _zero_ipc_stats()
+    for key in base:
+        value = snapshot.get(key)
+        if isinstance(value, (int, float)) and value >= 0:
+            base[key] = int(value)
+    return base
+
+
+def _zero_ipc_stats() -> dict[str, int]:
+    return {
+        "admit_attempts": 0,
+        "admit_success": 0,
+        "admit_failures": 0,
+        "read_attempts": 0,
+        "read_hits": 0,
+        "read_misses": 0,
+        "fallback_reads": 0,
+    }
+
+
+def _ipc_summary(values: Mapping[str, int]) -> dict[str, float]:
+    admit_attempts = float(values.get("admit_attempts", 0))
+    admit_success = float(values.get("admit_success", 0))
+    admit_failures = float(values.get("admit_failures", 0))
+    read_attempts = float(values.get("read_attempts", 0))
+    read_hits = float(values.get("read_hits", 0))
+    read_misses = float(values.get("read_misses", 0))
+    fallback_reads = float(values.get("fallback_reads", 0))
+    return {
+        "admit_attempts": admit_attempts,
+        "admit_success": admit_success,
+        "admit_failures": admit_failures,
+        "read_attempts": read_attempts,
+        "read_hits": read_hits,
+        "read_misses": read_misses,
+        "fallback_reads": fallback_reads,
+        "admit_success_ratio": _safe_ratio(admit_success, admit_attempts),
+        "read_hit_ratio": _safe_ratio(read_hits, read_attempts),
+        "fallback_ratio": _safe_ratio(
+            fallback_reads, read_attempts + fallback_reads
+        ),
+    }
 
 
 def render_projector_metrics(metrics: ProjectorMetrics, *, labels: Optional[Mapping[str, str]] = None) -> str:
@@ -352,6 +412,32 @@ def render_projector_metrics(metrics: ProjectorMetrics, *, labels: Optional[Mapp
         "# TYPE noetl_projector_max_projection_lag_milliseconds gauge",
         f"noetl_projector_max_projection_lag_milliseconds{label_text} {snapshot['max_projection_lag_milliseconds']}",
     ]
+    ipc = _fetch_ipc_stats()
+    lines.extend(
+        [
+            "# HELP noetl_ipc_admit_attempts_total IPC Tier 1.5 admit attempts (producer writes to shared memory).",
+            "# TYPE noetl_ipc_admit_attempts_total counter",
+            f"noetl_ipc_admit_attempts_total{label_text} {ipc['admit_attempts']}",
+            "# HELP noetl_ipc_admit_success_total IPC Tier 1.5 successful admits.",
+            "# TYPE noetl_ipc_admit_success_total counter",
+            f"noetl_ipc_admit_success_total{label_text} {ipc['admit_success']}",
+            "# HELP noetl_ipc_admit_failures_total IPC Tier 1.5 admit failures (budget exceeded, write error).",
+            "# TYPE noetl_ipc_admit_failures_total counter",
+            f"noetl_ipc_admit_failures_total{label_text} {ipc['admit_failures']}",
+            "# HELP noetl_ipc_read_attempts_total IPC Tier 1.5 read attempts (consumer tries shared memory first).",
+            "# TYPE noetl_ipc_read_attempts_total counter",
+            f"noetl_ipc_read_attempts_total{label_text} {ipc['read_attempts']}",
+            "# HELP noetl_ipc_read_hits_total IPC Tier 1.5 cache hits.",
+            "# TYPE noetl_ipc_read_hits_total counter",
+            f"noetl_ipc_read_hits_total{label_text} {ipc['read_hits']}",
+            "# HELP noetl_ipc_read_misses_total IPC Tier 1.5 cache misses (segment evicted, expired, or cross-node).",
+            "# TYPE noetl_ipc_read_misses_total counter",
+            f"noetl_ipc_read_misses_total{label_text} {ipc['read_misses']}",
+            "# HELP noetl_ipc_fallback_reads_total Reads that fell through to the durable tier (no hint or miss).",
+            "# TYPE noetl_ipc_fallback_reads_total counter",
+            f"noetl_ipc_fallback_reads_total{label_text} {ipc['fallback_reads']}",
+        ]
+    )
     return "\n".join(lines) + "\n"
 
 

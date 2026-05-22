@@ -90,6 +90,83 @@ def test_projector_metrics_render_prometheus_labels():
     assert summary["frame_stale_projection_ratio"] == 0
 
 
+def test_projector_metrics_render_includes_ipc_counters():
+    """Prometheus export pulls IPC Tier 1.5 stats from the default store."""
+    from noetl.core.projector.metrics import ProjectorMetrics, render_projector_metrics
+
+    metrics = ProjectorMetrics()
+    body = render_projector_metrics(metrics)
+    # All seven counters appear in the body (values may be zero on a
+    # fresh process — assertion is on the metric name being exported).
+    assert "noetl_ipc_admit_attempts_total" in body
+    assert "noetl_ipc_admit_success_total" in body
+    assert "noetl_ipc_admit_failures_total" in body
+    assert "noetl_ipc_read_attempts_total" in body
+    assert "noetl_ipc_read_hits_total" in body
+    assert "noetl_ipc_read_misses_total" in body
+    assert "noetl_ipc_fallback_reads_total" in body
+    assert "# HELP noetl_ipc_read_hits_total" in body
+
+
+def test_projector_metrics_summary_includes_ipc_block():
+    """summary()['ipc'] always present with zero-value counters."""
+    from noetl.core.projector.metrics import ProjectorMetrics
+
+    metrics = ProjectorMetrics()
+    summary = metrics.summary()
+    assert "ipc" in summary
+    ipc = summary["ipc"]
+    for key in [
+        "admit_attempts",
+        "admit_success",
+        "admit_failures",
+        "read_attempts",
+        "read_hits",
+        "read_misses",
+        "fallback_reads",
+        "admit_success_ratio",
+        "read_hit_ratio",
+        "fallback_ratio",
+    ]:
+        assert key in ipc, f"missing ipc.{key}"
+
+
+def test_projector_metrics_summary_ipc_ratios_when_default_store_active(monkeypatch):
+    """When TempStore tracks IPC activity, summary ratios reflect it."""
+    from noetl.core.projector.metrics import ProjectorMetrics
+    from noetl.core.storage import default_store
+
+    snapshot = {
+        "admit_attempts": 5,
+        "admit_success": 4,
+        "admit_failures": 1,
+        "read_attempts": 10,
+        "read_hits": 7,
+        "read_misses": 3,
+        "fallback_reads": 2,
+    }
+    monkeypatch.setattr(default_store, "_ipc_stats", dict(snapshot))
+
+    metrics = ProjectorMetrics()
+    ipc = metrics.summary()["ipc"]
+    assert ipc["admit_success_ratio"] == 4 / 5
+    assert ipc["read_hit_ratio"] == 0.7
+    # fallback_ratio = fallback_reads / (read_attempts + fallback_reads)
+    assert ipc["fallback_ratio"] == 2 / 12
+
+
+def test_default_ipc_stats_returns_independent_snapshot():
+    """default_ipc_stats() returns a copy — mutating it doesn't leak back."""
+    from noetl.core.storage import default_ipc_stats, default_store
+
+    first = default_ipc_stats()
+    first["read_hits"] = 99999  # mutate the returned dict
+    second = default_ipc_stats()
+    # default_store's internal counter wasn't affected
+    assert second["read_hits"] != 99999
+    assert second["read_hits"] == default_store.ipc_stats()["read_hits"]
+
+
 def test_projector_metrics_record_notification_tracks_frame_counters():
     """Frame-specific counters increment when record_notification is called with them."""
     from noetl.core.projector.metrics import ProjectorMetrics, render_projector_metrics
