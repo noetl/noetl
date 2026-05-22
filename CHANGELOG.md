@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.91.0](https://github.com/noetl/noetl/compare/v2.90.0...v2.91.0) (2026-05-22)
+
+### Features
+
+* **engine:** cache fanout/reduce plan and annotate reducer commands ([4734928](https://github.com/noetl/noetl/commit/473492856cd751f5804202faa08448a76cdc5ea7))
+
 ## [2.90.0](https://github.com/noetl/noetl/compare/v2.89.0...v2.90.0) (2026-05-22)
 
 ### Features
