@@ -79,7 +79,8 @@ async def test_replay_state_projector_writes_grouped_projection_records():
         ]
     )
 
-    assert len(written) == 2
+    # 2 execution records + 1 frame record from execution 7 (frame "1")
+    assert len(written) == 3
     first = store.records["execution/7/all"]
     assert first.tenant_id == "tenant-a"
     assert first.organization_id == "org-a"
@@ -98,6 +99,177 @@ async def test_replay_state_projector_writes_grouped_projection_records():
     assert first.meta["projector"] == "replay_state"
     assert first.meta["projection_checksums"] == first.state["projection_checksums"]
     assert first.meta["source_event_id"] == 10
+
+    # Per-frame record was emitted for frame "1" in execution 7
+    frame_record = store.records["frame/1/all"]
+    assert frame_record.tenant_id == "tenant-a"
+    assert frame_record.organization_id == "org-a"
+    assert frame_record.execution_id == 7
+    assert frame_record.version == 2
+    assert frame_record.source_event_id == 10
+    assert frame_record.projection_type == "replay_state:frame:all"
+    assert frame_record.state["frame_id"] == "1"
+    assert frame_record.state["frame"]["status"] == "COMPLETED"
+    assert frame_record.meta["frame_id"] == "1"
+    assert frame_record.meta["frame_status"] == "COMPLETED"
+    assert frame_record.meta["event_count"] == 1
+    assert frame_record.meta["projector"] == "replay_state"
+
+
+@pytest.mark.asyncio
+async def test_replay_state_projector_writes_per_frame_projection_records():
+    """Two distinct frames in one execution → two per-frame projection rows."""
+    from noetl.core.projector import ReplayStateProjector
+
+    store = _MemoryProjectionStore()
+    projector = ReplayStateProjector(store)
+
+    written = await projector.project(
+        [
+            {
+                "event_id": 100,
+                "stream_version": 1,
+                "tenant_id": "tenant-a",
+                "organization_id": "org-a",
+                "execution_id": 12,
+                "event_type": "frame.dispatched",
+                "aggregate_type": "frame",
+                "aggregate_id": "frame/11",
+                "meta": {"frame_id": "11", "stage_id": "1"},
+            },
+            {
+                "event_id": 101,
+                "stream_version": 2,
+                "tenant_id": "tenant-a",
+                "organization_id": "org-a",
+                "execution_id": 12,
+                "event_type": "frame.committed",
+                "aggregate_type": "frame",
+                "aggregate_id": "frame/11",
+                "result": {"status": "COMPLETED"},
+                "meta": {"frame_id": "11", "stage_id": "1", "row_count": 5},
+            },
+            {
+                "event_id": 102,
+                "stream_version": 1,
+                "tenant_id": "tenant-a",
+                "organization_id": "org-a",
+                "execution_id": 12,
+                "event_type": "frame.dispatched",
+                "aggregate_type": "frame",
+                "aggregate_id": "frame/22",
+                "meta": {"frame_id": "22", "stage_id": "1"},
+            },
+            {
+                "event_id": 103,
+                "stream_version": 2,
+                "tenant_id": "tenant-a",
+                "organization_id": "org-a",
+                "execution_id": 12,
+                "event_type": "frame.committed",
+                "aggregate_type": "frame",
+                "aggregate_id": "frame/22",
+                "result": {"status": "COMPLETED"},
+                "meta": {"frame_id": "22", "stage_id": "1", "row_count": 7},
+            },
+        ]
+    )
+
+    # 1 execution record + 2 frame records
+    assert len(written) == 3
+    assert {r.projection_id for r in written} == {
+        "execution/12/all",
+        "frame/11/all",
+        "frame/22/all",
+    }
+    assert store.records["frame/11/all"].state["frame"]["row_count"] == 5
+    assert store.records["frame/22/all"].state["frame"]["row_count"] == 7
+    # Frames share the same execution_id but have independent versions
+    assert store.records["frame/11/all"].version == 2
+    assert store.records["frame/22/all"].version == 2
+
+
+@pytest.mark.asyncio
+async def test_replay_state_projector_skips_per_frame_when_no_frame_events():
+    """Execution-only events produce only execution records — no frame writes."""
+    from noetl.core.projector import ReplayStateProjector
+
+    store = _MemoryProjectionStore()
+    projector = ReplayStateProjector(store)
+
+    written = await projector.project(
+        [
+            {
+                "event_id": 200,
+                "stream_version": 1,
+                "tenant_id": "tenant-a",
+                "organization_id": "org-a",
+                "execution_id": 30,
+                "event_type": "execution.started",
+            },
+            {
+                "event_id": 201,
+                "stream_version": 2,
+                "tenant_id": "tenant-a",
+                "organization_id": "org-a",
+                "execution_id": 30,
+                "event_type": "workflow.completed",
+            },
+        ]
+    )
+
+    assert len(written) == 1
+    assert written[0].projection_id == "execution/30/all"
+    assert not any(pid.startswith("frame/") for pid in store.records)
+
+
+@pytest.mark.asyncio
+async def test_replay_state_projector_frame_records_respect_monotonic_upsert():
+    """A stale (lower-version) frame event must not overwrite the existing row."""
+    from noetl.core.projector import ReplayStateProjector
+
+    store = _MemoryProjectionStore()
+    projector = ReplayStateProjector(store)
+
+    newer = await projector.project(
+        [
+            {
+                "event_id": 300,
+                "stream_version": 3,
+                "tenant_id": "tenant-a",
+                "organization_id": "org-a",
+                "execution_id": 42,
+                "event_type": "frame.committed",
+                "aggregate_type": "frame",
+                "aggregate_id": "frame/99",
+                "result": {"status": "COMPLETED"},
+                "meta": {"frame_id": "99", "stage_id": "9", "row_count": 11},
+            }
+        ]
+    )
+
+    stale = await projector.project(
+        [
+            {
+                "event_id": 290,
+                "stream_version": 1,
+                "tenant_id": "tenant-a",
+                "organization_id": "org-a",
+                "execution_id": 42,
+                "event_type": "frame.dispatched",
+                "aggregate_type": "frame",
+                "aggregate_id": "frame/99",
+                "meta": {"frame_id": "99", "stage_id": "9"},
+            }
+        ]
+    )
+
+    assert any(r.projection_id == "frame/99/all" for r in newer)
+    # Stale projection-store write is a no-op (returns False from save_projection)
+    assert not any(r.projection_id == "frame/99/all" for r in stale)
+    # Stored record stays at the newer version
+    assert store.records["frame/99/all"].version == 3
+    assert store.records["frame/99/all"].state["frame"]["status"] == "COMPLETED"
 
 
 @pytest.mark.asyncio
@@ -371,6 +543,97 @@ async def test_nats_projector_worker_does_not_count_same_execution_batch_as_stal
     assert snapshot["events_owned_total"] == 2
     assert snapshot["projection_records_total"] == 1
     assert snapshot["projection_stale_records_total"] == 0
+
+
+@pytest.mark.asyncio
+async def test_nats_projector_worker_counts_frame_projection_writes():
+    """Worker should count per-frame projection writes separately from per-execution."""
+    from noetl.core.projector.metrics import ProjectorMetrics
+    from noetl.core.projector.nats_worker import NATSProjectorWorker, ProjectorWorkerSettings
+
+    metrics = ProjectorMetrics()
+    store = _MemoryProjectionStore()
+    worker = NATSProjectorWorker(
+        projection_store=store,
+        settings=ProjectorWorkerSettings(shard_count=1),
+        metrics=metrics,
+    )
+
+    action = await worker.handle_notification(
+        {
+            "events": [
+                {
+                    "event_id": 700,
+                    "stream_version": 1,
+                    "tenant_id": "tenant-a",
+                    "organization_id": "org-a",
+                    "execution_id": 50,
+                    "event_type": "frame.dispatched",
+                    "aggregate_type": "frame",
+                    "aggregate_id": "frame/55",
+                    "meta": {"frame_id": "55", "stage_id": "1"},
+                },
+                {
+                    "event_id": 701,
+                    "stream_version": 2,
+                    "tenant_id": "tenant-a",
+                    "organization_id": "org-a",
+                    "execution_id": 50,
+                    "event_type": "frame.committed",
+                    "aggregate_type": "frame",
+                    "aggregate_id": "frame/55",
+                    "result": {"status": "COMPLETED"},
+                    "meta": {"frame_id": "55", "stage_id": "1", "row_count": 3},
+                },
+            ]
+        }
+    )
+
+    assert action == "ack"
+    assert "execution/50/all" in store.records
+    assert "frame/55/all" in store.records
+
+    snapshot = metrics.snapshot()
+    assert snapshot["projection_records_total"] == 1
+    assert snapshot["projection_stale_records_total"] == 0
+    assert snapshot["frame_projection_records_total"] == 1
+    assert snapshot["frame_projection_stale_records_total"] == 0
+    assert snapshot["last_batch_frame_projection_records"] == 1
+    assert snapshot["last_batch_frame_stale_projection_records"] == 0
+
+
+@pytest.mark.asyncio
+async def test_nats_projector_worker_reports_zero_frame_metrics_for_non_frame_batch():
+    """Per-frame metrics stay at zero when no frame events are in the batch."""
+    from noetl.core.projector.metrics import ProjectorMetrics
+    from noetl.core.projector.nats_worker import NATSProjectorWorker, ProjectorWorkerSettings
+
+    metrics = ProjectorMetrics()
+    store = _MemoryProjectionStore()
+    worker = NATSProjectorWorker(
+        projection_store=store,
+        settings=ProjectorWorkerSettings(shard_count=1),
+        metrics=metrics,
+    )
+
+    await worker.handle_notification(
+        {
+            "event": {
+                "event_id": 800,
+                "stream_version": 1,
+                "tenant_id": "tenant-a",
+                "organization_id": "org-a",
+                "execution_id": 60,
+                "event_type": "workflow.completed",
+            }
+        }
+    )
+
+    snapshot = metrics.snapshot()
+    assert snapshot["projection_records_total"] == 1
+    assert snapshot["frame_projection_records_total"] == 0
+    assert snapshot["frame_projection_stale_records_total"] == 0
+    assert snapshot["last_batch_frame_projection_records"] == 0
 
 
 def test_projector_notification_decoder_accepts_json_and_arrow_feather():

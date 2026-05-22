@@ -23,6 +23,8 @@ class ProjectorMetrics:
             "events_unshardable_total": 0.0,
             "projection_records_total": 0.0,
             "projection_stale_records_total": 0.0,
+            "frame_projection_records_total": 0.0,
+            "frame_projection_stale_records_total": 0.0,
             "projection_errors_total": 0.0,
             "decode_errors_total": 0.0,
             "acknowledged_notifications_total": 0.0,
@@ -44,6 +46,8 @@ class ProjectorMetrics:
             "last_batch_unshardable_events": 0.0,
             "last_batch_projection_records": 0.0,
             "last_batch_stale_projection_records": 0.0,
+            "last_batch_frame_projection_records": 0.0,
+            "last_batch_frame_stale_projection_records": 0.0,
             "last_projection_source_event_id": 0.0,
             "last_projection_event_time_watermark_unixtime": 0.0,
             "last_projection_projected_at_unixtime": 0.0,
@@ -60,6 +64,8 @@ class ProjectorMetrics:
         unowned_events: int = 0,
         unshardable_events: int = 0,
         stale_projection_records: int = 0,
+        frame_projection_records: int = 0,
+        frame_stale_projection_records: int = 0,
     ) -> None:
         now = time.time()
         with self._lock:
@@ -70,6 +76,10 @@ class ProjectorMetrics:
             self._values["events_unshardable_total"] += float(max(0, unshardable_events))
             self._values["projection_records_total"] += float(max(0, projection_records))
             self._values["projection_stale_records_total"] += float(max(0, stale_projection_records))
+            self._values["frame_projection_records_total"] += float(max(0, frame_projection_records))
+            self._values["frame_projection_stale_records_total"] += float(
+                max(0, frame_stale_projection_records)
+            )
             self._values["last_success_unixtime"] = now
             self._values["last_batch_extracted_events"] = float(max(0, extracted_events))
             self._values["last_batch_events"] = float(max(0, owned_events))
@@ -77,6 +87,10 @@ class ProjectorMetrics:
             self._values["last_batch_unshardable_events"] = float(max(0, unshardable_events))
             self._values["last_batch_projection_records"] = float(max(0, projection_records))
             self._values["last_batch_stale_projection_records"] = float(max(0, stale_projection_records))
+            self._values["last_batch_frame_projection_records"] = float(max(0, frame_projection_records))
+            self._values["last_batch_frame_stale_projection_records"] = float(
+                max(0, frame_stale_projection_records)
+            )
             if owned_events <= 0:
                 self._values["empty_or_unowned_notifications_total"] += 1.0
 
@@ -208,6 +222,18 @@ def render_projector_metrics(metrics: ProjectorMetrics, *, labels: Optional[Mapp
             "noetl_projector_projection_stale_records_total"
             f"{label_text} {snapshot['projection_stale_records_total']}"
         ),
+        "# HELP noetl_projector_frame_projection_records_total Per-frame projection records written by this projector.",
+        "# TYPE noetl_projector_frame_projection_records_total counter",
+        (
+            "noetl_projector_frame_projection_records_total"
+            f"{label_text} {snapshot['frame_projection_records_total']}"
+        ),
+        "# HELP noetl_projector_frame_projection_stale_records_total Per-frame projection records skipped because a newer version already exists.",
+        "# TYPE noetl_projector_frame_projection_stale_records_total counter",
+        (
+            "noetl_projector_frame_projection_stale_records_total"
+            f"{label_text} {snapshot['frame_projection_stale_records_total']}"
+        ),
         "# HELP noetl_projector_projection_errors_total Projector notification projection callback failures.",
         "# TYPE noetl_projector_projection_errors_total counter",
         f"noetl_projector_projection_errors_total{label_text} {snapshot['projection_errors_total']}",
@@ -291,6 +317,18 @@ def render_projector_metrics(metrics: ProjectorMetrics, *, labels: Optional[Mapp
         (
             "noetl_projector_last_batch_stale_projection_records"
             f"{label_text} {snapshot['last_batch_stale_projection_records']}"
+        ),
+        "# HELP noetl_projector_last_batch_frame_projection_records Per-frame projection records from the last handled notification.",
+        "# TYPE noetl_projector_last_batch_frame_projection_records gauge",
+        (
+            "noetl_projector_last_batch_frame_projection_records"
+            f"{label_text} {snapshot['last_batch_frame_projection_records']}"
+        ),
+        "# HELP noetl_projector_last_batch_frame_stale_projection_records Stale per-frame projection records from the last handled notification.",
+        "# TYPE noetl_projector_last_batch_frame_stale_projection_records gauge",
+        (
+            "noetl_projector_last_batch_frame_stale_projection_records"
+            f"{label_text} {snapshot['last_batch_frame_stale_projection_records']}"
         ),
         "# HELP noetl_projector_last_projection_source_event_id Last projected source event id.",
         "# TYPE noetl_projector_last_projection_source_event_id gauge",
@@ -422,6 +460,8 @@ def _batch_summary(values: Mapping[str, float]) -> dict[str, float]:
     unshardable = values["last_batch_unshardable_events"]
     projection_records = values["last_batch_projection_records"]
     stale_projection_records = values["last_batch_stale_projection_records"]
+    frame_records = values["last_batch_frame_projection_records"]
+    frame_stale_records = values["last_batch_frame_stale_projection_records"]
     return {
         "extracted_events": extracted,
         "owned_events": owned,
@@ -429,11 +469,15 @@ def _batch_summary(values: Mapping[str, float]) -> dict[str, float]:
         "unshardable_events": unshardable,
         "projection_records": projection_records,
         "stale_projection_records": stale_projection_records,
+        "frame_projection_records": frame_records,
+        "frame_stale_projection_records": frame_stale_records,
         "owned_ratio": _safe_ratio(owned, extracted),
         "unowned_ratio": _safe_ratio(unowned, extracted),
         "unshardable_ratio": _safe_ratio(unshardable, extracted),
         "projection_record_ratio": _safe_ratio(projection_records, owned),
         "stale_projection_ratio": _safe_ratio(stale_projection_records, projection_records),
+        "frame_projection_record_ratio": _safe_ratio(frame_records, owned),
+        "frame_stale_projection_ratio": _safe_ratio(frame_stale_records, frame_records),
     }
 
 

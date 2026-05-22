@@ -181,24 +181,30 @@ class NATSProjectorWorker:
 
         try:
             projection_group_count = _projection_group_count(events)
+            frame_group_count = _frame_group_count(events)
             written = await self.projector.project(events)
         except Exception:
             self.metrics.record_error()
             raise
+        execution_records = [r for r in written if not _is_frame_record(r)]
+        frame_records = [r for r in written if _is_frame_record(r)]
         self.metrics.record_notification(
             extracted_events=len(extracted_events),
             owned_events=len(events),
-            projection_records=len(written),
+            projection_records=len(execution_records),
             unowned_events=unowned_events,
             unshardable_events=unshardable_events,
-            stale_projection_records=max(0, projection_group_count - len(written)),
+            stale_projection_records=max(0, projection_group_count - len(execution_records)),
+            frame_projection_records=len(frame_records),
+            frame_stale_projection_records=max(0, frame_group_count - len(frame_records)),
         )
         self.metrics.record_projection_checkpoints(written)
         logger.debug(
-            "Projector %s folded %s events into %s projection records",
+            "Projector %s folded %s events into %s execution + %s frame projection records",
             self.settings.shard_id,
             len(events),
-            len(written),
+            len(execution_records),
+            len(frame_records),
         )
         return "ack"
 
@@ -293,6 +299,47 @@ def _projection_group_count(events: Iterable[dict[str, Any]]) -> int:
             )
         )
     return len(groups)
+
+
+def _frame_group_count(events: Iterable[dict[str, Any]]) -> int:
+    """Count distinct frames represented in the event batch.
+
+    Mirrors the projector's frame-fold grouping so the worker can report
+    a stale-frame metric (frames present in the batch but skipped by the
+    monotonic upsert).
+    """
+    from .service import _extract_frame_id  # local import to avoid a cycle
+
+    groups: set[tuple[str, str, int, str]] = set()
+    for event in events:
+        execution_id = event.get("execution_id")
+        if execution_id is None:
+            continue
+        frame_id = _extract_frame_id(event)
+        if not frame_id:
+            continue
+        try:
+            parsed_execution_id = int(execution_id)
+        except (TypeError, ValueError):
+            continue
+        groups.add(
+            (
+                str(event.get("tenant_id") or "default"),
+                str(event.get("organization_id") or "default"),
+                parsed_execution_id,
+                frame_id,
+            )
+        )
+    return len(groups)
+
+
+def _is_frame_record(record: Any) -> bool:
+    """Return True if the projection record was written by the frame fan-out path."""
+    projection_id = getattr(record, "projection_id", None)
+    if isinstance(projection_id, str) and projection_id.startswith("frame/"):
+        return True
+    projection_type = getattr(record, "projection_type", None)
+    return isinstance(projection_type, str) and projection_type.startswith("replay_state:frame")
 
 
 def decode_projector_notification(payload: bytes) -> dict[str, Any]:
