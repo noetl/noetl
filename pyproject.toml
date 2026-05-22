@@ -64,6 +64,7 @@ dependencies = [
     "aioboto3>=13.0.0",
     "azure-identity>=1.23.0",
     "azure-keyvault-secrets>=4.8.0",
+    "azure-storage-blob>=12.20.0",
     "ortools>=9.10",
     "kubernetes>=31.0.0",
     "nats-py>=2.10.0",
