@@ -15,10 +15,11 @@ With **NoETL Gateway**, playbooks can be deployed as a **distributed backend**: 
 **[NoETL wiki](https://github.com/noetl/noetl/wiki)** — operator and
 developer reference. Pages mirror the code tree under `noetl/noetl`.
 
-Async batch acceptance details for workers and operators:
+Async batch acceptance and recovery references (on the wiki):
 
-- [`noetl/server/api/BATCH_EVENTS_ASYNC.md`](noetl/server/api/BATCH_EVENTS_ASYNC.md)
-- [`noetl/server/api/RECOVERY_AUTORESUME.md`](noetl/server/api/RECOVERY_AUTORESUME.md)
+- [Batch Events API](https://github.com/noetl/noetl/wiki/batch_events_async) — `POST /api/events/batch` async acceptance flow
+- [Recovery: Auto-Resume](https://github.com/noetl/noetl/wiki/recovery_autoresume) — readiness-gated parent-execution restart at startup
+- [Command Reaper](https://github.com/noetl/noetl/wiki/command_reaper) — runtime re-publish for orphaned / stranded commands
 
 ### Distributed runtime components
 
