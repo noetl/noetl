@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.93.0](https://github.com/noetl/noetl/compare/v2.92.0...v2.93.0) (2026-05-22)
+
+### Features
+
+* **payload-store:** add port + filesystem reference adapter ([140db9d](https://github.com/noetl/noetl/commit/140db9da26ce7cf3f6915d564c3dd6b07ac7ccad))
+
 ## [2.92.0](https://github.com/noetl/noetl/compare/v2.91.0...v2.92.0) (2026-05-22)
 
 ### Features
