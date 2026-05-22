@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.90.0](https://github.com/noetl/noetl/compare/v2.89.0...v2.90.0) (2026-05-22)
+
+### Features
+
+* **projector:** write per-frame projections from the projector worker ([282d11a](https://github.com/noetl/noetl/commit/282d11adc40a5ddf6bd1305c16b3cf0cd778b421))
+
 ## [2.89.0](https://github.com/noetl/noetl/compare/v2.88.1...v2.89.0) (2026-05-22)
 
 ### Features
