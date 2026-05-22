@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.89.0](https://github.com/noetl/noetl/compare/v2.88.1...v2.89.0) (2026-05-22)
+
+### Features
+
+* **python-tool:** add hot-pluggable deps to Python tool executor ([b6a67ab](https://github.com/noetl/noetl/commit/b6a67ab5d637f682464f2ec86e6b7b6628e35b2f))
+
 ## [2.88.1](https://github.com/noetl/noetl/compare/v2.88.0...v2.88.1) (2026-05-21)
 
 ### Bug Fixes
