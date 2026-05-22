@@ -15,6 +15,7 @@ rounds.
 """
 
 from .filesystem import FilesystemPayloadStore
+from .gcs import GCSPayloadStore
 from .ports import (
     PayloadNotFound,
     PayloadReference,
@@ -30,4 +31,5 @@ __all__ = [
     "content_hash",
     "FilesystemPayloadStore",
     "S3PayloadStore",
+    "GCSPayloadStore",
 ]
