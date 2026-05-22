@@ -1065,7 +1065,26 @@ class TempStore:
 default_store = TempStore()
 
 
+def default_ipc_stats() -> Dict[str, int]:
+    """Return a snapshot of the default TempStore's IPC Tier 1.5 counters.
+
+    Exposed at module scope so callers without a direct ``TempStore``
+    reference (the projector metrics exporter, ops tooling) can read
+    counters without coupling to the singleton. Returns a fresh dict;
+    callers can mutate the result without affecting future calls.
+
+    Counter keys (see :class:`ArrowIpcSharedMemoryCache` for the producer
+    side and :meth:`TempStore.get_ipc_bytes` for the consumer side):
+
+    - ``admit_attempts`` / ``admit_success`` / ``admit_failures``
+    - ``read_attempts`` / ``read_hits`` / ``read_misses``
+    - ``fallback_reads``
+    """
+    return default_store.ipc_stats()
+
+
 __all__ = [
     "TempStore",
+    "default_ipc_stats",
     "default_store",
 ]

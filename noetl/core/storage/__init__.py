@@ -53,6 +53,7 @@ from noetl.core.storage.router import (
 from noetl.core.storage.result_store import (
     TempStore,
     default_store,
+    default_ipc_stats,
 )
 
 from noetl.core.storage.ipc_cache import (
@@ -126,6 +127,7 @@ __all__ = [
     'default_router',
     # Store (both names)
     'TempStore',
+    'default_ipc_stats',
     'ResultStore',
     'default_store',
     'default_result_store',
