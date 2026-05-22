@@ -10,12 +10,35 @@ With **NoETL Gateway**, playbooks can be deployed as a **distributed backend**: 
 
 ## Documentation
 
-**https://noetl.dev**
+**https://noetl.dev** — user-facing site.
+
+**[NoETL wiki](https://github.com/noetl/noetl/wiki)** — operator and
+developer reference. Pages mirror the code tree under `noetl/noetl`.
 
 Async batch acceptance details for workers and operators:
 
 - [`noetl/server/api/BATCH_EVENTS_ASYNC.md`](noetl/server/api/BATCH_EVENTS_ASYNC.md)
 - [`noetl/server/api/RECOVERY_AUTORESUME.md`](noetl/server/api/RECOVERY_AUTORESUME.md)
+
+### Distributed runtime components
+
+Reference docs for the event-sourced, projection-backed runtime
+(implements v2 distributed-runtime spec phases 0–2; spec lives in
+`noetl/docs` at [`docs/features/noetl_distributed_runtime_spec.md`](https://github.com/noetl/docs/blob/main/docs/features/noetl_distributed_runtime_spec.md)):
+
+- **[Event Store](https://github.com/noetl/noetl/wiki/event_store)** —
+  durable append-only event log (port + Postgres adapter), `EventRecord`
+  envelope, optimistic concurrency via `expected_version`.
+- **[Projection Store](https://github.com/noetl/noetl/wiki/projection_store)**
+  — version-monotonic projection + snapshot store (port + Postgres
+  adapter), query interface for replay state.
+- **[Outbox](https://github.com/noetl/noetl/wiki/outbox)** — transactional
+  outbox publisher (`python -m noetl.outbox`) that drains `noetl.outbox`
+  to NATS with at-least-once retry/backoff.
+- **[Projector](https://github.com/noetl/noetl/wiki/projector)** —
+  out-of-process projection worker (`python -m noetl.projector`),
+  durable NATS pull consumer, shard-stable, Prometheus metrics,
+  replay-state folding shared with the in-process replay API.
 
 ## Repository model (ai-meta driven)
 
