@@ -17,6 +17,26 @@ Async batch acceptance details for workers and operators:
 - [`noetl/server/api/BATCH_EVENTS_ASYNC.md`](noetl/server/api/BATCH_EVENTS_ASYNC.md)
 - [`noetl/server/api/RECOVERY_AUTORESUME.md`](noetl/server/api/RECOVERY_AUTORESUME.md)
 
+### Distributed runtime components
+
+Reference docs for the event-sourced, projection-backed runtime
+(implements v2 distributed-runtime spec phases 0–2; spec lives in
+`noetl/docs` at [`docs/features/noetl_distributed_runtime_spec.md`](https://github.com/noetl/docs/blob/main/docs/features/noetl_distributed_runtime_spec.md)):
+
+- [`noetl/core/event_store/`](noetl/core/event_store/README.md) — durable
+  append-only event log (port + Postgres adapter), `EventRecord` envelope,
+  optimistic concurrency via `expected_version`.
+- [`noetl/core/projection_store/`](noetl/core/projection_store/README.md) —
+  version-monotonic projection + snapshot store (port + Postgres adapter),
+  query interface for replay state.
+- [`noetl/outbox/`](noetl/outbox/README.md) — transactional outbox
+  publisher (`python -m noetl.outbox`) that drains `noetl.outbox` to NATS
+  with at-least-once retry/backoff.
+- [`noetl/projector/`](noetl/projector/README.md) — out-of-process
+  projection worker (`python -m noetl.projector`), durable NATS pull
+  consumer, shard-stable, Prometheus metrics, replay-state folding shared
+  with the in-process replay API.
+
 ## Repository model (ai-meta driven)
 
 NoETL development is now coordinated through the `ai-meta` repository:
