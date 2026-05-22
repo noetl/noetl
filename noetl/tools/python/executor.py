@@ -5,11 +5,15 @@ Python action executor for NoETL jobs.
 import asyncio
 import uuid
 import datetime
+import glob
 import os
 import json
 import inspect
 import importlib.util
-from typing import Dict, Any, Optional, Callable
+import subprocess
+import sys
+import venv
+from typing import Dict, Any, List, Optional, Callable
 try:
     from jinja2 import Environment, BaseLoader
 except ImportError:
@@ -28,6 +32,131 @@ from noetl.core.script import resolve_script
 from noetl.worker.auth_resolver import resolve_auth
 
 logger = setup_logger(__name__, include_location=True)
+
+_TENANT_ENVS_DEFAULT = "/opt/noetl/tenant-envs"
+
+
+def _venv_site_packages(venv_dir: str) -> Optional[str]:
+    """Return the site-packages path inside a venv directory, or None if not found."""
+    pattern = os.path.join(venv_dir, "lib", "python*", "site-packages")
+    matches = glob.glob(pattern)
+    if matches:
+        return matches[0]
+    # Windows layout
+    win = os.path.join(venv_dir, "Lib", "site-packages")
+    if os.path.isdir(win):
+        return win
+    return None
+
+
+def _venv_python(venv_dir: str) -> str:
+    """Return the Python interpreter path inside a venv directory."""
+    candidates = [
+        os.path.join(venv_dir, "bin", "python"),
+        os.path.join(venv_dir, "bin", "python3"),
+        os.path.join(venv_dir, "Scripts", "python.exe"),
+    ]
+    for c in candidates:
+        if os.path.isfile(c):
+            return c
+    return os.path.join(venv_dir, "bin", "python")
+
+
+def _inject_sys_path(path: str) -> None:
+    """Prepend path to sys.path if not already present."""
+    if path not in sys.path:
+        sys.path.insert(0, path)
+
+
+def _resolve_deps(deps_config: Dict[str, Any]) -> None:
+    """Resolve and inject tenant-specific Python dependencies before code execution.
+
+    Supports three sub-keys in deps_config:
+    - sys_path: list of directory paths to inject into sys.path directly.
+    - venv_path: path to a pre-built venv whose site-packages will be injected.
+    - packages: dict of {tenant_key: [pip-spec, ...]} — creates/reuses a
+      per-tenant cached venv under NOETL_TENANT_ENVS_DIR.
+
+    Skipped entirely when NOETL_SKIP_DEPS_RESOLUTION=true.
+    """
+    if os.getenv("NOETL_SKIP_DEPS_RESOLUTION") == "true":
+        logger.debug("PYTHON.DEPS: resolution skipped (NOETL_SKIP_DEPS_RESOLUTION=true)")
+        return
+
+    if not deps_config or not isinstance(deps_config, dict):
+        return
+
+    # 1. sys_path — direct injection
+    for path in deps_config.get("sys_path") or []:
+        path = str(path)
+        if os.path.isdir(path):
+            _inject_sys_path(path)
+            logger.debug("PYTHON.DEPS: injected sys_path %s", path)
+        else:
+            logger.warning("PYTHON.DEPS: sys_path entry does not exist, skipping: %s", path)
+
+    # 2. venv_path — locate site-packages in an existing venv and inject
+    venv_path = deps_config.get("venv_path")
+    if venv_path:
+        venv_path = str(venv_path)
+        if not os.path.isdir(venv_path):
+            raise RuntimeError(
+                f"PYTHON.DEPS: venv_path does not exist: {venv_path}. "
+                "Ensure the tenant venv is created before this step runs."
+            )
+        site_pkgs = _venv_site_packages(venv_path)
+        if site_pkgs:
+            _inject_sys_path(site_pkgs)
+            logger.debug("PYTHON.DEPS: injected venv site-packages %s", site_pkgs)
+        else:
+            logger.warning("PYTHON.DEPS: no site-packages found in venv_path %s", venv_path)
+
+    # 3. packages — create/reuse a per-tenant cached venv and pip-install
+    packages_map = deps_config.get("packages")
+    if packages_map and isinstance(packages_map, dict):
+        base_dir = os.getenv("NOETL_TENANT_ENVS_DIR", _TENANT_ENVS_DEFAULT)
+        for tenant_key, pkg_list in packages_map.items():
+            if not pkg_list:
+                continue
+            pkg_list = [str(p) for p in pkg_list]
+            tenant_venv = os.path.join(base_dir, str(tenant_key))
+
+            if not os.path.isdir(tenant_venv):
+                logger.info(
+                    "PYTHON.DEPS: creating tenant venv for %s at %s", tenant_key, tenant_venv
+                )
+                venv.create(tenant_venv, with_pip=True, clear=False)
+
+            python_bin = _venv_python(tenant_venv)
+            try:
+                result = subprocess.run(
+                    [python_bin, "-m", "pip", "install", "--quiet"] + pkg_list,
+                    check=True,
+                    capture_output=True,
+                    text=True,
+                )
+                if result.stdout.strip():
+                    logger.debug("PYTHON.DEPS: pip stdout: %s", result.stdout.strip())
+            except subprocess.CalledProcessError as exc:
+                stderr = exc.stderr.strip() if exc.stderr else ""
+                raise RuntimeError(
+                    f"PYTHON.DEPS: pip install failed for tenant '{tenant_key}' "
+                    f"packages {pkg_list}: {stderr}"
+                ) from exc
+
+            site_pkgs = _venv_site_packages(tenant_venv)
+            if site_pkgs:
+                _inject_sys_path(site_pkgs)
+                logger.info(
+                    "PYTHON.DEPS: tenant '%s' venv ready, injected %s", tenant_key, site_pkgs
+                )
+            else:
+                logger.warning(
+                    "PYTHON.DEPS: tenant '%s' venv installed but no site-packages found at %s",
+                    tenant_key,
+                    tenant_venv,
+                )
+
 
 def _size_hint(value: Any) -> int:
     try:
@@ -430,6 +559,11 @@ async def execute_python_task_async(
                 logger.debug("PYTHON.EXECUTE_PYTHON_TASK: Imports block prepared (len=%s)", len(imports_block))
             else:
                 logger.warning(f"PYTHON.EXECUTE_PYTHON_TASK: 'libs' must be a dict, got {type(libs_config)}")
+
+        # Resolve tenant-specific deps (install/inject) before executing code
+        deps_config = task_config.get('deps')
+        if deps_config:
+            _resolve_deps(deps_config)
 
         logger.debug(f"PYTHON.EXECUTE_PYTHON_TASK: Python code length={len(code)} chars")
 
