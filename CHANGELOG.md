@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.100.2](https://github.com/noetl/noetl/compare/v2.100.1...v2.100.2) (2026-05-23)
+
+### Bug Fixes
+
+* **runtime:** KEDA scaler default nats_account must be NOETL, not \$G ([1e26634](https://github.com/noetl/noetl/commit/1e266349bd709144b4cab0e5715f16f58804e7d5)), closes [#594](https://github.com/noetl/noetl/issues/594)
+
 ## [2.100.1](https://github.com/noetl/noetl/compare/v2.100.0...v2.100.1) (2026-05-23)
 
 ### Bug Fixes
