@@ -7,6 +7,13 @@ trigger parameters. Subjects + consumer names derive from
 deployment can spin up scalers programmatically without copy-pasting
 YAML.
 
+Static sample manifests produced by this generator live in the
+``noetl/ops`` repo at ``ci/manifests/keda/``
+(https://github.com/noetl/ops/tree/main/ci/manifests/keda) — that
+is the canonical home for NoETL operational manifests. Regenerate
+them by re-running the call documented in the YAML header and
+overwriting the file in the ops repo.
+
 Out of scope for this round:
 
 - No live KEDA install or cluster-side automation. The wiki page
