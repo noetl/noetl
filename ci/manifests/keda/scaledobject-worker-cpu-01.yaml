@@ -42,7 +42,7 @@ spec:
   - type: nats-jetstream
     metadata:
       natsServerMonitoringEndpoint: nats.nats.svc.cluster.local:8222
-      account: $G
+      account: NOETL
       stream: NOETL_COMMANDS
       consumer: noetl_worker_pool
       lagThreshold: '10'

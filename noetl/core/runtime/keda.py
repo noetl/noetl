@@ -54,9 +54,14 @@ DEFAULT_NATS_STREAM = "NOETL_COMMANDS"
 #: consumer lag. Matches ``ci/manifests/nats/`` defaults.
 DEFAULT_NATS_MONITORING_ENDPOINT = "nats.nats.svc.cluster.local:8222"
 
-#: NATS default-account marker. ``$G`` is the global account; per-tenant
-#: accounts come in Phase 4 round 3 (supercluster).
-DEFAULT_NATS_ACCOUNT = "$G"
+#: NATS account that the existing NoETL deployment uses (see
+#: ``ci/manifests/nats/nats.yaml`` — the ``noetl`` user lives in
+#: the ``NOETL`` account, not the global ``$G`` account). KEDA's
+#: ``nats-jetstream`` scaler filters monitoring queries by account
+#: name; pointing at the wrong account returns ``num_pending: 0``
+#: silently. Per-tenant accounts in a future round can override
+#: this per-pool.
+DEFAULT_NATS_ACCOUNT = "NOETL"
 
 
 def worker_pool_segment(worker_pool_urn: str) -> str:
