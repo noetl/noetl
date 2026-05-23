@@ -68,23 +68,37 @@ spec:
         - containerPort: 7222
           name: gateway
           protocol: TCP
+        env:
+        - name: POD_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.name
         args:
         - -c
         - /etc/nats/nats.conf
+        - --name
+        - $(POD_NAME)
         volumeMounts:
         - name: nats-config
           mountPath: /etc/nats
         - name: nats-storage
           mountPath: /data
+        startupProbe:
+          httpGet:
+            path: /healthz?js-server-only=true
+            port: 8222
+          periodSeconds: 5
+          failureThreshold: 60
         livenessProbe:
           httpGet:
-            path: /healthz
+            path: /healthz?js-server-only=true
             port: 8222
           initialDelaySeconds: 30
           periodSeconds: 10
+          failureThreshold: 5
         readinessProbe:
           httpGet:
-            path: /healthz
+            path: /healthz?js-enabled-only=true
             port: 8222
           initialDelaySeconds: 10
           periodSeconds: 5
@@ -122,6 +136,7 @@ metadata:
     region: us-west-2
 spec:
   clusterIP: None
+  publishNotReadyAddresses: true
   selector: *id001
   ports:
   - name: client

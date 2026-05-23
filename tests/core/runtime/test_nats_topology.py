@@ -218,6 +218,65 @@ def test_build_cluster_manifests_service_is_headless():
     assert port_names == {"client", "monitoring", "cluster", "gateway"}
 
 
+def test_build_cluster_manifests_service_publishes_not_ready_addresses():
+    """Live-validation guard: gateway URLs resolve through the
+    Service DNS, and supercluster startup is a chicken-and-egg
+    (each cluster waits for its peers' Service to publish
+    addresses). publishNotReadyAddresses=True breaks the cycle.
+    """
+    a, _, topo = _two_cluster_topo()
+    _, _, svc = build_cluster_manifests(a, supercluster=topo)
+    assert svc["spec"]["publishNotReadyAddresses"] is True
+
+
+def test_build_cluster_manifests_statefulset_passes_pod_name_via_args():
+    """Live-validation guard: NATS requires a unique `server_name`
+    per node when JetStream runs in cluster mode. We pull pod name
+    via downward API and pass it as --name so each StatefulSet
+    replica registers under its own ID.
+    """
+    a, _, topo = _two_cluster_topo()
+    _, sts, _ = build_cluster_manifests(a, supercluster=topo)
+    container = sts["spec"]["template"]["spec"]["containers"][0]
+    # POD_NAME env via downward API
+    env = container["env"]
+    assert any(
+        e.get("name") == "POD_NAME"
+        and e.get("valueFrom", {}).get("fieldRef", {}).get("fieldPath") == "metadata.name"
+        for e in env
+    )
+    # --name $(POD_NAME) on the args list
+    assert "--name" in container["args"]
+    name_idx = container["args"].index("--name")
+    assert container["args"][name_idx + 1] == "$(POD_NAME)"
+
+
+def test_build_cluster_manifests_uses_split_healthz_endpoints():
+    """Live-validation guard: the plain /healthz path returns
+    failure during JetStream's meta-layer recovery, which kills
+    the pod via liveness before the cluster forms. Use the
+    js-server-only and js-enabled-only variants instead.
+    """
+    a, _, topo = _two_cluster_topo()
+    _, sts, _ = build_cluster_manifests(a, supercluster=topo)
+    container = sts["spec"]["template"]["spec"]["containers"][0]
+
+    # Liveness probes base NATS only
+    assert (
+        container["livenessProbe"]["httpGet"]["path"]
+        == "/healthz?js-server-only=true"
+    )
+    # Readiness probes JetStream enabled-only (not full recovery)
+    assert (
+        container["readinessProbe"]["httpGet"]["path"]
+        == "/healthz?js-enabled-only=true"
+    )
+    # Startup probe with a long failureThreshold gives cluster
+    # formation time before liveness kicks in.
+    assert container["startupProbe"]["httpGet"]["path"] == "/healthz?js-server-only=true"
+    assert container["startupProbe"]["failureThreshold"] >= 30
+
+
 def test_build_cluster_manifests_statefulset_labels_carry_locality():
     a, _, topo = _two_cluster_topo()
     _, sts, _ = build_cluster_manifests(a, supercluster=topo)
