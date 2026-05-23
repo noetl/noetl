@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.100.1](https://github.com/noetl/noetl/compare/v2.100.0...v2.100.1) (2026-05-23)
+
+### Bug Fixes
+
+* **runtime:** NATS supercluster — server_name, healthz, headless DNS ([7e2bdfb](https://github.com/noetl/noetl/commit/7e2bdfbef3708c74b98b6acf5e60e684aa153c1f)), closes [#595](https://github.com/noetl/noetl/issues/595) [#595](https://github.com/noetl/noetl/issues/595) [#594](https://github.com/noetl/noetl/issues/594)
+
 ## [2.100.0](https://github.com/noetl/noetl/compare/v2.99.0...v2.100.0) (2026-05-23)
 
 ### Features
