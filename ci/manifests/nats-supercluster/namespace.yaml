@@ -1,0 +1,14 @@
+# NATS supercluster — Phase 4 round 3
+#
+# A separate namespace so the supercluster does not collide with
+# the existing single-node NATS deployment in the `nats` namespace.
+# Both topologies can coexist during evaluation; only the
+# supercluster is the production target.
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: nats-supercluster
+  labels:
+    managed-by: noetl
+    topology: supercluster
