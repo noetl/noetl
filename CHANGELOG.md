@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.98.0](https://github.com/noetl/noetl/compare/v2.97.0...v2.98.0) (2026-05-23)
+
+### Features
+
+* **resource-locator:** URN extension for data resources, locality, NATS subjects ([99692f7](https://github.com/noetl/noetl/commit/99692f753338c6716c2311bd9f2d3e963b7a5449))
+
 ## [2.97.0](https://github.com/noetl/noetl/compare/v2.96.0...v2.97.0) (2026-05-23)
 
 ### Features
