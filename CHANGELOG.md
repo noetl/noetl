@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.99.0](https://github.com/noetl/noetl/compare/v2.98.0...v2.99.0) (2026-05-23)
+
+### Features
+
+* **runtime:** KEDA scaler for NATS JetStream worker autoscaling ([f63a601](https://github.com/noetl/noetl/commit/f63a6011b1156e9aac8fb7ce1009e517260efd17))
+
 ## [2.98.0](https://github.com/noetl/noetl/compare/v2.97.0...v2.98.0) (2026-05-23)
 
 ### Features
