@@ -18,6 +18,14 @@ This module emits the supercluster shape (the larger of the two);
 a degenerate single-cluster supercluster (one cluster, no peers)
 emits a valid cluster-only config.
 
+Static sample manifests produced by this generator live in the
+``noetl/ops`` repo at ``ci/manifests/nats-supercluster/``
+(https://github.com/noetl/ops/tree/main/ci/manifests/nats-supercluster)
+— that is the canonical home for NoETL operational manifests.
+``noetl/ops`` also hosts a sibling parameterized renderer
+playbook at ``automation/infrastructure/nats_supercluster.yaml``
+for arbitrary single-cluster deployments.
+
 Out of scope for this round:
 
 - No live install automation. The wiki + manifest README document

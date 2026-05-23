@@ -3,8 +3,6 @@
 
 from __future__ import annotations
 
-from pathlib import Path
-
 import pytest
 import yaml
 
@@ -315,40 +313,3 @@ def test_dump_manifests_yaml_uses_doc_separators():
     assert rendered.count("---") >= 2
 
 
-# ---------------------------------------------------------------------------
-# Sample manifest drift guards
-# ---------------------------------------------------------------------------
-
-
-_REPO_ROOT = Path(__file__).resolve().parents[3]
-
-
-def _load_yaml_docs(path: Path) -> list[dict]:
-    return list(yaml.safe_load_all(path.read_text()))
-
-
-def test_sample_namespace_yaml_matches_expected_shape():
-    path = _REPO_ROOT / "ci" / "manifests" / "nats-supercluster" / "namespace.yaml"
-    docs = [d for d in _load_yaml_docs(path) if d is not None]
-    assert len(docs) == 1
-    ns = docs[0]
-    assert ns["kind"] == "Namespace"
-    assert ns["metadata"]["name"] == "nats-supercluster"
-    assert ns["metadata"]["labels"]["managed-by"] == "noetl"
-    assert ns["metadata"]["labels"]["topology"] == "supercluster"
-
-
-def test_sample_cluster_a_yaml_matches_generator_output():
-    a, _, topo = _two_cluster_topo()
-    expected = build_cluster_manifests(a, supercluster=topo)
-    path = _REPO_ROOT / "ci" / "manifests" / "nats-supercluster" / "cluster-a.yaml"
-    actual = [d for d in _load_yaml_docs(path) if d is not None]
-    assert actual == expected
-
-
-def test_sample_cluster_b_yaml_matches_generator_output():
-    _, b, topo = _two_cluster_topo()
-    expected = build_cluster_manifests(b, supercluster=topo)
-    path = _REPO_ROOT / "ci" / "manifests" / "nats-supercluster" / "cluster-b.yaml"
-    actual = [d for d in _load_yaml_docs(path) if d is not None]
-    assert actual == expected

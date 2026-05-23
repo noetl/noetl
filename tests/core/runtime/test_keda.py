@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from pathlib import Path
-
 import pytest
 import yaml
 
@@ -195,26 +193,3 @@ def test_dump_scaledobject_yaml_preserves_top_level_key_order():
     assert lines[3].startswith("spec:")
 
 
-def test_sample_manifest_matches_generator_output():
-    """The committed sample manifest must match the generator's output exactly.
-
-    Drift guard: a hand-edit to ``scaledobject-worker-cpu-01.yaml`` will
-    fail this test, prompting the editor to either update the generator
-    (preferred) or roll back the hand-edit.
-    """
-    repo_root = Path(__file__).resolve().parents[3]
-    manifest_path = repo_root / "ci" / "manifests" / "keda" / "scaledobject-worker-cpu-01.yaml"
-    raw = manifest_path.read_text()
-
-    # Manifest has a leading comment header then a `---` doc separator;
-    # yaml.safe_load handles both.
-    loaded = yaml.safe_load(raw)
-
-    expected = build_worker_scaledobject(
-        ScaledObjectSpec(
-            worker_pool_urn=EXISTING_URN,
-            deployment="noetl-worker",
-            nats_consumer="noetl_worker_pool",
-        )
-    )
-    assert loaded == expected
