@@ -1,9 +1,0 @@
-apiVersion: v1
-kind: Pod
-metadata:
-  name: psql-tshoot
-spec:
-  containers:
-    - name: psql
-      image: postgres:17.4-alpine
-      command: ["sleep", "infinity"]

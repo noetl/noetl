@@ -30,9 +30,10 @@ Out of scope for this round:
 
 - No live install automation. The wiki + manifest README document
   the manual ``kubectl apply`` flow.
-- No edits to the existing single-node ``ci/manifests/nats/``
-  deployment. The supercluster is a separate namespace +
-  topology that operators can deploy alongside.
+- No edits to the existing single-node ``noetl/ops``
+  ``ci/manifests/nats/`` deployment. The supercluster is a
+  separate namespace + topology that operators can deploy
+  alongside.
 - No client-side rewiring. ``NATSCommandPublisher`` /
   ``NATSCommandSubscriber`` keep pointing at the existing
   single-cluster endpoint. Cluster-aware client routing is
@@ -84,11 +85,11 @@ DEFAULT_JETSTREAM_PVC_SIZE = "5Gi"
 DEFAULT_NATS_IMAGE = "nats:latest"
 
 
-#: Accounts block preserved verbatim from
-#: ``ci/manifests/nats/nats.yaml`` so callers — and the existing
-#: ``noetl`` user — work against the supercluster without
-#: rewiring credentials. Per-tenant accounts are out-of-phase
-#: follow-up work.
+#: Accounts block preserved verbatim from ``noetl/ops``
+#: ``ci/manifests/nats/nats.yaml`` so callers — and the
+#: existing ``noetl`` user — work against the supercluster
+#: without rewiring credentials. Per-tenant accounts are
+#: out-of-phase follow-up work.
 _NATS_ACCOUNTS_BLOCK = """\
 accounts {
   $SYS {

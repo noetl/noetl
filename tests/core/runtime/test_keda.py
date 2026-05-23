@@ -23,8 +23,8 @@ from noetl.core.runtime.keda import (
 
 
 # Worker-pool URN used for the existing single-pool deployment in
-# ci/manifests/noetl/worker-deployment.yaml. Reused across tests so
-# we don't repeat the literal.
+# noetl/ops at ci/manifests/noetl/worker-deployment.yaml.
+# Reused across tests so we don't repeat the literal.
 EXISTING_URN = "noetl://tenant/default/org/default/worker/worker-cpu-01"
 
 
@@ -96,7 +96,8 @@ def test_build_worker_scaledobject_emits_keda_v1alpha1_schema():
     # Live-validation pin: the default must match the NATS account
     # the noetl user actually lives in. Pointing KEDA at the wrong
     # account (e.g. the global "$G") returns num_pending: 0
-    # silently and breaks scaling. See ci/manifests/nats/nats.yaml.
+    # silently and breaks scaling. See noetl/ops at
+    # ci/manifests/nats/nats.yaml.
     assert DEFAULT_NATS_ACCOUNT == "NOETL"
     assert md["stream"] == DEFAULT_NATS_STREAM
     # KEDA requires every metadata value to be a string, even for
