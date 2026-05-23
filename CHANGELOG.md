@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.97.0](https://github.com/noetl/noetl/compare/v2.96.0...v2.97.0) (2026-05-23)
+
+### Features
+
+* **event-store:** bind payload_ref to PayloadReference ([63e24bd](https://github.com/noetl/noetl/commit/63e24bd5c8677edb07bcb2c15971bba1fb7f536d))
+
 ## [2.96.0](https://github.com/noetl/noetl/compare/v2.95.0...v2.96.0) (2026-05-22)
 
 ### Features
