@@ -4,7 +4,9 @@ import hashlib
 import json
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Any, Optional, Protocol
+from typing import Any, Optional, Protocol, Union
+
+from noetl.core.payload_store.ports import PayloadReference
 
 
 class ExpectedVersionConflict(RuntimeError):
@@ -37,6 +39,54 @@ def canonical_event_checksum(value: dict[str, Any]) -> str:
     return hashlib.sha256(payload).hexdigest()
 
 
+#: Marker on serialized payload_ref dicts that originated from a
+#: :class:`noetl.core.payload_store.PayloadReference`. Consumers
+#: (replay locator, future PayloadStore-aware resolver) use this
+#: discriminator to recognize payload-store-backed references
+#: without inspecting field shapes.
+PAYLOAD_REF_KIND_PAYLOAD_STORE = "payload_store"
+
+
+def payload_ref_to_dict(
+    value: Optional[Union[PayloadReference, dict[str, Any]]],
+) -> Optional[dict[str, Any]]:
+    """Normalize an event ``payload_ref`` to a JSON-column-compatible dict.
+
+    Accepts three shapes:
+
+    - ``None`` — returned unchanged.
+    - :class:`PayloadReference` — serialized to a canonical dict with the
+      ``kind`` discriminator set to
+      :data:`PAYLOAD_REF_KIND_PAYLOAD_STORE` plus every reference field
+      (``sha256``, ``byte_length``, ``content_type``, ``uri``,
+      ``metadata``).
+    - ``dict`` — returned unchanged. Used both for legacy
+      TempStore-shaped references (``{"ref": ..., "kind": "result_ref"}``)
+      and for already-serialized PayloadReference dicts coming back off
+      the postgres ``payload_ref`` JSON column.
+
+    Any other input raises :class:`TypeError` with a clear message —
+    the envelope must never carry a non-serializable ``payload_ref``.
+    """
+    if value is None:
+        return None
+    if isinstance(value, PayloadReference):
+        return {
+            "kind": PAYLOAD_REF_KIND_PAYLOAD_STORE,
+            "sha256": value.sha256,
+            "byte_length": value.byte_length,
+            "content_type": value.content_type,
+            "uri": value.uri,
+            "metadata": dict(value.metadata),
+        }
+    if isinstance(value, dict):
+        return value
+    raise TypeError(
+        "EventRecord.payload_ref must be None, a PayloadReference, or a "
+        f"dict; got {type(value).__name__}"
+    )
+
+
 @dataclass(frozen=True)
 class EventRecord:
     """Backend-neutral event-store record.
@@ -58,7 +108,7 @@ class EventRecord:
     causation_id: Optional[str] = None
     correlation_id: Optional[str] = None
     idempotency_key: Optional[str] = None
-    payload_ref: Optional[dict[str, Any]] = None
+    payload_ref: Optional[Union[PayloadReference, dict[str, Any]]] = None
     result: dict[str, Any] = field(default_factory=dict)
     meta: dict[str, Any] = field(default_factory=dict)
     status: Optional[str] = None
@@ -84,7 +134,7 @@ class EventRecord:
             "causation_id": self.causation_id,
             "correlation_id": self.correlation_id,
             "idempotency_key": self.idempotency_key,
-            "payload_ref": self.payload_ref,
+            "payload_ref": payload_ref_to_dict(self.payload_ref),
             "result": self.result,
             "meta": self.meta,
             "status": self.status,

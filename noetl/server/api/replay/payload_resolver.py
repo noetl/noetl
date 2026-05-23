@@ -78,11 +78,33 @@ def _resolve_input(reference: Any, ref: str) -> Any:
 
 
 def replay_payload_ref_locator(reference: Any) -> str | None:
-    """Return the stable locator for a replay payload reference, when present."""
+    """Return the stable locator for a replay payload reference, when present.
+
+    Recognized shapes:
+
+    - Bare string locators (legacy).
+    - Mappings with ``kind == "payload_store"`` — extracted from
+      :class:`noetl.core.payload_store.PayloadReference` via
+      :func:`noetl.core.event_store.payload_ref_to_dict`. Prefers
+      the ``uri`` field (e.g. ``s3://``, ``gs://``, ``azure://``);
+      falls back to the ``sha256`` digest when no URI is set.
+    - Legacy mappings carrying ``ref``/``uri``/``locator`` keys,
+      including nested ``rows_ref`` sub-mappings.
+
+    Returns ``None`` when the reference has no extractable locator.
+    """
     if isinstance(reference, str):
         return reference
     if not isinstance(reference, Mapping):
         return None
+    if reference.get("kind") == "payload_store":
+        for key in ("uri", "sha256"):
+            value = reference.get(key)
+            if value:
+                return str(value)
+        # Fall through to the legacy keys for forward-compat (a
+        # PayloadReference dict with no URI and no sha256 is malformed,
+        # but the legacy path shouldn't crash on it).
     for key in ("ref", "uri", "locator"):
         value = reference.get(key)
         if value:
