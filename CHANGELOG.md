@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.100.0](https://github.com/noetl/noetl/compare/v2.99.0...v2.100.0) (2026-05-23)
+
+### Features
+
+* **runtime:** NATS supercluster topology generator + sample manifests ([ce56b71](https://github.com/noetl/noetl/commit/ce56b71aadce94f7ee0dd0c9044b8ffda15e5a5a))
+
 ## [2.99.0](https://github.com/noetl/noetl/compare/v2.98.0...v2.99.0) (2026-05-23)
 
 ### Features
