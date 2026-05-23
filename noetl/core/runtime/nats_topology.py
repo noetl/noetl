@@ -355,18 +355,63 @@ def _build_statefulset(
                                 {"containerPort": DEFAULT_CLUSTER_PORT, "name": "cluster", "protocol": "TCP"},
                                 {"containerPort": DEFAULT_GATEWAY_PORT, "name": "gateway", "protocol": "TCP"},
                             ],
-                            "args": ["-c", "/etc/nats/nats.conf"],
+                            # NATS requires a unique `server_name` per node when
+                            # JetStream runs in cluster mode. Pull the pod name
+                            # via the downward API and pass it as --name so each
+                            # StatefulSet replica registers under its own ID.
+                            "env": [
+                                {
+                                    "name": "POD_NAME",
+                                    "valueFrom": {
+                                        "fieldRef": {"fieldPath": "metadata.name"}
+                                    },
+                                }
+                            ],
+                            "args": [
+                                "-c",
+                                "/etc/nats/nats.conf",
+                                "--name",
+                                "$(POD_NAME)",
+                            ],
                             "volumeMounts": [
                                 {"name": "nats-config", "mountPath": "/etc/nats"},
                                 {"name": "nats-storage", "mountPath": "/data"},
                             ],
+                            # NATS publishes three healthz variants. For
+                            # a clustered JetStream deployment we use:
+                            #   liveness:  ?js-server-only=true  — base NATS
+                            #              process up. Most forgiving — only
+                            #              fails when the server has crashed.
+                            #   readiness: ?js-enabled-only=true — JetStream
+                            #              enabled and reachable. Pod becomes
+                            #              Ready once JS is up; doesn't wait
+                            #              for full meta-layer recovery.
+                            #   startup:   ?js-server-only=true with a long
+                            #              failureThreshold — gives the
+                            #              cluster time to form gateway
+                            #              connections before liveness kicks in.
+                            "startupProbe": {
+                                "httpGet": {
+                                    "path": "/healthz?js-server-only=true",
+                                    "port": DEFAULT_MONITORING_PORT,
+                                },
+                                "periodSeconds": 5,
+                                "failureThreshold": 60,
+                            },
                             "livenessProbe": {
-                                "httpGet": {"path": "/healthz", "port": DEFAULT_MONITORING_PORT},
+                                "httpGet": {
+                                    "path": "/healthz?js-server-only=true",
+                                    "port": DEFAULT_MONITORING_PORT,
+                                },
                                 "initialDelaySeconds": 30,
                                 "periodSeconds": 10,
+                                "failureThreshold": 5,
                             },
                             "readinessProbe": {
-                                "httpGet": {"path": "/healthz", "port": DEFAULT_MONITORING_PORT},
+                                "httpGet": {
+                                    "path": "/healthz?js-enabled-only=true",
+                                    "port": DEFAULT_MONITORING_PORT,
+                                },
                                 "initialDelaySeconds": 10,
                                 "periodSeconds": 5,
                             },
@@ -415,6 +460,13 @@ def _build_service(
             # Headless Service — pods get stable per-replica DNS
             # names for the route URLs we emit in nats.conf.
             "clusterIP": "None",
+            # Critical for supercluster: gateway URLs resolve
+            # through the Service DNS, and supercluster startup
+            # is a chicken-and-egg (each cluster waits for its
+            # peers' Service to publish addresses). Setting this
+            # to True lets the headless DNS resolve to pods
+            # before they reach Ready state, breaking the cycle.
+            "publishNotReadyAddresses": True,
             "selector": labels,
             "ports": [
                 {"name": "client", "port": DEFAULT_CLIENT_PORT, "targetPort": DEFAULT_CLIENT_PORT, "protocol": "TCP"},
