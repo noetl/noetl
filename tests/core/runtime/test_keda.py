@@ -95,6 +95,11 @@ def test_build_worker_scaledobject_emits_keda_v1alpha1_schema():
     md = trigger["metadata"]
     assert md["natsServerMonitoringEndpoint"] == DEFAULT_NATS_MONITORING_ENDPOINT
     assert md["account"] == DEFAULT_NATS_ACCOUNT
+    # Live-validation pin: the default must match the NATS account
+    # the noetl user actually lives in. Pointing KEDA at the wrong
+    # account (e.g. the global "$G") returns num_pending: 0
+    # silently and breaks scaling. See ci/manifests/nats/nats.yaml.
+    assert DEFAULT_NATS_ACCOUNT == "NOETL"
     assert md["stream"] == DEFAULT_NATS_STREAM
     # KEDA requires every metadata value to be a string, even for
     # numeric fields. Guard the contract.
