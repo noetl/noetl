@@ -19,8 +19,9 @@ Out of scope for this round:
 - No live KEDA install or cluster-side automation. The wiki page
   documents the one-off ``helm install kedacore/keda`` step the
   human runs after merge.
-- No edits to ``ci/manifests/noetl/worker-deployment.yaml``. The
-  static ``replicas: 3`` remains as the Deployment's initial state;
+- No edits to the worker Deployment manifest in
+  ``noetl/ops`` at ``ci/manifests/noetl/worker-deployment.yaml``.
+  The static ``replicas: 3`` remains as the Deployment's initial state;
   KEDA reconciles it once installed.
 - No NATS supercluster topology (Phase 4 round 3).
 - No catalog-driven dynamic scaling. A future round can iterate
@@ -53,16 +54,18 @@ DEFAULT_MIN_REPLICAS = 1
 DEFAULT_MAX_REPLICAS = 20
 
 #: NATS stream the existing ``noetl-worker`` Deployment consumes from
-#: (see ``ci/manifests/noetl/configmap-worker.yaml`` → ``NATS_STREAM``).
+#: (see ``noetl/ops`` at ``ci/manifests/noetl/configmap-worker.yaml``
+#: → ``NATS_STREAM``).
 DEFAULT_NATS_STREAM = "NOETL_COMMANDS"
 
 #: NATS monitoring endpoint inside the kind / Kubernetes cluster.
 #: KEDA's ``nats-jetstream`` scaler scrapes this endpoint to read
-#: consumer lag. Matches ``ci/manifests/nats/`` defaults.
+#: consumer lag. Matches ``noetl/ops`` ``ci/manifests/nats/`` defaults.
 DEFAULT_NATS_MONITORING_ENDPOINT = "nats.nats.svc.cluster.local:8222"
 
 #: NATS account that the existing NoETL deployment uses (see
-#: ``ci/manifests/nats/nats.yaml`` — the ``noetl`` user lives in
+#: ``noetl/ops`` at ``ci/manifests/nats/nats.yaml`` — the
+#: ``noetl`` user lives in
 #: the ``NOETL`` account, not the global ``$G`` account). KEDA's
 #: ``nats-jetstream`` scaler filters monitoring queries by account
 #: name; pointing at the wrong account returns ``num_pending: 0``

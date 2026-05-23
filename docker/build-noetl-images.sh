@@ -162,7 +162,7 @@ echo
 echo -e "${GREEN}To use these images in Kubernetes:${NC}"
 echo -e "  1. Load them into Kind: kind load docker-image <image> --name noetl"
 echo -e "  2. Update the deployment YAML files to use these images"
-echo -e "  3. Apply deployments: kubectl apply -f ci/manifests/noetl/"
+echo -e "  3. Apply deployments: kubectl apply -f ../ops/ci/manifests/noetl/"
 echo
 echo -e "${YELLOW}Example workflow:${NC}"
 echo -e "  noetl run ../ops/automation/boot.yaml"
