@@ -87,6 +87,131 @@ def test_parse_worker_locator_rejects_non_worker_locator():
         parse_worker_locator("noetl://tenant/tenant-a/org/org-a")
 
 
+def test_worker_locator_emits_region_and_zone_in_coarse_to_fine_order():
+    from noetl.core.runtime.topology import worker_locator
+
+    uri = worker_locator(
+        tenant_id="acme",
+        organization_id="research",
+        worker_id="worker-cpu-01",
+        locality={
+            "region": "us-east1",
+            "zone": "us-east1-b",
+            "cluster_id": "prod",
+            "node_id": "node-a",
+            "worker_pool": "worker-cpu-01",
+        },
+    )
+
+    # Coarse-to-fine: region → zone → cluster → node → worker
+    assert (
+        uri
+        == "noetl://tenant/acme/org/research/region/us-east1/zone/us-east1-b"
+        "/cluster/prod/node/node-a/worker/worker-cpu-01"
+    )
+
+
+def test_worker_locator_emits_region_only_when_zone_unset():
+    from noetl.core.runtime.topology import worker_locator
+
+    uri = worker_locator(
+        tenant_id="acme",
+        organization_id="research",
+        worker_id="worker-cpu-01",
+        locality={"region": "us-east1", "worker_pool": "worker-cpu-01"},
+    )
+
+    assert (
+        uri
+        == "noetl://tenant/acme/org/research/region/us-east1/worker/worker-cpu-01"
+    )
+
+
+def test_worker_locator_without_region_or_zone_is_back_compat():
+    """Existing call shape produces the pre-round-1 URN unchanged."""
+    from noetl.core.runtime.topology import worker_locator
+
+    uri = worker_locator(
+        tenant_id="tenant-a",
+        organization_id="org-a",
+        worker_id="worker-a",
+        locality={
+            "cluster_id": "cluster-a",
+            "node_id": "node-a",
+            "worker_pool": "worker-cpu-01",
+        },
+    )
+
+    # Pre-round-1 canonical form — no region/zone segments.
+    assert (
+        uri
+        == "noetl://tenant/tenant-a/org/org-a/cluster/cluster-a/node/node-a/worker/worker-cpu-01"
+    )
+
+
+def test_parse_worker_locator_populates_region_and_zone():
+    from noetl.core.runtime.topology import parse_worker_locator
+
+    parts = parse_worker_locator(
+        "noetl://tenant/acme/org/research/region/us-east1/zone/us-east1-b"
+        "/cluster/prod/node/node-a/worker/worker-cpu-01"
+    )
+
+    assert parts.region == "us-east1"
+    assert parts.zone == "us-east1-b"
+    assert parts.cluster_id == "prod"
+    assert parts.node_id == "node-a"
+    assert parts.worker_pool == "worker-cpu-01"
+
+
+def test_parse_worker_locator_back_compat_without_region_zone():
+    from noetl.core.runtime.topology import parse_worker_locator
+
+    parts = parse_worker_locator(
+        "noetl://tenant/acme/org/research/cluster/prod/worker/worker-cpu-01"
+    )
+
+    assert parts.region is None
+    assert parts.zone is None
+    assert parts.cluster_id == "prod"
+    assert parts.worker_pool == "worker-cpu-01"
+
+
+def test_worker_locator_parts_as_locality_includes_region_zone():
+    from noetl.core.runtime.topology import WorkerLocatorParts
+
+    parts = WorkerLocatorParts(
+        tenant_id="acme",
+        organization_id="research",
+        worker_pool="cpu-01",
+        cluster_id="prod",
+        node_id="node-a",
+        region="us-east1",
+        zone="us-east1-b",
+    )
+
+    assert parts.as_locality() == {
+        "worker_pool": "cpu-01",
+        "region": "us-east1",
+        "zone": "us-east1-b",
+        "cluster_id": "prod",
+        "node_id": "node-a",
+    }
+
+
+def test_parse_worker_locator_rejects_unknown_segment():
+    """The allowlist still bars segments outside the known schema."""
+    import pytest
+
+    from noetl.core.resource_locator import ResourceLocatorError
+    from noetl.core.runtime.topology import parse_worker_locator
+
+    with pytest.raises(ResourceLocatorError, match="unknown segments: country"):
+        parse_worker_locator(
+            "noetl://tenant/acme/org/research/country/uk/worker/worker-cpu-01"
+        )
+
+
 def test_locality_distance_prefers_closest_match():
     from noetl.core.runtime.topology import locality_distance, locality_within, placement_evaluation
 

@@ -21,9 +21,15 @@ class WorkerLocatorParts:
     worker_pool: str
     cluster_id: str | None = None
     node_id: str | None = None
+    region: str | None = None
+    zone: str | None = None
 
     def as_locality(self) -> dict[str, str]:
         locality: dict[str, str] = {"worker_pool": self.worker_pool}
+        if self.region:
+            locality["region"] = self.region
+        if self.zone:
+            locality["zone"] = self.zone
         if self.cluster_id:
             locality["cluster_id"] = self.cluster_id
         if self.node_id:
@@ -61,9 +67,16 @@ def worker_locator(
             "org",
             organization_id or "default",
         ]
+        region = locality.get("region")
+        zone = locality.get("zone")
         cluster_id = locality.get("cluster_id")
         node_id = locality.get("node_id")
         worker_pool = locality.get("worker_pool") or worker_id
+        # Coarse-to-fine: region → zone → cluster → node → worker.
+        if region:
+            segments.extend(["region", region])
+        if zone:
+            segments.extend(["zone", zone])
         if cluster_id:
             segments.extend(["cluster", cluster_id])
         if node_id:
@@ -85,7 +98,9 @@ def parse_worker_locator(value: str) -> WorkerLocatorParts:
     except ResourceLocatorError as exc:
         raise ResourceLocatorError("worker locator must use alternating key/value segments") from exc
 
-    unknown = sorted(set(parts) - {"tenant", "org", "cluster", "node", "worker"})
+    unknown = sorted(
+        set(parts) - {"tenant", "org", "region", "zone", "cluster", "node", "worker"}
+    )
     if unknown:
         raise ResourceLocatorError(f"worker locator contains unknown segments: {', '.join(unknown)}")
 
@@ -99,6 +114,8 @@ def parse_worker_locator(value: str) -> WorkerLocatorParts:
         organization_id=parts["org"],
         cluster_id=parts.get("cluster"),
         node_id=parts.get("node"),
+        region=parts.get("region"),
+        zone=parts.get("zone"),
         worker_pool=parts["worker"],
     )
 
