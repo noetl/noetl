@@ -305,3 +305,41 @@ def mask_value(value: str, visible_start: int = 4, visible_end: int = 4) -> str:
         return REDACTED
 
     return f"{value[:visible_start]}...{value[-visible_end:]}"
+
+
+# Matches the userinfo portion of a URL: ``scheme://[user[:pass]@]host...``.
+# Captures the scheme + ``://`` (group 1) and the host-and-rest (group 2);
+# the ``[^/@:]+(?::[^/@]*)?@`` middle is the userinfo segment we strip.
+_URL_CREDENTIALS_RE = re.compile(
+    r"(?P<scheme>[a-zA-Z][a-zA-Z0-9+.\-]*://)"  # e.g. nats://, postgres://, https://
+    r"(?:[^/@:\s]+(?::[^/@\s]*)?@)"             # userinfo segment to redact
+    r"(?P<rest>[^\s]+)"                          # host + path + query + fragment
+)
+
+
+def redact_url_credentials(value: str, placeholder: str = REDACTED) -> str:
+    """Replace the userinfo segment of any URL found in ``value`` with a placeholder.
+
+    Use this before logging or writing connection strings (NATS, Postgres,
+    HTTP basic-auth, etc.) so that ``user:password@host`` does not leak into
+    logs or debug files.
+
+    Examples::
+
+        >>> redact_url_credentials("nats://noetl:noetl@nats:4222")
+        'nats://[REDACTED]@nats:4222'
+        >>> redact_url_credentials("connect to postgres://u:p@db/noetl now")
+        'connect to postgres://[REDACTED]@db/noetl now'
+        >>> redact_url_credentials("nats://nats:4222")  # no userinfo
+        'nats://nats:4222'
+
+    Non-string inputs are returned unchanged so callers can pass through
+    arbitrary types without a TypeError.
+    """
+    if not isinstance(value, str):
+        return value
+
+    def _replace(match: "re.Match[str]") -> str:
+        return f"{match.group('scheme')}{placeholder}@{match.group('rest')}"
+
+    return _URL_CREDENTIALS_RE.sub(_replace, value)

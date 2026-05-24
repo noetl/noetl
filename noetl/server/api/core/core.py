@@ -4,6 +4,7 @@ from typing import Optional
 from noetl.core.dsl.engine.executor import ControlFlowEngine, PlaybookRepo, StateStore
 from noetl.core.messaging import NATSCommandPublisher
 from noetl.core.logger import setup_logger
+from noetl.core.sanitize import redact_url_credentials
 
 logger = setup_logger(__name__, include_location=True)
 
@@ -193,7 +194,7 @@ async def get_nats_publisher():
             subject=settings.nats_subject
         )
         await _nats_publisher.connect()
-        logger.info(f"NATS publisher initialized: {settings.nats_url}")
+        logger.info("NATS publisher initialized: %s", redact_url_credentials(settings.nats_url))
     
     return _nats_publisher
 

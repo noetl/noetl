@@ -30,6 +30,8 @@ from nats.js.api import KeyValueConfig
 from nats.js.errors import KeyNotFoundError, BucketNotFoundError
 from nats.js.kv import KeyValue
 
+from noetl.core.sanitize import redact_url_credentials
+
 logger = logging.getLogger(__name__)
 
 # Default TTL in seconds (24 hours)
@@ -183,7 +185,10 @@ class NatsSessionStore:
                 logger.info(f"Created K/V bucket: {self.BUCKET_NAME} with TTL={self.default_ttl}s")
 
             self._connected = True
-            logger.info(f"Connected to NATS K/V session store at {self.nats_url}")
+            logger.info(
+                "Connected to NATS K/V session store at %s",
+                redact_url_credentials(self.nats_url),
+            )
 
         except Exception as e:
             logger.error(f"Failed to connect to NATS K/V: {e}")

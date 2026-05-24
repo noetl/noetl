@@ -25,6 +25,7 @@ from nats.js.api import StreamConfig, ConsumerConfig
 from nats.aio.client import Client as NATSClient
 
 from noetl.core.logger import setup_logger
+from noetl.core.sanitize import redact_url_credentials
 
 logger = setup_logger(__name__, include_location=True)
 _MAX_CALLBACK_NAK_DELAY_SECONDS = 3600.0
@@ -113,7 +114,11 @@ class NATSCommandPublisher:
                     max_age=3600,  # 1 hour retention
                     storage="memory"  # Memory for low latency
                 )
-                logger.info(f"Created stream {self.stream_name} | connected to NATS at {self.nats_url}")
+                logger.info(
+                    "Created stream %s | connected to NATS at %s",
+                    self.stream_name,
+                    redact_url_credentials(self.nats_url),
+                )
 
         except Exception as e:
             logger.error(f"Failed to connect to NATS: {e}")
@@ -621,7 +626,7 @@ class NATSCommandSubscriber:
             self._nc = await nats.connect(self.nats_url)
             self._js = self._nc.jetstream()
 
-            logger.debug(f"Connected to NATS at {self.nats_url}")
+            logger.debug("Connected to NATS at %s", redact_url_credentials(self.nats_url))
 
         except Exception as e:
             logger.error(f"Failed to connect to NATS: {e}")
