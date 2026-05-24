@@ -303,11 +303,18 @@ class CatalogService:
 
         terminal = metadata.get("terminal")
         terminal = terminal if isinstance(terminal, dict) else {}
-        terminal_scopes = terminal.get("scopes") or terminal.get("scope") or []
+        if "scopes" in terminal:
+            terminal_scopes = terminal.get("scopes")
+        elif "scope" in terminal:
+            terminal_scopes = terminal.get("scope")
+        else:
+            terminal_scopes = []
         if isinstance(terminal_scopes, str):
             normalized_terminal_scopes = [scope.strip() for scope in terminal_scopes.split(",") if scope.strip()]
         elif isinstance(terminal_scopes, list):
-            normalized_terminal_scopes = [str(scope).strip() for scope in terminal_scopes if str(scope).strip()]
+            normalized_terminal_scopes = [
+                str(scope).strip() for scope in terminal_scopes if scope is not None and str(scope).strip()
+            ]
         else:
             normalized_terminal_scopes = []
 
