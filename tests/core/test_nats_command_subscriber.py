@@ -17,6 +17,7 @@ class _FakeJetStream:
         self._add_consumer_error = add_consumer_error
         self.add_consumer_calls = []
         self.delete_consumer_calls = []
+        self.pull_subscribe_calls = []
 
     async def consumer_info(self, stream, consumer):
         if self._consumer_info_results:
@@ -35,6 +36,10 @@ class _FakeJetStream:
 
     async def delete_consumer(self, stream, consumer):
         self.delete_consumer_calls.append((stream, consumer))
+
+    async def pull_subscribe(self, subject, durable):
+        self.pull_subscribe_calls.append((subject, durable))
+        return SimpleNamespace(subject=subject, durable=durable)
 
 
 @pytest.mark.asyncio
@@ -98,6 +103,43 @@ async def test_add_consumer_tolerates_race_when_existing_consumer_matches_config
     _, config = fake_js.add_consumer_calls[0]
     assert config.max_ack_pending == 64
     assert fake_js.delete_consumer_calls == []
+
+
+@pytest.mark.asyncio
+async def test_recover_fetch_subscription_recreates_missing_consumer():
+    subscriber = NATSCommandSubscriber(
+        subject="noetl.commands",
+        consumer_name="test-consumer",
+        stream_name="NOETL_COMMANDS",
+        max_ack_pending=64,
+        max_inflight=1,
+    )
+    fake_js = _FakeJetStream(consumer_info_results=[RuntimeError("consumer not found")])
+    subscriber._js = fake_js
+
+    await subscriber._recover_fetch_subscription()
+
+    assert len(fake_js.add_consumer_calls) == 1
+    assert fake_js.pull_subscribe_calls == [("noetl.commands", "test-consumer")]
+
+
+@pytest.mark.asyncio
+async def test_recover_fetch_subscription_is_rate_limited():
+    subscriber = NATSCommandSubscriber(
+        subject="noetl.commands",
+        consumer_name="test-consumer",
+        stream_name="NOETL_COMMANDS",
+        max_ack_pending=64,
+        max_inflight=1,
+    )
+    fake_js = _FakeJetStream(consumer_info_results=[RuntimeError("consumer not found")])
+    subscriber._js = fake_js
+
+    await subscriber._recover_fetch_subscription()
+    await subscriber._recover_fetch_subscription()
+
+    assert len(fake_js.add_consumer_calls) == 1
+    assert fake_js.pull_subscribe_calls == [("noetl.commands", "test-consumer")]
 
 
 def test_consumer_config_enforces_ack_wait_budget(monkeypatch):

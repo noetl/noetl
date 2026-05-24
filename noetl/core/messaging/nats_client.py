@@ -16,6 +16,7 @@ import asyncio
 import json
 import math
 import re
+import time
 from contextlib import suppress
 from typing import Any, Optional, Callable, Awaitable
 import nats
@@ -320,6 +321,7 @@ class NATSCommandSubscriber:
         self._background_tasks: set = set()
         self._inflight_semaphore = asyncio.Semaphore(self.max_inflight)
         self._throttle_hits = 0
+        self._fetch_recovery_last_attempt = 0.0
 
     def _record_message_action(self, action: str, delay_seconds: Optional[float] = None) -> None:
         if self._message_action_observer is None:
@@ -328,6 +330,32 @@ class NATSCommandSubscriber:
             self._message_action_observer(action, delay_seconds)
         except Exception:
             logger.debug("Ignoring NATS message action observer failure", exc_info=True)
+
+    async def _recover_fetch_subscription(self) -> None:
+        """Recreate the durable pull subscription after runtime drift."""
+        if not self._js:
+            raise RuntimeError("Not connected to NATS")
+
+        now = time.monotonic()
+        if now - self._fetch_recovery_last_attempt < 30.0:
+            return
+        self._fetch_recovery_last_attempt = now
+
+        logger.warning(
+            "Attempting to recover NATS pull subscription for stream=%s consumer=%s",
+            self.stream_name,
+            self.consumer_name,
+        )
+        await self._ensure_consumer()
+        self._subscription = await self._js.pull_subscribe(
+            self.subject,
+            durable=self.consumer_name,
+        )
+        logger.info(
+            "Recovered NATS pull subscription for stream=%s consumer=%s",
+            self.stream_name,
+            self.consumer_name,
+        )
 
     @staticmethod
     def _decode_json_message(payload: bytes) -> dict[str, Any]:
@@ -726,6 +754,14 @@ class NATSCommandSubscriber:
                 except Exception as e:
                     self._inflight_semaphore.release()
                     logger.error(f"Error fetching messages: {e}")
+                    try:
+                        await self._recover_fetch_subscription()
+                    except Exception as recover_error:
+                        logger.warning(
+                            "NATS fetch recovery failed for consumer %s: %s",
+                            self.consumer_name,
+                            recover_error,
+                        )
                     await asyncio.sleep(0.1)
 
         except Exception as e:
