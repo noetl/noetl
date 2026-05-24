@@ -17,6 +17,7 @@ from fastapi.responses import JSONResponse
 
 from noetl.worker.transient import TransientVars
 from noetl.core.logger import setup_logger
+from noetl.core.sanitize import redact_keychain_values
 from .schema import (
     VariableListResponse,
     VariableValueResponse,
@@ -50,7 +51,7 @@ async def list_variables(
         variables = {}
         for var_name, metadata in vars_with_metadata.items():
             variables[var_name] = VariableMetadata(
-                value=metadata['value'],
+                value=redact_keychain_values(metadata['value']),
                 type=metadata['type'],
                 source_step=metadata.get('source_step'),
                 created_at=metadata['created_at'],
@@ -107,7 +108,7 @@ async def get_variable(
         return VariableValueResponse(
             execution_id=execution_id,
             var_name=var_name,
-            value=cached_var['value'],
+            value=redact_keychain_values(cached_var['value']),
             type=cached_var['type'],
             source_step=cached_var.get('source_step'),
             created_at=cached_var['created_at'],

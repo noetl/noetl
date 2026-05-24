@@ -10,6 +10,7 @@ from typing import Any, Dict
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import JSONResponse
 from noetl.core.logger import setup_logger
+from noetl.core.sanitize import redact_keychain_values
 from .service import AggregateService
 
 logger = setup_logger(__name__, include_location=True)
@@ -61,7 +62,7 @@ async def get_loop_iteration_results(execution_id: str, step_name: str) -> Dict[
             step_name=step_name
         )
         # Convert Pydantic model to dict for JSONResponse
-        return result.model_dump(exclude_none=True)
+        return redact_keychain_values(result.model_dump(exclude_none=True))
     except Exception as e:
         logger.exception(f"AGGREGATE.API: Failed to fetch loop results: {e}")
         raise HTTPException(status_code=500, detail=str(e))

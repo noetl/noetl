@@ -23,6 +23,7 @@ from noetl.core.storage import (
     default_tracker,
 )
 from noetl.core.logger import setup_logger
+from noetl.core.sanitize import redact_keychain_values
 
 logger = setup_logger(__name__, include_location=True)
 
@@ -163,7 +164,7 @@ async def get_temp_by_name(
         ref = matching[-1]
 
         if resolve:
-            return await default_store.get(ref)
+            return redact_keychain_values(await default_store.get(ref))
         else:
             return TempRefResponse(
                 ref=ref.ref,
@@ -173,8 +174,8 @@ async def get_temp_by_name(
                 expires_at=ref.expires_at.isoformat() if ref.expires_at else None,
                 bytes=ref.meta.bytes,
                 sha256=ref.meta.sha256,
-                preview=ref.preview,
-                correlation=ref.correlation
+                preview=redact_keychain_values(ref.preview),
+                correlation=redact_keychain_values(ref.correlation)
             )
 
     except HTTPException:
@@ -199,7 +200,7 @@ async def resolve_ref(
     - Inline data
     """
     try:
-        return await default_store.resolve(ref)
+        return redact_keychain_values(await default_store.resolve(ref))
     except KeyError as e:
         raise HTTPException(404, str(e))
     except Exception as e:
@@ -245,8 +246,8 @@ async def list_temps(
                     expires_at=r.expires_at.isoformat() if r.expires_at else None,
                     bytes=r.meta.bytes,
                     sha256=r.meta.sha256,
-                    preview=r.preview,
-                    correlation=r.correlation
+                    preview=redact_keychain_values(r.preview),
+                    correlation=redact_keychain_values(r.correlation)
                 )
                 for r in refs
             ]

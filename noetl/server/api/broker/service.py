@@ -20,7 +20,7 @@ from noetl.core.db.pool import get_pool_connection, get_snowflake_id
 from noetl.core.logger import setup_logger
 from noetl.core.messaging import NATSEventPublisher
 from noetl.core.outbox import enqueue_outbox, publish_outbox_batch
-from noetl.core.sanitize import sanitize_sensitive_data
+from noetl.core.sanitize import redact_keychain_values, sanitize_sensitive_data
 from .schema import EventEmitRequest, EventEmitResponse, EventQuery, EventResponse, EventListResponse, WorkloadData
 
 
@@ -304,8 +304,8 @@ class EventService:
                     node_name=row['node_name'],
                     node_type=row['node_type'],
                     status=row['status'],
-                    context=row['context'],
-                    meta=row['meta'],
+                    context=redact_keychain_values(row['context']),
+                    meta=redact_keychain_values(row['meta']),
                     created_at=row['created_at'].isoformat() if row['created_at'] else None
                 )
     
@@ -411,8 +411,8 @@ class EventService:
                         node_name=row['node_name'],
                         node_type=row['node_type'],
                         status=row['status'],
-                        context=row['context'],
-                        meta=row['meta'],
+                        context=redact_keychain_values(row['context']),
+                        meta=redact_keychain_values(row['meta']),
                         created_at=row['created_at'].isoformat() if row['created_at'] else None
                     )
                     for row in rows
