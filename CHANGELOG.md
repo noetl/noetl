@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.100.3](https://github.com/noetl/noetl/compare/v2.100.2...v2.100.3) (2026-05-24)
+
+### Bug Fixes
+
+* **worker:** recover missing nats durable consumer ([d69c313](https://github.com/noetl/noetl/commit/d69c313d7e323b66b8dc0b5e84d4a7f853fec768))
+
 ## [2.100.2](https://github.com/noetl/noetl/compare/v2.100.1...v2.100.2) (2026-05-23)
 
 ### Bug Fixes
