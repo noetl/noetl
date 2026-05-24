@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.100.5](https://github.com/noetl/noetl/compare/v2.100.4...v2.100.5) (2026-05-24)
+
+### Bug Fixes
+
+* **catalog:** distinguish empty vs missing terminal scopes; skip None entries ([b2a583a](https://github.com/noetl/noetl/commit/b2a583acb3abf6579c73012cb511b245bd769dbc))
+
 ## [2.100.4](https://github.com/noetl/noetl/compare/v2.100.3...v2.100.4) (2026-05-24)
 
 ### Bug Fixes
