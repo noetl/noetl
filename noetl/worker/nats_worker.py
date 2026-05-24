@@ -29,6 +29,7 @@ from noetl.core.messaging import NATSCommandSubscriber
 from noetl.worker.adaptive_concurrency import AdaptiveConcurrencyController
 from noetl.core.logging_context import LoggingContext
 from noetl.core.logger import setup_logger
+from noetl.core.sanitize import redact_url_credentials
 from noetl.core.urls import (
     build_api_url as _api_url,
     normalize_server_base_url as _normalize_server_base_url,
@@ -937,7 +938,7 @@ class Worker:
         logger.info(
             "Worker %s starting (NATS: %s, inflight=%s, db_inflight=%s, max_ack_pending=%s)",
             self.worker_id,
-            self.nats_url,
+            redact_url_credentials(self.nats_url),
             self._max_inflight_commands,
             self._max_inflight_db_commands,
             worker_settings.nats_max_ack_pending,
@@ -3730,13 +3731,18 @@ def run_worker_sync(
         
         worker_id = f"worker-{uuid.uuid4().hex[:8]}"
         
+        # Redact userinfo (user:password@) from NATS URL before writing /
+        # logging — the debug file lands under /tmp inside the pod, but
+        # logs ship to victorialogs and would otherwise leak the
+        # configured NATS credentials.
+        safe_nats_url = redact_url_credentials(nats_url)
         with open("/tmp/worker_config.txt", "w") as f:
             f.write(f"Worker ID: {worker_id}\n")
-            f.write(f"NATS URL: {nats_url}\n")
+            f.write(f"NATS URL: {safe_nats_url}\n")
             f.write(f"Server URL: {server_url}\n")
             f.flush()
-        
-        logger.info(f"Starting Core worker {worker_id} | NATS={nats_url} | Server={server_url}")
+
+        logger.info(f"Starting Core worker {worker_id} | NATS={safe_nats_url} | Server={server_url}")
         
         with open("/tmp/worker_before_run.txt", "w") as f:
             f.write(f"About to call asyncio.run at {datetime.now()}\n")
