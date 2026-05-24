@@ -79,3 +79,79 @@ def test_extract_agent_metadata_preserves_terminal_scopes():
     assert metadata["terminal_visible"] is True
     assert metadata["terminal"]["workspace"] == "kubernetes"
     assert metadata["terminal_scopes"] == ["/mcp/kubernetes"]
+
+
+def test_extract_agent_metadata_prefers_explicit_empty_scopes():
+    metadata = CatalogService._extract_agent_metadata(
+        {
+            "metadata": {
+                "agent": True,
+                "terminal": {
+                    "scopes": [],
+                    "scope": "/mcp/kubernetes",
+                },
+            }
+        }
+    )
+
+    assert metadata["terminal_scopes"] == []
+
+
+def test_extract_agent_metadata_normalizes_singular_scope():
+    metadata = CatalogService._extract_agent_metadata(
+        {
+            "metadata": {
+                "agent": True,
+                "terminal": {
+                    "scope": "/mcp/kubernetes",
+                },
+            }
+        }
+    )
+
+    assert metadata["terminal_scopes"] == ["/mcp/kubernetes"]
+
+
+def test_extract_agent_metadata_skips_none_terminal_scope_entries():
+    metadata = CatalogService._extract_agent_metadata(
+        {
+            "metadata": {
+                "agent": True,
+                "terminal": {
+                    "scopes": ["/mcp/kubernetes", None, "  "],
+                },
+            }
+        }
+    )
+
+    assert metadata["terminal_scopes"] == ["/mcp/kubernetes"]
+
+
+def test_extract_agent_metadata_normalizes_comma_separated_scopes_string():
+    metadata = CatalogService._extract_agent_metadata(
+        {
+            "metadata": {
+                "agent": True,
+                "terminal": {
+                    "scopes": "/mcp/kubernetes, /mcp/noetl",
+                },
+            }
+        }
+    )
+
+    assert metadata["terminal_scopes"] == ["/mcp/kubernetes", "/mcp/noetl"]
+
+
+def test_extract_agent_metadata_normalizes_comma_separated_scope_string():
+    metadata = CatalogService._extract_agent_metadata(
+        {
+            "metadata": {
+                "agent": True,
+                "terminal": {
+                    "scope": "/mcp/kubernetes, /mcp/noetl",
+                },
+            }
+        }
+    )
+
+    assert metadata["terminal_scopes"] == ["/mcp/kubernetes", "/mcp/noetl"]
