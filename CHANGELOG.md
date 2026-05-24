@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.100.4](https://github.com/noetl/noetl/compare/v2.100.3...v2.100.4) (2026-05-24)
+
+### Bug Fixes
+
+* **logging:** redact userinfo from NATS / Postgres / HTTP URLs in logs ([b538b84](https://github.com/noetl/noetl/commit/b538b8400a7bfe3e1ee7099f5312847b4e80d22a))
+
 ## [2.100.3](https://github.com/noetl/noetl/compare/v2.100.2...v2.100.3) (2026-05-24)
 
 ### Bug Fixes
