@@ -4,6 +4,7 @@ from typing import Any, Optional
 from fastapi import APIRouter, HTTPException
 from psycopg.rows import dict_row
 from psycopg.types.json import Json
+from noetl.core.sanitize import redact_keychain_values
 from noetl.core.db.pool import get_pool_connection
 from noetl.core.messaging import NATSEventPublisher
 from noetl.core.outbox import enqueue_outbox, publish_outbox_batch
@@ -266,7 +267,7 @@ async def get_execution_status(execution_id: str, full: bool = False):
                 terminal_time,
                 completed or failed,
             )
-            return {"execution_id": execution_id, "current_step": latest.get("node_name"), "completed_steps": completed_steps, "failed": failed, "completed": completed, "completion_inferred": inferred, "variables": _compact_status_variables({}), "source": "event_log_fallback", **duration}
+            return {"execution_id": execution_id, "current_step": latest.get("node_name"), "completed_steps": completed_steps, "failed": failed, "completed": completed, "completion_inferred": inferred, "variables": redact_keychain_values(_compact_status_variables({})), "source": "event_log_fallback", **duration}
 
         completed, failed, inferred = state.completed, state.failed, False
         async with get_pool_connection() as conn:
@@ -309,6 +310,7 @@ async def get_execution_status(execution_id: str, full: bool = False):
             (terminal or latest).get("created_at") if (terminal or latest) else None,
             completed or failed,
         )
-        return {"execution_id": execution_id, "current_step": state.current_step, "completed_steps": list(state.completed_steps), "failed": failed, "completed": completed, "completion_inferred": inferred, "variables": state.variables if full else _compact_status_variables(state.variables), **duration}
+        variables = state.variables if full else _compact_status_variables(state.variables)
+        return {"execution_id": execution_id, "current_step": state.current_step, "completed_steps": list(state.completed_steps), "failed": failed, "completed": completed, "completion_inferred": inferred, "variables": redact_keychain_values(variables), **duration}
     except HTTPException: raise
     except Exception as e: logger.error(f"get_execution_status failed: {e}", exc_info=True); raise HTTPException(500, str(e))

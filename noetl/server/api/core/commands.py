@@ -5,6 +5,7 @@ from fastapi import APIRouter, HTTPException
 from psycopg.rows import dict_row
 from psycopg_pool import PoolTimeout
 from noetl.core.db.pool import get_pool_connection
+from noetl.core.sanitize import redact_keychain_values
 from noetl.core.runtime.topology import placement_evaluation, worker_locator
 from noetl.core.storage import Scope, default_store, estimate_size
 from noetl.claim_policy import decide_reclaim_for_existing_claim
@@ -333,7 +334,9 @@ async def get_command(event_id: int):
                 if not row: raise HTTPException(404, f"command not found: {event_id}")
                 return {
                     "execution_id": row['execution_id'], "node_id": row['step_name'], "node_name": row['step_name'],
-                    "action": row['tool_kind'], "context": row['context'] or {}, "meta": row['meta']
+                    "action": row['tool_kind'],
+                    "context": redact_keychain_values(row['context'] or {}),
+                    "meta": redact_keychain_values(row['meta']),
                 }
     except HTTPException: raise
     except Exception as e:

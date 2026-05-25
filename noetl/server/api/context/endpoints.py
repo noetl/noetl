@@ -7,6 +7,7 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse
 
 from noetl.core.logger import setup_logger
+from noetl.core.sanitize import redact_keychain_values
 from .service import render_context
 
 logger = setup_logger(__name__, include_location=True)
@@ -81,7 +82,7 @@ async def render_context_endpoint(request: Request) -> Dict[str, Any]:
         
         return {
             "status": "ok",
-            "rendered": rendered,
+            "rendered": redact_keychain_values(rendered),
             "context_keys": context_keys
         }
         

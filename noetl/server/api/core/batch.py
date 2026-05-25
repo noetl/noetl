@@ -14,6 +14,7 @@ from noetl.core.db.pool import get_pool_connection
 from noetl.core.dsl.engine.models import Event
 from noetl.core.messaging import NATSEventPublisher
 from noetl.core.outbox import enqueue_outbox, publish_outbox_batch
+from noetl.core.sanitize import redact_keychain_values
 from .core import (
     logger, get_engine,
     _BATCH_ACCEPT_QUEUE_MAXSIZE, _BATCH_ACCEPT_WORKERS,
@@ -576,7 +577,7 @@ async def _get_batch_request_state(request_id: str) -> dict[str, Any]:
     res = row.get("result") or {}
     ctx = res.get("context") if isinstance(res, dict) else {}
     meta = row.get("meta") or {}
-    return {"request_id": request_id, "execution_id": str(row["execution_id"]), "state": state, "status": row["status"], "error_code": ctx.get("error_code"), "message": ctx.get("message") or row.get("error"), "commands_generated": ctx.get("commands_generated"), "idempotency_key": meta.get("idempotency_key"), "updated_at": _iso_timestamp(row.get("created_at"))}
+    return redact_keychain_values({"request_id": request_id, "execution_id": str(row["execution_id"]), "state": state, "status": row["status"], "error_code": ctx.get("error_code"), "message": ctx.get("message") or row.get("error"), "commands_generated": ctx.get("commands_generated"), "idempotency_key": meta.get("idempotency_key"), "updated_at": _iso_timestamp(row.get("created_at"))})
 
 @router.get("/events/batch/{request_id}/status")
 async def get_batch_event_status(request_id: str):

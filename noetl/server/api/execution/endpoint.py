@@ -12,6 +12,7 @@ from psycopg.rows import dict_row
 from psycopg.types.json import Json
 from noetl.core.db.pool import get_pool_connection, get_snowflake_id
 from noetl.core.logger import setup_logger
+from noetl.core.sanitize import redact_keychain_values
 from noetl.core.common import convert_snowflake_ids_for_api, normalize_execution_id_for_db
 from noetl.core.messaging import NATSEventPublisher
 from noetl.core.outbox import enqueue_outbox, publish_outbox_batch
@@ -161,6 +162,9 @@ def _deserialize_event_row(row: dict[str, Any], execution_id: str) -> dict[str, 
             event_data["result"] = json.loads(row["result"])
         except json.JSONDecodeError:
             pass
+    event_data["context"] = redact_keychain_values(event_data.get("context"))
+    event_data["result"] = redact_keychain_values(event_data.get("result"))
+    event_data["error"] = redact_keychain_values(event_data.get("error"))
     return event_data
 
 
@@ -571,8 +575,8 @@ def _execution_entry_from_row(row_dict: dict[str, Any], pending_count: int) -> E
         duration_seconds=round(duration_seconds, 3) if duration_seconds is not None else None,
         duration_human=_format_duration_human(duration_seconds),
         progress=100 if derived_status in {"COMPLETED", "FAILED", "CANCELLED"} else 0,
-        result=row_dict.get("result"),
-        error=row_dict.get("error"),
+        result=redact_keychain_values(row_dict.get("result")),
+        error=redact_keychain_values(row_dict.get("error")),
         parent_execution_id=str(row_dict["parent_execution_id"]) if row_dict.get("parent_execution_id") is not None else None,
     )
 
@@ -624,7 +628,7 @@ async def _load_db_rows_for_ai(
                     (execution_id, event_rows_limit),
                 )
                 rows = await cursor.fetchall()
-                event_rows = [_json_ready(dict(r)) for r in rows]
+                event_rows = [redact_keychain_values(_json_ready(dict(r))) for r in rows]
 
             if include_event_log_rows:
                 await cursor.execute(
@@ -653,7 +657,7 @@ async def _load_db_rows_for_ai(
                         (execution_id, event_log_rows_limit),
                     )
                     rows = await cursor.fetchall()
-                    event_log_rows = [_json_ready(dict(r)) for r in rows]
+                    event_log_rows = [redact_keychain_values(_json_ready(dict(r))) for r in rows]
 
     try:
         async with get_pool_connection() as conn:
@@ -691,7 +695,7 @@ async def _load_db_rows_for_ai(
                         )
                         await cursor.execute(sql, tuple(params))
                         rows = await cursor.fetchall()
-                        metric_rows = [_json_ready(dict(r)) for r in rows]
+                        metric_rows = [redact_keychain_values(_json_ready(dict(r))) for r in rows]
     except Exception as metric_exc:
         logger.warning("Skipping metric rows for execution %s due to query error: %s", execution_id, metric_exc)
 
@@ -814,7 +818,7 @@ async def _load_ai_execution_output(
         }
 
     status = _derive_execution_terminal_status(dict(latest_row) if latest_row else None)
-    return ai_report, ai_raw_output, status
+    return redact_keychain_values(ai_report), redact_keychain_values(ai_raw_output), status
 
 
 @router.post("/executions/{execution_id}/finalize", response_model=FinalizeExecutionResponse)
@@ -1308,7 +1312,7 @@ async def get_execution(
                         result=None,
                         error=None,
                         parent_execution_id=str(state.parent_execution_id) if state.parent_execution_id is not None else None,
-                        events=[ExecutionEventResponse(**event) for event in events] if include_events else [],
+                        events=[ExecutionEventResponse(**redact_keychain_values(event)) for event in events] if include_events else [],
                         events_included=include_events,
                         events_endpoint=f"/api/executions/{execution_id}/events",
                         pagination=ExecutionEventsPagination(**pagination) if include_events else None,
@@ -1362,7 +1366,7 @@ async def get_execution(
             else latest_event.get("error") if latest_event else None
         ),
         parent_execution_id=str(first_event["parent_execution_id"]) if first_event.get("parent_execution_id") is not None else None,
-        events=[ExecutionEventResponse(**event) for event in events] if include_events else [],
+        events=[ExecutionEventResponse(**redact_keychain_values(event)) for event in events] if include_events else [],
         events_included=include_events,
         events_endpoint=f"/api/executions/{execution_id}/events",
         pagination=ExecutionEventsPagination(**pagination) if include_events else None,
@@ -1399,7 +1403,7 @@ async def get_execution_events(
         "execution_id": detail.execution_id,
         "path": detail.path,
         "status": detail.status,
-        "events": events,
+        "events": redact_keychain_values(events),
         "pagination": pagination,
     }
 
@@ -1872,12 +1876,12 @@ async def analyze_execution_with_ai(
         path=bundle.path,
         status=bundle.status,
         generated_at=datetime.now(timezone.utc),
-        bundle=bundle,
+        bundle=AnalyzeExecutionResponse.model_validate(redact_keychain_values(bundle.model_dump())),
         ai_playbook_path=request.analysis_playbook_path,
         ai_execution_id=str(ai_execution_id),
         ai_execution_status=ai_execution_status,
-        ai_report=_json_ready(ai_report),
-        ai_raw_output=_json_ready(ai_raw_output),
+        ai_report=redact_keychain_values(_json_ready(ai_report)),
+        ai_raw_output=redact_keychain_values(_json_ready(ai_raw_output)),
         approval_required=request.approval_required,
         approved=request.approved,
         auto_fix_mode=auto_fix_mode,

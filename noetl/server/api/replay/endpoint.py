@@ -8,6 +8,7 @@ from typing import Optional
 from fastapi import APIRouter, HTTPException, Query
 
 from noetl.core.logger import setup_logger
+from noetl.core.sanitize import redact_keychain_values
 
 from .service import ReplayCutoff, ReplayService
 
@@ -40,7 +41,7 @@ async def replay_state(
             detail="Use only one replay cutoff: as_of_event_id, as_of_position, or as_of_time",
         )
     try:
-        return await ReplayService.replay_state(
+        return redact_keychain_values(await ReplayService.replay_state(
             tenant_id=tenant_id,
             organization_id=organization_id,
             execution_id=execution_id,
@@ -52,7 +53,7 @@ async def replay_state(
             projection=projection,
             limit=limit,
             resolve_payloads=resolve_payloads,
-        )
+        ))
     except HTTPException:
         raise
     except Exception as exc:

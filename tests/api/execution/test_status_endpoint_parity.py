@@ -154,3 +154,53 @@ async def test_status_endpoint_fallback_marks_missing_state_execution_failed_on_
     assert result["completed"] is False
     assert result["end_time"] == latest.isoformat()
     assert result["duration_human"] == "25m"
+
+
+@pytest.mark.asyncio
+async def test_status_endpoint_redacts_secret_bearing_variables(monkeypatch):
+    start = datetime(2026, 4, 18, 18, 0, 0, tzinfo=timezone.utc)
+    latest = datetime(2026, 4, 18, 18, 1, 0, tzinfo=timezone.utc)
+    terminal = {
+        "event_type": "playbook.completed",
+        "node_name": "end",
+        "status": "COMPLETED",
+        "created_at": latest,
+    }
+    state = _FakeState()
+    state.completed = True
+    state.current_step = "end"
+    state.completed_steps = {"start", "end"}
+    state.variables = {
+        "keychain": {
+            "openai_token": {
+                "api_key": "sk-" + "test_" + ("A" * 32),
+            }
+        },
+        "auth0_token": ".".join(["eyJhbGciOiJIUzI1NiJ9", "eyJzdWIiOiIxMjMifQ", "signature"]),
+        "provider_payload": {
+            "image_url": "https://example.invalid/static?key=" + ("B" * 32),
+            "label": "Miami",
+        },
+    }
+
+    monkeypatch.setattr(core_execution, "get_engine", lambda: _FakeEngine(state))
+    monkeypatch.setattr(
+        core_execution,
+        "get_pool_connection",
+        lambda: _ConnCtx(
+            _FakeConn(
+                _FakeCursor(
+                    first_event={"created_at": start},
+                    latest_event=terminal,
+                    terminal_event=terminal,
+                )
+            )
+        ),
+    )
+
+    result = await core_execution.get_execution_status("607458339856843442", full=True)
+
+    assert result["variables"]["keychain"] == "[REDACTED]"
+    assert result["variables"]["auth0_token"] == "[REDACTED]"
+    assert result["variables"]["provider_payload"]["image_url"] == "[REDACTED]"
+    assert result["variables"]["provider_payload"]["label"] == "Miami"

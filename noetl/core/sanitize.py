@@ -13,7 +13,7 @@ Usage:
 """
 
 import re
-from typing import Any, Dict, List, Optional, Set, Union
+from typing import Any, Dict, Iterable, List, Optional, Set, Union
 
 # Keys that indicate sensitive data (case-insensitive matching)
 SENSITIVE_KEYS: Set[str] = {
@@ -102,6 +102,43 @@ SENSITIVE_PATTERNS: List[re.Pattern] = [
     re.compile(r"-----BEGIN (RSA |EC |DSA |OPENSSH )?PRIVATE KEY-----"),
 ]
 
+# Additional response-boundary patterns. These are intentionally more specific
+# than the logging sanitizer's generic "long alphanumeric string" rule so
+# execution ids, provider ids, and document ids remain visible in API responses.
+SECRET_VALUE_PATTERNS: List[re.Pattern] = [
+    re.compile(r"^Bearer\s+\S+", re.IGNORECASE),
+    re.compile(r"^Basic\s+[A-Za-z0-9+/=]+", re.IGNORECASE),
+    re.compile(r"^eyJ[A-Za-z0-9\-_]+\.eyJ[A-Za-z0-9\-_]+\.[A-Za-z0-9\-_]+$"),
+    re.compile(r"(?:^|[\"':\s])sk-[A-Za-z0-9][A-Za-z0-9_\-]{12,}"),
+    re.compile(r"(?:^|[\"':\s])sk-ant-[A-Za-z0-9][A-Za-z0-9_\-]{12,}"),
+    re.compile(r"(?:^|[\"':\s])AIza[0-9A-Za-z_\-]{20,}"),
+    re.compile(r"(?:^|[\"':\s])ya29\.[0-9A-Za-z_\-]+"),
+    re.compile(r"(?:^|[\"':\s])gh[pousr]_[0-9A-Za-z_]{20,}"),
+    re.compile(r"(?:^|[\"':\s])github_pat_[0-9A-Za-z_]{20,}"),
+    re.compile(r"(?:^|[\"':\s])xox[baprs]-[0-9A-Za-z\-]{20,}"),
+    re.compile(r"-----BEGIN (RSA |EC |DSA |OPENSSH )?PRIVATE KEY-----"),
+    re.compile(
+        r"(?i)([?&](?:key|api[_-]?key|token|access[_-]?token|id[_-]?token|"
+        r"refresh[_-]?token|client[_-]?secret|signature)=)[^&\s]+"
+    ),
+]
+
+RESPONSE_SENSITIVE_KEYS: Set[str] = {
+    "keychain",
+    "api_secret",
+    "api-secret",
+    "apisecret",
+    "auth0_token",
+    "auth0-token",
+    "auth0_id_token",
+    "auth0-id-token",
+    "auth0_refresh_token",
+    "auth0-refresh-token",
+    "idtoken",
+    "oauth",
+    "jwt",
+}
+
 # Default redaction placeholder
 REDACTED = "[REDACTED]"
 
@@ -182,6 +219,135 @@ def sanitize_sensitive_data(
         {"user": "admin", "password": "[REDACTED]", "Authorization": "[REDACTED]"}
     """
     return _sanitize_recursive(data, additional_keys or set(), redaction, max_depth, 0)
+
+
+def redact_keychain_values(
+    data: Any,
+    additional_keys: Optional[Set[str]] = None,
+    secret_values: Optional[Iterable[str]] = None,
+    redaction: str = REDACTED,
+    max_depth: int = 20,
+) -> Any:
+    """
+    Redact secret-bearing values from API response payloads.
+
+    This is a serialization-boundary sanitizer. It returns a redacted copy of
+    ``data`` and does not mutate the stored workflow state or event log.
+
+    Detection combines:
+    - key-based matching for fields such as token, secret, api_key, auth, and
+      keychain-derived names;
+    - value-shape matching for bearer headers, JWTs, common provider key
+      prefixes, private keys, and URLs carrying secret query parameters;
+    - optional exact or embedded matches for caller-provided secret values.
+    """
+    normalized_keys = {str(key).lower().replace("-", "_") for key in (additional_keys or set())}
+    normalized_values = {
+        str(value)
+        for value in (secret_values or set())
+        if isinstance(value, str) and value
+    }
+    return _redact_response_recursive(
+        data,
+        normalized_keys,
+        normalized_values,
+        redaction,
+        max_depth,
+        0,
+    )
+
+
+def _is_response_secret_value(value: str, secret_values: Set[str]) -> bool:
+    if not isinstance(value, str) or not value:
+        return False
+
+    if value in secret_values:
+        return True
+    for secret in secret_values:
+        if len(secret) >= 8 and secret in value:
+            return True
+
+    if redact_url_credentials(value) != value:
+        return True
+
+    for pattern in SECRET_VALUE_PATTERNS:
+        if pattern.search(value):
+            return True
+
+    return False
+
+
+def _is_response_sensitive_key(key: str) -> bool:
+    if _is_sensitive_key(key):
+        return True
+    key_lower = key.lower().replace("-", "_")
+    if key_lower in RESPONSE_SENSITIVE_KEYS:
+        return True
+    for sensitive in RESPONSE_SENSITIVE_KEYS:
+        if sensitive.replace("-", "_") in key_lower:
+            return True
+    return False
+
+
+def _redact_response_recursive(
+    data: Any,
+    additional_keys: Set[str],
+    secret_values: Set[str],
+    redaction: str,
+    max_depth: int,
+    current_depth: int,
+) -> Any:
+    if current_depth >= max_depth:
+        return data
+
+    if isinstance(data, dict):
+        result = {}
+        for key, value in data.items():
+            key_text = str(key)
+            key_normalized = key_text.lower().replace("-", "_")
+            if _is_response_sensitive_key(key_text) or key_normalized in additional_keys:
+                result[key] = redaction
+            else:
+                result[key] = _redact_response_recursive(
+                    value,
+                    additional_keys,
+                    secret_values,
+                    redaction,
+                    max_depth,
+                    current_depth + 1,
+                )
+        return result
+
+    if isinstance(data, list):
+        return [
+            _redact_response_recursive(
+                item,
+                additional_keys,
+                secret_values,
+                redaction,
+                max_depth,
+                current_depth + 1,
+            )
+            for item in data
+        ]
+
+    if isinstance(data, tuple):
+        return tuple(
+            _redact_response_recursive(
+                item,
+                additional_keys,
+                secret_values,
+                redaction,
+                max_depth,
+                current_depth + 1,
+            )
+            for item in data
+        )
+
+    if isinstance(data, str) and _is_response_secret_value(data, secret_values):
+        return redaction
+
+    return data
 
 
 def _sanitize_recursive(
