@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.100.6](https://github.com/noetl/noetl/compare/v2.100.5...v2.100.6) (2026-05-25)
+
+### Bug Fixes
+
+* **security:** redact resolved keychain values from HTTP responses ([b6839f2](https://github.com/noetl/noetl/commit/b6839f25eb8ce7a656a749e6e159484c695c58ad))
+
 ## [2.100.5](https://github.com/noetl/noetl/compare/v2.100.4...v2.100.5) (2026-05-24)
 
 ### Bug Fixes
