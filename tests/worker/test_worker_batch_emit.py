@@ -328,3 +328,78 @@ async def test_execute_command_continues_when_hot_path_initial_events_timeout(mo
         "step.exit",
         "command.completed",
     ]
+
+
+def test_case_action_handler_uses_a_single_batched_emit():
+    """Regression: the case-action routing path (case rules in next.arcs
+    that resolve to a `next` or `retry` action) used to fire four
+    sequential `_emit_event` HTTP roundtrips for
+    `case.evaluated` + `call.done|call.error` + `step.exit` +
+    `command.completed`. At ~50-100 ms per roundtrip that added
+    200-400 ms per case-evaluated step.
+
+    They now fan out as a single `_emit_batch_events` call so the four
+    events land in one HTTP request and one Postgres transaction via
+    the existing /api/events/batch endpoint.
+
+    This test is a code-shape assertion (not a behavior simulation
+    against a fake worker) because the case-action path is buried
+    inside `_execute_command` and requires significant context setup to
+    reach via behavior tests. The existing initial / terminal batch
+    paths are covered by the behavior tests above; this one pins the
+    refactor's structural invariant: the case-action handler must NOT
+    contain four `_emit_event` calls inside its branch.
+    """
+    import inspect
+    import re
+
+    source = inspect.getsource(worker_module)
+
+    # Find the case-action handler. Look for the marker comment that
+    # opens the branch.
+    branch_start = source.find(
+        "if case_action and case_action.get('type') in ['next', 'retry']"
+    )
+    assert branch_start != -1, "case-action branch marker not found"
+
+    # The branch ends at the next `return` statement at the same
+    # indentation level (which is the # Exit - server will handle
+    # routing line). Grab everything between for inspection.
+    branch_end = source.find(
+        "return  # Exit - server will handle routing based on case_action",
+        branch_start,
+    )
+    assert branch_end != -1, "case-action branch close marker not found"
+    branch_body = source[branch_start:branch_end]
+
+    # The collapsed batch path: exactly one _emit_batch_events call.
+    batch_calls = re.findall(r"await\s+self\._emit_batch_events\(", branch_body)
+    assert len(batch_calls) == 1, (
+        f"case-action branch should issue exactly one batched emit; "
+        f"found {len(batch_calls)}"
+    )
+
+    # No individual _emit_event calls inside the branch body. Allow
+    # whitespace differences; the assertion is "no `await self._emit_event(`".
+    individual_calls = re.findall(r"await\s+self\._emit_event\(", branch_body)
+    assert individual_calls == [], (
+        f"case-action branch must not issue individual _emit_event calls "
+        f"(would cause 4 sequential HTTP roundtrips); "
+        f"found {len(individual_calls)}"
+    )
+
+    # The batch must contain at least the four event names. Order is
+    # preserved by the batch endpoint's executemany insert.
+    for required_name in (
+        '"case.evaluated"',
+        '"step.exit"',
+        '"command.completed"',
+    ):
+        assert required_name in branch_body, (
+            f"case-action batch must include {required_name}"
+        )
+    # call.done OR call.error must be present (one is selected at
+    # runtime by tool_error).
+    assert ('"call.done"' in branch_body) and (
+        '"call.error"' in branch_body
+    ), "case-action batch must include both call.done and call.error event templates"
