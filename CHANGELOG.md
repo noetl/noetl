@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.101.3](https://github.com/noetl/noetl/compare/v2.101.2...v2.101.3) (2026-05-26)
+
+### Performance Improvements
+
+* **inline-execution:** cache catalog lookups in dry-run loader ([244338d](https://github.com/noetl/noetl/commit/244338dd30447cb33d312677eb3380b65cc390ea)), closes [#610](https://github.com/noetl/noetl/issues/610) [pre-#610](https://github.com/noetl/pre-/issues/610) [post-#610](https://github.com/noetl/post-/issues/610)
+
 ## [2.101.2](https://github.com/noetl/noetl/compare/v2.101.1...v2.101.2) (2026-05-26)
 
 ### Bug Fixes
