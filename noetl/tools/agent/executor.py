@@ -717,6 +717,121 @@ def _inline_trivial_children_mode() -> str:
     return mode if mode in _INLINE_TRIVIAL_CHILDREN_MODES else "invalid"
 
 
+def _looks_like_placeholder_playbook(parsed: Dict[str, Any]) -> bool:
+    """Detect the broker-resolution placeholder stub emitted by
+    ``loader.create_placeholder_playbook`` when the child playbook is
+    not present on the worker's local filesystem (the normal case for
+    cross-repo entrypoints like ``automation/agents/mcp/firestore``,
+    which lives in noetl/ops, not in the noetl image).
+
+    The stub has exactly two steps named ``start`` and ``end``,
+    neither with a ``tool`` definition. Treating it as the real child
+    would make the inline detector mark every cross-repo MCP child as
+    `inline:false` for ``missing_tool_kind`` reasons, defeating the
+    dry-run observability path. When this returns True we fall through
+    to the catalog HTTP lookup so the detector sees the actual
+    workflow.
+    """
+    if not isinstance(parsed, dict):
+        return False
+    workflow = parsed.get("workflow")
+    if not isinstance(workflow, list) or len(workflow) != 2:
+        return False
+    expected = ("start", "end")
+    for idx, step in enumerate(workflow):
+        if not isinstance(step, dict):
+            return False
+        if step.get("step") != expected[idx]:
+            return False
+        if step.get("tool") is not None:
+            return False
+    return True
+
+
+def _load_inline_child_playbook_from_catalog(entrypoint: str) -> Optional[Dict[str, Any]]:
+    """Fetch the child playbook content from the noetl-server catalog
+    via the HTTP API. Used when the local filesystem lookup returns a
+    placeholder stub.
+
+    Synchronous (uses ``requests`` like the existing
+    ``_fetch_persisted_diagnosis_from_doc`` helper) so the dry-run
+    detector path can stay sync. The async catalog helper at
+    ``noetl.core.workflow.workbook.catalog.fetch_playbook_from_catalog``
+    has the same contract but is not callable from sync code without
+    setting up an event loop.
+
+    Returns the parsed playbook dict on success or None on any
+    failure. Best-effort: a failed catalog lookup falls back to
+    "no inspection" and the detector returns ``inline:false`` with a
+    clear reason, matching the existing behavior for un-inspectable
+    children.
+    """
+    try:
+        import requests
+    except ImportError:
+        logger.debug(
+            "AGENT.INLINE dry-run: requests module unavailable; cannot "
+            "fetch child playbook %s from catalog",
+            entrypoint,
+        )
+        return None
+
+    server_url = os.environ.get("NOETL_SERVER_URL", "http://localhost:8083").rstrip("/")
+    if not server_url.endswith("/api"):
+        server_url = server_url + "/api"
+    resource_url = f"{server_url}/catalog/resource"
+
+    try:
+        resp = requests.post(
+            resource_url,
+            json={"path": entrypoint, "version": "latest"},
+            timeout=5.0,
+        )
+        if resp.status_code == 404:
+            logger.debug(
+                "AGENT.INLINE dry-run: child playbook %s not in catalog",
+                entrypoint,
+            )
+            return None
+        resp.raise_for_status()
+        entry = resp.json() or {}
+    except Exception as exc:
+        logger.debug(
+            "AGENT.INLINE dry-run: catalog fetch failed for %s: %s",
+            entrypoint,
+            exc,
+        )
+        return None
+
+    # The catalog entry carries the rendered playbook content either as
+    # a parsed dict under ``payload``/``content``/``parsed`` or as a
+    # YAML string. Tolerate both shapes.
+    for candidate_key in ("payload", "parsed", "content"):
+        candidate = entry.get(candidate_key)
+        if isinstance(candidate, dict) and candidate:
+            return candidate
+        if isinstance(candidate, str) and candidate.strip():
+            try:
+                parsed = yaml.safe_load(candidate)
+                if isinstance(parsed, dict) and parsed:
+                    return parsed
+            except Exception as exc:
+                logger.debug(
+                    "AGENT.INLINE dry-run: failed to parse catalog %s "
+                    "for %s: %s",
+                    candidate_key, entrypoint, exc,
+                )
+                continue
+
+    logger.debug(
+        "AGENT.INLINE dry-run: catalog entry for %s had no parseable "
+        "playbook content; keys=%s",
+        entrypoint,
+        list(entry.keys()) if isinstance(entry, dict) else "(non-dict)",
+    )
+    return None
+
+
 def _load_inline_child_playbook_for_dry_run(
     *,
     entrypoint: str,
@@ -778,7 +893,27 @@ def _load_inline_child_playbook_for_dry_run(
                 )
             return {}
         parsed = yaml.safe_load(rendered) or {}
-        return parsed if isinstance(parsed, dict) else {}
+        if not isinstance(parsed, dict):
+            return {}
+        # If the on-disk lookup fell back to the broker-resolution
+        # placeholder (the workflow only has `start` + `end`, no tools),
+        # the detector cannot meaningfully inspect the child. Fall
+        # through to the catalog so the detector sees the real workflow
+        # the noetl-server would dispatch for this path.
+        if _looks_like_placeholder_playbook(parsed):
+            catalog_view = _load_inline_child_playbook_from_catalog(entrypoint)
+            if isinstance(catalog_view, dict) and catalog_view:
+                logger.debug(
+                    "AGENT.INLINE dry-run: replaced placeholder with "
+                    "catalog view for %s",
+                    entrypoint,
+                )
+                return catalog_view
+            # No catalog content either — leave the parsed placeholder
+            # in place. The detector will emit `missing_tool_kind`
+            # reasons, which is the correct outcome for a child the
+            # runtime genuinely cannot inspect.
+        return parsed
     except Exception as exc:
         logger.debug(
             "AGENT.INLINE dry-run could not inspect %s: %s",
