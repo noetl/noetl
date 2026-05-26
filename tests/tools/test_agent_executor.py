@@ -1177,10 +1177,57 @@ def test_load_inline_child_from_catalog_returns_payload_dict(monkeypatch):
     assert result["workflow"][0]["tool"]["kind"] == "python"
     # Correct URL (server_url + /api + /catalog/resource).
     assert captured["url"] == "http://noetl.test:8082/api/catalog/resource"
-    assert captured["json"] == {
-        "path": "automation/agents/mcp/firestore",
-        "version": "latest",
-    }
+    # Version is omitted from the request body. The server treats a
+    # missing version as "give me the highest version row". An earlier
+    # shape sent ``{"version": "latest"}`` as a literal string and the
+    # endpoint returned 404 — silently breaking detector decisions on
+    # any deployment whose child playbook lived in the server-side
+    # catalog rather than the worker's local filesystem.
+    assert captured["json"] == {"path": "automation/agents/mcp/firestore"}
+
+
+def test_load_inline_child_from_catalog_omits_version_field(monkeypatch):
+    """Regression test for the version="latest" → 404 bug. The catalog
+    HTTP request body must NOT carry a ``version`` field; the server
+    treats a missing field as "give me the highest version row" for
+    the path. An earlier shape sent the literal string ``"latest"`` and
+    the server returned 404 ``Catalog entry not found``, silently
+    forcing every detector decision on GKE to ``inline=False`` with
+    placeholder-cascade ``missing_tool_kind`` reasons."""
+    captured: Dict[str, Any] = {}
+
+    class _FakeResponse:
+        status_code = 200
+
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {
+                "path": "automation/agents/mcp/firestore",
+                "version": 4,
+                "payload": {"workflow": [{"step": "s", "tool": {"kind": "python"}}]},
+            }
+
+    class _FakeRequestsModule:
+        @staticmethod
+        def post(url, json=None, timeout=None):
+            captured["json"] = json
+            return _FakeResponse()
+
+    monkeypatch.setitem(sys.modules, "requests", _FakeRequestsModule)
+    monkeypatch.setenv("NOETL_SERVER_URL", "http://noetl.test:8082")
+
+    agent_executor._load_inline_child_playbook_from_catalog(
+        "automation/agents/mcp/firestore"
+    )
+
+    body = captured["json"]
+    assert "version" not in body, (
+        f"request body must omit `version`; got {body!r}. "
+        "Sending version=\"latest\" returns 404 from /api/catalog/resource."
+    )
+    assert body == {"path": "automation/agents/mcp/firestore"}
 
 
 def test_load_inline_child_from_catalog_parses_yaml_string_content(monkeypatch):

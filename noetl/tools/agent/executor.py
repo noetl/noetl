@@ -858,10 +858,21 @@ def _load_inline_child_playbook_from_catalog(entrypoint: str) -> Optional[Dict[s
         server_url = server_url + "/api"
     resource_url = f"{server_url}/catalog/resource"
 
+    # The catalog resource endpoint treats a missing or ``None`` ``version``
+    # as "give me the highest version row for this path".  An earlier shape
+    # sent ``version: "latest"`` as a literal string, which the endpoint
+    # could not parse and returned 404 for — silently breaking detector
+    # decisions in any deployment where the child playbook lived in the
+    # server-side catalog rather than on the worker's local filesystem.
+    # Confirmed against GKE: ``{"path": ..., "version": "latest"}`` returns
+    # 404 ``Catalog entry not found``; omitting the field returns the
+    # highest-version row.  Omit the field rather than send ``null`` so
+    # we stay forward-compatible with future server-side version
+    # validation that may reject explicit ``None``.
     try:
         resp = requests.post(
             resource_url,
-            json={"path": entrypoint, "version": "latest"},
+            json={"path": entrypoint},
             timeout=5.0,
         )
         if resp.status_code == 404:
