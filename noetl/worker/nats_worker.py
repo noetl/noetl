@@ -2187,36 +2187,45 @@ class Worker:
                 # If case action resulted in routing (next/retry), report and handle
                 if case_action and case_action.get('type') in ['next', 'retry']:
                     logger.info(f"[CASE-ACTION] Case evaluation triggered {case_action['type']} action for {step}")
-                    
+
                     # ARCHITECTURE PRINCIPLE #3:
                     # Report case action to server via ACTIONABLE event
                     # Server will issue new command with rendered input from case_action.config
-                    # This follows server-worker-server control loop pattern
-                    await self._emit_event(
-                        server_url,
-                        execution_id,
-                        step,
-                        "case.evaluated",
-                        {
-                            "action": case_action,
-                            "result": response_for_events,
-                            "triggered_by": eval_event_name
-                        },
-                        actionable=True,  # Server should process this for routing
-                        informative=True
-                    )
-                    
-                    # Emit appropriate event based on success or error
-                    # IMPORTANT: Use response_for_events for errors too so large failed
-                    # payloads are externalized and do not bloat event storage.
+                    # This follows server-worker-server control loop pattern.
+                    #
+                    # Performance: emit case.evaluated + call.done|call.error +
+                    # step.exit + command.completed in a single /api/events/batch
+                    # request. Previously each fired as an individual HTTP
+                    # round-trip (~50-100ms each) for a per-step cost of
+                    # 200-400ms even after a fast tool. The batch endpoint
+                    # persists all events in one Postgres transaction via
+                    # cursor.executemany() (server/api/core/batch.py); the
+                    # ordering within the batch is preserved by insertion
+                    # order so case.evaluated stays first.
+                    #
+                    # IMPORTANT: Use response_for_events for errors too so large
+                    # failed payloads are externalized and do not bloat event
+                    # storage.
                     error_event_response = response_for_events if tool_error else error_response
+
+                    case_action_events = [
+                        {
+                            "step": step,
+                            "name": "case.evaluated",
+                            "payload": {
+                                "action": case_action,
+                                "result": response_for_events,
+                                "triggered_by": eval_event_name,
+                            },
+                            "actionable": True,  # Server should process this for routing
+                            "informative": True,
+                        },
+                    ]
                     if tool_error:
-                        await self._emit_event(
-                            server_url,
-                            execution_id,
-                            step,
-                            "call.error",
-                            {
+                        case_action_events.append({
+                            "step": step,
+                            "name": "call.error",
+                            "payload": {
                                 "error": tool_error,
                                 "response": error_event_response,
                                 "case_handled": True,
@@ -2224,60 +2233,57 @@ class Worker:
                                 "loop_event_id": loop_event_id,
                                 "loop_iteration_index": loop_iteration_index,
                             },
-                            actionable=True,  # Case evaluated - server may route/retry
-                            informative=True,
-                            meta=loop_event_meta or None,
-                        )
+                            "actionable": True,  # Case evaluated - server may route/retry
+                            "informative": True,
+                            "meta": loop_event_meta or None,
+                        })
                     else:
-                        await self._emit_event(
-                            server_url,
-                            execution_id,
-                            step,
-                            "call.done",
-                            {
+                        case_action_events.append({
+                            "step": step,
+                            "name": "call.done",
+                            "payload": {
                                 "response": response_for_events,
                                 "case_handled": True,
                                 "command_id": command_id,
                                 "loop_event_id": loop_event_id,
                                 "loop_iteration_index": loop_iteration_index,
                             },
-                            actionable=True,
-                            informative=True,
-                            meta=loop_event_meta or None,
-                        )
-                    
-                    await self._emit_event(
-                        server_url,
-                        execution_id,
-                        step,
-                        "step.exit",
-                        {
+                            "actionable": True,
+                            "informative": True,
+                            "meta": loop_event_meta or None,
+                        })
+                    case_action_events.append({
+                        "step": step,
+                        "name": "step.exit",
+                        "payload": {
                             "status": "COMPLETED" if not tool_error else "CASE_HANDLED",
                             "result": response_for_events,
                             "case_action": case_action,
                             "command_id": command_id,
                         },
-                        actionable=True,  # Server should handle routing
-                        informative=True
-                    )
-                    
-                    # Emit command.completed
+                        "actionable": True,  # Server should handle routing
+                        "informative": True,
+                    })
                     if command_id:
-                        await self._emit_event(
-                            server_url,
-                            execution_id,
-                            step,
-                            "command.completed",
-                            {
+                        case_action_events.append({
+                            "step": step,
+                            "name": "command.completed",
+                            "payload": {
                                 "command_id": command_id,
                                 "worker_id": self.worker_id,
                                 "result": response_for_events,
-                                "case_action": case_action
+                                "case_action": case_action,
                             },
-                            actionable=False,  # Informational - case.evaluated has action
-                            informative=True
-                        )
-                    
+                            "actionable": False,  # Informational - case.evaluated has action
+                            "informative": True,
+                        })
+
+                    await self._emit_batch_events(
+                        server_url,
+                        execution_id,
+                        case_action_events,
+                    )
+
                     logger.info(f"[EVENT] Completed {step} with case action for execution {execution_id}")
                     return  # Exit - server will handle routing based on case_action
             
