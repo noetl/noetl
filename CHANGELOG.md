@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.100.8](https://github.com/noetl/noetl/compare/v2.100.7...v2.100.8) (2026-05-26)
+
+### Bug Fixes
+
+* **security:** scrub producer-side credential payloads ([b82d5d0](https://github.com/noetl/noetl/commit/b82d5d029eeed26d8446fd4cf22802467e92e500))
+
 ## [2.100.7](https://github.com/noetl/noetl/compare/v2.100.6...v2.100.7) (2026-05-26)
 
 ### Bug Fixes
