@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.100.10](https://github.com/noetl/noetl/compare/v2.100.9...v2.100.10) (2026-05-26)
+
+### Performance Improvements
+
+* **worker:** collapse case-action handler emits into single batch ([8075939](https://github.com/noetl/noetl/commit/80759394bee2b0da021073b44e14d9a5271cf243))
+
 ## [2.100.9](https://github.com/noetl/noetl/compare/v2.100.8...v2.100.9) (2026-05-26)
 
 ### Bug Fixes
