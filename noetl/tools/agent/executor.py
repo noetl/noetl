@@ -748,6 +748,58 @@ def _looks_like_placeholder_playbook(parsed: Dict[str, Any]) -> bool:
     return True
 
 
+# Process-local cache for the catalog HTTP lookup used by the inline-
+# trivial-children dry-run detector. The fallback was added by PR #610;
+# under PR #608's NOETL_INLINE_TRIVIAL_CHILDREN=dry_run mode the
+# detector fires once per `tool: agent` step on every turn, and an
+# uncached lookup hits the noetl-server `/api/catalog/resource`
+# endpoint per call. A typical itinerary-planner turn fires 8-10 agent
+# calls — measured impact: per-turn duration jumped from 10s
+# (placeholder path) to 39s (uncached catalog path) on the live GKE
+# cluster after PR #610 landed.
+#
+# This cache is dry-run-only by virtue of the env-gated caller chain;
+# the dispatched path does not consult it. The cache value records
+# both successful fetches (parsed playbook dict) and conclusive
+# failures (None) so we don't re-attempt a 404 or network error
+# burst on every step within a turn.
+#
+# Tuning knobs:
+# - NOETL_INLINE_TRIVIAL_CHILDREN_CATALOG_CACHE_TTL_SECONDS overrides
+#   the default TTL. 0 or negative disables the cache (forces every
+#   call to go through HTTP, which is what tests want when they
+#   monkeypatch the requests module).
+# - _clear_inline_child_catalog_cache() is exported below for tests
+#   to reset state cleanly.
+_INLINE_CATALOG_CACHE_TTL_ENV = "NOETL_INLINE_TRIVIAL_CHILDREN_CATALOG_CACHE_TTL_SECONDS"
+_INLINE_CATALOG_CACHE_DEFAULT_TTL = 300.0
+# Sentinel that distinguishes "we've recorded a None result" from
+# "this key has never been looked up". Keying on entrypoint alone is
+# sufficient because the loader always asks for `version: "latest"`.
+_INLINE_CATALOG_CACHE_NONE = object()
+_inline_child_catalog_cache: Dict[str, Tuple[float, Any]] = {}
+
+
+def _clear_inline_child_catalog_cache() -> None:
+    """Reset the dry-run catalog cache. Intended for test use only;
+    production code does not need to clear the cache during a process
+    lifetime. The cache is per-process and resets on worker restart."""
+    _inline_child_catalog_cache.clear()
+
+
+def _inline_catalog_cache_ttl_seconds() -> float:
+    """Read the cache TTL from the env every call so test harnesses
+    can disable the cache by setting the env var to ``0`` without
+    needing to monkeypatch a module global."""
+    raw = os.environ.get(_INLINE_CATALOG_CACHE_TTL_ENV)
+    if raw is None or not raw.strip():
+        return _INLINE_CATALOG_CACHE_DEFAULT_TTL
+    try:
+        return float(raw)
+    except (TypeError, ValueError):
+        return _INLINE_CATALOG_CACHE_DEFAULT_TTL
+
+
 def _load_inline_child_playbook_from_catalog(entrypoint: str) -> Optional[Dict[str, Any]]:
     """Fetch the child playbook content from the noetl-server catalog
     via the HTTP API. Used when the local filesystem lookup returns a
@@ -760,12 +812,37 @@ def _load_inline_child_playbook_from_catalog(entrypoint: str) -> Optional[Dict[s
     has the same contract but is not callable from sync code without
     setting up an event loop.
 
+    Results are cached in a process-local dict (see the cache state
+    above) so that a turn with 10 agent calls causes one HTTP roundtrip
+    instead of ten. Both successful fetches and conclusive failures
+    (404, network error) are cached so a missing/broken catalog entry
+    doesn't generate per-step retry storms inside a turn.
+
     Returns the parsed playbook dict on success or None on any
     failure. Best-effort: a failed catalog lookup falls back to
     "no inspection" and the detector returns ``inline:false`` with a
     clear reason, matching the existing behavior for un-inspectable
     children.
     """
+    ttl = _inline_catalog_cache_ttl_seconds()
+    now = time.time()
+    if ttl > 0:
+        cached = _inline_child_catalog_cache.get(entrypoint)
+        if cached is not None:
+            cached_at, cached_value = cached
+            if (now - cached_at) <= ttl:
+                if cached_value is _INLINE_CATALOG_CACHE_NONE:
+                    return None
+                return cached_value
+
+    def _cache(value: Any) -> Any:
+        if ttl > 0:
+            _inline_child_catalog_cache[entrypoint] = (
+                now,
+                _INLINE_CATALOG_CACHE_NONE if value is None else value,
+            )
+        return value
+
     try:
         import requests
     except ImportError:
@@ -774,7 +851,7 @@ def _load_inline_child_playbook_from_catalog(entrypoint: str) -> Optional[Dict[s
             "fetch child playbook %s from catalog",
             entrypoint,
         )
-        return None
+        return _cache(None)
 
     server_url = os.environ.get("NOETL_SERVER_URL", "http://localhost:8083").rstrip("/")
     if not server_url.endswith("/api"):
@@ -792,7 +869,7 @@ def _load_inline_child_playbook_from_catalog(entrypoint: str) -> Optional[Dict[s
                 "AGENT.INLINE dry-run: child playbook %s not in catalog",
                 entrypoint,
             )
-            return None
+            return _cache(None)
         resp.raise_for_status()
         entry = resp.json() or {}
     except Exception as exc:
@@ -801,7 +878,7 @@ def _load_inline_child_playbook_from_catalog(entrypoint: str) -> Optional[Dict[s
             entrypoint,
             exc,
         )
-        return None
+        return _cache(None)
 
     # The catalog entry carries the rendered playbook content either as
     # a parsed dict under ``payload``/``content``/``parsed`` or as a
@@ -809,12 +886,12 @@ def _load_inline_child_playbook_from_catalog(entrypoint: str) -> Optional[Dict[s
     for candidate_key in ("payload", "parsed", "content"):
         candidate = entry.get(candidate_key)
         if isinstance(candidate, dict) and candidate:
-            return candidate
+            return _cache(candidate)
         if isinstance(candidate, str) and candidate.strip():
             try:
                 parsed = yaml.safe_load(candidate)
                 if isinstance(parsed, dict) and parsed:
-                    return parsed
+                    return _cache(parsed)
             except Exception as exc:
                 logger.debug(
                     "AGENT.INLINE dry-run: failed to parse catalog %s "
@@ -829,7 +906,7 @@ def _load_inline_child_playbook_from_catalog(entrypoint: str) -> Optional[Dict[s
         entrypoint,
         list(entry.keys()) if isinstance(entry, dict) else "(non-dict)",
     )
-    return None
+    return _cache(None)
 
 
 def _load_inline_child_playbook_for_dry_run(
