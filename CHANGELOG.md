@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.100.9](https://github.com/noetl/noetl/compare/v2.100.8...v2.100.9) (2026-05-26)
+
+### Bug Fixes
+
+* **api:** listings endpoint joins noetl.event for terminal-state correctness ([06c9845](https://github.com/noetl/noetl/commit/06c9845c97f4c74f517fc51d38df8062643ef175))
+
 ## [2.100.8](https://github.com/noetl/noetl/compare/v2.100.7...v2.100.8) (2026-05-26)
 
 ### Bug Fixes
