@@ -26,6 +26,7 @@ import time
 from typing import Any, Callable, Dict, Optional, Tuple
 
 from jinja2 import Environment
+import yaml
 
 from noetl.core.dsl.render import render_template
 from noetl.core.logger import setup_logger
@@ -308,7 +309,7 @@ def _compact_mcp_result_for_agent_context(result: Any) -> Any:
                     compact_data[key] = value[:max_items]
                 else:
                     # Travel renderers and most MCP consumers expect the
-                    # canonical collection field to be `items`; Amadeus uses
+                    # shared collection field to be `items`; Amadeus uses
                     # domain-specific names for hotels/activities.
                     compact_data["items"] = value[:max_items]
                 compact_data.setdefault(f"{key}_total", len(value))
@@ -545,6 +546,8 @@ _REQUIRED_DIAGNOSIS_KEYS = (
     "suggested_action",
     "source",
 )
+_INLINE_TRIVIAL_CHILDREN_ENV = "NOETL_INLINE_TRIVIAL_CHILDREN"
+_INLINE_TRIVIAL_CHILDREN_MODES = {"off", "dry_run", "enforce"}
 _TROUBLESHOOT_ON_FAILURE_KEYS = {
     "confidence_threshold",
     "escalate_to",
@@ -704,6 +707,128 @@ def _fetch_persisted_diagnosis_with_backoff(
         remaining = max(0.0, deadline_at - now)
         time.sleep(min(sleep_seconds, remaining))
         sleep_seconds = min(sleep_seconds * multiplier, max_sleep_seconds)
+
+
+def _inline_trivial_children_mode() -> str:
+    raw = os.environ.get(_INLINE_TRIVIAL_CHILDREN_ENV, "off")
+    mode = str(raw or "off").strip().lower()
+    if not mode:
+        return "off"
+    return mode if mode in _INLINE_TRIVIAL_CHILDREN_MODES else "invalid"
+
+
+def _load_inline_child_playbook_for_dry_run(
+    *,
+    entrypoint: str,
+    task_config: Dict[str, Any],
+    context: Dict[str, Any],
+    jinja_env: Any,
+) -> Dict[str, Any]:
+    for key in ("inline_child_playbook", "child_playbook", "playbook"):
+        candidate = task_config.get(key)
+        if isinstance(candidate, dict):
+            return dict(candidate)
+
+    for key in (
+        "inline_child_playbook_content",
+        "child_playbook_content",
+        "playbook_content",
+        "content",
+    ):
+        content = task_config.get(key)
+        if isinstance(content, str) and content.strip():
+            try:
+                parsed = yaml.safe_load(content) or {}
+                return parsed if isinstance(parsed, dict) else {}
+            except Exception as exc:
+                logger.debug(
+                    "AGENT.INLINE dry-run failed to parse inline content for %s: %s",
+                    entrypoint,
+                    exc,
+                )
+                return {}
+
+    try:
+        from noetl.core.workflow.playbook.loader import (
+            load_playbook_content,
+            render_playbook_content,
+        )
+
+        _path, content, error = load_playbook_content({"path": entrypoint}, "inline-dry-run")
+        if error or not content:
+            if error:
+                logger.debug(
+                    "AGENT.INLINE dry-run could not load %s: %s",
+                    entrypoint,
+                    error,
+                )
+            return {}
+        rendered, render_error = render_playbook_content(
+            content,
+            context,
+            jinja_env,
+            "inline-dry-run",
+        )
+        if render_error or not rendered:
+            if render_error:
+                logger.debug(
+                    "AGENT.INLINE dry-run could not render %s: %s",
+                    entrypoint,
+                    render_error,
+                )
+            return {}
+        parsed = yaml.safe_load(rendered) or {}
+        return parsed if isinstance(parsed, dict) else {}
+    except Exception as exc:
+        logger.debug(
+            "AGENT.INLINE dry-run could not inspect %s: %s",
+            entrypoint,
+            exc,
+        )
+        return {}
+
+
+def _inline_decision_for_noetl_child(
+    *,
+    entrypoint: str,
+    task_config: Dict[str, Any],
+    context: Dict[str, Any],
+    jinja_env: Any,
+) -> Optional[Dict[str, Any]]:
+    mode = _inline_trivial_children_mode()
+    if mode == "off":
+        return None
+    if mode == "enforce":
+        raise RuntimeError(
+            f"{_INLINE_TRIVIAL_CHILDREN_ENV}=enforce is reserved; Round B not yet implemented"
+        )
+    if mode == "invalid":
+        raise RuntimeError(
+            f"{_INLINE_TRIVIAL_CHILDREN_ENV} must be one of: dry_run, enforce, off"
+        )
+
+    from noetl.core.workflow.playbook.inline_execution import detect_inline_child
+
+    child_playbook = _load_inline_child_playbook_for_dry_run(
+        entrypoint=entrypoint,
+        task_config=task_config,
+        context=context,
+        jinja_env=jinja_env,
+    )
+    decision = detect_inline_child(
+        child_playbook,
+        context,
+        child_path=entrypoint,
+        framework="noetl",
+    ).to_dict()
+    logger.debug(
+        "AGENT.INLINE dry-run decision entrypoint=%s inline=%s mode=%s reasons=%s",
+        entrypoint,
+        decision.get("inline"),
+        decision.get("mode"),
+        decision.get("reasons"),
+    )
+    return decision
 
 
 def _dispatch_troubleshoot_diagnosis(
@@ -965,6 +1090,26 @@ def _invoke_noetl_playbook(
             },
         }
 
+    try:
+        inline_decision = _inline_decision_for_noetl_child(
+            entrypoint=entrypoint,
+            task_config=task_config,
+            context=context,
+            jinja_env=jinja_env,
+        )
+    except RuntimeError as exc:
+        return {
+            "status": "error",
+            "framework": "noetl",
+            "entrypoint": entrypoint,
+            "error": {
+                "kind": "agent.configuration",
+                "code": "INLINE_TRIVIAL_CHILDREN_UNAVAILABLE",
+                "message": str(exc),
+                "retryable": False,
+            },
+        }
+
     # The plugin's task_config contract expects `path` (catalog
     # playbook path) plus an optional `input` dict. Build that out
     # of `entrypoint` + the agent's payload + invoke_kwargs.
@@ -1074,6 +1219,8 @@ def _invoke_noetl_playbook(
             "execution_id": sub_execution_id or sub_result.get("execution_id"),
             "duration": sub_result.get("duration"),
         }
+        if inline_decision is not None:
+            envelope["meta"] = {"inline_decision": inline_decision}
         if normalised_status != "ok":
             error_message = (
                 (sub_terminal.get("error") if sub_terminal else None)
@@ -1117,7 +1264,7 @@ def _invoke_noetl_playbook(
         return envelope
 
     # Defensive: plugin returned something unexpected.
-    return {
+    envelope = {
         "status": "error",
         "framework": "noetl",
         "entrypoint": entrypoint,
@@ -1128,6 +1275,9 @@ def _invoke_noetl_playbook(
             "retryable": False,
         },
     }
+    if inline_decision is not None:
+        envelope["meta"] = {"inline_decision": inline_decision}
+    return envelope
 
 
 def _call_plan(

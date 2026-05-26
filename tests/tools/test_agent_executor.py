@@ -132,6 +132,131 @@ async def test_agent_executor_returns_structured_error_for_bad_entrypoint():
     assert result["error"]["kind"] == "agent.execution"
 
 
+def _install_successful_noetl_child(monkeypatch, calls):
+    def fake_execute_playbook_task(task_config, context, jinja_env, task_with):
+        calls.append(
+            {
+                "task_config": dict(task_config),
+                "task_with": dict(task_with or {}),
+            }
+        )
+        return {
+            "status": "success",
+            "execution_id": "child-exec-1",
+            "duration": 0.01,
+        }
+
+    monkeypatch.setattr(
+        "noetl.core.workflow.playbook.execute_playbook_task",
+        fake_execute_playbook_task,
+    )
+    monkeypatch.setattr(
+        agent_executor,
+        "_wait_for_sub_execution_terminal",
+        lambda *args, **kwargs: {
+            "status": "COMPLETED",
+            "execution_id": "child-exec-1",
+            "completed": True,
+            "failed": False,
+        },
+    )
+    monkeypatch.setattr(
+        agent_executor,
+        "_fetch_sub_execution_terminal_result",
+        lambda execution_id: {"ok": True, "items": ["result"]},
+    )
+
+
+@pytest.mark.asyncio
+async def test_noetl_inline_dry_run_off_does_not_inspect_child(monkeypatch):
+    calls = []
+    monkeypatch.delenv(agent_executor._INLINE_TRIVIAL_CHILDREN_ENV, raising=False)
+    monkeypatch.setattr(
+        agent_executor,
+        "_load_inline_child_playbook_for_dry_run",
+        lambda **kwargs: pytest.fail("dry-run loader should not run when flag is off"),
+    )
+    _install_successful_noetl_child(monkeypatch, calls)
+
+    result = await execute_agent_task(
+        task_config={
+            "framework": "noetl",
+            "entrypoint": "automation/agents/mcp/weather",
+            "payload": {"city": "SFO"},
+        },
+        context={},
+        jinja_env=Environment(),
+        task_with={},
+    )
+
+    assert result["status"] == "ok"
+    assert result["data"] == {"ok": True, "items": ["result"]}
+    assert "meta" not in result
+    assert len(calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_noetl_inline_dry_run_attaches_decision_without_changing_dispatch(monkeypatch):
+    calls = []
+    monkeypatch.setenv(agent_executor._INLINE_TRIVIAL_CHILDREN_ENV, "dry_run")
+    monkeypatch.setattr(
+        agent_executor,
+        "_load_inline_child_playbook_for_dry_run",
+        lambda **kwargs: {
+            "metadata": {"inline_when_safe": True},
+            "workflow": [
+                {
+                    "step": "shape",
+                    "tool": {"kind": "python"},
+                }
+            ],
+        },
+    )
+    _install_successful_noetl_child(monkeypatch, calls)
+
+    result = await execute_agent_task(
+        task_config={
+            "framework": "noetl",
+            "entrypoint": "automation/agents/mcp/weather",
+            "payload": {"city": "SFO"},
+        },
+        context={},
+        jinja_env=Environment(),
+        task_with={},
+    )
+
+    assert result["status"] == "ok"
+    assert len(calls) == 1
+    assert calls[0]["task_config"]["path"] == "automation/agents/mcp/weather"
+    decision = result["meta"]["inline_decision"]
+    assert decision["inline"] is True
+    assert decision["mode"] == "metadata_opt_in"
+
+
+@pytest.mark.asyncio
+async def test_noetl_inline_enforce_errors_before_dispatch(monkeypatch):
+    monkeypatch.setenv(agent_executor._INLINE_TRIVIAL_CHILDREN_ENV, "enforce")
+    monkeypatch.setattr(
+        "noetl.core.workflow.playbook.execute_playbook_task",
+        lambda *args, **kwargs: pytest.fail("enforce must not dispatch in Round A"),
+    )
+
+    result = await execute_agent_task(
+        task_config={
+            "framework": "noetl",
+            "entrypoint": "automation/agents/mcp/weather",
+        },
+        context={},
+        jinja_env=Environment(),
+        task_with={},
+    )
+
+    assert result["status"] == "error"
+    assert result["error"]["kind"] == "agent.configuration"
+    assert result["error"]["code"] == "INLINE_TRIVIAL_CHILDREN_UNAVAILABLE"
+    assert "Round B not yet implemented" in result["error"]["message"]
+
+
 @pytest.mark.asyncio
 async def test_agent_executor_adk_keyword_payload_and_async_generator():
     module_name = "test_agent_exec_adk_mod"
