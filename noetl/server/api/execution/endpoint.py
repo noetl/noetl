@@ -878,11 +878,27 @@ async def get_executions(
             try:
                 # Keep this endpoint lightweight for UI polling. Avoid scanning giant payload columns.
                 await cursor.execute("SET LOCAL statement_timeout = '8s'")
+                # The noetl.execution projection columns (status, last_event_type,
+                # end_time) can lag behind the immutable event log when a
+                # playbook.completed / workflow.failed / etc. event fires but the
+                # projection write that follows it is delayed or missed (nested
+                # playbook completions, transient projector races). The status
+                # endpoint at /api/executions/{id}/status reads the event log
+                # directly and stays correct; the listings endpoint historically
+                # used only the projection and reported stale RUNNING rows.
+                #
+                # Fix: LATERAL-join the event log for each row in the page and
+                # prefer the event-log-derived terminal columns. The index
+                # idx_event_exec_type ON noetl.event (execution_id, event_type,
+                # event_id DESC) makes the per-row lookup O(log n). For
+                # in-progress executions the projection columns remain the
+                # fallback.
                 await cursor.execute("""
                     SELECT
                         e.execution_id,
                         e.catalog_id,
                         COALESCE(
+                            term_evt.event_type,
                             e.last_event_type,
                             CASE
                                 WHEN e.status IN ('COMPLETED', 'FAILED', 'CANCELLED')
@@ -891,58 +907,82 @@ async def get_executions(
                             END
                         ) AS event_type,
                         e.last_node_name AS node_name,
-                        e.status,
-                        e.status AS event_status,
+                        COALESCE(term_evt.status, e.status) AS status,
+                        COALESCE(term_evt.status, e.status) AS event_status,
                         COALESCE(e.last_event_type, 'execution.projected') AS derived_event_type,
                         COALESCE(e.start_time, e.created_at) AS start_time,
-                        e.end_time,
+                        COALESCE(term_evt.created_at, e.end_time) AS end_time,
                         NULL::jsonb AS result,
                         e.error,
                         e.parent_execution_id,
-                        CASE
-                            WHEN e.last_event_type IN (
-                                'execution.cancelled',
-                                'playbook.failed',
-                                'workflow.failed',
-                                'command.failed',
-                                'playbook.completed',
-                                'workflow.completed'
-                            )
-                            THEN e.last_event_type
-                            WHEN e.status IN ('COMPLETED', 'FAILED', 'CANCELLED')
-                            THEN 'execution.' || lower(e.status)
-                            ELSE NULL
-                        END AS terminal_event_type,
-                        CASE
-                            WHEN e.last_event_type IN (
-                                'execution.cancelled',
-                                'playbook.failed',
-                                'workflow.failed',
-                                'command.failed',
-                                'playbook.completed',
-                                'workflow.completed'
-                            )
-                             OR e.status IN ('COMPLETED', 'FAILED', 'CANCELLED')
-                            THEN e.status
-                            ELSE NULL
-                        END AS terminal_status,
-                        CASE
-                            WHEN e.last_event_type IN (
-                                'execution.cancelled',
-                                'playbook.failed',
-                                'workflow.failed',
-                                'command.failed',
-                                'playbook.completed',
-                                'workflow.completed'
-                            )
-                             OR e.status IN ('COMPLETED', 'FAILED', 'CANCELLED')
-                            THEN COALESCE(e.end_time, e.updated_at)
-                            ELSE NULL
-                        END AS terminal_end_time,
+                        COALESCE(
+                            term_evt.event_type,
+                            CASE
+                                WHEN e.last_event_type IN (
+                                    'execution.cancelled',
+                                    'playbook.failed',
+                                    'workflow.failed',
+                                    'command.failed',
+                                    'playbook.completed',
+                                    'workflow.completed'
+                                )
+                                THEN e.last_event_type
+                                WHEN e.status IN ('COMPLETED', 'FAILED', 'CANCELLED')
+                                THEN 'execution.' || lower(e.status)
+                                ELSE NULL
+                            END
+                        ) AS terminal_event_type,
+                        COALESCE(
+                            term_evt.status,
+                            CASE
+                                WHEN e.last_event_type IN (
+                                    'execution.cancelled',
+                                    'playbook.failed',
+                                    'workflow.failed',
+                                    'command.failed',
+                                    'playbook.completed',
+                                    'workflow.completed'
+                                )
+                                 OR e.status IN ('COMPLETED', 'FAILED', 'CANCELLED')
+                                THEN e.status
+                                ELSE NULL
+                            END
+                        ) AS terminal_status,
+                        COALESCE(
+                            term_evt.created_at,
+                            CASE
+                                WHEN e.last_event_type IN (
+                                    'execution.cancelled',
+                                    'playbook.failed',
+                                    'workflow.failed',
+                                    'command.failed',
+                                    'playbook.completed',
+                                    'workflow.completed'
+                                )
+                                 OR e.status IN ('COMPLETED', 'FAILED', 'CANCELLED')
+                                THEN COALESCE(e.end_time, e.updated_at)
+                                ELSE NULL
+                            END
+                        ) AS terminal_end_time,
                         COALESCE(c.path, 'unknown') AS path,
                         COALESCE(c.version, 0) AS version
                     FROM noetl.execution e
                     LEFT JOIN noetl.catalog c ON c.catalog_id = e.catalog_id
+                    LEFT JOIN LATERAL (
+                        SELECT event_type, status, created_at
+                        FROM noetl.event
+                        WHERE execution_id = e.execution_id
+                          AND event_type IN (
+                            'execution.cancelled',
+                            'playbook.failed',
+                            'workflow.failed',
+                            'command.failed',
+                            'playbook.completed',
+                            'workflow.completed'
+                          )
+                        ORDER BY event_id DESC
+                        LIMIT 1
+                    ) term_evt ON true
                     ORDER BY COALESCE(e.start_time, e.created_at) DESC NULLS LAST, e.execution_id DESC
                     LIMIT %(limit)s
                     OFFSET %(offset)s
