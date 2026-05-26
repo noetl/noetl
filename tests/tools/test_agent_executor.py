@@ -964,6 +964,18 @@ def test_placeholder_detector_handles_non_dict_input():
     assert agent_executor._looks_like_placeholder_playbook({"workflow": "not-a-list"}) is False
 
 
+@pytest.fixture(autouse=True)
+def _reset_inline_catalog_cache():
+    """Per-test isolation for the catalog cache. The cache is process-
+    local and persists across calls during a worker's lifetime, but
+    test-to-test cross-contamination would cause false positives when
+    later tests expect the loader to consult the mocked requests
+    module."""
+    agent_executor._clear_inline_child_catalog_cache()
+    yield
+    agent_executor._clear_inline_child_catalog_cache()
+
+
 def test_load_inline_child_from_catalog_returns_payload_dict(monkeypatch):
     """Successful catalog fetch with `payload` dict shape."""
     captured: Dict[str, Any] = {}
@@ -1097,3 +1109,168 @@ def test_load_inline_child_from_catalog_returns_none_on_network_failure(monkeypa
     )
 
     assert result is None
+
+
+# ---------------------------------------------------------------------------
+# Catalog lookup cache. PR #610 added the HTTP fallback so the detector sees
+# the real child playbook for cross-repo entrypoints; uncached, that fallback
+# hits noetl-server on every `tool: agent` step. Measured impact on the live
+# GKE cluster: per-turn duration moved from 10s (placeholder-only path) to
+# 39s (uncached catalog path) for an itinerary-planner turn that fires ~8
+# agent calls. This cache keeps the dry-run hot path near zero overhead.
+# ---------------------------------------------------------------------------
+
+
+class _CountingFakeRequests:
+    """Records every POST so tests can assert the cache fired (1 call,
+    not N) or was bypassed (>1 call) without inspecting cache internals."""
+
+    def __init__(self, responses):
+        self._responses = list(responses)
+        self.calls = 0
+
+    def post(self, url, json=None, timeout=None):
+        self.calls += 1
+        if not self._responses:
+            raise RuntimeError("no more fake responses")
+        return self._responses.pop(0)
+
+
+class _FakeOkResponse:
+    status_code = 200
+
+    def __init__(self, payload):
+        self._payload = payload
+
+    def raise_for_status(self):
+        return None
+
+    def json(self):
+        return self._payload
+
+
+def test_catalog_cache_hits_on_second_call_for_same_entrypoint(monkeypatch):
+    payload = {
+        "apiVersion": "noetl.io/v2",
+        "kind": "Playbook",
+        "workflow": [{"step": "do_thing", "tool": {"kind": "python"}}],
+    }
+    fake = _CountingFakeRequests([_FakeOkResponse({"payload": payload})])
+    monkeypatch.setitem(sys.modules, "requests", fake)
+    monkeypatch.setenv("NOETL_SERVER_URL", "http://noetl.test:8082")
+    # Default TTL applies; the test doesn't need to wait.
+
+    first = agent_executor._load_inline_child_playbook_from_catalog(
+        "automation/agents/mcp/firestore"
+    )
+    second = agent_executor._load_inline_child_playbook_from_catalog(
+        "automation/agents/mcp/firestore"
+    )
+
+    assert first is not None and second is not None
+    assert first == second
+    # The cache must have served the second call without a second HTTP
+    # roundtrip. The fake only had one response queued.
+    assert fake.calls == 1
+
+
+def test_catalog_cache_caches_none_results_too(monkeypatch):
+    """A 404 / network failure / missing entry must be cached so a
+    catalog miss does not retry on every subsequent agent step in
+    the same turn — the worst case of the uncached path."""
+    class _Fake404Response:
+        status_code = 404
+
+        def raise_for_status(self):
+            raise RuntimeError("must not be called on 404 short-circuit")
+
+        def json(self):
+            raise RuntimeError("must not be called on 404 short-circuit")
+
+    fake = _CountingFakeRequests([_Fake404Response()])
+    monkeypatch.setitem(sys.modules, "requests", fake)
+    monkeypatch.setenv("NOETL_SERVER_URL", "http://noetl.test:8082")
+
+    first = agent_executor._load_inline_child_playbook_from_catalog("missing/playbook")
+    second = agent_executor._load_inline_child_playbook_from_catalog("missing/playbook")
+
+    assert first is None
+    assert second is None
+    assert fake.calls == 1
+
+
+def test_catalog_cache_different_entrypoints_do_not_collide(monkeypatch):
+    payload_a = {"workflow": [{"step": "a", "tool": {"kind": "python"}}]}
+    payload_b = {"workflow": [{"step": "b", "tool": {"kind": "python"}}]}
+    fake = _CountingFakeRequests([
+        _FakeOkResponse({"payload": payload_a}),
+        _FakeOkResponse({"payload": payload_b}),
+    ])
+    monkeypatch.setitem(sys.modules, "requests", fake)
+    monkeypatch.setenv("NOETL_SERVER_URL", "http://noetl.test:8082")
+
+    got_a = agent_executor._load_inline_child_playbook_from_catalog("path/a")
+    got_b = agent_executor._load_inline_child_playbook_from_catalog("path/b")
+    got_a_again = agent_executor._load_inline_child_playbook_from_catalog("path/a")
+
+    assert got_a == payload_a
+    assert got_b == payload_b
+    # Third call to path/a is a cache hit; total HTTP calls = 2.
+    assert got_a_again == payload_a
+    assert fake.calls == 2
+
+
+def test_catalog_cache_zero_ttl_disables_cache(monkeypatch):
+    """Setting TTL <= 0 forces every call through HTTP. This matches
+    the test contract elsewhere in the file that monkeypatches
+    `requests` and expects the loader to actually invoke it."""
+    payload = {"workflow": [{"step": "do_thing", "tool": {"kind": "python"}}]}
+    fake = _CountingFakeRequests([
+        _FakeOkResponse({"payload": payload}),
+        _FakeOkResponse({"payload": payload}),
+    ])
+    monkeypatch.setitem(sys.modules, "requests", fake)
+    monkeypatch.setenv("NOETL_SERVER_URL", "http://noetl.test:8082")
+    monkeypatch.setenv(
+        agent_executor._INLINE_CATALOG_CACHE_TTL_ENV, "0"
+    )
+
+    agent_executor._load_inline_child_playbook_from_catalog("automation/agents/mcp/foo")
+    agent_executor._load_inline_child_playbook_from_catalog("automation/agents/mcp/foo")
+
+    assert fake.calls == 2
+
+
+def test_catalog_cache_expires_after_ttl(monkeypatch):
+    """After the TTL elapses the loader re-fetches. Simulate elapsed
+    time by monkeypatching time.time() rather than actually sleeping."""
+    payload_v1 = {"workflow": [{"step": "v1", "tool": {"kind": "python"}}]}
+    payload_v2 = {"workflow": [{"step": "v2", "tool": {"kind": "python"}}]}
+    fake = _CountingFakeRequests([
+        _FakeOkResponse({"payload": payload_v1}),
+        _FakeOkResponse({"payload": payload_v2}),
+    ])
+    monkeypatch.setitem(sys.modules, "requests", fake)
+    monkeypatch.setenv("NOETL_SERVER_URL", "http://noetl.test:8082")
+    # Short TTL so the test is fast and obvious.
+    monkeypatch.setenv(
+        agent_executor._INLINE_CATALOG_CACHE_TTL_ENV, "10"
+    )
+
+    # Pin the time the loader sees so we control TTL boundary
+    # behavior without sleeping.
+    fake_time = [1000.0]
+
+    def _fake_time_time():
+        return fake_time[0]
+
+    monkeypatch.setattr(agent_executor.time, "time", _fake_time_time)
+
+    first = agent_executor._load_inline_child_playbook_from_catalog("path/cached")
+    # Advance past the TTL.
+    fake_time[0] += 15.0
+    second = agent_executor._load_inline_child_playbook_from_catalog("path/cached")
+
+    assert first == payload_v1
+    assert second == payload_v2
+    assert fake.calls == 2
