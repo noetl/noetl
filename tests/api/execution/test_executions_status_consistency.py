@@ -359,8 +359,80 @@ async def test_get_executions_applies_page_size_and_offset(monkeypatch):
     assert len(result) == 1
     assert cursor._params == {"limit": 25, "offset": 25}
     assert "FROM noetl.execution e" in cursor._query
-    assert "FROM noetl.event" not in cursor._query
+    # The listings endpoint joins LATERAL noetl.event for terminal-event
+    # detection so a stale projection cannot mask a completed execution.
+    # See test_get_executions_uses_event_log_lateral_for_terminal_state.
+    assert "LEFT JOIN LATERAL" in cursor._query
+    assert "FROM noetl.event" in cursor._query
     assert "WHEN e.last_event_type IN (" in cursor._query
+
+
+@pytest.mark.asyncio
+async def test_get_executions_uses_event_log_lateral_for_terminal_state(monkeypatch):
+    """The listings endpoint must not rely solely on the noetl.execution
+    projection for terminal status. The projection can lag behind the
+    immutable event log when a playbook.completed event fires but the
+    projection write that follows it is delayed or missed. When the LATERAL
+    join against noetl.event finds a terminal event, the listings must
+    surface that terminal status even if e.status / e.last_event_type are
+    stale.
+
+    Regression for the production observability bug where 82 of 100 listed
+    executions reported status:RUNNING despite playbook.completed events
+    having fired hours earlier. The per-execution /status endpoint was
+    correct because it reads the event log directly; the listings endpoint
+    only read the projection and reported stale RUNNING.
+    """
+    start = datetime(2026, 5, 26, 10, 0, 0, tzinfo=timezone.utc)
+    terminal = datetime(2026, 5, 26, 10, 0, 12, tzinfo=timezone.utc)
+    rows = [
+        {
+            # Projection columns are STALE — execution has actually completed
+            # but the projection row still shows RUNNING.
+            "execution_id": "456",
+            "catalog_id": "789",
+            "status": "RUNNING",
+            "event_status": "RUNNING",
+            "event_type": "playbook.completed",
+            "derived_event_type": "execution.projected",
+            "start_time": start,
+            "end_time": None,
+            "result": None,
+            "error": None,
+            "parent_execution_id": None,
+            # The LATERAL join against noetl.event populated these from
+            # the immutable event log:
+            "terminal_event_type": "playbook.completed",
+            "terminal_status": "COMPLETED",
+            "terminal_end_time": terminal,
+            "path": "tests/listings_stale_projection_regression",
+            "version": 1,
+        }
+    ]
+    cursor = _FakeCursor(rows)
+
+    monkeypatch.setattr(
+        execution_api,
+        "get_pool_connection",
+        lambda: _ConnCtx(_FakeConn(cursor)),
+    )
+
+    result = await execution_api.get_executions()
+
+    assert len(result) == 1
+    # The listings entry must reflect the event-log-derived terminal state
+    # even though the projection columns were stale.
+    assert result[0].status == "COMPLETED"
+    assert result[0].end_time == terminal
+    assert result[0].progress == 100
+
+    # SQL contract: the LATERAL join + the projection fallback must both be
+    # present. The order is `term_evt.event_type` first (event-log wins),
+    # then the projection columns as fallback for in-progress rows.
+    assert "LEFT JOIN LATERAL" in cursor._query
+    assert "term_evt" in cursor._query
+    assert "FROM noetl.event" in cursor._query
+    assert "'playbook.completed'" in cursor._query
 
 
 @pytest.mark.asyncio
