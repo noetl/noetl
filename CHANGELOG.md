@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.102.4](https://github.com/noetl/noetl/compare/v2.102.3...v2.102.4) (2026-05-26)
+
+### Bug Fixes
+
+* **inline-execution:** cancellation probe hits cancellation-check endpoint, not /status ([3f83eb5](https://github.com/noetl/noetl/commit/3f83eb5054e4d68851cae5f7c25956babb565df0))
+
 ## [2.102.3](https://github.com/noetl/noetl/compare/v2.102.2...v2.102.3) (2026-05-26)
 
 ### Bug Fixes
