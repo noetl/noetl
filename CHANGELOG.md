@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.102.2](https://github.com/noetl/noetl/compare/v2.102.1...v2.102.2) (2026-05-26)
+
+### Bug Fixes
+
+* **inline-execution:** child execution_id must fit PostgreSQL bigint ([e38e9fa](https://github.com/noetl/noetl/commit/e38e9fa9ecfa26a3af4aa5950679fa5c59d46724))
+
 ## [2.102.1](https://github.com/noetl/noetl/compare/v2.102.0...v2.102.1) (2026-05-26)
 
 ### Bug Fixes
