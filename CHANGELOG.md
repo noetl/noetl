@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.101.2](https://github.com/noetl/noetl/compare/v2.101.1...v2.101.2) (2026-05-26)
+
+### Bug Fixes
+
+* **inline-execution:** detector falls back to catalog when child is placeholder ([2056f98](https://github.com/noetl/noetl/commit/2056f988c8a00a79e0b14b3d71c7a7f764eb917d)), closes [#608](https://github.com/noetl/noetl/issues/608) [#609](https://github.com/noetl/noetl/issues/609)
+
 ## [2.101.1](https://github.com/noetl/noetl/compare/v2.101.0...v2.101.1) (2026-05-26)
 
 ### Bug Fixes
