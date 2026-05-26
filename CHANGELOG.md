@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.102.3](https://github.com/noetl/noetl/compare/v2.102.2...v2.102.3) (2026-05-26)
+
+### Bug Fixes
+
+* **inline-execution:** InlineResult.data mirrors dispatched-path terminal-result filter ([11bceb0](https://github.com/noetl/noetl/commit/11bceb02577a5fc3ff535b6015d2c8898b38ea87)), closes [#614](https://github.com/noetl/noetl/issues/614)
+
 ## [2.102.2](https://github.com/noetl/noetl/compare/v2.102.1...v2.102.2) (2026-05-26)
 
 ### Bug Fixes
