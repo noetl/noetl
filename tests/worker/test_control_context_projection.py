@@ -341,3 +341,83 @@ def test_non_agent_data_stays_out_of_projection():
     )
 
     assert projected == {"status": "ok"}
+
+
+def test_meta_inline_decision_survives_projection():
+    """The NoETL agent bridge attaches `meta.inline_decision` (a dict
+    carrying inline / reasons / depth / mode) to the agent envelope when
+    NOETL_INLINE_TRIVIAL_CHILDREN=dry_run. Without an explicit carve-out
+    in `_extract_control_context` the dict-of-dict gets stripped by the
+    nested-scalars-only rule and the decision never reaches the event
+    log's result.context.meta. Same pattern as the error.diagnosis and
+    render.args carve-outs above.
+
+    Regression for the visibility gap observed when first enabling the
+    dry-run flag on the live GKE cluster: the detector was firing (per
+    worker logs) but `meta.inline_decision` was missing from every
+    /api/executions/{id}/events row.
+    """
+    worker = _worker()
+    decision = {
+        "inline": False,
+        "reasons": [
+            "framework:ok:noetl",
+            "metadata:skip:inline_when_safe_not_true",
+            "allow_list:ok:path_matched",
+            "steps:ok:1<=3",
+            "callback:ok:none",
+        ],
+        "depth": 0,
+        "mode": "allow_list",
+    }
+    projected = worker._extract_control_context(
+        {
+            "status": "ok",
+            "framework": "noetl",
+            "entrypoint": "automation/agents/mcp/firestore",
+            "data": {"ok": True, "value": 1},
+            "execution_id": "63504...",
+            "duration": 0.21,
+            "meta": {"inline_decision": decision},
+        }
+    )
+
+    # Sanity: the scalar fields still survive (existing behavior).
+    assert projected["status"] == "ok"
+    assert projected["framework"] == "noetl"
+    assert projected["entrypoint"] == "automation/agents/mcp/firestore"
+    assert projected["execution_id"] == "63504..."
+    assert projected["duration"] == 0.21
+    # The agent's data carve-out still kicks in (framework: noetl).
+    assert projected["data"]["ok"] is True
+
+    # The new behavior — meta.inline_decision is preserved.
+    assert "meta" in projected, "meta key should be preserved for inline_decision"
+    assert "inline_decision" in projected["meta"]
+    persisted = projected["meta"]["inline_decision"]
+    assert persisted["inline"] is False
+    assert persisted["depth"] == 0
+    assert persisted["mode"] == "allow_list"
+    # Reasons list (scalar strings) round-trips through
+    # _preserve_recursive_control_value.
+    assert "framework:ok:noetl" in persisted["reasons"]
+
+
+def test_meta_without_inline_decision_does_not_synthesize_meta_key():
+    """The carve-out only fires when meta.inline_decision is present.
+    A generic meta dict with only-non-scalar children still gets the
+    nested-scalars-only treatment and contributes nothing — proving the
+    fix is targeted, not a wholesale relaxation of the projection rule.
+    """
+    worker = _worker()
+    projected = worker._extract_control_context(
+        {
+            "status": "ok",
+            # meta carries no inline_decision and no scalar children:
+            # the existing rule should produce nothing for the meta key.
+            "meta": {"unrelated_dict": {"nested": "value"}},
+        }
+    )
+
+    assert projected["status"] == "ok"
+    assert "meta" not in projected
