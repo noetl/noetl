@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.100.7](https://github.com/noetl/noetl/compare/v2.100.6...v2.100.7) (2026-05-26)
+
+### Bug Fixes
+
+* **security:** persist keychain refs for worker dispatch ([862303d](https://github.com/noetl/noetl/commit/862303d89bc1cc4d34edc482b4f0d16bde7cc6c7))
+
 ## [2.100.6](https://github.com/noetl/noetl/compare/v2.100.5...v2.100.6) (2026-05-25)
 
 ### Bug Fixes
