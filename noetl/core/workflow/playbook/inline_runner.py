@@ -58,6 +58,15 @@ _META_INLINE_DEPTH = "inline_depth"
 _META_INLINE_MODE = "inline_mode"
 _INLINE_MODE_WORKER = "worker"
 
+# Boundary step names that the dispatched agent path's
+# ``_fetch_sub_execution_terminal_result`` filters out when scanning for the
+# playbook's externally-visible terminal result.  Keep this in sync with
+# ``_BOUNDARY_NODE_NAMES`` in ``noetl/tools/agent/executor.py``.  A playbook
+# whose last step is ``end: {tool: {kind: noop}}`` (the common shape for
+# explicit terminators) must not have its noop ``{"status": "ok"}`` mask the
+# preceding real step's payload at the agent envelope boundary.
+_BOUNDARY_STEP_NAMES = frozenset({"start", "end", ""})
+
 
 @dataclass
 class InlineResult:
@@ -281,6 +290,20 @@ async def run_inline(
     }
 
     last_result: Any = None
+    # ``last_meaningful_result`` tracks the result of the last non-boundary
+    # step.  The dispatched agent path's ``_fetch_sub_execution_terminal_result``
+    # filters terminal events by ``node_name not in {"start", "end", "", None}``
+    # — playbooks routinely end with a ``kind: noop`` ``end`` step whose
+    # ``{"status": "ok"}`` result is a sentinel, not the payload callers
+    # expect.  Mirror that filter so the inline runner's ``InlineResult.data``
+    # carries the same shape the dispatched path returns for the same
+    # playbook.  Phase D on GKE observed the diverged-from-dispatch
+    # symptom: ``automation/agents/mcp/vertex-ai-stub`` ran the
+    # ``canned_chat_completion`` Python step correctly (1799-byte
+    # diagnosis dict) but the runner returned the 15-byte
+    # ``{"status": "ok"}`` from the subsequent ``end`` noop, masking the
+    # real payload at the parent's ``call.done.result.context.data``.
+    last_meaningful_result: Any = None
     failed = False
     fail_error: Optional[Dict[str, Any]] = None
     cancelled = False
@@ -380,6 +403,18 @@ async def run_inline(
         )
         last_result = processed_result
 
+        # The agent envelope's terminal result must mirror the dispatched
+        # path's ``_fetch_sub_execution_terminal_result`` filter: ignore
+        # boundary node names (``start`` / ``end`` / "" / None).  The
+        # dispatched path scans events back-to-front for the highest
+        # event_id whose ``node_name`` is NOT in that boundary set; we
+        # walk the steps forward so we just keep the latest non-boundary
+        # result and surface it as ``InlineResult.data``.  See the
+        # boundary-set comment in
+        # ``noetl/tools/agent/executor.py:_fetch_sub_execution_terminal_result``.
+        if step_name and step_name not in _BOUNDARY_STEP_NAMES:
+            last_meaningful_result = processed_result
+
         # Update child_context with this step's result so later steps can
         # reference it via Jinja templates.
         child_context[step_name] = processed_result
@@ -454,9 +489,20 @@ async def run_inline(
         "INLINE.RUNNER complete child=%s status=ok",
         child_execution_id,
     )
+    # ``InlineResult.data`` carries the dispatched-path equivalent:
+    # the last non-boundary step's processed result.  Fall back to
+    # ``last_result`` only when no meaningful step ran (e.g. a degenerate
+    # workflow that is just a boundary step) — this preserves the previous
+    # shape for that one corner case while fixing the common case where
+    # the workflow ends with an ``end: noop`` terminator.
+    envelope_data = (
+        last_meaningful_result
+        if last_meaningful_result is not None
+        else last_result
+    )
     return InlineResult(
         status="ok",
-        data=last_result,
+        data=envelope_data,
         execution_id=child_execution_id,
         meta={
             "inline_decision": inline_decision.to_dict(),
