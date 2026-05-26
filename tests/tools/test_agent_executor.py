@@ -1521,3 +1521,139 @@ async def test_noetl_inline_enforce_depth_limit_falls_back_to_dispatch(monkeypat
     # Detector blocked inline (depth too deep) → dispatch ran.
     assert result["status"] == "ok"
     assert len(dispatch_calls) == 1
+
+
+# ---------------------------------------------------------------------------
+# Cancellation probe — regression tests for Bug C from Round B Phase D
+# ---------------------------------------------------------------------------
+
+
+def _install_fake_requests_for_probe(monkeypatch, response_status: int, response_body):
+    """Monkeypatch the ``requests`` module with a fake that captures
+    the URL hit by ``_make_cancellation_probe``.  Returns the captured
+    state dict so callers can assert on the URL."""
+    captured: Dict[str, Any] = {}
+
+    class _Resp:
+        status_code = response_status
+
+        def __init__(self, body):
+            self._body = body
+
+        def json(self):
+            return self._body
+
+    class _FakeRequestsModule:
+        @staticmethod
+        def get(url, timeout=None):
+            captured["url"] = url
+            captured["timeout"] = timeout
+            return _Resp(response_body)
+
+    monkeypatch.setitem(sys.modules, "requests", _FakeRequestsModule)
+    monkeypatch.setenv("NOETL_SERVER_URL", "http://noetl.test:8082")
+    return captured
+
+
+def test_cancellation_probe_hits_cancellation_check_endpoint(monkeypatch):
+    """Regression test for Bug C from Round B Phase D: the probe URL must
+    end with ``/cancellation-check``, not ``/status``.  Round A's design
+    (round-01 result) named the cancellation-check endpoint as the
+    cancellation seam; the dispatched worker path uses the same endpoint
+    at noetl/worker/nats_worker.py:1108.  An earlier shape hit ``/status``
+    which returned ``completed``/``failed`` flags but never surfaced
+    cancellation state, so the probe returned False on every call and the
+    cancel cascade silently broke on the live cluster."""
+    captured = _install_fake_requests_for_probe(
+        monkeypatch,
+        response_status=200,
+        response_body={"cancelled": False, "status": "RUNNING"},
+    )
+    probe = agent_executor._make_cancellation_probe()
+    probe("123456789012345678")
+
+    assert captured["url"].endswith("/cancellation-check"), (
+        f"probe must hit /cancellation-check; got {captured['url']!r}. "
+        f"The /status endpoint does not surface cancellation state."
+    )
+    assert "/api/executions/123456789012345678/cancellation-check" in captured["url"]
+
+
+def test_cancellation_probe_returns_true_on_cancelled_response(monkeypatch):
+    """When the cancellation-check endpoint reports ``cancelled: true``
+    the probe must return True so the runner aborts the child between
+    steps."""
+    _install_fake_requests_for_probe(
+        monkeypatch,
+        response_status=200,
+        response_body={"cancelled": True, "status": "CANCELLED"},
+    )
+    probe = agent_executor._make_cancellation_probe()
+    assert probe("123456789012345678") is True
+
+
+def test_cancellation_probe_returns_false_on_running_response(monkeypatch):
+    """When the endpoint reports ``cancelled: false`` the probe must
+    return False so the runner continues normally."""
+    _install_fake_requests_for_probe(
+        monkeypatch,
+        response_status=200,
+        response_body={"cancelled": False, "status": "RUNNING"},
+    )
+    probe = agent_executor._make_cancellation_probe()
+    assert probe("123456789012345678") is False
+
+
+def test_cancellation_probe_returns_false_on_missing_cancelled_field(monkeypatch):
+    """Best-effort: if a future endpoint shape omits ``cancelled``, fall
+    back to False rather than crashing the runner.  The dispatched path
+    will see the cancellation through its own seam; the inline runner
+    just doesn't proactively abort in that case."""
+    _install_fake_requests_for_probe(
+        monkeypatch,
+        response_status=200,
+        response_body={"status": "RUNNING"},  # no `cancelled` key
+    )
+    probe = agent_executor._make_cancellation_probe()
+    assert probe("123456789012345678") is False
+
+
+def test_cancellation_probe_returns_false_on_404(monkeypatch):
+    """A 404 (e.g. execution_id not yet visible to the server) must not
+    abort the child — return False and let the next probe see the
+    cancellation."""
+    _install_fake_requests_for_probe(
+        monkeypatch,
+        response_status=404,
+        response_body={"detail": "not found"},
+    )
+    probe = agent_executor._make_cancellation_probe()
+    assert probe("123456789012345678") is False
+
+
+def test_cancellation_probe_returns_false_on_empty_id(monkeypatch):
+    """Guard: an empty or None execution_id must not produce a request
+    against the server."""
+    captured = _install_fake_requests_for_probe(
+        monkeypatch,
+        response_status=200,
+        response_body={"cancelled": True},
+    )
+    probe = agent_executor._make_cancellation_probe()
+    assert probe("") is False
+    assert "url" not in captured, "empty execution_id must not trigger an HTTP call"
+
+
+def test_cancellation_probe_returns_false_on_network_error(monkeypatch):
+    """Transient network errors must not abort the child; the probe
+    returns False on any exception from ``requests.get``."""
+    class _RaisingFakeRequests:
+        @staticmethod
+        def get(url, timeout=None):
+            raise RuntimeError("simulated network outage")
+
+    monkeypatch.setitem(sys.modules, "requests", _RaisingFakeRequests)
+    monkeypatch.setenv("NOETL_SERVER_URL", "http://noetl.test:8082")
+
+    probe = agent_executor._make_cancellation_probe()
+    assert probe("123456789012345678") is False

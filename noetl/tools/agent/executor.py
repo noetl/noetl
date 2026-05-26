@@ -1263,13 +1263,37 @@ def _dispatch_troubleshoot_diagnosis(
 def _make_cancellation_probe() -> Callable:
     """Return a lightweight cancellation probe for the inline runner.
 
-    The probe hits ``/api/executions/{id}/status`` and returns True when the
-    execution's status is ``cancelled``.  It is best-effort: network errors
-    return False so the runner continues rather than aborting on a transient
-    probe failure.
+    The probe hits ``/api/executions/{id}/cancellation-check`` — the same
+    purpose-built endpoint the dispatched worker path uses (see
+    ``noetl/worker/nats_worker.py:1108``).  Round A's design (round-01
+    result) named this exact endpoint as the cancellation seam; an earlier
+    runner shape hit ``/status`` by mistake, but that endpoint does not
+    surface cancellation state — its response carries only
+    ``completed``/``failed`` flags and the probe returned False on every
+    call, silently breaking the cancel cascade.
 
-    The probe is a plain sync callable; ``run_inline`` wraps the call in an
-    awaitable context so async callers work too.
+    Response shape (from ``get_execution_cancellation_status`` in
+    ``noetl/server/api/execution/endpoint.py``):
+    ```json
+    {
+        "execution_id": "123456789",
+        "status": "RUNNING" | "CANCELLED" | "COMPLETED" | "FAILED",
+        "cancelled": true | false,
+        "completed": true | false,
+        "failed": true | false
+    }
+    ```
+
+    We trust the explicit ``cancelled`` flag rather than parsing
+    ``status`` so a future status-vocabulary tweak does not silently
+    regress the probe.
+
+    Best-effort: network errors, 404, and parse failures all return
+    False so a transient blip lets the runner continue rather than
+    aborting the child mid-flight on a probe miss.
+
+    The probe is a plain sync callable; ``run_inline`` wraps the call in
+    an awaitable context so async callers work too.
     """
     def probe(execution_id: str) -> bool:
         if not execution_id:
@@ -1280,12 +1304,12 @@ def _make_cancellation_probe() -> Callable:
             server_url = os.environ.get("NOETL_SERVER_URL", "http://localhost:8083").rstrip("/")
             if not server_url.endswith("/api"):
                 server_url = server_url + "/api"
-            url = f"{server_url}/executions/{execution_id}/status"
+            url = f"{server_url}/executions/{execution_id}/cancellation-check"
             resp = _requests.get(url, timeout=3.0)
             if resp.status_code != 200:
                 return False
             doc = resp.json() or {}
-            return str(doc.get("status") or "").lower() == "cancelled"
+            return bool(doc.get("cancelled"))
         except Exception:
             return False
 
