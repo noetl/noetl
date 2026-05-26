@@ -715,6 +715,17 @@ class Worker:
                     rendered_args = self._preserve_recursive_control_value(child["args"])
                     if rendered_args is not None:
                         nested["args"] = rendered_args
+                # Inline-execution Round A observability — the NoETL agent
+                # bridge attaches `meta.inline_decision` (a dict carrying
+                # `inline`, `reasons`, `depth`, `mode`) so the dry-run path
+                # can be observed end-to-end. Without an explicit carve-out
+                # the dict-of-dict gets stripped by the nested-scalars-only
+                # rule above and the decision never reaches the event log.
+                # Same pattern as error.diagnosis and render.args.
+                if key_str == "meta" and isinstance(child.get("inline_decision"), dict):
+                    decision = self._preserve_recursive_control_value(child["inline_decision"])
+                    if decision is not None:
+                        nested["inline_decision"] = decision
                 if nested:
                     context[key_str] = nested
 
