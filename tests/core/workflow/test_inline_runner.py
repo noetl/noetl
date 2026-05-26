@@ -92,6 +92,43 @@ def _make_emitter() -> tuple[List[Dict], Any]:
 # ---------------------------------------------------------------------------
 
 
+# PostgreSQL ``bigint`` is signed 64-bit; its maximum value is
+# 9223372036854775807 (~9.22e18).  Every ``execution_id`` column in the
+# NoETL schema uses that type.  An id that exceeds this range cannot be
+# inserted into the database and causes downstream lookups to fail with
+# ``value "..." is out of range for type bigint``.
+_BIGINT_MAX = 9223372036854775807
+
+
+def test_allocate_child_execution_id_fits_postgres_bigint():
+    """Regression test: the runner's child id allocator must produce ids
+    that fit PostgreSQL ``bigint``.  An earlier shape used ``% (10 ** 20)``
+    which produced 20-digit ids up to ~9.99e19 — about 11x the bigint
+    ceiling.  Phase D on GKE observed
+    ``value "69474466565741823165" is out of range for type bigint``
+    when the runner emitted child events under that id."""
+    # Sample enough times that any single overflow would surface; UUID4 is
+    # uniform, so every draw should satisfy the bound.
+    for _ in range(500):
+        as_str = _allocate_child_execution_id()
+        assert isinstance(as_str, str)
+        # 18-digit zero-padded shape — never longer.
+        assert len(as_str) == 18, f"expected 18-char id, got {as_str!r}"
+        as_int = int(as_str)
+        assert as_int <= _BIGINT_MAX, (
+            f"id {as_str} overflows PostgreSQL bigint "
+            f"({as_int} > {_BIGINT_MAX})"
+        )
+
+
+def test_allocate_child_execution_id_returns_unique_ids():
+    """UUID4 has 122 bits of entropy; even after ``% (10 ** 18)`` the
+    18-digit space holds ~1.15e18 distinct values.  Across 1000 samples
+    we should observe zero collisions."""
+    ids = {_allocate_child_execution_id() for _ in range(1000)}
+    assert len(ids) == 1000, "expected 1000 distinct ids; got collisions"
+
+
 @pytest.mark.asyncio
 async def test_inline_runner_noop_step_ok():
     """Single noop step produces ok envelope with child execution_id."""

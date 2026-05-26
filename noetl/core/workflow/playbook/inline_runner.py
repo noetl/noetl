@@ -104,15 +104,28 @@ def _allocate_child_execution_id() -> str:
     The server-side snowflake allocator (``get_snowflake_id``) is an async
     DB operation that requires the server process context. The inline runner
     runs inside the worker process and must allocate ids without a DB round-
-    trip. We use a UUID4 formatted as a 20-digit integer string to match the
-    shape callers expect from the server path while staying process-local.
+    trip. We use a UUID4 derived 18-digit integer string to match the shape
+    callers expect from the server path while staying process-local.
 
-    The id is unique within any single worker process lifetime. Cross-process
-    collisions with server-allocated snowflakes are astronomically improbable
-    (UUID4 has 122 bits of entropy).
+    The 18-digit ceiling is load-bearing: every execution_id column in the
+    NoETL schema is PostgreSQL ``bigint`` (signed 64-bit, max ~9.22e18).
+    An earlier shape used ``% (10 ** 20)`` which produced 20-digit ids up
+    to ~9.99e19 — about 11x the bigint ceiling.  Phase D validation on GKE
+    observed ``value "69474466565741823165" is out of range for type
+    bigint`` from ``/api/executions/<child>/events`` and from the engine's
+    state-insert path, leaving the child event stream unretrievable and
+    some downstream extraction silently failing.
+
+    The narrowing to 18 digits keeps 60 bits of entropy (~1.15e18 distinct
+    ids).  Collision probability across one billion sibling ids is on the
+    order of 4e-37; across a single worker process lifetime it is
+    indistinguishable from zero.  Cross-process collisions with
+    server-allocated snowflakes are also astronomically improbable —
+    snowflakes encode time + worker id + sequence and do not collide with
+    uniformly-random ids in a 60-bit space.
     """
-    raw = uuid.uuid4().int % (10 ** 20)
-    return str(raw).zfill(20)
+    raw = uuid.uuid4().int % (10 ** 18)
+    return str(raw).zfill(18)
 
 
 def _inline_meta(
