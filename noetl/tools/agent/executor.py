@@ -1007,13 +1007,20 @@ def _inline_decision_for_noetl_child(
     context: Dict[str, Any],
     jinja_env: Any,
 ) -> Optional[Dict[str, Any]]:
+    """Run the Round A detector and return the decision dict, or None if the
+    feature flag is off.
+
+    Round B wires the ``enforce`` mode: when enabled this function still
+    returns the decision dict (same shape as ``dry_run``).  The caller in
+    ``_invoke_noetl_playbook`` inspects ``decision["inline"]`` to decide
+    whether to run the inline runner or fall back to the dispatched path.
+
+    ``dry_run`` continues unchanged — observe + always dispatch via HTTP/NATS.
+    ``off`` returns None immediately (zero overhead).
+    """
     mode = _inline_trivial_children_mode()
     if mode == "off":
         return None
-    if mode == "enforce":
-        raise RuntimeError(
-            f"{_INLINE_TRIVIAL_CHILDREN_ENV}=enforce is reserved; Round B not yet implemented"
-        )
     if mode == "invalid":
         raise RuntimeError(
             f"{_INLINE_TRIVIAL_CHILDREN_ENV} must be one of: dry_run, enforce, off"
@@ -1033,8 +1040,12 @@ def _inline_decision_for_noetl_child(
         child_path=entrypoint,
         framework="noetl",
     ).to_dict()
+    # Stash the loaded playbook on the decision dict so the enforce path in
+    # _invoke_noetl_playbook can pass it to the inline runner without a second
+    # load — the runner needs the parsed dict, not just the decision.
+    decision["_child_playbook"] = child_playbook
     logger.debug(
-        "AGENT.INLINE dry-run decision entrypoint=%s inline=%s mode=%s reasons=%s",
+        "AGENT.INLINE decision entrypoint=%s inline=%s mode=%s reasons=%s",
         entrypoint,
         decision.get("inline"),
         decision.get("mode"),
@@ -1238,6 +1249,72 @@ def _dispatch_troubleshoot_diagnosis(
     return None
 
 
+def _make_cancellation_probe() -> Callable:
+    """Return a lightweight cancellation probe for the inline runner.
+
+    The probe hits ``/api/executions/{id}/status`` and returns True when the
+    execution's status is ``cancelled``.  It is best-effort: network errors
+    return False so the runner continues rather than aborting on a transient
+    probe failure.
+
+    The probe is a plain sync callable; ``run_inline`` wraps the call in an
+    awaitable context so async callers work too.
+    """
+    def probe(execution_id: str) -> bool:
+        if not execution_id:
+            return False
+        try:
+            import requests as _requests
+
+            server_url = os.environ.get("NOETL_SERVER_URL", "http://localhost:8083").rstrip("/")
+            if not server_url.endswith("/api"):
+                server_url = server_url + "/api"
+            url = f"{server_url}/executions/{execution_id}/status"
+            resp = _requests.get(url, timeout=3.0)
+            if resp.status_code != 200:
+                return False
+            doc = resp.json() or {}
+            return str(doc.get("status") or "").lower() == "cancelled"
+        except Exception:
+            return False
+
+    return probe
+
+
+def _make_batch_event_emitter() -> Callable:
+    """Return a batch event emitter for the inline runner.
+
+    Posts a list of event dicts to ``/api/events/batch``.  Best-effort: HTTP
+    errors are logged at DEBUG and swallowed so the runner continues rather
+    than aborting on an emission failure.
+
+    The emitter is a plain sync callable; ``run_inline`` wraps it in an
+    awaitable context.
+    """
+    def emitter(execution_id: str, events: list) -> bool:
+        if not execution_id or not events:
+            return True
+        try:
+            import requests as _requests
+
+            server_url = os.environ.get("NOETL_SERVER_URL", "http://localhost:8083").rstrip("/")
+            if not server_url.endswith("/api"):
+                server_url = server_url + "/api"
+            url = f"{server_url}/events/batch"
+            payload_body = {"execution_id": execution_id, "events": events}
+            resp = _requests.post(url, json=payload_body, timeout=5.0)
+            return resp.status_code in (200, 201, 202, 204)
+        except Exception as exc:
+            logger.debug(
+                "AGENT.INLINE batch emitter failed execution_id=%s: %s",
+                execution_id,
+                exc,
+            )
+            return False
+
+    return emitter
+
+
 def _invoke_noetl_playbook(
     *,
     entrypoint: str,
@@ -1321,6 +1398,32 @@ def _invoke_noetl_playbook(
                 "retryable": False,
             },
         }
+
+    # Round B — enforce mode: signal the caller to invoke the inline runner.
+    # ``_invoke_noetl_playbook`` is sync; when enforce + inline is active we
+    # return a sentinel so ``execute_agent_task`` (async) can await the runner.
+    # The ``_child_playbook`` key was stashed by ``_inline_decision_for_noetl_child``
+    # to avoid a second load; strip it before attaching the decision to any envelope.
+    mode = _inline_trivial_children_mode()
+    if (
+        mode == "enforce"
+        and inline_decision is not None
+        and inline_decision.get("inline") is True
+    ):
+        # Return the sentinel dict. The caller checks for _inline_runner_requested.
+        child_playbook_for_runner = inline_decision.pop("_child_playbook", {})
+        return {
+            "_inline_runner_requested": True,
+            "_child_playbook": child_playbook_for_runner,
+            "_inline_decision": dict(inline_decision),
+        }
+
+    # enforce mode but detector said no-inline: fall through to the
+    # dispatched path. Do NOT error — the detector intentionally declines
+    # unsafe children; that's the safety net.  Also remove the stashed
+    # ``_child_playbook`` before the decision dict leaves this function.
+    if inline_decision is not None:
+        inline_decision.pop("_child_playbook", None)
 
     # The plugin's task_config contract expects `path` (catalog
     # playbook path) plus an optional `input` dict. Build that out
@@ -1737,7 +1840,7 @@ async def execute_agent_task(
                 },
             }
         try:
-            return _invoke_noetl_playbook(
+            dispatch_result = _invoke_noetl_playbook(
                 entrypoint=entrypoint,
                 payload=payload,
                 invoke_kwargs=invoke_kwargs,
@@ -1761,6 +1864,87 @@ async def execute_agent_task(
                     "retryable": False,
                 },
             }
+
+        # Round B — if the sync dispatcher signalled that the inline runner
+        # should take over, await it here (we are in async context).
+        if (
+            isinstance(dispatch_result, dict)
+            and dispatch_result.get("_inline_runner_requested")
+        ):
+            child_playbook_for_runner = dispatch_result.get("_child_playbook") or {}
+            inline_decision = dispatch_result.get("_inline_decision") or {}
+
+            child_input: Dict[str, Any] = {}
+            if isinstance(payload, dict):
+                child_input.update(payload)
+            elif payload is not None:
+                child_input["input"] = payload
+            if isinstance(invoke_kwargs, dict):
+                child_input.update(invoke_kwargs)
+
+            parent_execution_id_str = str(
+                (context or {}).get("execution_id")
+                or ((context or {}).get("workload") or {}).get("execution_id")
+                or ""
+            )
+            parent_command_id_str = (
+                str(
+                    (context or {}).get("command_id")
+                    or ((context or {}).get("event") or {}).get("command_id")
+                    or ""
+                )
+                or None
+            )
+
+            try:
+                from noetl.core.workflow.playbook.inline_runner import run_inline
+                from noetl.core.workflow.playbook.inline_execution import InlineDecision
+
+                decision_obj = InlineDecision(
+                    inline=inline_decision.get("inline", False),
+                    reasons=list(inline_decision.get("reasons") or []),
+                    depth=int(inline_decision.get("depth") or 0),
+                    mode=inline_decision.get("mode"),
+                )
+
+                inline_result = await run_inline(
+                    parent_execution_id=parent_execution_id_str,
+                    parent_command_id=parent_command_id_str,
+                    parent_step=str((context or {}).get("step") or "agent"),
+                    child_playbook=child_playbook_for_runner,
+                    child_input=child_input,
+                    inline_decision=decision_obj,
+                    jinja_env=jinja_env,
+                    cancellation_probe=_make_cancellation_probe(),
+                    batch_event_emitter=_make_batch_event_emitter(),
+                    depth=int(inline_decision.get("depth") or 0),
+                )
+                return inline_result.to_envelope(entrypoint=entrypoint)
+
+            except Exception as exc:
+                logger.debug(
+                    "AGENT.INLINE enforce runner failed entrypoint=%s: %s",
+                    entrypoint,
+                    exc,
+                )
+                # An inline failure is a real failure — do not fall back to the
+                # dispatched path.
+                err_envelope: Dict[str, Any] = {
+                    "status": "error",
+                    "framework": "noetl",
+                    "entrypoint": entrypoint,
+                    "error": {
+                        "kind": "agent.runtime",
+                        "code": "INLINE_RUNNER_FAILED",
+                        "message": str(exc)[:500],
+                        "retryable": False,
+                    },
+                }
+                if inline_decision:
+                    err_envelope["meta"] = {"inline_decision": inline_decision}
+                return err_envelope
+
+        return dispatch_result
 
     try:
         entry = _load_entrypoint(entrypoint)

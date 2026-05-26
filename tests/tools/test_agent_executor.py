@@ -234,11 +234,127 @@ async def test_noetl_inline_dry_run_attaches_decision_without_changing_dispatch(
 
 
 @pytest.mark.asyncio
-async def test_noetl_inline_enforce_errors_before_dispatch(monkeypatch):
+async def test_noetl_inline_enforce_no_dispatch_when_inline_approved(monkeypatch):
+    """Round B: enforce + detector approves → inline runner runs, HTTP dispatch skipped."""
     monkeypatch.setenv(agent_executor._INLINE_TRIVIAL_CHILDREN_ENV, "enforce")
     monkeypatch.setattr(
         "noetl.core.workflow.playbook.execute_playbook_task",
-        lambda *args, **kwargs: pytest.fail("enforce must not dispatch in Round A"),
+        lambda *args, **kwargs: pytest.fail("enforce+inline must not call execute_playbook_task"),
+    )
+    monkeypatch.setattr(
+        agent_executor,
+        "_load_inline_child_playbook_for_dry_run",
+        lambda **kwargs: {
+            "metadata": {"inline_when_safe": True},
+            "workflow": [
+                {"step": "noop_step", "tool": {"kind": "noop"}},
+            ],
+        },
+    )
+    # Stub the inline runner so we don't need the full worker stack.
+    from noetl.core.workflow.playbook.inline_runner import InlineResult
+
+    async def fake_run_inline(**kwargs):
+        return InlineResult(
+            status="ok",
+            data={"result": "inlined"},
+            execution_id="inline-child-1",
+            meta={
+                "inline_decision": {"inline": True},
+                "inlined_in_parent": "parent-1",
+                "inlined_in_command": None,
+                "inline_depth": 0,
+                "inline_mode": "worker",
+            },
+        )
+
+    monkeypatch.setattr(
+        "noetl.core.workflow.playbook.inline_runner.run_inline",
+        fake_run_inline,
+    )
+
+    result = await execute_agent_task(
+        task_config={
+            "framework": "noetl",
+            "entrypoint": "automation/agents/mcp/weather",
+        },
+        context={},
+        jinja_env=Environment(),
+        task_with={},
+    )
+
+    assert result["status"] == "ok"
+    assert result["data"] == {"result": "inlined"}
+    assert result["execution_id"] == "inline-child-1"
+    assert result["framework"] == "noetl"
+
+
+@pytest.mark.asyncio
+async def test_noetl_inline_enforce_dispatches_when_detector_declines(monkeypatch):
+    """Round B: enforce + detector declines → HTTP dispatch runs, runner NOT called."""
+    calls = []
+    monkeypatch.setenv(agent_executor._INLINE_TRIVIAL_CHILDREN_ENV, "enforce")
+    monkeypatch.setattr(
+        agent_executor,
+        "_load_inline_child_playbook_for_dry_run",
+        # Return a playbook with an agent step (detector will block it).
+        lambda **kwargs: {
+            "workflow": [
+                {"step": "sub", "tool": {"kind": "agent"}},
+            ],
+        },
+    )
+
+    async def fail_if_runner_called(**kwargs):
+        pytest.fail("inline runner must not be called when detector declines")
+
+    monkeypatch.setattr(
+        "noetl.core.workflow.playbook.inline_runner.run_inline",
+        fail_if_runner_called,
+    )
+    _install_successful_noetl_child(monkeypatch, calls)
+
+    result = await execute_agent_task(
+        task_config={
+            "framework": "noetl",
+            "entrypoint": "automation/agents/mcp/weather",
+            "payload": {"x": 1},
+        },
+        context={},
+        jinja_env=Environment(),
+        task_with={},
+    )
+
+    assert result["status"] == "ok"
+    # HTTP dispatch ran.
+    assert len(calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_noetl_inline_enforce_runner_error_is_real_failure(monkeypatch):
+    """Round B: enforce + detector approves + runner raises → error with INLINE_RUNNER_FAILED."""
+    monkeypatch.setenv(agent_executor._INLINE_TRIVIAL_CHILDREN_ENV, "enforce")
+    monkeypatch.setattr(
+        "noetl.core.workflow.playbook.execute_playbook_task",
+        lambda *args, **kwargs: pytest.fail("dispatch must not run when runner is called"),
+    )
+    monkeypatch.setattr(
+        agent_executor,
+        "_load_inline_child_playbook_for_dry_run",
+        lambda **kwargs: {
+            "metadata": {"inline_when_safe": True},
+            "workflow": [
+                {"step": "noop_step", "tool": {"kind": "noop"}},
+            ],
+        },
+    )
+
+    async def failing_runner(**kwargs):
+        raise RuntimeError("simulated runner crash")
+
+    monkeypatch.setattr(
+        "noetl.core.workflow.playbook.inline_runner.run_inline",
+        failing_runner,
     )
 
     result = await execute_agent_task(
@@ -252,9 +368,51 @@ async def test_noetl_inline_enforce_errors_before_dispatch(monkeypatch):
     )
 
     assert result["status"] == "error"
-    assert result["error"]["kind"] == "agent.configuration"
-    assert result["error"]["code"] == "INLINE_TRIVIAL_CHILDREN_UNAVAILABLE"
-    assert "Round B not yet implemented" in result["error"]["message"]
+    assert result["error"]["kind"] == "agent.runtime"
+    assert result["error"]["code"] == "INLINE_RUNNER_FAILED"
+    assert "simulated runner crash" in result["error"]["message"]
+
+
+@pytest.mark.asyncio
+async def test_noetl_inline_dry_run_does_not_call_runner(monkeypatch):
+    """Round B: dry_run + detector approves → runner NOT called, dispatch DOES run."""
+    calls = []
+    monkeypatch.setenv(agent_executor._INLINE_TRIVIAL_CHILDREN_ENV, "dry_run")
+    monkeypatch.setattr(
+        agent_executor,
+        "_load_inline_child_playbook_for_dry_run",
+        lambda **kwargs: {
+            "metadata": {"inline_when_safe": True},
+            "workflow": [
+                {"step": "noop_step", "tool": {"kind": "noop"}},
+            ],
+        },
+    )
+
+    async def fail_if_runner_called(**kwargs):
+        pytest.fail("inline runner must not run in dry_run mode")
+
+    monkeypatch.setattr(
+        "noetl.core.workflow.playbook.inline_runner.run_inline",
+        fail_if_runner_called,
+    )
+    _install_successful_noetl_child(monkeypatch, calls)
+
+    result = await execute_agent_task(
+        task_config={
+            "framework": "noetl",
+            "entrypoint": "automation/agents/mcp/weather",
+        },
+        context={},
+        jinja_env=Environment(),
+        task_with={},
+    )
+
+    assert result["status"] == "ok"
+    # Dispatch ran.
+    assert len(calls) == 1
+    # Decision is present.
+    assert result["meta"]["inline_decision"]["inline"] is True
 
 
 @pytest.mark.asyncio
@@ -1274,3 +1432,45 @@ def test_catalog_cache_expires_after_ttl(monkeypatch):
     assert first == payload_v1
     assert second == payload_v2
     assert fake.calls == 2
+
+
+@pytest.mark.asyncio
+async def test_noetl_inline_enforce_depth_limit_falls_back_to_dispatch(monkeypatch):
+    """Enforce: detector blocks at depth DEFAULT_MAX_DEPTH+1 → dispatch runs instead."""
+    from noetl.core.workflow.playbook.inline_execution import DEFAULT_MAX_DEPTH
+
+    dispatch_calls = []
+    monkeypatch.setenv(agent_executor._INLINE_TRIVIAL_CHILDREN_ENV, "enforce")
+    # Simulate a context already at max depth.
+    ctx = {"meta": {"inline_depth": DEFAULT_MAX_DEPTH + 1}}
+    monkeypatch.setattr(
+        agent_executor,
+        "_load_inline_child_playbook_for_dry_run",
+        lambda **kwargs: {
+            "metadata": {"inline_when_safe": True},
+            "workflow": [{"step": "noop_step", "tool": {"kind": "noop"}}],
+        },
+    )
+
+    async def fail_if_runner_called(**kwargs):
+        pytest.fail("runner must not be called when depth exceeds limit")
+
+    monkeypatch.setattr(
+        "noetl.core.workflow.playbook.inline_runner.run_inline",
+        fail_if_runner_called,
+    )
+    _install_successful_noetl_child(monkeypatch, dispatch_calls)
+
+    result = await execute_agent_task(
+        task_config={
+            "framework": "noetl",
+            "entrypoint": "automation/agents/mcp/weather",
+        },
+        context=ctx,
+        jinja_env=Environment(),
+        task_with={},
+    )
+
+    # Detector blocked inline (depth too deep) → dispatch ran.
+    assert result["status"] == "ok"
+    assert len(dispatch_calls) == 1
