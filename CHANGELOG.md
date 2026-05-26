@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.102.1](https://github.com/noetl/noetl/compare/v2.102.0...v2.102.1) (2026-05-26)
+
+### Bug Fixes
+
+* **inline-execution:** catalog fallback omits version field; "latest" returned 404 ([435a020](https://github.com/noetl/noetl/commit/435a0207324d497c8fd1076ae55e6078322e8dec)), closes [#610](https://github.com/noetl/noetl/issues/610)
+
 ## [2.102.0](https://github.com/noetl/noetl/compare/v2.101.3...v2.102.0) (2026-05-26)
 
 ### Features
