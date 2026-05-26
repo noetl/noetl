@@ -68,7 +68,7 @@ async def test_execute_command_scrubs_keychain_namespace_before_result_persisten
         def __init__(self, execution_id):
             self.execution_id = execution_id
 
-        async def process_result(self, step_name, result, output_config):
+        async def process_result(self, step_name, result, output_config, scrub_context=None):
             seen_results.append(result)
             return result
 

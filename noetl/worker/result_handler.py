@@ -34,6 +34,7 @@ from noetl.core.storage import (
     should_externalize,
     create_preview,
 )
+from noetl.core.credential_refs import producer_scrub_payload
 from noetl.core.logger import setup_logger
 
 logger = setup_logger(__name__, include_location=True)
@@ -143,6 +144,7 @@ class ResultHandler:
         step_name: str,
         result: Any,
         output_config: Optional[Dict[str, Any]] = None,
+        scrub_context: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         """
         Process step result for storage and template access.
@@ -170,6 +172,8 @@ class ResultHandler:
             return {"_value": None}
 
         output_config = output_config or {}
+        # Producer boundary per agents/rules/execution-model.md secrets rule.
+        result = producer_scrub_payload(result, scrub_context)
 
         # Check size
         size_bytes = estimate_size(result)

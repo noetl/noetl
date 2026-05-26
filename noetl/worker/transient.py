@@ -20,6 +20,7 @@ from psycopg.rows import dict_row
 from psycopg.types.json import Json
 
 from noetl.core.db.pool import get_pool_connection, get_pool
+from noetl.core.credential_refs import producer_scrub_payload
 from noetl.core.logger import setup_logger
 
 logger = setup_logger(__name__, include_location=True)
@@ -158,6 +159,8 @@ class TransientVars:
             var_type: Variable classification (user_defined, step_result, computed, iterator_state)
             source_step: Step name that set/updated the variable
         """
+        # Producer boundary per agents/rules/execution-model.md secrets rule.
+        safe_var_value = producer_scrub_payload(var_value)
         # Check if running in worker context (use API) or server context (use DB)
         if TransientVars._is_worker_context():
             # Worker context - use server API
@@ -167,7 +170,7 @@ class TransientVars:
                     response = await client.post(
                         f"{server_url}/api/vars/{execution_id}",
                         json={
-                            "variables": {var_name: var_value},
+                            "variables": {var_name: safe_var_value},
                             "var_type": var_type,
                             "source_step": source_step
                         }
@@ -215,7 +218,7 @@ class TransientVars:
                                 "execution_id": execution_id,
                                 "var_name": var_name,
                                 "var_type": var_type,
-                                "var_value": Json(var_value),
+                                "var_value": Json(safe_var_value),
                                 "source_step": source_step
                             }
                         )
@@ -414,12 +417,17 @@ class TransientVars:
         """
         if not variables:
             return 0
+        # Producer boundary per agents/rules/execution-model.md secrets rule.
+        safe_variables = {
+            var_name: producer_scrub_payload(var_value)
+            for var_name, var_value in variables.items()
+        }
             
         try:
             async with get_pool_connection() as conn:
                 async with conn.cursor() as cur:
                     count = 0
-                    for var_name, var_value in variables.items():
+                    for var_name, var_value in safe_variables.items():
                         await cur.execute(
                             """
                             INSERT INTO noetl.transient (
