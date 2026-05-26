@@ -419,3 +419,145 @@ async def test_inline_runner_inline_result_envelope_shape():
     assert "execution_id" in envelope
     assert "meta" in envelope
     assert envelope["meta"]["inline_mode"] == "worker"
+
+
+@pytest.mark.asyncio
+async def test_inline_runner_data_skips_noop_end_boundary_step():
+    """Regression test for Bug B from Round B Phase D: when a playbook ends
+    with an ``end: {tool: {kind: noop}}`` terminator, the runner's
+    ``InlineResult.data`` must surface the last MEANINGFUL step's result,
+    not the noop's ``{"status": "ok"}``.  This mirrors the dispatched
+    agent path's ``_fetch_sub_execution_terminal_result`` which filters
+    out boundary node names (``start`` / ``end`` / "" / None) when
+    walking events for the playbook's externally-visible terminal
+    result.
+
+    Phase D evidence on GKE
+    (``automation/agents/mcp/vertex-ai-stub``, child execution id
+    ``465179147430762901``): worker log
+    ``[RESULT] Step canned_chat_completion: inline result (1799b)``
+    followed by ``[RESULT] Step end: inline result (15b)``.  Pre-fix the
+    runner returned the 15-byte ``{"status": "ok"}`` and masked the
+    1799-byte diagnosis payload.
+    """
+    _events, emitter = _make_emitter()
+
+    playbook = {
+        "metadata": {"name": "test/python_then_end_noop"},
+        "workflow": [
+            {
+                "step": "produce_payload",
+                "tool": {
+                    "kind": "python",
+                    "code": "result = {'category': 'unknown', 'confidence': 0.63}",
+                },
+            },
+            {"step": "end", "tool": {"kind": "noop"}},
+        ],
+    }
+
+    result = await run_inline(
+        parent_execution_id="parent-bugb",
+        parent_command_id="cmd-bugb",
+        parent_step="agent_step",
+        child_playbook=playbook,
+        child_input={},
+        inline_decision=_make_decision(),
+        jinja_env=Environment(),
+        cancellation_probe=_cancellation_probe_returning(False),
+        batch_event_emitter=emitter,
+        depth=0,
+    )
+
+    assert result.status == "ok"
+    # The data must be ``produce_payload``'s result, NOT ``end``'s
+    # ``{"status": "ok"}``.  The exact wrapper shape comes from
+    # ResultHandler scrub; we only assert the meaningful payload is
+    # reachable.
+    data_str = repr(result.data)
+    assert "category" in data_str or "confidence" in data_str, (
+        f"InlineResult.data lost the meaningful step's payload. "
+        f"Got: {result.data!r}"
+    )
+    # Sanity: the noop end's degenerate sentinel must NOT be the whole
+    # data envelope.
+    assert result.data != {"status": "ok"}, (
+        "InlineResult.data is the noop terminator's sentinel; the "
+        "boundary-step filter regressed."
+    )
+
+
+@pytest.mark.asyncio
+async def test_inline_runner_data_falls_back_when_only_boundary_steps():
+    """Degenerate corner case: a workflow that contains only an ``end``
+    step has no meaningful results.  Fall back to ``last_result``
+    (the noop's payload) rather than ``None`` so callers don't have to
+    special-case ``data is None``."""
+    _events, emitter = _make_emitter()
+
+    playbook = {
+        "metadata": {"name": "test/only_end_step"},
+        "workflow": [
+            {"step": "end", "tool": {"kind": "noop"}},
+        ],
+    }
+
+    result = await run_inline(
+        parent_execution_id="parent-only-end",
+        parent_command_id="cmd-only-end",
+        parent_step="agent_step",
+        child_playbook=playbook,
+        child_input={},
+        inline_decision=_make_decision(),
+        jinja_env=Environment(),
+        cancellation_probe=_cancellation_probe_returning(False),
+        batch_event_emitter=emitter,
+        depth=0,
+    )
+
+    assert result.status == "ok"
+    # No meaningful steps ran; the runner falls back to the noop's
+    # result rather than emitting ``data=None``.
+    assert result.data is not None
+
+
+@pytest.mark.asyncio
+async def test_inline_runner_data_skips_start_boundary_step():
+    """``start`` is also a boundary node name in the dispatched path's
+    filter.  A workflow that opens with a ``start`` step (rare but
+    declarable) must not mask a real intermediate result either."""
+    _events, emitter = _make_emitter()
+
+    playbook = {
+        "metadata": {"name": "test/start_then_python"},
+        "workflow": [
+            {"step": "start", "tool": {"kind": "noop"}},
+            {
+                "step": "do_work",
+                "tool": {
+                    "kind": "python",
+                    "code": "result = {'value': 42}",
+                },
+            },
+            {"step": "end", "tool": {"kind": "noop"}},
+        ],
+    }
+
+    result = await run_inline(
+        parent_execution_id="parent-start",
+        parent_command_id="cmd-start",
+        parent_step="agent_step",
+        child_playbook=playbook,
+        child_input={},
+        inline_decision=_make_decision(),
+        jinja_env=Environment(),
+        cancellation_probe=_cancellation_probe_returning(False),
+        batch_event_emitter=emitter,
+        depth=0,
+    )
+
+    assert result.status == "ok"
+    data_str = repr(result.data)
+    assert "value" in data_str or "42" in data_str, (
+        f"InlineResult.data lost do_work's payload. Got: {result.data!r}"
+    )
