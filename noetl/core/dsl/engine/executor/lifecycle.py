@@ -7,6 +7,7 @@ from .outbox import drain_executor_outbox, enqueue_executor_outbox
 from .state import ExecutionState
 from .store import PlaybookRepo, StateStore
 from noetl.core.dsl.engine.models import Event, Command
+from noetl.core.credential_refs import KEYCHAIN_MANIFEST_KEY, strip_keychain_namespaces
 
 class LifecycleMixin:
     async def _persist_event(self, event: Event, state: ExecutionState, conn=None):
@@ -164,15 +165,14 @@ class LifecycleMixin:
         if playbook.keychain and catalog_id:
             from noetl.server.keychain_processor import process_keychain_section
             try:
-                keychain_data = await process_keychain_section(
+                keychain_manifest = await process_keychain_section(
                     keychain_section=playbook.keychain,
                     catalog_id=catalog_id,
                     execution_id=int(execution_id),
                     workload_vars=state.variables
                 )
-                if keychain_data:
-                    state.variables.update(keychain_data)
-                    state.variables.setdefault("keychain", {}).update(keychain_data)
+                if keychain_manifest:
+                    state.variables[KEYCHAIN_MANIFEST_KEY] = keychain_manifest
             except Exception as e:
                 logger.error(f"ENGINE: Failed to process keychain section: {e}")
 
@@ -181,7 +181,12 @@ class LifecycleMixin:
         if not start_step:
             raise ValueError(f"Entry step '{entry_step_name}' not found.")
         
-        workload_snapshot = {k: v for k, v in state.variables.items() if not (isinstance(v, dict) and 'status' in v)}
+        keychain_manifest = state.variables.get(KEYCHAIN_MANIFEST_KEY)
+        workload_snapshot = {
+            k: v if k == KEYCHAIN_MANIFEST_KEY else strip_keychain_namespaces(v, keychain_manifest)
+            for k, v in state.variables.items()
+            if not (isinstance(v, dict) and 'status' in v)
+        }
 
         from noetl.core.dsl.engine.models import LifecycleEventPayload
         playbook_init_event = Event(

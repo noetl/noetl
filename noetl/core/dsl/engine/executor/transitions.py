@@ -1,6 +1,11 @@
 from __future__ import annotations
 
 from .common import *
+from noetl.core.credential_refs import (
+    KEYCHAIN_MANIFEST_KEY,
+    render_preserving_keychain_refs,
+    strip_keychain_namespaces,
+)
 from .outbox import drain_executor_outbox, enqueue_executor_outbox
 from .state import ExecutionState
 from .store import PlaybookRepo, StateStore
@@ -238,7 +243,8 @@ class TransitionMixin:
             if not k.startswith("__")
         }
         step_args.update(filtered_input)
-        rendered_input = recursive_render(self.jinja_env, step_args, base_context)
+        rendered_input = render_preserving_keychain_refs(self.jinja_env, step_args, base_context, recursive_render)
+        safe_base_context = strip_keychain_namespaces(base_context, base_context.get(KEYCHAIN_MANIFEST_KEY))
 
         # Next router passes through unchanged — evaluated when
         # loop.done fires (i.e. all workers exited).
@@ -293,7 +299,7 @@ class TransitionMixin:
                 step=f"{step_def.step}:task_sequence",
                 tool=ToolCall(kind="cursor_worker", config=tool_config),
                 input=rendered_input,
-                render_context=base_context,
+                render_context=safe_base_context,
                 pipeline=tasks,
                 next_targets=next_targets,
                 spec=command_spec,
@@ -1093,7 +1099,7 @@ class TransitionMixin:
                         target_step = next_item
                         arc_set = {}
                     elif isinstance(next_item, dict):
-                        # {step: name, set: {...}} (canonical)
+                        # v10 form: {step: name, set: {...}}
                         target_step = next_item.get("step")
                         arc_set = next_item.get("set") or {}
 

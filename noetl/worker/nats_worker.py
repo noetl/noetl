@@ -30,6 +30,10 @@ from noetl.worker.adaptive_concurrency import AdaptiveConcurrencyController
 from noetl.core.logging_context import LoggingContext
 from noetl.core.logger import setup_logger
 from noetl.core.sanitize import redact_url_credentials
+from noetl.core.credential_refs import (
+    resolve_credential_references,
+    strip_keychain_namespaces,
+)
 from noetl.core.urls import (
     build_api_url as _api_url,
     normalize_server_base_url as _normalize_server_base_url,
@@ -747,7 +751,7 @@ class Worker:
 
     @staticmethod
     def _normalize_output_config(tool_config: dict[str, Any]) -> dict[str, Any]:
-        """Bridge canonical `tool.output` config to the legacy ResultHandler shape."""
+        """Bridge `tool.output` config to the legacy ResultHandler shape."""
         if not isinstance(tool_config, dict):
             return {}
 
@@ -2045,6 +2049,7 @@ class Worker:
             # Contract: worker owns payload persistence; events carry refs/metadata only.
             t_result_start = time.perf_counter()
             try:
+                safe_response = strip_keychain_namespaces(response)
                 result_handler = ResultHandler(execution_id=execution_id)
                 output_config = self._normalize_output_config(tool_config)
                 event_output_config = dict(output_config)
@@ -2053,7 +2058,7 @@ class Worker:
                 event_output_config["inline_max_bytes"] = int(os.getenv("NOETL_INLINE_MAX_BYTES", "10485760"))
                 processed_response = await result_handler.process_result(
                     step_name=step,
-                    result=response,
+                    result=safe_response,
                     output_config=event_output_config,
                 )
                 logger.info(f"[DEBUG-PAYLOAD] Step {step} processed_response: {json.dumps(processed_response, default=str)[:1000]}")
@@ -2112,20 +2117,21 @@ class Worker:
             error_response = None
             is_agent_envelope = (str(tool_kind or "").strip().lower() == "agent")
             if isinstance(response, dict) and not is_agent_envelope:
-                if response.get('status') in ('error', 'failed'):
+                safe_response_for_error = strip_keychain_namespaces(response)
+                if safe_response_for_error.get('status') in ('error', 'failed'):
                     # Extract error from either 'error' dict (task_sequence) or 'error' string (other tools)
-                    error_val = response.get('error')
+                    error_val = safe_response_for_error.get('error')
                     if isinstance(error_val, dict):
                         tool_error = error_val.get('message', str(error_val))
                     else:
                         tool_error = error_val or 'Tool returned error status'
-                    error_response = response
+                    error_response = safe_response_for_error
                 # Also check nested data errors (for tools that return {data: {...}})
-                elif isinstance(response.get('data'), dict):
-                    for key, value in response['data'].items():
+                elif isinstance(safe_response_for_error.get('data'), dict):
+                    for key, value in safe_response_for_error['data'].items():
                         if isinstance(value, dict) and value.get('status') == 'error':
                             tool_error = f"{key}: {value.get('message', 'Unknown error')}"
-                            error_response = response
+                            error_response = safe_response_for_error
                             break
             
             # HYBRID CASE EVALUATION: Worker-side evaluation with both event and data context
@@ -2468,8 +2474,19 @@ class Worker:
                 api_base_url=server_url,
                 refresh_threshold_seconds=refresh_threshold
             )
+            resolved_payload, context = await resolve_credential_references(
+                {"config": config, "args": args},
+                context,
+                catalog_id=catalog_id,
+                execution_id=execution_id,
+                api_base_url=server_url,
+                refresh_threshold_seconds=refresh_threshold,
+            )
+            if isinstance(resolved_payload, dict):
+                config = resolved_payload.get("config", config)
+                args = resolved_payload.get("args", args)
             k_end = time.perf_counter()
-            logger.debug(f"[PERF] populate_keychain_context took {k_end - k_start:.4f}s")
+            logger.debug(f"[PERF] keychain dispatch resolution took {k_end - k_start:.4f}s")
         
         import time
         t_jinja_start = time.perf_counter()
@@ -2488,7 +2505,7 @@ class Worker:
         # For workbook tool, preserve 'name' field from config (it's the workbook action name)
         # For other tools, add 'name' as step name for logging
         task_config = {**config}
-        # Merge canonical tool args/input with command input overrides.
+        # Merge tool args/input with command input overrides.
         # `args` is still used by Python playbooks, while newer tools prefer
         # `input`; keep both forms flowing through the worker adapter.
         config_args = config.get("args") if isinstance(config.get("args"), dict) else {}

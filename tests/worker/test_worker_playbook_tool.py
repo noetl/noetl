@@ -3,6 +3,106 @@ import httpx
 
 import noetl.worker.nats_worker as worker_module
 from noetl.worker.nats_worker import Worker
+from noetl.core.credential_refs import NOETL_REF_KEY
+
+
+@pytest.mark.asyncio
+async def test_execute_tool_resolves_keychain_refs_at_dispatch(monkeypatch):
+    worker = Worker(worker_id="test-worker")
+    seen = {}
+
+    async def fake_resolve_keychain_entries(**_kwargs):
+        return {"openai_token": {"api_key": "placeholder-secret"}}
+
+    async def fake_execute_python_task_async(task_config, context, _jinja_env, args):
+        seen["task_config"] = task_config
+        seen["context"] = context
+        seen["args"] = args
+        return {"data": {"status": "ok"}}
+
+    import noetl.worker.keychain_resolver as keychain_resolver
+
+    monkeypatch.setattr(keychain_resolver, "resolve_keychain_entries", fake_resolve_keychain_entries)
+    monkeypatch.setattr(worker_module, "execute_python_task_async", fake_execute_python_task_async)
+
+    result = await worker._execute_tool(
+        "python",
+        {
+            "input": {
+                "api_key": {
+                    NOETL_REF_KEY: {
+                        "kind": "keychain",
+                        "name": "openai_token",
+                        "field": "api_key",
+                    }
+                },
+                "header": "Bearer {{ keychain.openai_token.api_key }}",
+            },
+            "code": "result = {'status': 'ok'}",
+        },
+        {},
+        "extract_turn",
+        {"catalog_id": "42", "execution_id": "123"},
+    )
+
+    assert result == {"status": "ok"}
+    assert seen["task_config"]["input"]["api_key"] == "placeholder-secret"
+    assert seen["task_config"]["input"]["header"] == "Bearer placeholder-secret"
+    assert seen["context"]["keychain"]["openai_token"]["api_key"] == "placeholder-secret"
+
+
+@pytest.mark.asyncio
+async def test_execute_command_scrubs_keychain_namespace_before_result_persistence(monkeypatch):
+    worker = Worker(worker_id="test-worker")
+    batch_payloads = []
+    seen_results = []
+
+    async def fake_execute_tool(*_args, **_kwargs):
+        return {
+            "status": "ok",
+            "keychain": {"openai_token": {"api_key": "placeholder-secret"}},
+            "data": {"value": 1, "keychain": {"openai_token": {"api_key": "placeholder-secret"}}},
+        }
+
+    class FakeResultHandler:
+        def __init__(self, execution_id):
+            self.execution_id = execution_id
+
+        async def process_result(self, step_name, result, output_config):
+            seen_results.append(result)
+            return result
+
+    async def fake_emit_event(_server_url, _execution_id, _step, _event_name, _payload, **_kwargs):
+        return None
+
+    async def fake_emit_batch_events(_server_url, _execution_id, events, **_kwargs):
+        batch_payloads.extend(events)
+        return True
+
+    monkeypatch.setattr(worker, "_execute_tool", fake_execute_tool)
+    monkeypatch.setattr(worker, "_emit_event", fake_emit_event)
+    monkeypatch.setattr(worker, "_emit_batch_events", fake_emit_batch_events)
+    monkeypatch.setattr(worker_module, "ResultHandler", FakeResultHandler)
+
+    command = {
+        "execution_id": "123",
+        "step": "extract_turn",
+        "tool_kind": "python",
+        "meta": {"catalog_id": "42"},
+        "context": {
+            "tool_config": {},
+            "input": {},
+            "render_context": {},
+        },
+    }
+
+    await worker._execute_command(command, server_url="http://noetl.test", command_id="cmd-1")
+
+    assert seen_results == [{"status": "ok", "data": {"value": 1}}]
+    call_done = next(item["payload"] for item in batch_payloads if item["name"] == "call.done")
+    step_exit = next(item["payload"] for item in batch_payloads if item["name"] == "step.exit")
+    assert "keychain" not in str(call_done)
+    assert "keychain" not in str(step_exit)
 
 
 @pytest.mark.asyncio

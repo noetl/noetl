@@ -13,6 +13,7 @@ import httpx
 from typing import Dict, Any, List, Optional
 from datetime import datetime, timezone, timedelta
 from noetl.core.logger import setup_logger
+from noetl.core.credential_refs import build_keychain_manifest
 from jinja2 import Template, Environment, StrictUndefined
 
 logger = setup_logger(__name__, include_location=True)
@@ -57,7 +58,8 @@ async def process_keychain_section(
         api_base_url: Base URL of NoETL API
         
     Returns:
-        Dict mapping keychain names to their data (for immediate use if needed)
+        Keychain manifest with names and field hints. Resolved values stay in
+        noetl.keychain and are not returned to workflow state.
     """
     if not keychain_section:
         logger.debug("KEYCHAIN_PROCESSOR: No keychain section to process")
@@ -76,6 +78,7 @@ async def process_keychain_section(
     logger.debug(f"KEYCHAIN_PROCESSOR: Processing {len(keychain_section)} keychain entries for execution {execution_id} (api_base_url={api_base_url})")
     
     keychain_data = {}
+    resolved_fields: Dict[str, set[str]] = {}
     
     async with httpx.AsyncClient(timeout=30.0) as client:
         for entry in keychain_section:
@@ -119,12 +122,14 @@ async def process_keychain_section(
                 
                 if success:
                     keychain_data[entry_name] = data
+                    if isinstance(data, dict):
+                        resolved_fields[str(entry_name)] = {str(k) for k in data.keys()}
                     logger.debug(f"KEYCHAIN_PROCESSOR: Successfully stored entry '{entry_name}'")
                 else:
                     raise RuntimeError(f"KEYCHAIN_PROCESSOR: Failed to store entry '{entry_name}' in database")
     
     logger.debug(f"KEYCHAIN_PROCESSOR: Completed processing {len(keychain_data)}/{len(keychain_section)} entries")
-    return keychain_data
+    return build_keychain_manifest(keychain_section, resolved_fields)
 
 
 async def _process_secret_manager(

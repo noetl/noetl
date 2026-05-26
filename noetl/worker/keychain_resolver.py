@@ -426,7 +426,7 @@ async def populate_keychain_context(
         refresh_threshold_seconds=refresh_threshold_seconds
     )
     
-    logger.debug(f"[KEYCHAIN-WORKER] Resolved keychain_data | keys={list(keychain_data.keys())} | data={keychain_data}")
+    logger.debug("[KEYCHAIN-WORKER] Resolved keychain entries | keys=%s", list(keychain_data.keys()))
     
     # Add to context
     context['keychain'] = keychain_data
