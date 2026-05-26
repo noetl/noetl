@@ -875,3 +875,225 @@ def test_fetch_sub_execution_terminal_result_swallows_request_failure(monkeypatc
 
     result = agent_executor._fetch_sub_execution_terminal_result("12345")
     assert result is None
+
+
+# ---------------------------------------------------------------------------
+# Catalog-fallback for the dry-run loader. When the on-disk lookup falls back
+# to the placeholder stub (real-world case for cross-repo entrypoints like
+# automation/agents/mcp/firestore where the file lives in noetl/ops, not in
+# the noetl image), the loader must fetch the actual playbook from the
+# noetl-server catalog so the detector can inspect the real workflow.
+#
+# Without this, the live GKE dry-run experiment with PR #608 + PR #609 saw
+# every mcp/firestore decision come back inline=false with
+# "tool:block:step[0].missing_tool_kind" + "step[1].missing_tool_kind" — even
+# though the real firestore playbook has exactly one step with tool.kind=python.
+# The detector was inspecting the broker-resolution placeholder, not the real
+# child.
+# ---------------------------------------------------------------------------
+
+
+def test_placeholder_detector_matches_broker_resolution_stub():
+    """The placeholder shape comes from loader.create_placeholder_playbook —
+    exactly start + end with no tool. Pin the detector against that exact
+    shape so a future change to the placeholder catches a test failure
+    here before silently breaking the catalog-fallback trigger."""
+    placeholder = {
+        "apiVersion": "noetl.io/v1",
+        "kind": "Playbook",
+        "name": "firestore",
+        "path": "automation/agents/mcp/firestore",
+        "workload": {},
+        "workflow": [
+            {
+                "step": "start",
+                "desc": "Placeholder for path-referenced playbook",
+                "next": [{"step": "end"}],
+            },
+            {"step": "end", "desc": "End"},
+        ],
+    }
+    assert agent_executor._looks_like_placeholder_playbook(placeholder) is True
+
+
+def test_placeholder_detector_does_not_match_real_one_step_playbook():
+    real_playbook = {
+        "apiVersion": "noetl.io/v2",
+        "kind": "Playbook",
+        "workload": {},
+        "workflow": [
+            {
+                "step": "firestore_dispatch",
+                "tool": {"kind": "python", "code": "..."},
+            }
+        ],
+    }
+    assert agent_executor._looks_like_placeholder_playbook(real_playbook) is False
+
+
+def test_placeholder_detector_does_not_match_three_step_playbook():
+    """Multi-step playbooks (start + real + end, or longer) are not stubs."""
+    multi_step = {
+        "workflow": [
+            {"step": "start", "next": [{"step": "fetch"}]},
+            {"step": "fetch", "tool": {"kind": "python"}},
+            {"step": "end"},
+        ]
+    }
+    assert agent_executor._looks_like_placeholder_playbook(multi_step) is False
+
+
+def test_placeholder_detector_rejects_two_steps_with_tool_definition():
+    """A two-step playbook with tool defined is not the placeholder. The
+    placeholder is defined by both having exactly the (start, end) names
+    AND lacking tool definitions."""
+    two_step_with_tools = {
+        "workflow": [
+            {"step": "start", "tool": {"kind": "python"}},
+            {"step": "end"},
+        ]
+    }
+    assert agent_executor._looks_like_placeholder_playbook(two_step_with_tools) is False
+
+
+def test_placeholder_detector_handles_non_dict_input():
+    """Defensive: callers may pass empty dicts, None, or unexpected shapes.
+    The detector should return False (not raise)."""
+    assert agent_executor._looks_like_placeholder_playbook({}) is False
+    assert agent_executor._looks_like_placeholder_playbook({"workflow": []}) is False
+    assert agent_executor._looks_like_placeholder_playbook({"workflow": "not-a-list"}) is False
+
+
+def test_load_inline_child_from_catalog_returns_payload_dict(monkeypatch):
+    """Successful catalog fetch with `payload` dict shape."""
+    captured: Dict[str, Any] = {}
+
+    class _FakeResponse:
+        status_code = 200
+
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {
+                "path": "automation/agents/mcp/firestore",
+                "version": 7,
+                "payload": {
+                    "apiVersion": "noetl.io/v2",
+                    "kind": "Playbook",
+                    "workflow": [
+                        {"step": "firestore_dispatch", "tool": {"kind": "python"}}
+                    ],
+                },
+            }
+
+    class _FakeRequestsModule:
+        @staticmethod
+        def post(url, json=None, timeout=None):
+            captured["url"] = url
+            captured["json"] = json
+            captured["timeout"] = timeout
+            return _FakeResponse()
+
+    monkeypatch.setitem(sys.modules, "requests", _FakeRequestsModule)
+    monkeypatch.setenv("NOETL_SERVER_URL", "http://noetl.test:8082")
+
+    result = agent_executor._load_inline_child_playbook_from_catalog(
+        "automation/agents/mcp/firestore"
+    )
+
+    assert result is not None
+    assert result["workflow"][0]["step"] == "firestore_dispatch"
+    assert result["workflow"][0]["tool"]["kind"] == "python"
+    # Correct URL (server_url + /api + /catalog/resource).
+    assert captured["url"] == "http://noetl.test:8082/api/catalog/resource"
+    assert captured["json"] == {
+        "path": "automation/agents/mcp/firestore",
+        "version": "latest",
+    }
+
+
+def test_load_inline_child_from_catalog_parses_yaml_string_content(monkeypatch):
+    """Catalog entry may carry the playbook as a YAML string under
+    `content` instead of a parsed dict. The loader must parse it."""
+    class _FakeResponse:
+        status_code = 200
+
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {
+                "content": (
+                    "apiVersion: noetl.io/v2\n"
+                    "kind: Playbook\n"
+                    "workflow:\n"
+                    "  - step: firestore_dispatch\n"
+                    "    tool:\n"
+                    "      kind: python\n"
+                ),
+            }
+
+    class _FakeRequestsModule:
+        @staticmethod
+        def post(url, json=None, timeout=None):
+            return _FakeResponse()
+
+    monkeypatch.setitem(sys.modules, "requests", _FakeRequestsModule)
+    monkeypatch.setenv("NOETL_SERVER_URL", "http://noetl.test:8082")
+
+    result = agent_executor._load_inline_child_playbook_from_catalog(
+        "automation/agents/mcp/firestore"
+    )
+
+    assert result is not None
+    assert result["workflow"][0]["step"] == "firestore_dispatch"
+    assert result["workflow"][0]["tool"]["kind"] == "python"
+
+
+def test_load_inline_child_from_catalog_returns_none_on_404(monkeypatch):
+    """A 404 from the catalog endpoint is a clean "not found" signal,
+    not an error to bubble up. Caller falls back to leaving the
+    placeholder in place."""
+    class _FakeResponse:
+        status_code = 404
+
+        def raise_for_status(self):
+            raise RuntimeError("must not be called on 404 short-circuit")
+
+        def json(self):
+            raise RuntimeError("must not be called on 404 short-circuit")
+
+    class _FakeRequestsModule:
+        @staticmethod
+        def post(url, json=None, timeout=None):
+            return _FakeResponse()
+
+    monkeypatch.setitem(sys.modules, "requests", _FakeRequestsModule)
+    monkeypatch.setenv("NOETL_SERVER_URL", "http://noetl.test:8082")
+
+    result = agent_executor._load_inline_child_playbook_from_catalog(
+        "missing/playbook"
+    )
+
+    assert result is None
+
+
+def test_load_inline_child_from_catalog_returns_none_on_network_failure(monkeypatch):
+    """Network failure / connection error → None, never raises. The
+    detector then keeps the placeholder and emits a clear reason chain
+    rather than crashing the agent path."""
+
+    class _FakeRequestsModule:
+        @staticmethod
+        def post(url, json=None, timeout=None):
+            raise ConnectionError("simulated network failure")
+
+    monkeypatch.setitem(sys.modules, "requests", _FakeRequestsModule)
+    monkeypatch.setenv("NOETL_SERVER_URL", "http://noetl.test:8082")
+
+    result = agent_executor._load_inline_child_playbook_from_catalog(
+        "automation/agents/mcp/firestore"
+    )
+
+    assert result is None
