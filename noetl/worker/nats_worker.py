@@ -2060,6 +2060,7 @@ class Worker:
                     step_name=step,
                     result=safe_response,
                     output_config=event_output_config,
+                    scrub_context=render_context,
                 )
                 logger.info(f"[DEBUG-PAYLOAD] Step {step} processed_response: {json.dumps(processed_response, default=str)[:1000]}")
                 if is_result_ref(processed_response):

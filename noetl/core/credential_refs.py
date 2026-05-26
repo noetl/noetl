@@ -7,9 +7,21 @@ from typing import Any, Callable, Optional
 
 from jinja2 import BaseLoader, Environment
 
+from noetl.core.sanitize import REDACTED, redact_keychain_values
+
 NOETL_REF_KEY = "$noetl_ref"
 KEYCHAIN_REF_KIND = "keychain"
 KEYCHAIN_MANIFEST_KEY = "_keychain_manifest"
+HEADER_CREDENTIAL_KEYS = {
+    "authorization",
+    "proxy_authorization",
+    "www_authenticate",
+    "x_api_key",
+    "x_auth_token",
+    "x_access_token",
+    "cookie",
+    "set_cookie",
+}
 
 _JINJA_EXPR_RE = re.compile(r"^\s*\{\{\s*(.*?)\s*\}\}\s*$", re.DOTALL)
 _KEYCHAIN_DOT_RE = re.compile(
@@ -159,6 +171,78 @@ def strip_keychain_namespaces(value: Any, manifest: Any = None) -> Any:
     blocked = {"keychain"}
     blocked.update(keychain_names_from_manifest(manifest))
     return _strip_keychain_namespaces(value, blocked)
+
+
+def producer_scrub_payload(
+    value: Any,
+    context: Optional[dict[str, Any]] = None,
+    *,
+    additional_keys: Optional[set[str]] = None,
+    secret_values: Optional[set[str]] = None,
+    redaction: str = REDACTED,
+) -> Any:
+    """Return a storage-safe copy for producer-side result/temp writes."""
+    context = context or {}
+    manifest = context.get(KEYCHAIN_MANIFEST_KEY) if isinstance(context, dict) else None
+    keys = set(HEADER_CREDENTIAL_KEYS)
+    if additional_keys:
+        keys.update(str(key).lower().replace("-", "_") for key in additional_keys)
+
+    if isinstance(manifest, dict):
+        entries = manifest.get("entries")
+        if isinstance(entries, dict):
+            keys.update(str(name).lower().replace("-", "_") for name in entries.keys())
+            for entry in entries.values():
+                if isinstance(entry, dict) and isinstance(entry.get("fields"), list):
+                    keys.update(str(field).lower().replace("-", "_") for field in entry["fields"])
+
+    values = set(secret_values or set())
+    if isinstance(context, dict):
+        values.update(_collect_secret_strings(context.get("keychain")))
+
+    stripped = strip_keychain_namespaces(value, manifest)
+    return redact_keychain_values(
+        stripped,
+        additional_keys=keys,
+        secret_values=values,
+        redaction=redaction,
+    )
+
+
+def scrub_arrow_ipc_bytes(
+    data_bytes: bytes,
+    *,
+    schema_digest: str,
+    row_count: Optional[int] = None,
+    context: Optional[dict[str, Any]] = None,
+) -> tuple[bytes, str, Optional[int], bool]:
+    """Scrub valid Arrow IPC row payloads before durable or IPC-cache writes."""
+    try:
+        from noetl.core.storage.arrow_ipc import arrow_ipc_to_rows, rows_to_arrow_ipc
+
+        rows = arrow_ipc_to_rows(bytes(data_bytes))
+    except Exception:
+        return bytes(data_bytes), schema_digest, row_count, False
+
+    safe_rows = producer_scrub_payload(rows, context)
+    if safe_rows == rows:
+        return bytes(data_bytes), schema_digest, row_count if row_count is not None else len(rows), False
+
+    payload, safe_schema_digest, safe_row_count = rows_to_arrow_ipc(safe_rows)
+    return payload, safe_schema_digest, safe_row_count, True
+
+
+def _collect_secret_strings(value: Any) -> set[str]:
+    values: set[str] = set()
+    if isinstance(value, dict):
+        for item in value.values():
+            values.update(_collect_secret_strings(item))
+    elif isinstance(value, (list, tuple, set)):
+        for item in value:
+            values.update(_collect_secret_strings(item))
+    elif isinstance(value, str) and value:
+        values.add(value)
+    return values
 
 
 def _strip_keychain_namespaces(value: Any, blocked: set[str]) -> Any:

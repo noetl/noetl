@@ -40,6 +40,7 @@ from noetl.core.storage.models import (
     IpcHint,
 )
 from noetl.core.storage.arrow_ipc import ARROW_STREAM_MEDIA_TYPE, arrow_ipc_to_rows
+from noetl.core.credential_refs import producer_scrub_payload, scrub_arrow_ipc_bytes
 from noetl.core.storage.router import StorageRouter, default_router
 from noetl.core.storage.extractor import create_preview
 from noetl.core.storage.backends import get_backend
@@ -295,7 +296,8 @@ class TempStore:
         source_step: Optional[str] = None,
         parent_execution_id: Optional[str] = None,
         correlation: Optional[Dict[str, Any]] = None,
-        compress: bool = False
+        compress: bool = False,
+        scrub_context: Optional[Dict[str, Any]] = None,
     ) -> TempRef:
         """
         Store data and return a TempRef pointer.
@@ -315,6 +317,10 @@ class TempStore:
         Returns:
             TempRef pointer to the stored data
         """
+        # Producer boundary per agents/rules/execution-model.md secrets rule.
+        data = producer_scrub_payload(data, scrub_context)
+        correlation = producer_scrub_payload(correlation, scrub_context)
+
         data_bytes, meta, preview, original_size = await asyncio.to_thread(
             self._prepare_data_for_storage,
             data,
@@ -384,6 +390,7 @@ class TempStore:
         ipc_cache: Any = None,
         ipc_lease_seconds: Optional[float] = None,
         media_type: str = "application/vnd.apache.arrow.stream",
+        scrub_context: Optional[Dict[str, Any]] = None,
     ) -> TempRef:
         """Store serialized Arrow IPC bytes with optional same-node IPC hint.
 
@@ -392,7 +399,15 @@ class TempStore:
         """
         if not isinstance(data_bytes, (bytes, bytearray, memoryview)):
             raise TypeError("data_bytes must be bytes-like")
-        payload = bytes(data_bytes)
+        # Producer boundary per agents/rules/execution-model.md secrets rule.
+        payload, schema_digest, row_count, scrubbed = scrub_arrow_ipc_bytes(
+            bytes(data_bytes),
+            schema_digest=schema_digest,
+            row_count=row_count,
+            context=scrub_context,
+        )
+        if scrubbed:
+            logger.debug("TEMP: Scrubbed Arrow IPC rows before storing %s", name)
         if not schema_digest:
             raise ValueError("schema_digest is required")
 

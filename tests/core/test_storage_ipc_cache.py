@@ -109,6 +109,50 @@ async def test_tempstore_put_ipc_bytes_uses_ipc_hint_and_durable_fallback():
 
 
 @pytest.mark.asyncio
+async def test_tempstore_put_scrubs_json_payload_before_storage():
+    from noetl.core.storage import Scope, StoreTier, TempStore
+
+    store = TempStore()
+    ref = await store.put(
+        execution_id="exec-1",
+        name="result-1",
+        data={"headers": {"Authorization": "Bearer placeholder-token"}},
+        scope=Scope.EXECUTION,
+        store=StoreTier.MEMORY,
+    )
+    try:
+        assert await store.get(ref) == {"headers": {"Authorization": "[REDACTED]"}}
+        assert "placeholder-token" not in str(ref.preview)
+    finally:
+        await store.delete(ref)
+
+
+@pytest.mark.asyncio
+async def test_tempstore_put_ipc_bytes_scrubs_rows_before_storage():
+    from noetl.core.storage import Scope, StoreTier, TempStore, arrow_ipc_to_rows, rows_to_arrow_ipc
+
+    rows = [{"id": 1, "Authorization": "Bearer placeholder-token"}]
+    payload, schema_digest, row_count = rows_to_arrow_ipc(rows)
+    store = TempStore()
+    ref = await store.put_ipc_bytes(
+        execution_id="exec-1",
+        name="frame-1",
+        data_bytes=payload,
+        schema_digest=schema_digest,
+        row_count=row_count,
+        scope=Scope.EXECUTION,
+        store=StoreTier.MEMORY,
+    )
+    try:
+        stored_payload = await store.get_ipc_bytes(ref)
+        assert arrow_ipc_to_rows(stored_payload) == [
+            {"id": 1, "Authorization": "[REDACTED]"}
+        ]
+    finally:
+        await store.delete(ref)
+
+
+@pytest.mark.asyncio
 async def test_tempstore_ipc_stats_track_admission_failure():
     from noetl.core.storage import ArrowIpcSharedMemoryCache, Scope, StoreTier, TempStore
 

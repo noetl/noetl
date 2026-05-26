@@ -23,6 +23,7 @@ from noetl.core.storage import (
     default_tracker,
 )
 from noetl.core.logger import setup_logger
+from noetl.core.credential_refs import producer_scrub_payload
 from noetl.core.sanitize import redact_keychain_values
 
 logger = setup_logger(__name__, include_location=True)
@@ -106,16 +107,20 @@ async def put_temp(
             except ValueError:
                 raise HTTPException(400, f"Invalid store tier: {request.store}")
 
+        # Producer boundary per agents/rules/execution-model.md secrets rule.
+        safe_data = producer_scrub_payload(request.data)
+        safe_correlation = producer_scrub_payload(request.correlation)
+
         # Store the data
         temp_ref = await default_store.put(
             execution_id=execution_id,
             name=request.name,
-            data=request.data,
+            data=safe_data,
             scope=scope,
             store=store,
             ttl_seconds=request.ttl_seconds,
             source_step=request.source_step,
-            correlation=request.correlation,
+            correlation=safe_correlation,
             compress=request.compress
         )
 
