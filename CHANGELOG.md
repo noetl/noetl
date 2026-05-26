@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.102.0](https://github.com/noetl/noetl/compare/v2.101.3...v2.102.0) (2026-05-26)
+
+### Features
+
+* **inline-execution:** Round B worker inline runner (enforce mode wired) ([4ca1f2a](https://github.com/noetl/noetl/commit/4ca1f2a3baa13427e68721607b38f66f70f9e844))
+
 ## [2.101.3](https://github.com/noetl/noetl/compare/v2.101.2...v2.101.3) (2026-05-26)
 
 ### Performance Improvements
