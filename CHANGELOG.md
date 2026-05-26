@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.102.5](https://github.com/noetl/noetl/compare/v2.102.4...v2.102.5) (2026-05-26)
+
+### Bug Fixes
+
+* **security:** sanitize_sensitive_data must not destroy credential aliases ([b050cd9](https://github.com/noetl/noetl/commit/b050cd97b6ae721f8c79613dd07b765ffce492f4)), closes [#603](https://github.com/noetl/noetl/issues/603)
+
 ## [2.102.4](https://github.com/noetl/noetl/compare/v2.102.3...v2.102.4) (2026-05-26)
 
 ### Bug Fixes
