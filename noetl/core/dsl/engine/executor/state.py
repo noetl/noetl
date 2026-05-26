@@ -3,6 +3,7 @@ from __future__ import annotations
 from .common import *
 
 from noetl.core.dsl.engine.planner import FanoutReducePlan, build_fanout_reduce_plan
+from noetl.core.credential_refs import KEYCHAIN_MANIFEST_KEY, keychain_names_from_manifest, strip_keychain_namespaces
 
 
 class ExecutionState:
@@ -53,7 +54,7 @@ class ExecutionState:
         # NOTE: 'vars' key is REMOVED in strict v10 - use 'ctx' instead
         for k, v in payload.items():
             if k == "ctx" and isinstance(v, dict):
-                # Merge execution request ctx into variables (canonical v10)
+                # Merge execution request ctx into variables for v10 compatibility.
                 self.variables.update(v)
                 logger.debug(f"[STATE-INIT] Merged execution ctx into variables: {list(v.keys())}")
             else:
@@ -107,19 +108,23 @@ class ExecutionState:
 
         # Compact variables: strip step result mirrors (they're in step_results)
         compact_vars = {}
+        keychain_manifest = self.variables.get(KEYCHAIN_MANIFEST_KEY)
+        keychain_names = keychain_names_from_manifest(keychain_manifest)
         for k, v in self.variables.items():
             # Keep only playbook workload vars and set mutations (scalars/small dicts)
             # Skip step result mirrors (dicts with 'reference' or 'status' + 'context')
             if isinstance(v, dict) and ("reference" in v or ("status" in v and "context" in v)):
                 continue  # step result mirror — skip
-            compact_vars[k] = v
+            if k == "keychain" or k in keychain_names:
+                continue
+            compact_vars[k] = v if k == KEYCHAIN_MANIFEST_KEY else strip_keychain_namespaces(v, keychain_manifest)
 
         return {
             "execution_id": self.execution_id,
             "catalog_id": self.catalog_id,
             "playbook_path": playbook_metadata.get("path") or playbook_metadata.get("name"),
             "parent_execution_id": self.parent_execution_id,
-            "payload": self.payload,
+            "payload": strip_keychain_namespaces(self.payload, keychain_manifest),
             "current_step": self.current_step,
             "variables": compact_vars,
             "last_event_id": self.last_event_id,
@@ -496,6 +501,9 @@ class ExecutionState:
             collection_size = len(loop_state["collection"]) if "collection" in loop_state else int(loop_state.get("collection_size", 0))
             iter_vars["_last"] = loop_state["index"] >= (collection_size - 1)
 
+        keychain_manifest = self.variables.get(KEYCHAIN_MANIFEST_KEY)
+        context_vars = strip_keychain_namespaces(self.variables, keychain_manifest)
+
         context = {
             "event": {
                 "name": event.name,
@@ -503,11 +511,11 @@ class ExecutionState:
                 "step": event.step,
                 "timestamp": event.timestamp.isoformat() if event.timestamp else None,
             },
-            # Canonical v10: ctx = execution-scoped, iter = iteration-scoped
-            "ctx": self.variables,  # Execution-scoped variables (canonical v10)
-            "iter": iter_vars,      # Iteration-scoped variables (canonical v10)
+            # ctx = execution-scoped, iter = iteration-scoped
+            "ctx": context_vars,
+            "iter": iter_vars,
             # Backward compatibility: workload namespace for {{ workload.xxx }}
-            "workload": self.variables,  # Legacy alias for Core playbooks
+            "workload": context_vars,
         }
 
         # Step results are accessed via {{ step_name.field }} through TaskResultProxy.
@@ -519,7 +527,10 @@ class ExecutionState:
                 context[step_name] = step_result
 
         # Add variables to context only if they don't collide with reserved keys
+        keychain_names = keychain_names_from_manifest(keychain_manifest)
         for k, v in self.variables.items():
+            if k == "keychain" or k in keychain_names:
+                continue
             if k not in context and k not in protected_fields:
                 context[k] = v
         

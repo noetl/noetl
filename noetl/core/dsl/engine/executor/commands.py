@@ -3,6 +3,11 @@ from __future__ import annotations
 from .common import *
 from .state import ExecutionState
 from .store import PlaybookRepo, StateStore
+from noetl.core.credential_refs import (
+    KEYCHAIN_MANIFEST_KEY,
+    render_preserving_keychain_refs,
+    strip_keychain_namespaces,
+)
 
 class CommandCreationMixin:
     async def _create_inline_command(
@@ -45,7 +50,8 @@ class CommandCreationMixin:
 
         # Render Jinja2 templates in tool config
         from noetl.core.dsl.render import render_template as recursive_render
-        rendered_tool_config = recursive_render(self.jinja_env, tool_config, context)
+        rendered_tool_config = render_preserving_keychain_refs(self.jinja_env, tool_config, context, recursive_render)
+        safe_context = strip_keychain_namespaces(context, context.get(KEYCHAIN_MANIFEST_KEY))
 
         # Create command for inline task
         # Use step_name as the step, task_name in metadata for tracking
@@ -57,7 +63,7 @@ class CommandCreationMixin:
                 config=rendered_tool_config
             ),
             input={},
-            render_context=context,
+            render_context=safe_context,
             attempt=1,
             priority=0,
             metadata={"inline_task": True, "task_name": task_name, "parent_step": step_name}
@@ -120,7 +126,7 @@ class CommandCreationMixin:
                 }
             ),
             input={},
-            render_context=context,
+            render_context=strip_keychain_namespaces(context, context.get(KEYCHAIN_MANIFEST_KEY)),
             attempt=1,
             priority=0,
             metadata={
@@ -900,7 +906,7 @@ class CommandCreationMixin:
                 context["iter"] = dict(context["iter"])
             
             iterator_value = state.variables.get(step.loop.iterator)
-            # Update both top-level and 'iter' namespace for canonical v10 compatibility
+            # Update both top-level and 'iter' namespace for v10 compatibility.
             context[step.loop.iterator] = iterator_value
             context["loop_index"] = claimed_index
             if "iter" in context and isinstance(context["iter"], dict):
@@ -970,7 +976,7 @@ class CommandCreationMixin:
         step_args.update(filtered_args)
 
         # Render Jinja2 templates in merged input.
-        rendered_input = recursive_render(self.jinja_env, step_args, context)
+        rendered_input = render_preserving_keychain_refs(self.jinja_env, step_args, context, recursive_render)
 
         if step.tool is None:
             logger.info(
@@ -1008,7 +1014,7 @@ class CommandCreationMixin:
 
             if policy_rules:
                 # Convert single tool to task sequence format so policy rules work
-                # Use canonical format: { name: "task_label", kind: "...", ... }
+                # Use v10 task format: { name: "task_label", kind: "...", ... }.
                 task_label = f"{step.step}_task"
                 pipeline = [{"name": task_label, **tool_dict}]
                 tool_kind = "task_sequence"
@@ -1018,9 +1024,9 @@ class CommandCreationMixin:
                 # NOTE: step.result removed in v10 - output config is now in tool.output or tool.spec.policy
 
                 # Render Jinja2 templates in tool config
-                tool_config = recursive_render(self.jinja_env, tool_config, context)
+                tool_config = render_preserving_keychain_refs(self.jinja_env, tool_config, context, recursive_render)
 
-        # Extract next targets for conditional routing (canonical v10 format)
+        # Extract next targets for conditional routing (v10 format)
         next_targets = None
         if step.next:
             next_targets = [arc.model_dump(exclude_none=True) for arc in _get_next_arcs(step)]
@@ -1055,6 +1061,8 @@ class CommandCreationMixin:
                 key: value for key, value in command_metadata.items() if value is not None
             }
 
+        safe_render_context = strip_keychain_namespaces(context, context.get(KEYCHAIN_MANIFEST_KEY))
+
         command = Command(
             execution_id=state.execution_id,
             step=command_step,
@@ -1063,7 +1071,7 @@ class CommandCreationMixin:
                 config=tool_config
             ),
             input=rendered_input,
-            render_context=context,
+            render_context=safe_render_context,
             pipeline=pipeline,
             next_targets=next_targets,
             spec=command_spec,
