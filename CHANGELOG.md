@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.101.1](https://github.com/noetl/noetl/compare/v2.101.0...v2.101.1) (2026-05-26)
+
+### Bug Fixes
+
+* **worker:** preserve meta.inline_decision through control-context projection ([6b0571a](https://github.com/noetl/noetl/commit/6b0571aad84c487c81e6a694019f367c9be69296))
+
 ## [2.101.0](https://github.com/noetl/noetl/compare/v2.100.10...v2.101.0) (2026-05-26)
 
 ### Features
