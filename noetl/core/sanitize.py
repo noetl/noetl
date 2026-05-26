@@ -367,8 +367,52 @@ def _sanitize_recursive(
         result = {}
         for key, value in data.items():
             # Check if key indicates sensitive data
-            if _is_sensitive_key(key) or (isinstance(key, str) and key.lower() in additional_keys):
-                result[key] = redaction
+            key_is_sensitive = (
+                _is_sensitive_key(key)
+                or (isinstance(key, str) and key.lower() in additional_keys)
+            )
+            if key_is_sensitive:
+                # The sensitive-key check uses partial substring matches
+                # (``db_credential`` matches ``credential``, ``oauth_token``
+                # matches ``token``, etc.) so we cannot blindly redact every
+                # value under a matching key — that pattern destroys
+                # credential alias references which the NoETL keychain uses
+                # to look up actual secrets at tool execution time.
+                # Example failure: a postgres task with
+                # ``auth: "{{ db_credential }}"`` and workload
+                # ``db_credential: pg_auth`` gets rendered to
+                # ``auth: "pg_auth"`` (the alias name).  Pre-fix, this
+                # function rewrote that to ``auth: "[REDACTED]"``, the
+                # worker tried to GET ``/api/credentials/[REDACTED]`` and
+                # the lookup 404'd — silently breaking every playbook that
+                # routes a credential by alias.
+                #
+                # Strategy:
+                #   - String values: only redact when ``_is_sensitive_value``
+                #     matches (Bearer tokens, JWTs, long random secrets,
+                #     PEM headers, etc.).  Short identifier-shaped strings
+                #     pass through — they're alias references, not secrets.
+                #   - Nested dict / list values: preserve the prior broad
+                #     redaction since key-only inspection cannot reach
+                #     individual leaves; recursion would re-encounter the
+                #     same sensitive-key trap.
+                #   - Other scalars (int, bool, None): pass through.
+                #
+                # Resolved secret values still get redacted on the
+                # producer side via ``producer_scrub_payload`` (which is
+                # keychain-manifest-aware) before they reach this layer,
+                # so this relaxation does not widen the leak surface for
+                # any value that already passed through the producer
+                # boundary.
+                if isinstance(value, str):
+                    if _is_sensitive_value(value):
+                        result[key] = redaction
+                    else:
+                        result[key] = value
+                elif isinstance(value, (dict, list)):
+                    result[key] = redaction
+                else:
+                    result[key] = value
             else:
                 result[key] = _sanitize_recursive(
                     value, additional_keys, redaction, max_depth, current_depth + 1
