@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.101.0](https://github.com/noetl/noetl/compare/v2.100.10...v2.101.0) (2026-05-26)
+
+### Features
+
+* **inline-execution:** Round A detector + dry-run observability (no execution change) ([a83f9fc](https://github.com/noetl/noetl/commit/a83f9fc82d690f0eaf0ec10e40bafca1e7414429))
+
 ## [2.100.10](https://github.com/noetl/noetl/compare/v2.100.9...v2.100.10) (2026-05-26)
 
 ### Performance Improvements
