@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.102.7](https://github.com/noetl/noetl/compare/v2.102.6...v2.102.7) (2026-05-27)
+
+### Bug Fixes
+
+* **inline-execution:** emit events that comply with strict payload schema + wire parent catalog_id ([efd4953](https://github.com/noetl/noetl/commit/efd4953b4ed070fc4fcb680b8b821bcec83c098e))
+
 ## [2.102.6](https://github.com/noetl/noetl/compare/v2.102.5...v2.102.6) (2026-05-27)
 
 ### Bug Fixes
