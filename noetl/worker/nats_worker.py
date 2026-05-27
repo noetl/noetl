@@ -726,6 +726,37 @@ class Worker:
                     decision = self._preserve_recursive_control_value(child["inline_decision"])
                     if decision is not None:
                         nested["inline_decision"] = decision
+                # Widget envelope contract — the `payload` field of a
+                # widget envelope is the control-plane render config
+                # (date-picker bounds, party-picker maxes, place-
+                # autocomplete suggestions, button labels, …) that the
+                # SPA's WidgetRenderer dispatches on, NOT a data-plane
+                # payload like rows or response bodies.  Without this
+                # carve-out the universal `payload` blocklist strips
+                # the render config and the SPA's `isWidgetEnvelope`
+                # check fails (it requires `isRecord(value.payload)`),
+                # so the chat renders the bot_message as plain
+                # `Typography` and the widget never appears.  Surfaced
+                # in production via the muno itinerary-planner
+                # ``date_range_picker`` regression: the playbook emits
+                # ``first_widget.payload`` with min_date/max_date/…, the
+                # worker dropped it here, the chat thread fell back to
+                # text-only output.  See ai-meta
+                # ``handoffs/archive/2026-05-27-itinerary-planner-empty-widget/``
+                # for the broader empty-widget arc.
+                #
+                # Detect a widget envelope by structural fingerprint
+                # (`schema_version == 1`, str `widget_type`, dict
+                # `payload`) so unrelated `payload` keys carrying data-
+                # plane content remain blocked.
+                if (
+                    child.get("schema_version") == 1
+                    and isinstance(child.get("widget_type"), str)
+                    and isinstance(child.get("payload"), dict)
+                ):
+                    widget_payload = self._preserve_recursive_control_value(child["payload"])
+                    if isinstance(widget_payload, dict):
+                        nested["payload"] = widget_payload
                 if nested:
                     context[key_str] = nested
 

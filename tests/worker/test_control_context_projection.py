@@ -421,3 +421,101 @@ def test_meta_without_inline_decision_does_not_synthesize_meta_key():
 
     assert projected["status"] == "ok"
     assert "meta" not in projected
+
+
+def test_widget_envelope_payload_survives_projection():
+    """The travel itinerary-planner playbook emits widget envelopes shaped
+    as ``{schema_version: 1, widget_type: <str>, variant: <str>, payload:
+    <dict>}`` and the SPA's WidgetRenderer requires the nested ``payload``
+    dict (it dispatches on ``isWidgetEnvelope`` which checks
+    ``isRecord(value.payload)``).  Without the widget-envelope carve-out,
+    the universal ``payload`` entry in ``blocked_keys`` and the
+    nested-scalars-only filter together strip the render config and the
+    chat falls back to plain-text output.  Regression for the muno
+    ``date_range_picker`` symptom — see ai-meta
+    ``handoffs/archive/2026-05-27-itinerary-planner-empty-widget/``.
+    """
+    worker = _worker()
+    projected = worker._extract_control_context(
+        {
+            "bot_message": "Pick the travel dates.",
+            "first_widget": {
+                "schema_version": 1,
+                "widget_type": "date_range_picker",
+                "variant": "compact",
+                "payload": {
+                    "min_date": "2026-05-27",
+                    "max_date": "2027-05-27",
+                    "default_from": "2026-06-17",
+                    "default_to": "2026-06-21",
+                    "locale": "en",
+                    "submit": "submit",
+                },
+            },
+        }
+    )
+
+    first = projected["first_widget"]
+    assert first["schema_version"] == 1
+    assert first["widget_type"] == "date_range_picker"
+    assert first["variant"] == "compact"
+    payload = first["payload"]
+    assert payload["min_date"] == "2026-05-27"
+    assert payload["max_date"] == "2027-05-27"
+    assert payload["default_from"] == "2026-06-17"
+    assert payload["default_to"] == "2026-06-21"
+    assert payload["locale"] == "en"
+    assert payload["submit"] == "submit"
+
+
+def test_widget_envelope_carve_out_only_fires_for_envelope_shape():
+    """The carve-out is structurally targeted — only triggers when the
+    child carries ``schema_version == 1`` AND a str ``widget_type`` AND a
+    dict ``payload``.  Unrelated dicts that happen to have a ``payload``
+    key keep being stripped (the universal data-plane block stands).
+    """
+    worker = _worker()
+    projected = worker._extract_control_context(
+        {
+            "looks_like_widget_but_isnt": {
+                # No schema_version + no widget_type → not a widget envelope.
+                "payload": {"nested": "value"},
+                "label": "scalar-keeps",
+            },
+        }
+    )
+
+    assert projected["looks_like_widget_but_isnt"] == {"label": "scalar-keeps"}
+
+
+def test_widget_envelope_carve_out_preserves_nested_lists_in_payload():
+    """``payload`` dicts can carry nested lists (e.g. flight_list items,
+    place autocomplete suggestions).  The recursive preserve helper must
+    round-trip them.
+    """
+    worker = _worker()
+    projected = worker._extract_control_context(
+        {
+            "first_widget": {
+                "schema_version": 1,
+                "widget_type": "place_autocomplete_input",
+                "variant": "default",
+                "payload": {
+                    "placeholder": "Where do you want to go?",
+                    "suggestions": [
+                        {"label": "Miami", "id": "MIA", "kind": "city"},
+                        {"label": "Paris", "id": "PAR", "kind": "city"},
+                    ],
+                    "submit_on_select": True,
+                },
+            },
+        }
+    )
+
+    payload = projected["first_widget"]["payload"]
+    assert payload["placeholder"] == "Where do you want to go?"
+    assert payload["suggestions"] == [
+        {"label": "Miami", "id": "MIA", "kind": "city"},
+        {"label": "Paris", "id": "PAR", "kind": "city"},
+    ]
+    assert payload["submit_on_select"] is True
