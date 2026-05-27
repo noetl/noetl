@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.102.10](https://github.com/noetl/noetl/compare/v2.102.9...v2.102.10) (2026-05-27)
+
+### Bug Fixes
+
+* **worker:** preserve widget envelope payload in control-context projection ([784c3c4](https://github.com/noetl/noetl/commit/784c3c4143c6acaf8a9c9994a1772ecb1d26e279))
+
 ## [2.102.9](https://github.com/noetl/noetl/compare/v2.102.8...v2.102.9) (2026-05-27)
 
 ### Bug Fixes
