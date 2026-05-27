@@ -305,8 +305,72 @@ def _redact_response_recursive(
         for key, value in data.items():
             key_text = str(key)
             key_normalized = key_text.lower().replace("-", "_")
-            if _is_response_sensitive_key(key_text) or key_normalized in additional_keys:
+            caller_blind_redact = key_normalized in additional_keys
+            partial_match_sensitive = _is_response_sensitive_key(key_text)
+            if caller_blind_redact:
+                # The caller explicitly named this key as one that always
+                # carries a credential value (HTTP header keys like
+                # ``authorization`` / ``cookie`` / ``x_api_key``, or
+                # keychain manifest namespaces like ``openai_token``).
+                # Blind-redact the value regardless of shape — this is
+                # the producer-scrub contract and the response sanitizer
+                # honors it verbatim.
                 result[key] = redaction
+            elif partial_match_sensitive:
+                # The key name *partial-matches* an entry in
+                # ``SENSITIVE_KEYS`` / ``RESPONSE_SENSITIVE_KEYS`` but
+                # the caller did NOT explicitly list it.  This is the
+                # path that historically destroyed credential alias
+                # references: a key like ``db_credential`` partial-matches
+                # ``credential``; a postgres task ``auth`` field exact-
+                # matches ``auth``.  Their values are alias names
+                # (``pg_auth``, ``openai_session``, ...) used by the
+                # NoETL keychain to look up actual secrets at tool-
+                # execution time.  Blindly redacting them breaks every
+                # downstream credential lookup.
+                #
+                # Concrete failure on the noetl-demo GKE cluster (the
+                # auth0_login_optimized playbook):
+                #   - command.issued event stores ``auth: "{{ db_credential }}"``
+                #     (raw Jinja template, untouched).
+                #   - Worker claims the command and fetches the
+                #     externalized ``render_context`` via
+                #     ``/api/temp/{execution_id}/{name}`` or
+                #     ``/api/result/...`` — both response endpoints run
+                #     ``redact_keychain_values`` over the payload.
+                #   - Pre-fix, ``redact_keychain_values`` saw
+                #     ``db_credential: "pg_auth"`` in render_context,
+                #     partial-matched ``credential``, and replaced the
+                #     value with ``"[REDACTED]"`` regardless of shape.
+                #   - Jinja then rendered ``{{ db_credential }}`` →
+                #     ``"[REDACTED]"`` and the worker's auth resolver
+                #     called ``GET /api/credentials/[REDACTED]`` which
+                #     404'd.  See ``worker/auth_resolver.py:434``
+                #     traceback: ``Auth resolution failed for 'auth':
+                #     Credential '[REDACTED]' not found``.
+                #
+                # Strategy for the partial-match case:
+                #   - String values: only redact when
+                #     ``_is_response_secret_value`` matches (caller-supplied
+                #     secrets set, URL credentials, SECRET_VALUE_PATTERNS:
+                #     Bearer / Basic / JWT / sk-/sk-ant-/AIza/ya29/
+                #     gh{p,o,u,s,r}_/github_pat_/xox{baprs}-/PEM headers /
+                #     long random query-string secrets).  Short
+                #     identifier-shaped strings pass through.
+                #   - Nested dict / list / tuple values: preserve the
+                #     prior broad redaction — key-only inspection cannot
+                #     reach individual leaves without re-encountering
+                #     the same key trap.
+                #   - Other scalars (int, bool, None): pass through.
+                if isinstance(value, str):
+                    if _is_response_secret_value(value, secret_values):
+                        result[key] = redaction
+                    else:
+                        result[key] = value
+                elif isinstance(value, (dict, list, tuple)):
+                    result[key] = redaction
+                else:
+                    result[key] = value
             else:
                 result[key] = _redact_response_recursive(
                     value,
@@ -366,36 +430,46 @@ def _sanitize_recursive(
     if isinstance(data, dict):
         result = {}
         for key, value in data.items():
-            # Check if key indicates sensitive data
-            key_is_sensitive = (
-                _is_sensitive_key(key)
-                or (isinstance(key, str) and key.lower() in additional_keys)
-            )
-            if key_is_sensitive:
-                # The sensitive-key check uses partial substring matches
-                # (``db_credential`` matches ``credential``, ``oauth_token``
-                # matches ``token``, etc.) so we cannot blindly redact every
-                # value under a matching key — that pattern destroys
-                # credential alias references which the NoETL keychain uses
-                # to look up actual secrets at tool execution time.
-                # Example failure: a postgres task with
-                # ``auth: "{{ db_credential }}"`` and workload
-                # ``db_credential: pg_auth`` gets rendered to
-                # ``auth: "pg_auth"`` (the alias name).  Pre-fix, this
-                # function rewrote that to ``auth: "[REDACTED]"``, the
-                # worker tried to GET ``/api/credentials/[REDACTED]`` and
-                # the lookup 404'd — silently breaking every playbook that
-                # routes a credential by alias.
+            caller_blind_redact = isinstance(key, str) and key.lower() in additional_keys
+            partial_match_sensitive = _is_sensitive_key(key)
+            if caller_blind_redact:
+                # Caller named this key explicitly — blind-redact regardless
+                # of value shape.  This is how producer-scrub passes HTTP
+                # header conventions (Authorization / Cookie / X-API-Key /
+                # ...) through additional_keys; those values are
+                # credentials by HTTP convention even when they're short.
+                result[key] = redaction
+            elif partial_match_sensitive:
+                # The key name partial-matches ``SENSITIVE_KEYS`` but the
+                # caller did NOT explicitly list it.  This is the path
+                # that historically destroyed credential alias references:
+                # ``db_credential`` matches ``credential``, postgres task
+                # ``auth`` exact-matches ``auth`` — but the values are
+                # alias names (``pg_auth``, ``openai_session``, ...) that
+                # the NoETL keychain uses to look up actual secrets at
+                # tool-execution time.  Blindly redacting them breaks
+                # every downstream credential lookup.
                 #
-                # Strategy:
+                # Concrete failure on the noetl-demo GKE cluster (the
+                # auth0_login_optimized playbook):
+                #   - workload ``db_credential: pg_auth`` (alias)
+                #   - step ``auth: "{{ db_credential }}"`` renders to
+                #     ``auth: "pg_auth"``
+                #   - Pre-fix the broker sanitizer rewrote that to
+                #     ``auth: "[REDACTED]"`` and the worker's auth resolver
+                #     looked up ``GET /api/credentials/[REDACTED]`` →
+                #     404.  See ``worker/auth_resolver.py:434`` trace:
+                #     ``Auth resolution failed for 'auth': Credential
+                #     '[REDACTED]' not found``.
+                #
+                # Strategy for the partial-match case:
                 #   - String values: only redact when ``_is_sensitive_value``
-                #     matches (Bearer tokens, JWTs, long random secrets,
-                #     PEM headers, etc.).  Short identifier-shaped strings
-                #     pass through — they're alias references, not secrets.
+                #     matches (Bearer / JWT / long random / PEM / API key
+                #     shapes).  Short identifier-shaped strings pass
+                #     through — they're alias references, not secrets.
                 #   - Nested dict / list values: preserve the prior broad
-                #     redaction since key-only inspection cannot reach
-                #     individual leaves; recursion would re-encounter the
-                #     same sensitive-key trap.
+                #     redaction; recursion cannot value-check leaves
+                #     without re-encountering the same key trap.
                 #   - Other scalars (int, bool, None): pass through.
                 #
                 # Resolved secret values still get redacted on the
