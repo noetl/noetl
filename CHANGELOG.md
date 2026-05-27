@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.102.8](https://github.com/noetl/noetl/compare/v2.102.7...v2.102.8) (2026-05-27)
+
+### Bug Fixes
+
+* **outbox:** publish JSON over NATS, not arrow-feather bytes ([a04e895](https://github.com/noetl/noetl/commit/a04e89505c63fecd0a7ce6db327662b8c4b738e9))
+
 ## [2.102.7](https://github.com/noetl/noetl/compare/v2.102.6...v2.102.7) (2026-05-27)
 
 ### Bug Fixes
