@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.102.9](https://github.com/noetl/noetl/compare/v2.102.8...v2.102.9) (2026-05-27)
+
+### Bug Fixes
+
+* **render:** TaskResultProxy falls back to context for stripped fields ([5ee21d3](https://github.com/noetl/noetl/commit/5ee21d34ded61ecb26510cddfdf36762549c31e8))
+
 ## [2.102.8](https://github.com/noetl/noetl/compare/v2.102.7...v2.102.8) (2026-05-27)
 
 ### Bug Fixes
