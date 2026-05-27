@@ -186,6 +186,17 @@ async def _persist_batch_acceptance(req: BatchEventRequest, idempotency_key: Opt
         async with conn.cursor(row_factory=dict_row) as cur:
             await cur.execute("SELECT catalog_id FROM noetl.event WHERE execution_id = %s LIMIT 1", (exec_id,))
             catalog_id = (await cur.fetchone() or {}).get("catalog_id")
+            # Fall back to the request's caller-supplied catalog_id when no
+            # prior event row exists for this execution.  This is the
+            # inline-runner path: a worker creates a child execution_id
+            # in-process and emits its first events via this endpoint —
+            # there is no ``POST /api/execute`` ingress for that execution,
+            # so the DB lookup above returns ``None`` and the
+            # ``noetl.event.catalog_id`` NOT NULL constraint would block
+            # the insert.  The DB-discovered value still wins when present
+            # so cross-batch rows stay consistent.
+            if catalog_id is None and req.catalog_id is not None:
+                catalog_id = req.catalog_id
             if idempotency_key:
                 await cur.execute("SELECT meta, result FROM noetl.event WHERE execution_id = %s AND event_type = 'batch.accepted' AND meta->>'idempotency_key' = %s ORDER BY event_id DESC LIMIT 1", (exec_id, idempotency_key))
                 if row := await cur.fetchone():

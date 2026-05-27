@@ -64,6 +64,19 @@ class BatchEventRequest(BaseModel):
     execution_id: str
     events: list[BatchEventItem]
     worker_id: Optional[str] = None
+    catalog_id: Optional[int] = Field(
+        default=None,
+        description=(
+            "Fallback catalog_id for executions that have no prior event "
+            "rows (e.g. inline-runner children created in-worker without a "
+            "``POST /api/execute`` ingress). The persistence path normally "
+            "discovers ``catalog_id`` by querying the first existing event "
+            "row for the execution; for inline children there is no such "
+            "row yet, so the caller must supply it. Ignored when the "
+            "execution already has events written — the DB-discovered value "
+            "wins to keep cross-batch event rows consistent."
+        ),
+    )
 
     @model_validator(mode="after")
     def validate_batch_limits(self):

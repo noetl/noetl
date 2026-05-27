@@ -1316,17 +1316,42 @@ def _make_cancellation_probe() -> Callable:
     return probe
 
 
-def _make_batch_event_emitter() -> Callable:
-    """Return a batch event emitter for the inline runner.
+class _BatchEventEmitter:
+    """Callable batch event emitter for the inline runner.
 
-    Posts a list of event dicts to ``/api/events/batch``.  Best-effort: HTTP
-    errors are logged at DEBUG and swallowed so the runner continues rather
-    than aborting on an emission failure.
+    Posts a list of event dicts to ``/api/events/batch``.  Exposes a
+    ``set_catalog_id`` mutator that ``run_inline`` calls to wire the
+    parent's ``catalog_id`` through — the server's persistence path
+    discovers ``catalog_id`` by querying any prior event row for the
+    execution, but inline children have no prior rows, so the caller
+    must supply it explicitly in the request body
+    (``BatchEventRequest.catalog_id``).
 
-    The emitter is a plain sync callable; ``run_inline`` wraps it in an
-    awaitable context.
+    A persistently-failing emission upgrades to a WARNING log so the
+    silent-drop class of bug stops being invisible.  Round B Phase D
+    on GKE captured the original symptom: an itinerary-planner-class
+    child playbook triggered ``payload.result includes unsupported
+    keys`` and ``null value in column catalog_id`` server errors that
+    the runner's ``_safe_emit`` swallowed at DEBUG, leaving the SPA
+    hung on ``Muno is planning...`` with no visible diagnostic.
+
+    The emitter is a plain sync callable; ``run_inline`` wraps the
+    call in an awaitable context so async callers work too.
     """
-    def emitter(execution_id: str, events: list) -> bool:
+
+    __slots__ = ("_catalog_id", "_consecutive_failures")
+
+    def __init__(self) -> None:
+        self._catalog_id: Optional[int] = None
+        self._consecutive_failures = 0
+
+    def set_catalog_id(self, catalog_id: Optional[int]) -> None:
+        try:
+            self._catalog_id = int(catalog_id) if catalog_id is not None else None
+        except (TypeError, ValueError):
+            self._catalog_id = None
+
+    def __call__(self, execution_id: str, events: list) -> bool:
         if not execution_id or not events:
             return True
         try:
@@ -1336,18 +1361,61 @@ def _make_batch_event_emitter() -> Callable:
             if not server_url.endswith("/api"):
                 server_url = server_url + "/api"
             url = f"{server_url}/events/batch"
-            payload_body = {"execution_id": execution_id, "events": events}
+            payload_body: Dict[str, Any] = {
+                "execution_id": execution_id,
+                "events": events,
+            }
+            if self._catalog_id is not None:
+                payload_body["catalog_id"] = self._catalog_id
             resp = _requests.post(url, json=payload_body, timeout=5.0)
-            return resp.status_code in (200, 201, 202, 204)
-        except Exception as exc:
-            logger.debug(
-                "AGENT.INLINE batch emitter failed execution_id=%s: %s",
+            ok = resp.status_code in (200, 201, 202, 204)
+            if ok:
+                self._consecutive_failures = 0
+                return True
+            self._consecutive_failures += 1
+            # First failure logs at DEBUG (typical transient HTTP blip);
+            # repeated failures upgrade to WARNING so the silent-drop
+            # behaviour stops hiding real defects.  Phase D on GKE was
+            # masked precisely because every emission failed silently.
+            log_method = (
+                logger.warning if self._consecutive_failures >= 3 else logger.debug
+            )
+            try:
+                body_preview = resp.text[:500] if resp.text else ""
+            except Exception:
+                body_preview = ""
+            log_method(
+                "AGENT.INLINE batch emitter HTTP %s for execution_id=%s "
+                "(consecutive_failures=%d) body=%s",
+                resp.status_code,
                 execution_id,
+                self._consecutive_failures,
+                body_preview,
+            )
+            return False
+        except Exception as exc:
+            self._consecutive_failures += 1
+            log_method = (
+                logger.warning if self._consecutive_failures >= 3 else logger.debug
+            )
+            log_method(
+                "AGENT.INLINE batch emitter exception execution_id=%s "
+                "(consecutive_failures=%d): %s",
+                execution_id,
+                self._consecutive_failures,
                 exc,
             )
             return False
 
-    return emitter
+
+def _make_batch_event_emitter() -> _BatchEventEmitter:
+    """Return a batch event emitter for the inline runner.
+
+    See ``_BatchEventEmitter`` for the contract.  Returned as the class
+    instance rather than a closure so ``run_inline`` can wire the
+    parent's ``catalog_id`` through ``set_catalog_id``.
+    """
+    return _BatchEventEmitter()
 
 
 def _invoke_noetl_playbook(
@@ -1942,6 +2010,29 @@ async def execute_agent_task(
                     mode=inline_decision.get("mode"),
                 )
 
+                # Parent ``catalog_id`` flows into the batch emitter so
+                # the server can populate ``noetl.event.catalog_id`` for
+                # child events.  The worker drops the parent's catalog_id
+                # into the rendered context at ``nats_worker.py:1926``;
+                # fall back to ``meta.catalog_id`` on the agent envelope
+                # for completeness.
+                parent_catalog_id_raw: Any = (
+                    (context or {}).get("catalog_id")
+                    or ((context or {}).get("meta") or {}).get("catalog_id")
+                )
+                try:
+                    parent_catalog_id: Optional[int] = (
+                        int(parent_catalog_id_raw)
+                        if parent_catalog_id_raw is not None
+                        else None
+                    )
+                except (TypeError, ValueError):
+                    parent_catalog_id = None
+
+                batch_emitter = _make_batch_event_emitter()
+                if parent_catalog_id is not None:
+                    batch_emitter.set_catalog_id(parent_catalog_id)
+
                 inline_result = await run_inline(
                     parent_execution_id=parent_execution_id_str,
                     parent_command_id=parent_command_id_str,
@@ -1951,8 +2042,9 @@ async def execute_agent_task(
                     inline_decision=decision_obj,
                     jinja_env=jinja_env,
                     cancellation_probe=_make_cancellation_probe(),
-                    batch_event_emitter=_make_batch_event_emitter(),
+                    batch_event_emitter=batch_emitter,
                     depth=int(inline_decision.get("depth") or 0),
+                    parent_catalog_id=parent_catalog_id,
                 )
                 return inline_result.to_envelope(entrypoint=entrypoint)
 

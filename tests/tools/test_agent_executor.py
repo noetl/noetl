@@ -1657,3 +1657,123 @@ def test_cancellation_probe_returns_false_on_network_error(monkeypatch):
 
     probe = agent_executor._make_cancellation_probe()
     assert probe("123456789012345678") is False
+
+
+# ---------------------------------------------------------------------------
+# Batch event emitter (_BatchEventEmitter) — Round B Phase D regression
+# ---------------------------------------------------------------------------
+
+
+def test_batch_event_emitter_sends_catalog_id_in_request_body(monkeypatch):
+    """The inline runner's batch emitter must include ``catalog_id`` in
+    the POST body to ``/api/events/batch`` after ``set_catalog_id``
+    has been called.  Without this the server's persistence path
+    cannot populate ``noetl.event.catalog_id`` for inline-child events
+    (no prior event rows exist for the DB-lookup fallback)."""
+    captured: Dict[str, Any] = {}
+
+    class _Resp:
+        status_code = 202
+
+        @property
+        def text(self):
+            return ""
+
+    class _FakeRequests:
+        @staticmethod
+        def post(url, json=None, timeout=None):
+            captured["url"] = url
+            captured["json"] = json
+            return _Resp()
+
+    monkeypatch.setitem(sys.modules, "requests", _FakeRequests)
+    monkeypatch.setenv("NOETL_SERVER_URL", "http://noetl.test:8082")
+
+    emitter = agent_executor._make_batch_event_emitter()
+    emitter.set_catalog_id(635123456789012345)
+    ok = emitter(
+        "999999999999999999",
+        [{"step": "x", "name": "playbook.initialized", "payload": {}}],
+    )
+
+    assert ok is True
+    assert captured["url"].endswith("/events/batch")
+    body = captured["json"]
+    assert body["execution_id"] == "999999999999999999"
+    assert body["catalog_id"] == 635123456789012345
+
+
+def test_batch_event_emitter_omits_catalog_id_when_unset(monkeypatch):
+    """Backwards compat: a fresh emitter with no ``set_catalog_id`` call
+    omits the field entirely so the server's DB-lookup path keeps its
+    pre-Round-B behaviour."""
+    captured: Dict[str, Any] = {}
+
+    class _Resp:
+        status_code = 202
+
+        @property
+        def text(self):
+            return ""
+
+    class _FakeRequests:
+        @staticmethod
+        def post(url, json=None, timeout=None):
+            captured["json"] = json
+            return _Resp()
+
+    monkeypatch.setitem(sys.modules, "requests", _FakeRequests)
+    monkeypatch.setenv("NOETL_SERVER_URL", "http://noetl.test:8082")
+
+    emitter = agent_executor._make_batch_event_emitter()
+    emitter("777", [{"step": "x", "name": "noop", "payload": {}}])
+
+    assert "catalog_id" not in captured["json"]
+
+
+def test_batch_event_emitter_warns_after_repeated_failures(monkeypatch):
+    """Round B Phase D was masked because every emission failed silently
+    at DEBUG.  The emitter must upgrade to WARNING after three
+    consecutive failures so the silent-drop class of bug becomes
+    visible in logs.
+
+    Uses a direct ``logging.Handler`` rather than ``caplog`` because the
+    executor's custom ``setup_logger`` configures handlers that don't
+    propagate to the root logger that ``caplog`` attaches to."""
+    import logging
+
+    class _FailingRequests:
+        @staticmethod
+        def post(url, json=None, timeout=None):
+            raise RuntimeError("simulated network blip")
+
+    monkeypatch.setitem(sys.modules, "requests", _FailingRequests)
+    monkeypatch.setenv("NOETL_SERVER_URL", "http://noetl.test:8082")
+
+    captured_records: list = []
+
+    class _Capture(logging.Handler):
+        def emit(self, record: logging.LogRecord) -> None:
+            captured_records.append(record)
+
+    handler = _Capture(level=logging.WARNING)
+    target_logger = agent_executor.logger
+    prior_level = target_logger.level
+    target_logger.addHandler(handler)
+    target_logger.setLevel(logging.DEBUG)
+    try:
+        emitter = agent_executor._make_batch_event_emitter()
+        for _ in range(4):
+            emitter("111", [{"step": "x", "name": "noop", "payload": {}}])
+    finally:
+        target_logger.removeHandler(handler)
+        target_logger.setLevel(prior_level)
+
+    warning_records = [r for r in captured_records if r.levelno >= logging.WARNING]
+    assert warning_records, (
+        "expected at least one WARNING-level log from the batch emitter "
+        f"after 4 consecutive failures; got: "
+        f"{[r.levelname for r in captured_records]!r}"
+    )
+    # The message should reference the consecutive-failures counter.
+    assert any("consecutive_failures" in r.getMessage() for r in warning_records)
