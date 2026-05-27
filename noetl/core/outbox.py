@@ -160,7 +160,27 @@ async def publish_outbox_batch(
     limit: int = 100,
     publisher: NATSEventPublisher | None = None,
 ) -> int:
-    """Publish one claimed outbox batch to the configured event distribution stream."""
+    """Publish one claimed outbox batch to the configured event distribution stream.
+
+    All NATS payloads are published as JSON via ``publish_event``, regardless of
+    whether ``payload_bytes`` (arrow-feather) is present in the outbox row.
+
+    Background: ``enqueue_outbox`` always writes an arrow-feather encoded copy of
+    the event into ``payload_bytes`` for projector fan-out consumers that read the
+    outbox table directly.  The previous code sent those raw bytes over NATS as
+    well, which caused the gateway (``src/playbook_state.rs``, ``serde_json::from_slice``)
+    to log 438 "Failed to parse lifecycle NATS payload as JSON" warnings and never
+    deliver a ``playbook/state`` SSE frame to the SPA.
+
+    The projector's NATS consumer (``noetl/core/projector/nats_worker.py``,
+    ``decode_projector_notification``) already handles both JSON and arrow-feather
+    (JSON first, feather fallback), so switching to JSON here does not break it.
+    The arrow-feather bytes remain available in the ``payload_bytes`` DB column for
+    any reader that queries the outbox table directly.
+
+    Fix introduced: kadyapam/outbox-nats-publish-json (2026-05-27).
+    Root-cause chain: round-02 of handoff 2026-05-27-itinerary-planner-spa-hang.
+    """
 
     rows = await claim_outbox_batch(limit=limit)
     if not rows:
@@ -170,13 +190,10 @@ async def publish_outbox_batch(
     for row in rows:
         try:
             payload = row.get("payload") or {}
-            subject = row.get("subject")
-            payload_bytes = row.get("payload_bytes")
-            if subject and payload_bytes:
-                await event_publisher.ensure_connected()
-                await event_publisher._publish_event_payload(subject, bytes(payload_bytes))
-            else:
-                await event_publisher.publish_event(payload)
+            # Always publish JSON over NATS. The JSONB ``payload`` column is the
+            # source of truth for the event envelope; ``payload_bytes`` stays in
+            # the DB for direct-table readers (projector fan-out) only.
+            await event_publisher.publish_event(payload)
             await mark_outbox_published(int(row["outbox_id"]))
             published += 1
         except Exception as exc:

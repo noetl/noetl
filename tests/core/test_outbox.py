@@ -126,32 +126,47 @@ async def test_publish_outbox_batch_publishes_and_marks(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_publish_outbox_batch_uses_preencoded_bytes_when_subject_exists(monkeypatch):
+async def test_publish_outbox_batch_publishes_json_even_when_payload_bytes_present(monkeypatch):
+    """Regression test: outbox rows that carry both ``payload`` (JSONB) and
+    ``payload_bytes`` (arrow-feather) must be published over NATS as JSON, not
+    as raw arrow-feather bytes.
+
+    The gateway (``src/playbook_state.rs``) uses ``serde_json::from_slice`` to
+    parse NATS payloads.  Publishing arrow-feather bytes caused 438 parse failures
+    in production and zero ``playbook/state`` SSE frames reaching the SPA.
+
+    Fix: ``publish_outbox_batch`` always calls ``publish_event(payload)`` which
+    JSON-encodes the JSONB column.  The arrow-feather bytes remain in the DB for
+    direct-table readers; they are never sent over NATS.
+    """
+    import json
+
     import noetl.core.outbox as outbox
 
+    event_payload = {"event_id": 101, "execution_id": 7, "event_type": "playbook.completed"}
     claim_rows = [
         {
             "outbox_id": 1,
             "event_id": 101,
             "execution_id": 7,
             "subject": "noetl.events.default.default.7.0",
-            "payload": {"event_id": 101},
-            "payload_bytes": b"ARROW1...",
+            "payload": event_payload,
+            "payload_bytes": b"ARROW1...",  # arrow-feather bytes must NOT go to NATS
             "attempts": 1,
         }
     ]
-    sent = []
+    published = []
     marked = []
 
     class Publisher:
-        async def ensure_connected(self):
-            sent.append(("connected", None))
+        async def _publish_event_payload(self, subject, payload):  # pragma: no cover
+            raise AssertionError(
+                "arrow-feather path must not be used for NATS publish; "
+                f"received subject={subject!r} payload_prefix={payload[:8]!r}"
+            )
 
-        async def _publish_event_payload(self, subject, payload):
-            sent.append((subject, payload))
-
-        async def publish_event(self, event):  # pragma: no cover - fallback must not run
-            raise AssertionError(f"unexpected fallback publish: {event}")
+        async def publish_event(self, event):
+            published.append(event)
 
     async def fake_claim(*, limit):
         return claim_rows
@@ -165,11 +180,12 @@ async def test_publish_outbox_batch_uses_preencoded_bytes_when_subject_exists(mo
     count = await outbox.publish_outbox_batch(limit=10, publisher=Publisher())
 
     assert count == 1
-    assert sent == [
-        ("connected", None),
-        ("noetl.events.default.default.7.0", b"ARROW1..."),
-    ]
     assert marked == [1]
+
+    # Verify the published payload round-trips through JSON (it is JSON-serialisable).
+    assert len(published) == 1
+    assert json.dumps(published[0])  # must not raise
+    assert published[0].get("event_type") == "playbook.completed"
 
 
 @pytest.mark.asyncio
