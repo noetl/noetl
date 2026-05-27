@@ -100,6 +100,36 @@ class TaskResultProxy:
         if isinstance(data, dict) and name in data:
             return _wrap(data[name])
 
+        # Fall back to ``data["context"][name]`` for fields that the
+        # producer set at the top level of its result envelope but
+        # ``ExecutionState.to_dict()`` later stripped during state
+        # compaction.  The compaction at ``state.py`` keeps only
+        # ``status`` / ``reference`` / ``context`` / scalars at the
+        # top level — every dict-valued field gets dropped.  The
+        # producer's full output is preserved under ``context`` by
+        # the ``mark_step_completed`` writer (it adds the alias
+        # ``result = {**result, "context": dict(result)}``).  Without
+        # this fallback, ``{{ step.dict_field }}`` resolves correctly
+        # in-process but fails the first time the state is reloaded
+        # from the ``execution.state`` JSONB — which is exactly the
+        # path hit between command issuance and template rendering
+        # for subsequent steps.
+        #
+        # See the 2026-05-27 travel itinerary-planner empty-widget
+        # diagnostic for the failure mode: ``normalize_input``
+        # writes ``input_event: {...}`` at the top level, the state
+        # is persisted, the dict is dropped, ``extract_turn`` renders
+        # ``{{ normalize_input.input_event }}`` against the compacted
+        # shape and gets ``Undefined`` — extraction silently falls
+        # through to the generic ``bot_text`` widget and the SPA's
+        # Searches sidebar stays empty.
+        if (
+            isinstance(data, dict)
+            and isinstance(data.get("context"), dict)
+            and name in data["context"]
+        ):
+            return _wrap(data["context"][name])
+
         # On-demand resolution from shared cache (TempStore):
         # When the dict has a reference but not the requested field,
         # resolve the reference and cache the result for this proxy instance.
