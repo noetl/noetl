@@ -193,6 +193,7 @@ async def run_inline(
     cancellation_probe: Callable[[str], Any],
     batch_event_emitter: Callable[[str, List[Dict[str, Any]]], Any],
     depth: int,
+    parent_catalog_id: Optional[int] = None,
 ) -> InlineResult:
     """Run a detector-approved child playbook inline inside the current worker.
 
@@ -222,13 +223,27 @@ async def run_inline(
         posts the event list to ``/api/events/batch``.
     depth:
         Current inline depth (0-based, bounded by DEFAULT_MAX_DEPTH = 3).
-
-    Returns
-    -------
-    InlineResult
-        Agent-envelope-compatible result.  Caller attaches ``inline_decision``
-        and ``inlined_*`` keys from ``result.meta`` to the terminal parent event.
+    parent_catalog_id:
+        Optional ``catalog_id`` of the parent's playbook.  Forwarded to the
+        batch emitter so the server can write child events with the right
+        ``noetl.event.catalog_id`` (the column is NOT NULL and the server
+        cannot discover it from an empty event row set for a brand-new
+        inline child).  When the emitter is a closure created by
+        ``executor._make_batch_event_emitter`` it captures this directly;
+        legacy emitters that pre-date the parent-catalog-id seam can pass
+        ``None`` and the server falls back to the per-execution lookup.
     """
+    # Stash on the closure-style emitter for the legacy 2-arg shape; the
+    # caller-supplied emitter signature is preserved for backward
+    # compatibility (existing tests construct 2-arg lambdas).  When the
+    # emitter exposes a ``set_catalog_id`` method (as
+    # ``_make_batch_event_emitter`` does in executor.py) we wire it now.
+    if parent_catalog_id is not None and hasattr(batch_event_emitter, "set_catalog_id"):
+        try:
+            batch_event_emitter.set_catalog_id(parent_catalog_id)
+        except Exception:
+            # Best-effort: a faulty emitter shouldn't abort the runner.
+            pass
     if depth > DEFAULT_MAX_DEPTH:
         # Depth guard: should not be reached because the detector blocks depth
         # > DEFAULT_MAX_DEPTH before this function is ever called.  Guard here
@@ -568,16 +583,27 @@ async def _emit_init_events(
     inline_meta: Dict[str, Any],
     batch_event_emitter: Callable,
 ) -> None:
+    # ``payload.result`` is gated by the server-side
+    # ``_validate_reference_only_payload`` filter
+    # (``noetl/server/api/core/events.py``) — only the keys in
+    # ``_STRICT_RESULT_ALLOWED_KEYS = {"status", "reference", "context",
+    # "command_id"}`` are accepted.  ``workload`` and ``playbook_path``
+    # used to live directly in ``result`` here, which caused every batch
+    # to be rejected with ``payload.result includes unsupported keys:
+    # playbook_path, workload`` and the runner's ``_safe_emit`` silently
+    # swallowed the 500.  Moving them into ``inline_meta`` keeps the
+    # information attached to the event without violating the schema.
+    init_meta = dict(inline_meta)
+    init_meta.setdefault("playbook_path", playbook_path)
+    if isinstance(workload, dict):
+        init_meta.setdefault("inline_workload", workload)
     events = [
         {
             "step": playbook_path,
             "name": "playbook.initialized",
             "payload": _with_inline_meta(
-                {
-                    "status": "initialized",
-                    "result": {"workload": workload, "playbook_path": playbook_path},
-                },
-                inline_meta,
+                {"status": "initialized", "result": {"status": "INITIALIZED"}},
+                init_meta,
             ),
             "actionable": False,
             "informative": True,
@@ -586,11 +612,8 @@ async def _emit_init_events(
             "step": "workflow",
             "name": "workflow.initialized",
             "payload": _with_inline_meta(
-                {
-                    "status": "initialized",
-                    "result": {"playbook_path": playbook_path, "workload": workload},
-                },
-                inline_meta,
+                {"status": "initialized", "result": {"status": "INITIALIZED"}},
+                init_meta,
             ),
             "actionable": False,
             "informative": True,
@@ -750,12 +773,34 @@ async def _emit_workflow_completed(
     inline_meta: Dict[str, Any],
     batch_event_emitter: Callable,
 ) -> None:
+    # ``payload.result`` is gated by ``_STRICT_RESULT_ALLOWED_KEYS =
+    # {"status", "reference", "context", "command_id"}``.  The
+    # processed_result coming in here is the last meaningful step's
+    # result envelope (often ``{"id": "...", "data": {...}, "status":
+    # "ok"}`` from a tool like postgres or python).  Pre-fix this was
+    # spread directly into ``payload.result`` and the server rejected
+    # the batch with ``payload.result includes unsupported keys: data,
+    # id``.  Wrap the tool result in ``context`` (which IS allowed) so
+    # downstream readers can still reach the payload at
+    # ``result.context.*`` — the same shape the dispatched path
+    # surfaces via ``LifecycleEventPayload`` plus the ``call.done``
+    # event chain.
+    result_envelope: Dict[str, Any] = {"status": "ok"}
+    if isinstance(result, dict):
+        # Reuse the tool's status when present so the lifecycle event
+        # reflects the actual terminal outcome.
+        tool_status = result.get("status")
+        if isinstance(tool_status, str) and tool_status.strip():
+            result_envelope["status"] = tool_status
+        result_envelope["context"] = result
+    elif result is not None:
+        result_envelope["context"] = {"value": result}
     events = [
         {
             "step": "workflow",
             "name": "workflow.completed",
             "payload": _with_inline_meta(
-                {"status": "completed", "result": result},
+                {"status": "completed", "result": result_envelope},
                 inline_meta,
             ),
             "actionable": False,
@@ -765,7 +810,7 @@ async def _emit_workflow_completed(
             "step": playbook_path,
             "name": "playbook.completed",
             "payload": _with_inline_meta(
-                {"status": "completed"},
+                {"status": "completed", "result": {"status": "ok"}},
                 inline_meta,
             ),
             "actionable": False,

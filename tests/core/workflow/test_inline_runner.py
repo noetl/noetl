@@ -561,3 +561,288 @@ async def test_inline_runner_data_skips_start_boundary_step():
     assert "value" in data_str or "42" in data_str, (
         f"InlineResult.data lost do_work's payload. Got: {result.data!r}"
     )
+
+
+# ---------------------------------------------------------------------------
+# Event payload schema regression tests
+#
+# Round B Phase D on the noetl-demo GKE cluster failed because the runner's
+# emitted events did not comply with ``_STRICT_RESULT_ALLOWED_KEYS = {"status",
+# "reference", "context", "command_id"}``.  The server's
+# ``_validate_reference_only_payload`` rejected every batch with
+# ``payload.result includes unsupported keys: ...`` and the runner's
+# ``_safe_emit`` swallowed the 500.  Symptom: SPA hung on "Muno is planning..."
+# with no visible diagnostic.  These tests guard the event payload shapes.
+# ---------------------------------------------------------------------------
+
+
+_STRICT_RESULT_ALLOWED_KEYS = {"status", "reference", "context", "command_id"}
+
+
+def _assert_payload_result_keys_allowed(payload, *, event_name: str) -> None:
+    """Helper mirroring the server's ``_validate_reference_only_payload``
+    rule for the ``payload.result`` key set."""
+    if not isinstance(payload, dict):
+        return
+    result_obj = payload.get("result")
+    if result_obj is None:
+        return
+    assert isinstance(result_obj, dict), (
+        f"{event_name}: payload.result must be a dict; got {type(result_obj).__name__}"
+    )
+    unknown = {k for k in result_obj.keys() if k not in _STRICT_RESULT_ALLOWED_KEYS}
+    assert not unknown, (
+        f"{event_name}: payload.result includes unsupported keys: "
+        f"{sorted(unknown)} (allowed: {sorted(_STRICT_RESULT_ALLOWED_KEYS)})"
+    )
+
+
+@pytest.mark.asyncio
+async def test_inline_runner_emitted_events_comply_with_strict_payload_schema():
+    """Every event the inline runner emits must keep ``payload.result``
+    within ``_STRICT_RESULT_ALLOWED_KEYS``.  Pre-fix ``playbook.initialized``
+    and ``workflow.initialized`` smuggled ``workload``/``playbook_path``
+    into ``result``, and ``workflow.completed`` spread the tool result
+    dict (``{"id": "...", "data": {...}, "status": "ok"}``) directly into
+    ``result``, both of which the server's
+    ``_validate_reference_only_payload`` rejected with HTTP 500."""
+    events, emitter = _make_emitter()
+
+    playbook = {
+        "metadata": {"name": "test/firestore_dispatch_style"},
+        "workflow": [
+            {
+                "step": "firestore_dispatch",
+                "tool": {
+                    "kind": "python",
+                    # Mirror the real firestore mcp playbook's terminal
+                    # result envelope: ``{"id": "...", "data": {...},
+                    # "status": "ok"}``.  Pre-fix this was the exact shape
+                    # that broke workflow.completed.
+                    "code": (
+                        "result = {"
+                        "    'id': '8d3da932-dcde-4274-8a47-firestore',"
+                        "    'data': {'rows': [{'value': 'ok'}]},"
+                        "    'status': 'ok',"
+                        "}"
+                    ),
+                },
+            },
+            {"step": "end", "tool": {"kind": "noop"}},
+        ],
+    }
+
+    result = await run_inline(
+        parent_execution_id="parent-schema",
+        parent_command_id="cmd-schema",
+        parent_step="agent_step",
+        child_playbook=playbook,
+        child_input={"firestore_database": "(default)"},
+        inline_decision=_make_decision(),
+        jinja_env=Environment(),
+        cancellation_probe=_cancellation_probe_returning(False),
+        batch_event_emitter=emitter,
+        depth=0,
+    )
+
+    assert result.status == "ok"
+    # The runner must have emitted at least the playbook.initialized +
+    # workflow.completed events.
+    event_names = {ev.get("name") for ev in events}
+    assert "playbook.initialized" in event_names
+    assert "workflow.initialized" in event_names
+    assert "workflow.completed" in event_names
+    assert "playbook.completed" in event_names
+
+    for ev in events:
+        _assert_payload_result_keys_allowed(
+            ev.get("payload"), event_name=ev.get("name", "<unknown>")
+        )
+
+
+@pytest.mark.asyncio
+async def test_inline_runner_workflow_completed_wraps_tool_result_in_context():
+    """``workflow.completed`` historically dropped the last step's result
+    dict directly into ``payload.result``, which violated the
+    strict-allowed-keys rule (``id``, ``data`` are not allowed at that
+    layer).  The fix wraps the tool result inside ``payload.result.context``
+    so downstream readers can still reach it at ``result.context.*`` and
+    the strict-keys check passes.
+
+    Note: the runner emits ``workflow.completed`` with ``last_result``
+    (the literal last step's result), not ``last_meaningful_result`` —
+    mirroring the dispatched path's ``LifecycleEventPayload(result=
+    event.payload.get('result'))`` shape where ``event`` is the
+    terminating step.exit event.  Data preservation for the agent
+    envelope (which uses ``last_meaningful_result``) is covered by
+    ``test_inline_runner_data_skips_noop_end_boundary_step``."""
+    events, emitter = _make_emitter()
+
+    # Single-step playbook so ``last_result`` is the tool's dict
+    # directly (the very shape that pre-fix violated the schema).
+    playbook = {
+        "metadata": {"name": "test/python_with_id_data_status"},
+        "workflow": [
+            {
+                "step": "produce",
+                "tool": {
+                    "kind": "python",
+                    "code": "result = {'id': 'x', 'data': {'category': 'unknown'}, 'status': 'ok'}",
+                },
+            },
+        ],
+    }
+
+    await run_inline(
+        parent_execution_id="parent-ctx",
+        parent_command_id="cmd-ctx",
+        parent_step="agent_step",
+        child_playbook=playbook,
+        child_input={},
+        inline_decision=_make_decision(),
+        jinja_env=Environment(),
+        cancellation_probe=_cancellation_probe_returning(False),
+        batch_event_emitter=emitter,
+        depth=0,
+    )
+
+    completed = [e for e in events if e.get("name") == "workflow.completed"]
+    assert completed, "workflow.completed must be emitted"
+    payload = completed[0].get("payload") or {}
+    result_obj = payload.get("result") or {}
+    # Strict-keys rule
+    assert set(result_obj.keys()).issubset(_STRICT_RESULT_ALLOWED_KEYS), (
+        f"workflow.completed payload.result has forbidden keys: "
+        f"{sorted(result_obj.keys())}"
+    )
+    # The actual tool payload is reachable through context
+    ctx = result_obj.get("context") or {}
+    assert isinstance(ctx, dict), f"result.context must be a dict; got {ctx!r}"
+    assert "id" in ctx or "data" in ctx or "category" in repr(ctx), (
+        f"workflow.completed lost the tool result payload. "
+        f"Got result.context={ctx!r}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_inline_runner_init_events_move_workload_into_meta():
+    """``playbook.initialized`` and ``workflow.initialized`` historically
+    placed ``workload`` and ``playbook_path`` directly inside
+    ``payload.result``, which the server rejected.  The fix moves both
+    into ``payload.meta`` so the information is preserved without
+    violating the strict-allowed-keys rule."""
+    events, emitter = _make_emitter()
+
+    playbook = {
+        "metadata": {"name": "test/init_event_meta"},
+        "workflow": [
+            {"step": "noop", "tool": {"kind": "noop"}},
+        ],
+    }
+
+    await run_inline(
+        parent_execution_id="parent-init",
+        parent_command_id="cmd-init",
+        parent_step="agent_step",
+        child_playbook=playbook,
+        child_input={"db_credential": "pg_auth", "tenant": "demo"},
+        inline_decision=_make_decision(),
+        jinja_env=Environment(),
+        cancellation_probe=_cancellation_probe_returning(False),
+        batch_event_emitter=emitter,
+        depth=0,
+    )
+
+    for evt_name in ("playbook.initialized", "workflow.initialized"):
+        matching = [e for e in events if e.get("name") == evt_name]
+        assert matching, f"expected {evt_name!r} event in emitted stream"
+        payload = matching[0].get("payload") or {}
+        # Strict keys must hold
+        _assert_payload_result_keys_allowed(payload, event_name=evt_name)
+        # ``workload`` and ``playbook_path`` must NOT appear under result
+        result_obj = payload.get("result") or {}
+        assert "workload" not in result_obj
+        assert "playbook_path" not in result_obj
+        # ...but should be reachable via payload.meta
+        meta = payload.get("meta") or {}
+        assert meta.get("playbook_path") == "test/init_event_meta"
+        # ``inline_workload`` carries the child_input dict (renamed to
+        # avoid colliding with the generic ``workload`` field downstream
+        # readers may project from event meta).
+        assert isinstance(meta.get("inline_workload"), dict)
+        assert meta["inline_workload"].get("db_credential") == "pg_auth"
+
+
+# ---------------------------------------------------------------------------
+# parent_catalog_id wiring
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_inline_runner_passes_parent_catalog_id_to_emitter():
+    """The runner must forward ``parent_catalog_id`` to the batch emitter
+    via the emitter's ``set_catalog_id`` mutator.  Without it the server
+    cannot populate ``noetl.event.catalog_id`` for child events (the
+    column is NOT NULL and the per-execution DB lookup returns None for
+    inline children with no prior event rows)."""
+
+    set_catalog_id_calls: list = []
+
+    class _ProbeEmitter:
+        def __init__(self) -> None:
+            self.emit_calls: list = []
+
+        def set_catalog_id(self, catalog_id):
+            set_catalog_id_calls.append(catalog_id)
+
+        def __call__(self, execution_id, events):
+            self.emit_calls.append((execution_id, events))
+            return True
+
+    emitter = _ProbeEmitter()
+
+    await run_inline(
+        parent_execution_id="parent-cat",
+        parent_command_id="cmd-cat",
+        parent_step="agent_step",
+        child_playbook={"workflow": [{"step": "noop", "tool": {"kind": "noop"}}]},
+        child_input={},
+        inline_decision=_make_decision(),
+        jinja_env=Environment(),
+        cancellation_probe=_cancellation_probe_returning(False),
+        batch_event_emitter=emitter,
+        depth=0,
+        parent_catalog_id=635123456789012345,
+    )
+
+    assert set_catalog_id_calls == [635123456789012345], (
+        f"runner did not wire parent_catalog_id through; got calls: "
+        f"{set_catalog_id_calls!r}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_inline_runner_legacy_emitter_without_set_catalog_id_still_works():
+    """Tests in the suite construct simple 2-arg lambdas as emitters.
+    Those must keep working — the runner only calls ``set_catalog_id``
+    if the emitter exposes it, and a missing method must not abort
+    the run."""
+    events, emitter = _make_emitter()
+
+    result = await run_inline(
+        parent_execution_id="parent-legacy",
+        parent_command_id="cmd-legacy",
+        parent_step="agent_step",
+        child_playbook={"workflow": [{"step": "noop", "tool": {"kind": "noop"}}]},
+        child_input={},
+        inline_decision=_make_decision(),
+        jinja_env=Environment(),
+        cancellation_probe=_cancellation_probe_returning(False),
+        batch_event_emitter=emitter,
+        depth=0,
+        parent_catalog_id=635999999999999999,
+    )
+
+    assert result.status == "ok"
+    # The legacy callable still received emissions.
+    assert events, "legacy emitter must still receive events"
