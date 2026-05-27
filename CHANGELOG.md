@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.102.6](https://github.com/noetl/noetl/compare/v2.102.5...v2.102.6) (2026-05-27)
+
+### Bug Fixes
+
+* **security:** redact_keychain_values must not destroy credential aliases (continuation of [#617](https://github.com/noetl/noetl/issues/617)) ([1266d5c](https://github.com/noetl/noetl/commit/1266d5c7f6ffb2b2650cf0575ec59ee86c4fce2a))
+
 ## [2.102.5](https://github.com/noetl/noetl/compare/v2.102.4...v2.102.5) (2026-05-26)
 
 ### Bug Fixes
