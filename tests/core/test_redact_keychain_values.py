@@ -183,3 +183,102 @@ def test_render_context_workload_with_aliases_and_real_secret():
     assert redacted["workload"]["nats_credential"] == "nats_user"
     assert redacted["workload"]["auth0_token"] == REDACTED
     assert redacted["workload"]["request_id"] == "abc-123"
+
+
+def test_preserves_noetl_ref_placeholder_under_blind_redact_key():
+    """``$noetl_ref`` keychain placeholders must survive blind-redact branch.
+
+    Regression test for noetl/ai-meta#24 — the producer scrub previously
+    replaced ``{"duffel_token": {"$noetl_ref": ...}}`` with
+    ``{"duffel_token": "[REDACTED]"}`` because the key ``duffel_token``
+    was in ``additional_keys`` (derived from the keychain manifest).
+    The worker then received a string sentinel where the placeholder
+    dict should have been, sent ``Authorization: Bearer [REDACTED]``
+    to Duffel, and got ``access_token_not_found`` 401 on every dispatch.
+    """
+    payload = {
+        "duffel_token": {
+            "$noetl_ref": {
+                "kind": "keychain",
+                "name": "duffel_token",
+                "field": "token",
+            }
+        }
+    }
+
+    redacted = redact_keychain_values(payload, additional_keys={"duffel_token"})
+
+    assert redacted["duffel_token"] == payload["duffel_token"]
+
+
+def test_preserves_noetl_ref_placeholder_under_partial_match_key():
+    """Same preservation contract for the partial-match-sensitive branch.
+
+    ``access_token`` is partial-match-sensitive via the ``token``
+    substring rule.  When the value is a ``$noetl_ref`` placeholder
+    (e.g. amadeus's ``{{ keychain.amadeus_token.access_token }}``
+    encoded via ``render_preserving_keychain_refs``) the redactor
+    used to replace it with ``[REDACTED]``.  Now it passes through.
+    """
+    payload = {
+        "access_token": {
+            "$noetl_ref": {
+                "kind": "keychain",
+                "name": "amadeus_token",
+                "field": "access_token",
+            }
+        }
+    }
+
+    # No additional_keys — the partial-match branch handles ``access_token``
+    # via the substring rule.
+    redacted = redact_keychain_values(payload)
+
+    assert redacted["access_token"] == payload["access_token"]
+
+
+def test_still_redacts_resolved_token_string_under_blind_redact_key():
+    """Real credential values must still be redacted — the preservation
+    only applies to ``$noetl_ref`` placeholder dicts.
+    """
+    payload = {
+        "duffel_token": "duffel_test_resolvedSecretValue",
+    }
+
+    redacted = redact_keychain_values(payload, additional_keys={"duffel_token"})
+
+    assert redacted["duffel_token"] == REDACTED
+
+
+def test_redacts_noetl_ref_with_non_keychain_kind():
+    """Only ``kind: keychain`` placeholders survive.  Other ``$noetl_ref``
+    shapes (if any are introduced later) must be redacted by default
+    until they're explicitly opted into the preservation list.
+    """
+    payload = {
+        "duffel_token": {
+            "$noetl_ref": {
+                "kind": "something_else",
+                "name": "foo",
+            }
+        }
+    }
+
+    redacted = redact_keychain_values(payload, additional_keys={"duffel_token"})
+
+    assert redacted["duffel_token"] == REDACTED
+
+
+def test_redacts_dict_without_noetl_ref_under_blind_redact_key():
+    """Any other dict shape under a blind-redact key is still redacted
+    — the preservation is narrow to the placeholder contract.
+    """
+    payload = {
+        "duffel_token": {
+            "nested": "leaked-token-value",
+        }
+    }
+
+    redacted = redact_keychain_values(payload, additional_keys={"duffel_token"})
+
+    assert redacted["duffel_token"] == REDACTED
