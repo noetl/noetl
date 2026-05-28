@@ -183,16 +183,28 @@ def extract_keychain_references(template_str: str) -> Set[str]:
 def extract_keychain_references_from_dict(data: Any) -> Set[str]:
     """
     Recursively extract keychain references from a dictionary or list.
-    
+
+    Handles both Jinja-template strings (``{{ keychain.name.field }}``) and
+    ``$noetl_ref`` placeholder dicts produced by
+    ``render_preserving_keychain_refs`` at command-issuance time.
+
     Args:
         data: Dictionary, list, or primitive value to scan
-        
+
     Returns:
         Set of keychain entry names
     """
     refs = set()
-    
+
     if isinstance(data, dict):
+        # Detect $noetl_ref placeholders emitted by render_preserving_keychain_refs.
+        # Shape: {"$noetl_ref": {"kind": "keychain", "name": "<name>", "field": ...}}
+        noetl_ref = data.get("$noetl_ref")
+        if isinstance(noetl_ref, dict) and noetl_ref.get("kind") == "keychain":
+            name = noetl_ref.get("name")
+            if name:
+                refs.add(str(name))
+            return refs
         for value in data.values():
             refs.update(extract_keychain_references_from_dict(value))
     elif isinstance(data, list):
@@ -200,7 +212,7 @@ def extract_keychain_references_from_dict(data: Any) -> Set[str]:
             refs.update(extract_keychain_references_from_dict(item))
     elif isinstance(data, str):
         refs.update(extract_keychain_references(data))
-    
+
     return refs
 
 
@@ -394,6 +406,11 @@ async def populate_keychain_context(
         if isinstance(obj, str):
             return 'keychain.' in obj
         if isinstance(obj, dict):
+            # Detect $noetl_ref placeholders emitted by render_preserving_keychain_refs.
+            # Shape: {"$noetl_ref": {"kind": "keychain", "name": "...", "field": "..."}}
+            noetl_ref = obj.get("$noetl_ref")
+            if isinstance(noetl_ref, dict) and noetl_ref.get("kind") == "keychain":
+                return True
             # Only scan keys and shallow values first
             for k, v in obj.items():
                 if 'keychain.' in k: return True
