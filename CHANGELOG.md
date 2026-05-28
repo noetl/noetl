@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.102.12](https://github.com/noetl/noetl/compare/v2.102.11...v2.102.12) (2026-05-28)
+
+### Bug Fixes
+
+* **sanitize:** preserve $noetl_ref keychain placeholders in producer scrub ([c9490b0](https://github.com/noetl/noetl/commit/c9490b05df6abf195f713a5bd3d60c0a828fc57c)), closes [noetl/ai-meta#24](https://github.com/noetl/ai-meta/issues/24) [noetl/ai-meta#21](https://github.com/noetl/ai-meta/issues/21) [noetl/ai-meta#20](https://github.com/noetl/ai-meta/issues/20)
+
 ## [2.102.11](https://github.com/noetl/noetl/compare/v2.102.10...v2.102.11) (2026-05-28)
 
 ### Bug Fixes
