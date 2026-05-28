@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.102.11](https://github.com/noetl/noetl/compare/v2.102.10...v2.102.11) (2026-05-28)
+
+### Bug Fixes
+
+* **worker:** detect $noetl_ref placeholders in populate_keychain_context ([48b3f49](https://github.com/noetl/noetl/commit/48b3f4979a8f10890d513797ba9b53a1fd2c71d0)), closes [noetl/ai-meta#24](https://github.com/noetl/ai-meta/issues/24) [noetl/ai-meta#21](https://github.com/noetl/ai-meta/issues/21) [noetl/noetl#623](https://github.com/noetl/noetl/issues/623)
+
 ## [2.102.10](https://github.com/noetl/noetl/compare/v2.102.9...v2.102.10) (2026-05-27)
 
 ### Bug Fixes
