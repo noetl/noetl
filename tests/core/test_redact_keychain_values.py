@@ -282,3 +282,93 @@ def test_redacts_dict_without_noetl_ref_under_blind_redact_key():
     redacted = redact_keychain_values(payload, additional_keys={"duffel_token"})
 
     assert redacted["duffel_token"] == REDACTED
+
+
+# noetl/ai-meta#20 regression: python tool ``code`` blocks containing
+# URL-building f-strings (``f"...?key={var}"``) were being replaced
+# wholesale with ``[REDACTED]`` because the ``[?&]key=<value>`` URL
+# credential pattern matched ``&key={urllib.parse.quote(key, ...)}``.
+# The worker then exec()'d the redaction sentinel as Python code and
+# raised ``NameError: name 'REDACTED' is not defined``.  These tests
+# guard the heuristic that recognises code/template strings and
+# bypasses the value-shape secret checks.
+
+
+def test_passes_through_python_fstring_url_with_template_key_param():
+    """Concrete google-places line that triggered the bug."""
+    code_line = (
+        'return f"https://places.googleapis.com/v1/{resource}/media'
+        '?maxWidthPx={int(max_width)}'
+        '&key={urllib.parse.quote(key, safe=\'\')}"'
+    )
+    payload = {"code": code_line}
+
+    redacted = redact_keychain_values(payload)
+
+    assert redacted["code"] == code_line
+
+
+def test_passes_through_multi_line_python_code_with_def_import_return():
+    """Multi-line python code with ``def``/``import``/``return`` markers
+    is metadata, not a leaf value.  Skips the structural secret checks.
+    """
+    code = (
+        "import urllib.parse\n"
+        "def build_url(key):\n"
+        "    return f'https://example.test?key={key}'\n"
+    )
+    payload = {"code": code}
+
+    redacted = redact_keychain_values(payload)
+
+    assert redacted["code"] == code
+
+
+def test_passes_through_jinja_template_string_with_substitution_markers():
+    """Jinja templates carry substitution markers ``{{ ... }}``.  Even
+    when they happen to render to a URL with credentials, the *template*
+    string is not itself a secret.
+    """
+    template = "https://api.example.test/v1/resource?key={{ workload.api_key }}"
+    payload = {"template_url": template}
+
+    redacted = redact_keychain_values(payload)
+
+    assert redacted["template_url"] == template
+
+
+def test_still_redacts_resolved_url_with_actual_key_param():
+    """A real URL with an actual resolved API key in the query string
+    is still redacted via the SECRET_VALUE_PATTERNS / URL credential
+    checks.  Only template/code shapes are exempted.
+    """
+    resolved_url = "https://api.example.test/v1/resource?key=AIzaSyAbCdEfGhIjKlMnOpQrStUvWxYz"
+    payload = {"url": resolved_url}
+
+    redacted = redact_keychain_values(payload)
+
+    # Either fully redacted (string-level) or URL-credential-redacted
+    # (substring level via redact_url_credentials).  Either way the
+    # original secret must not survive verbatim.
+    assert redacted["url"] != resolved_url
+
+
+def test_passes_through_yaml_workflow_definition_string():
+    """A YAML workflow definition stored as a string contains code-like
+    keywords (``import``, ``def``, ``return``) and should pass through
+    even if it embeds a URL.  This guards against false-positive
+    redactions of stored playbook content.
+    """
+    workflow = (
+        "- step: dispatch\n"
+        "  tool:\n"
+        "    kind: python\n"
+        "    code: |\n"
+        "      import urllib.parse\n"
+        "      return urllib.request.urlopen(url)\n"
+    )
+    payload = {"definition": workflow}
+
+    redacted = redact_keychain_values(payload)
+
+    assert redacted["definition"] == workflow
