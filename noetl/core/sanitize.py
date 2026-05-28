@@ -257,6 +257,52 @@ def redact_keychain_values(
     )
 
 
+def _looks_like_template_or_code(value: str) -> bool:
+    """Best-effort detection of strings that are templates or source code
+    rather than resolved leaf values.
+
+    The value-shape secret patterns in ``SECRET_VALUE_PATTERNS`` (e.g.
+    ``[?&]key=<value>`` URL credentials) match templated URLs that contain
+    f-string / Jinja substitution markers — e.g. the google-places MCP's
+    ``f"...?key={urllib.parse.quote(key, safe='')}"`` line.  When the
+    value matched after ``key=`` is itself a substitution marker, the
+    string is metadata describing how to build a URL at runtime, not a
+    resolved URL carrying an actual key.
+
+    Treating such strings as secrets and replacing them with the
+    redaction sentinel destroys the python tool's ``code`` block when
+    the playbook contains URL-building patterns.  Concrete failure on
+    noetl-demo-19700101 GKE: the google-places MCP dispatch returned
+    ``NameError: name 'REDACTED' is not defined`` because the entire
+    code string was replaced by ``"[REDACTED]"`` and exec(code)
+    evaluated ``[REDACTED]`` as a list-literal containing a bareword.
+    See noetl/ai-meta#20.
+
+    Heuristics (all liberal — false-positive cost is leaving template-
+    looking strings unredacted, false-negative cost is breaking
+    playbooks like above):
+
+    - Contains Jinja markers: ``{{`` / ``}}``.
+    - Contains Python f-string or .format markers inside a URL-like
+      query parameter, identifiable as the substring sequence
+      ``={`` (an ``=`` immediately followed by ``{`` — see
+      ``key={urllib...}``).
+    - Contains source-code patterns: ``def `` / ``import `` /
+      ``return ``.  The python-tool ``code`` field always contains at
+      least one of these.
+    """
+    if not isinstance(value, str) or not value:
+        return False
+    if "{{" in value or "}}" in value:
+        return True
+    if "={" in value:
+        return True
+    for marker in ("def ", "import ", "return ", "class ", "async def "):
+        if marker in value:
+            return True
+    return False
+
+
 def _is_response_secret_value(value: str, secret_values: Set[str]) -> bool:
     if not isinstance(value, str) or not value:
         return False
@@ -266,6 +312,17 @@ def _is_response_secret_value(value: str, secret_values: Set[str]) -> bool:
     for secret in secret_values:
         if len(secret) >= 8 and secret in value:
             return True
+
+    # Template / code-shaped strings skip the structural value-shape
+    # checks below.  They can still be flagged as secrets by the
+    # explicit ``secret_values`` set above (e.g. when a known token
+    # appears as a substring), but the URL-credential and
+    # SECRET_VALUE_PATTERNS regex checks would otherwise produce
+    # destructive false positives on f-string URL builders and
+    # multi-line python code blocks.  See ``_looks_like_template_or_code``
+    # docstring + noetl/ai-meta#20.
+    if _looks_like_template_or_code(value):
+        return False
 
     if redact_url_credentials(value) != value:
         return True
