@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.102.13](https://github.com/noetl/noetl/compare/v2.102.12...v2.102.13) (2026-05-28)
+
+### Bug Fixes
+
+* **sanitize:** bypass URL-credential + value-pattern checks for code/template strings ([2fb6f1f](https://github.com/noetl/noetl/commit/2fb6f1f9aafe0f944a692a168140d4f2cee754aa)), closes [noetl/ai-meta#20](https://github.com/noetl/ai-meta/issues/20) [noetl/ai-meta#20](https://github.com/noetl/ai-meta/issues/20) [noetl/noetl#627](https://github.com/noetl/noetl/issues/627) [noetl/ai-meta#20](https://github.com/noetl/ai-meta/issues/20)
+
 ## [2.102.12](https://github.com/noetl/noetl/compare/v2.102.11...v2.102.12) (2026-05-28)
 
 ### Bug Fixes
