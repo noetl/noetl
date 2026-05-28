@@ -289,6 +289,32 @@ def _is_response_sensitive_key(key: str) -> bool:
     return False
 
 
+def _is_noetl_keychain_placeholder(value: Any) -> bool:
+    """Return ``True`` when ``value`` is a ``$noetl_ref`` keychain reference
+    dict produced by ``render_preserving_keychain_refs``.
+
+    The placeholder shape is:
+
+        {"$noetl_ref": {"kind": "keychain", "name": "<name>", "field": "<field>"}}
+
+    These placeholders are storage-safe by design — they carry the
+    credential's *name* (which is metadata, already in the keychain manifest
+    anyway), not the resolved value.  The worker dereferences them against
+    ``noetl.keychain`` at tool-execution time.  Scrubbers MUST pass them
+    through; redacting them to ``[REDACTED]`` destroys the only signal the
+    worker has that this field needs late-resolution.
+
+    Implemented inline (no import of ``credential_refs``) to avoid a
+    circular dependency between ``sanitize`` and ``credential_refs``.
+    """
+    if not isinstance(value, dict):
+        return False
+    ref = value.get("$noetl_ref")
+    if not isinstance(ref, dict):
+        return False
+    return ref.get("kind") == "keychain"
+
+
 def _redact_response_recursive(
     data: Any,
     additional_keys: Set[str],
@@ -315,7 +341,22 @@ def _redact_response_recursive(
                 # Blind-redact the value regardless of shape — this is
                 # the producer-scrub contract and the response sanitizer
                 # honors it verbatim.
-                result[key] = redaction
+                #
+                # **Exception**: ``$noetl_ref`` keychain placeholder dicts
+                # produced by ``render_preserving_keychain_refs`` are
+                # storage-safe references, not resolved values.  Replacing
+                # them with ``[REDACTED]`` destroys the worker's only
+                # signal that the field needs late-resolution and the
+                # downstream tool ends up with ``Authorization: Bearer
+                # [REDACTED]`` against the upstream API (concrete failure
+                # in noetl/ai-meta#24 — Duffel returned
+                # ``access_token_not_found`` 401 on every dispatch
+                # despite the keychain cache being correctly populated).
+                # Pass the placeholder through so the worker resolves it.
+                if _is_noetl_keychain_placeholder(value):
+                    result[key] = value
+                else:
+                    result[key] = redaction
             elif partial_match_sensitive:
                 # The key name *partial-matches* an entry in
                 # ``SENSITIVE_KEYS`` / ``RESPONSE_SENSITIVE_KEYS`` but
@@ -367,6 +408,11 @@ def _redact_response_recursive(
                         result[key] = redaction
                     else:
                         result[key] = value
+                elif _is_noetl_keychain_placeholder(value):
+                    # Storage-safe $noetl_ref placeholder; preserve so
+                    # the worker can resolve.  See the blind-redact
+                    # branch above for the failure case this prevents.
+                    result[key] = value
                 elif isinstance(value, (dict, list, tuple)):
                     result[key] = redaction
                 else:
