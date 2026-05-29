@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.103.3](https://github.com/noetl/noetl/compare/v2.103.2...v2.103.3) (2026-05-29)
+
+### Performance Improvements
+
+* **batch:** batch cascade event INSERTs in handle_event ([86a9ba6](https://github.com/noetl/noetl/commit/86a9ba6aff0e312cfad9413b3b709c28e81304d2)), closes [noetl/ai-meta#29](https://github.com/noetl/ai-meta/issues/29)
+
 ## [2.103.2](https://github.com/noetl/noetl/compare/v2.103.1...v2.103.2) (2026-05-29)
 
 ### Performance Improvements
