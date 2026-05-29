@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.103.4](https://github.com/noetl/noetl/compare/v2.103.3...v2.103.4) (2026-05-29)
+
+### Performance Improvements
+
+* **batch:** coalesce intermediate save_state inside one handle_event ([7097457](https://github.com/noetl/noetl/commit/7097457faf2cd7895bde55f1aaeb4ab334e794ee)), closes [#635](https://github.com/noetl/noetl/issues/635)
+
 ## [2.103.3](https://github.com/noetl/noetl/compare/v2.103.2...v2.103.3) (2026-05-29)
 
 ### Performance Improvements
