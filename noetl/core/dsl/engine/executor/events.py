@@ -384,7 +384,18 @@ class EventHandlingMixin:
             )
             if not already_persisted:
                 await self._persist_event_compat(event, state, conn=conn)
-                await self.state_store.save_state(state, conn)
+                # Terminal-event fast path.  state is unchanged — completion
+                # was already persisted when the execution first reached
+                # this terminal status.  Skip the heavy state-JSONB rewrite
+                # (which dominates the no-op batch.completed tail; see
+                # noetl/ai-meta#29) and only advance last_event_id so
+                # cache-staleness checks and replay consumers see the new
+                # event ordering.
+                await self.state_store.save_state_terminal_lightweight(
+                    state.execution_id,
+                    state.last_event_id,
+                    conn=conn,
+                )
             return commands
         
         # Get current step

@@ -485,3 +485,93 @@ workflow:
     # TempStore is not mocked — that's an integration test concern)
     context = state.get_render_context(Event(execution_id=execution_id, step="process_rows", name="loop_init"))
     assert context["claim_rows"]["status"] == "success"
+
+
+@pytest.mark.asyncio
+async def test_terminal_event_skips_heavy_state_save(engine_setup, monkeypatch):
+    """Re-entry against an already-completed execution must take the
+    terminal-event fast path: persist the event, advance last_event_id via
+    ``save_state_terminal_lightweight``, and skip the full ``save_state``
+    JSONB rewrite. See noetl/ai-meta#29 for the timing data motivating this
+    fast path."""
+    engine, playbook_repo, state_store = engine_setup
+
+    playbook = _make_minimal_playbook("terminal_re_entry")
+    state = ExecutionState(
+        execution_id="200000000000022222",
+        playbook=playbook,
+        payload={},
+    )
+    # Pretend the execution is already terminal on entry.
+    state.completed = True
+    state.last_event_id = 4242
+
+    monkeypatch.setattr(state_store, "load_state", AsyncMock(return_value=state))
+    monkeypatch.setattr(state_store, "load_state_for_update", AsyncMock(return_value=state))
+    full_save = AsyncMock(return_value=None)
+    lightweight_save = AsyncMock(return_value=None)
+    monkeypatch.setattr(state_store, "save_state", full_save)
+    monkeypatch.setattr(state_store, "save_state_terminal_lightweight", lightweight_save)
+    persist_compat = AsyncMock(return_value=None)
+    monkeypatch.setattr(engine, "_persist_event_compat", persist_compat)
+
+    event = Event(
+        execution_id="200000000000022222",
+        step="fetch_data",
+        name="call.done",
+        payload={"result": {"ok": True}},
+    )
+
+    commands = await engine.handle_event(event, already_persisted=False)
+
+    assert commands == []
+    # The terminal-event fast path must persist the event (event-sourcing
+    # log is append-only) but skip the heavy state JSONB rewrite.
+    persist_compat.assert_awaited_once()
+    full_save.assert_not_awaited()
+    lightweight_save.assert_awaited_once()
+    args, kwargs = lightweight_save.call_args
+    # save_state_terminal_lightweight(execution_id, last_event_id, conn=...)
+    assert args[0] == state.execution_id
+    assert args[1] == state.last_event_id
+
+
+@pytest.mark.asyncio
+async def test_terminal_event_already_persisted_does_not_double_save(engine_setup, monkeypatch):
+    """When ``already_persisted=True`` (the batch.completed -> handle_event
+    path), the terminal-event branch must NOT call save_state at all
+    (heavy or lightweight) — the event is already in the log and no state
+    has changed."""
+    engine, playbook_repo, state_store = engine_setup
+
+    playbook = _make_minimal_playbook("terminal_already_persisted")
+    state = ExecutionState(
+        execution_id="200000000000022223",
+        playbook=playbook,
+        payload={},
+    )
+    state.completed = True
+    state.last_event_id = 9999
+
+    monkeypatch.setattr(state_store, "load_state", AsyncMock(return_value=state))
+    monkeypatch.setattr(state_store, "load_state_for_update", AsyncMock(return_value=state))
+    full_save = AsyncMock(return_value=None)
+    lightweight_save = AsyncMock(return_value=None)
+    monkeypatch.setattr(state_store, "save_state", full_save)
+    monkeypatch.setattr(state_store, "save_state_terminal_lightweight", lightweight_save)
+    persist_compat = AsyncMock(return_value=None)
+    monkeypatch.setattr(engine, "_persist_event_compat", persist_compat)
+
+    event = Event(
+        execution_id="200000000000022223",
+        step="fetch_data",
+        name="call.done",
+        payload={"result": {"ok": True}},
+    )
+
+    commands = await engine.handle_event(event, already_persisted=True)
+
+    assert commands == []
+    persist_compat.assert_not_awaited()
+    full_save.assert_not_awaited()
+    lightweight_save.assert_not_awaited()

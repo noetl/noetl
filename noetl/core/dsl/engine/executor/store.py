@@ -249,6 +249,46 @@ class StateStore:
 
         logger.debug(f"[STATE-SAVE] State saved to Postgres for execution {state.execution_id}")
 
+    async def save_state_terminal_lightweight(
+        self,
+        execution_id: Any,
+        last_event_id: Optional[int],
+        conn=None,
+    ) -> None:
+        """Lightweight save for already-terminal executions.
+
+        When an event arrives for an execution that is already
+        ``state.completed`` on entry to ``Engine._handle_event_inner``, the
+        state JSONB is unchanged — status is already terminal, step_results
+        will not be touched, end_time was set when the execution first
+        completed. The full ``save_state`` UPDATE rewrites the state column
+        anyway, which for orchestrator executions means re-serializing and
+        re-TOASTing a potentially-megabyte-sized blob on every late-arriving
+        event. That's the dominant cost in the no-op batch.completed tail
+        documented in noetl/ai-meta#29 (engine_total_ms = 1237ms while
+        state_load_ms = 5ms and issue_commands_ms = 0).
+
+        This method advances only ``last_event_id`` + ``updated_at``, which
+        is all the state-store cache layer + replay consumers need to
+        invalidate any cached state and observe the event ordering. The
+        terminal-event fast path in ``Engine._handle_event_inner`` calls it
+        instead of the full ``save_state`` for terminal re-entries.
+        """
+        sql = """
+            UPDATE noetl.execution
+            SET updated_at = CURRENT_TIMESTAMP,
+                last_event_id = GREATEST(COALESCE(last_event_id, 0), %s)
+            WHERE execution_id = %s
+        """
+        params = (int(last_event_id or 0), int(execution_id))
+        if conn is None:
+            async with get_pool_connection() as c:
+                async with c.cursor() as cur:
+                    await cur.execute(sql, params)
+        else:
+            async with conn.cursor() as cur:
+                await cur.execute(sql, params)
+
     async def should_refresh_cached_state(self, execution_id: str, last_event_id: Optional[int], allowed_missing_events: int = 1) -> bool:
         return False
 
