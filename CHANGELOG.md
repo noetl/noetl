@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.103.1](https://github.com/noetl/noetl/compare/v2.103.0...v2.103.1) (2026-05-29)
+
+### Performance Improvements
+
+* **batch:** terminal-event fast path skips state JSONB rewrite ([141814c](https://github.com/noetl/noetl/commit/141814c5df9500ac54c800a1ca3d9e626eed08d1)), closes [noetl/ai-meta#29](https://github.com/noetl/ai-meta/issues/29)
+
 ## [2.103.0](https://github.com/noetl/noetl/compare/v2.102.13...v2.103.0) (2026-05-29)
 
 ### Features
