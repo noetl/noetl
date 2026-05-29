@@ -423,22 +423,86 @@ async def _issue_commands_for_batch(job: _BatchAcceptJob, commands: list) -> Non
     publish_items = [(p["execution_id"], p["evt_id"], p["cmd_id"], p["step"]) for p in prepared_commands]
     await _publish_commands_with_recovery(publish_items, server_url=server_url)
 
-async def _process_accepted_batch(job: _BatchAcceptJob) -> int:
+async def _process_accepted_batch(
+    job: _BatchAcceptJob,
+    timing_capture: Optional[dict] = None,
+) -> int:
+    """Run the batch's engine pass + command issuance.
+
+    When ``timing_capture`` is supplied (the dispatcher passes a dict from
+    ``_process_batch_job``), populate per-phase wall-clock measurements in
+    milliseconds.  See noetl/ai-meta#29 for the profiling brief.  Phases
+    captured at this layer:
+
+      - ``pool_checkout_ms``: wall-clock for ``get_pool_connection`` to
+        return a usable connection.  Reflects pool saturation.
+      - ``lock_acquire_ms``: wall-clock for the
+        ``pg_advisory_xact_lock(execution_id)`` SQL.  Reflects lock
+        contention against other batches for the same execution.
+      - ``engine_total_ms`` + ``state_load_ms``: populated by
+        ``engine.handle_event`` itself via the same ``timing_capture``
+        dict.  See that method's docstring for definitions.
+      - ``issue_commands_ms``: wall-clock for ``_issue_commands_for_batch``.
+      - ``commit_ms``: wall-clock for the transaction commit (measured as
+        the time spent inside the ``engine_conn.transaction()`` __aexit__
+        after ``engine.handle_event`` returns).
+      - ``actionable_event``: ``True`` when ``last_actionable_event`` was
+        non-None and the engine ran; ``False`` for batches that were
+        accepted but had nothing actionable (the fast no-op path).
+    """
     from .events import _invalidate_execution_state_cache
     commands = []
     engine = None
     if job.last_actionable_event:
         engine = get_engine()
+        if timing_capture is not None:
+            timing_capture["actionable_event"] = True
+        pool_start = time.perf_counter()
         async with get_pool_connection() as engine_conn:
+            if timing_capture is not None:
+                timing_capture["pool_checkout_ms"] = round(
+                    (time.perf_counter() - pool_start) * 1000, 3
+                )
+            tx_start = time.perf_counter()
             async with engine_conn.transaction():
                 async with engine_conn.cursor() as cur:
                     await cur.execute(f"SET LOCAL statement_timeout = {int(_BATCH_PROCESSING_STATEMENT_TIMEOUT_MS)}"); await cur.execute(f"SET LOCAL idle_in_transaction_session_timeout = {int(_BATCH_PROCESSING_STATEMENT_TIMEOUT_MS)}")
+                    lock_start = time.perf_counter()
                     await cur.execute("SELECT pg_advisory_xact_lock(%s)", (int(job.last_actionable_event.execution_id),))
-                    commands = await engine.handle_event(job.last_actionable_event, conn=engine_conn, already_persisted=True)
+                    if timing_capture is not None:
+                        timing_capture["lock_acquire_ms"] = round(
+                            (time.perf_counter() - lock_start) * 1000, 3
+                        )
+                    commands = await engine.handle_event(
+                        job.last_actionable_event,
+                        conn=engine_conn,
+                        already_persisted=True,
+                        timing_capture=timing_capture,
+                    )
+                    engine_done_ts = time.perf_counter()
+            if timing_capture is not None:
+                # Time between engine.handle_event returning and transaction
+                # commit completing — captures COMMIT wall-clock (writes any
+                # dirtied state JSONB + advisory-lock release + flush).
+                timing_capture["commit_ms"] = round(
+                    (time.perf_counter() - engine_done_ts) * 1000, 3
+                )
+                # Total time inside the engine_conn.transaction() block.
+                timing_capture["transaction_ms"] = round(
+                    (time.perf_counter() - tx_start) * 1000, 3
+                )
+    elif timing_capture is not None:
+        timing_capture["actionable_event"] = False
+    issue_start = time.perf_counter()
     try: await _issue_commands_for_batch(job, commands)
     except Exception as e:
         if engine and commands: await _invalidate_execution_state_cache(str(job.execution_id), reason=f"batch_command_issue_failed:{type(e).__name__}", engine=engine)
         raise
+    finally:
+        if timing_capture is not None:
+            timing_capture["issue_commands_ms"] = round(
+                (time.perf_counter() - issue_start) * 1000, 3
+            )
     return len(commands)
 
 def _drain_contiguous_jobs_for_execution(execution_id: int) -> list[_BatchAcceptJob]:
@@ -474,14 +538,20 @@ async def _process_batch_job(job: _BatchAcceptJob) -> None:
         },
     )
     p_start = time.perf_counter()
+    # Per-phase timing breakdown for noetl/ai-meta#29.  Populated by
+    # ``_process_accepted_batch`` + ``engine.handle_event``.  Always-on,
+    # low-overhead (~microseconds per perf_counter call).  Operators
+    # can read the breakdown directly off the ``batch.completed``
+    # event's ``context`` JSONB.
+    timing_capture: dict = {}
     try:
         if _BATCH_PROCESSING_TIMEOUT_SECONDS > 0:
             cmd_gen = await asyncio.wait_for(
-                _process_accepted_batch(job),
+                _process_accepted_batch(job, timing_capture=timing_capture),
                 timeout=_BATCH_PROCESSING_TIMEOUT_SECONDS,
             )
         else:
-            cmd_gen = await _process_accepted_batch(job)
+            cmd_gen = await _process_accepted_batch(job, timing_capture=timing_capture)
     except asyncio.TimeoutError:
         _inc_batch_metric("processing_timeout_total")
         await _persist_batch_failed_event(
@@ -494,13 +564,28 @@ async def _process_batch_job(job: _BatchAcceptJob) -> None:
     p_sec = time.perf_counter() - p_start
     if p_sec > _BATCH_PROCESSING_WARN_SECONDS:
         logger.warning(
-            "[BATCH-EVENTS] Slow async batch processing request_id=%s exec_id=%s event_count=%s p_sec=%.3f cmd_gen=%s",
+            "[BATCH-EVENTS] Slow async batch processing request_id=%s exec_id=%s event_count=%s p_sec=%.3f cmd_gen=%s timing=%s",
             job.request_id,
             job.execution_id,
             len(job.events),
             p_sec,
             cmd_gen,
+            timing_capture,
         )
+    completed_context: dict = {
+        "request_id": job.request_id,
+        "commands_generated": cmd_gen,
+        "processing_ms": round(p_sec * 1000, 3),
+    }
+    if timing_capture:
+        # Promote each captured phase into the event context.  Existing
+        # consumers reading ``processing_ms`` / ``commands_generated``
+        # see the same fields; new operators can now read
+        # ``state_load_ms`` / ``engine_total_ms`` / ``pool_checkout_ms``
+        # / ``lock_acquire_ms`` / ``issue_commands_ms`` / ``commit_ms``
+        # / ``transaction_ms`` / ``actionable_event`` to localise
+        # per-execution finalization cost.  See noetl/ai-meta#29.
+        completed_context.update(timing_capture)
     await _persist_batch_status_event(
         job.execution_id,
         job.catalog_id,
@@ -509,11 +594,7 @@ async def _process_batch_job(job: _BatchAcceptJob) -> None:
         job.idempotency_key,
         "batch.completed",
         "COMPLETED",
-        {
-            "request_id": job.request_id,
-            "commands_generated": cmd_gen,
-            "processing_ms": round(p_sec * 1000, 3),
-        },
+        completed_context,
     )
 
 async def _batch_accept_worker_loop(worker_idx: int) -> None:

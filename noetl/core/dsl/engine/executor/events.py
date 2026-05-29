@@ -251,12 +251,63 @@ class EventHandlingMixin:
             )
             return None
 
-    async def handle_event(self, event: Event, conn=None, already_persisted: bool = False) -> list[Command]:
+    async def handle_event(
+        self,
+        event: Event,
+        conn=None,
+        already_persisted: bool = False,
+        timing_capture: Optional[dict] = None,
+    ) -> list[Command]:
+        """Public entry point.  Thin wrapper around ``_handle_event_inner`` that
+        captures per-phase wall-clock when the caller passes in a
+        ``timing_capture`` dict (see noetl/ai-meta#29 for the profiling brief).
+
+        Args:
+            event: The event to process.
+            already_persisted: If True, skip persisting the event (it was already
+                persisted by caller).
+            timing_capture: Optional dict; when supplied, populated with per-phase
+                wall-clock measurements in milliseconds.  Currently emits:
+
+                - ``state_load_ms``: wall-clock for the initial state read
+                  (``load_state_for_update`` for the batch path,
+                  ``load_state`` for the unlocked path, plus any cache-
+                  refresh re-read).
+                - ``engine_total_ms``: wall-clock for this entire
+                  ``handle_event`` invocation, captured at function exit.
+
+                ``engine_walk_ms`` can be inferred as
+                ``engine_total_ms - state_load_ms`` and aggregates the
+                DSL state-machine walk plus all ``save_state`` calls
+                made during this invocation.  A future PR may split
+                ``state_save_ms`` out into its own field.
+        """
+        engine_start_ts = time.perf_counter()
+        try:
+            return await self._handle_event_inner(
+                event,
+                conn=conn,
+                already_persisted=already_persisted,
+                timing_capture=timing_capture,
+            )
+        finally:
+            if timing_capture is not None:
+                timing_capture["engine_total_ms"] = round(
+                    (time.perf_counter() - engine_start_ts) * 1000, 3
+                )
+
+    async def _handle_event_inner(
+        self,
+        event: Event,
+        conn=None,
+        already_persisted: bool = False,
+        timing_capture: Optional[dict] = None,
+    ) -> list[Command]:
         """
         Handle an event and return commands to enqueue.
-        
+
         This is the core engine method called by the API.
-        
+
         Args:
             event: The event to process
             already_persisted: If True, skip persisting the event (it was already persisted by caller)
@@ -274,9 +325,10 @@ class EventHandlingMixin:
         normalized_payload = _unwrap_event_payload(event.payload)
         preserved_loop_snapshots: dict[str, dict[str, Any]] = {}
         cache_refreshed = False
-        
 
 
+
+        state_load_start = time.perf_counter()
         if conn:
             state = await self.state_store.load_state_for_update(event.execution_id, conn)
         else:
@@ -293,6 +345,10 @@ class EventHandlingMixin:
                 )
                 state = await self.state_store.load_state(event.execution_id)
                 cache_refreshed = True
+        if timing_capture is not None:
+            timing_capture["state_load_ms"] = round(
+                (time.perf_counter() - state_load_start) * 1000, 3
+            )
         if not state:
             logger.error(f"Execution state not found: {event.execution_id}")
             return commands
