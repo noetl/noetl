@@ -5,6 +5,7 @@ Tests for NoETL DSL Engine Control Flow
 import pytest
 import json
 from contextlib import asynccontextmanager
+from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 from noetl.core.dsl.engine.executor import ControlFlowEngine, PlaybookRepo, StateStore, ExecutionState
 from noetl.core.dsl.engine.models import Event, Command, Playbook
@@ -682,3 +683,154 @@ workflow:
     assert capture.get("save_state_ms", -1) >= 0
     assert capture.get("persist_event_compat_ms_calls", 0) >= 1
     assert capture.get("persist_event_compat_ms", -1) >= 0
+
+
+@pytest.mark.asyncio
+async def test_persist_cascade_events_no_events_is_noop(engine_setup, monkeypatch):
+    """Empty cascade list returns immediately without touching the DB
+    or _persist_event."""
+    engine, _playbook_repo, state_store = engine_setup
+    playbook = _make_minimal_playbook("cascade_noop")
+    state = ExecutionState(execution_id="200000000000044440", playbook=playbook, payload={})
+    persist = AsyncMock(return_value=None)
+    monkeypatch.setattr(engine, "_persist_event", persist)
+
+    await engine._persist_cascade_events([], state, conn=None)
+
+    persist.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_persist_cascade_events_single_falls_through(engine_setup, monkeypatch):
+    """A 1-event cascade routes through _persist_event_compat (single-row
+    path) — the batched optimisation only pays off for 2+ events."""
+    engine, _playbook_repo, state_store = engine_setup
+    playbook = _make_minimal_playbook("cascade_single")
+    state = ExecutionState(execution_id="200000000000044441", playbook=playbook, payload={})
+    persist = AsyncMock(return_value=None)
+    monkeypatch.setattr(engine, "_persist_event", persist)
+
+    one_event = Event(
+        execution_id="200000000000044441",
+        step="workflow",
+        name="workflow.completed",
+        payload={"status": "completed"},
+    )
+    await engine._persist_cascade_events([one_event], state, conn=None)
+
+    persist.assert_awaited_once()
+    persisted_event = persist.call_args.args[0]
+    assert persisted_event.name == "workflow.completed"
+
+
+@pytest.mark.asyncio
+async def test_persist_cascade_events_no_conn_iterates_per_event(engine_setup, monkeypatch):
+    """A multi-event cascade with conn=None (the test-environment shape)
+    routes each event through _persist_event_compat in order so test
+    monkeypatches on _persist_event see every cascade member."""
+    engine, _playbook_repo, state_store = engine_setup
+    playbook = _make_minimal_playbook("cascade_iter")
+    state = ExecutionState(execution_id="200000000000044442", playbook=playbook, payload={})
+    persist = AsyncMock(return_value=None)
+    monkeypatch.setattr(engine, "_persist_event", persist)
+
+    workflow_evt = Event(
+        execution_id="200000000000044442",
+        step="workflow",
+        name="workflow.completed",
+        payload={"status": "completed"},
+    )
+    playbook_evt = Event(
+        execution_id="200000000000044442",
+        step="my_playbook",
+        name="playbook.completed",
+        payload={"status": "completed"},
+    )
+
+    await engine._persist_cascade_events(
+        [workflow_evt, playbook_evt], state, conn=None
+    )
+
+    assert persist.await_count == 2
+    emitted_names = [c.args[0].name for c in persist.call_args_list]
+    assert emitted_names == ["workflow.completed", "playbook.completed"]
+
+
+@pytest.mark.asyncio
+async def test_persist_cascade_events_batched_path_with_conn(engine_setup, monkeypatch):
+    """A multi-event cascade with a real ``conn`` takes the batched path:
+    one SELECT for N snowflake IDs, one ``executemany`` INSERT, no
+    fallthrough to ``_persist_event``.  This is the production shape from
+    batch.py and the round-4 mitigation surface (noetl/ai-meta#29)."""
+    engine, _playbook_repo, state_store = engine_setup
+    playbook = _make_minimal_playbook("cascade_batched")
+    state = ExecutionState(
+        execution_id="200000000000044443",
+        playbook=playbook,
+        payload={},
+        catalog_id=42,
+    )
+
+    # _persist_event must NOT be called in the batched path.
+    persist = AsyncMock(return_value=None)
+    monkeypatch.setattr(engine, "_persist_event", persist)
+
+    # Record what the batched SQL execution looked like.
+    seen_queries: list[str] = []
+    seen_param_lengths: list[int] = []
+
+    class _FakeCursor:
+        async def __aenter__(self): return self
+        async def __aexit__(self, *_): return False
+        async def execute(self, query, params=None):
+            seen_queries.append(query)
+        async def executemany(self, query, params_seq):
+            seen_queries.append(query)
+            params_list = list(params_seq)
+            seen_param_lengths.append(len(params_list))
+        async def fetchone(self):
+            # Stage-aware fake: queries that ask for catalog_id never run
+            # here (state.catalog_id is set on the state above), and the
+            # init-event lookup runs once per init kind.  Return a sentinel
+            # the cascade can use as ``created_at``.
+            return {"created_at": datetime.now(timezone.utc)}
+        async def fetchall(self):
+            # Return two snowflake ids — matches len(events)=2.
+            return [{"snowflake_id": 9001}, {"snowflake_id": 9002}]
+
+    class _FakeConn:
+        def cursor(self, *args, **kwargs):
+            return _FakeCursor()
+
+    fake_conn = _FakeConn()
+
+    # Production cascade emissions set timestamp=datetime.now(timezone.utc);
+    # the test mirrors that so the duration calculation against the
+    # init-event lookup (also tz-aware in the fake cursor) doesn't trip
+    # on naive-vs-aware datetime subtraction.
+    now_utc = datetime.now(timezone.utc)
+    wf_evt = Event(
+        execution_id="200000000000044443",
+        step="workflow",
+        name="workflow.completed",
+        payload={"status": "completed"},
+        timestamp=now_utc,
+    )
+    pb_evt = Event(
+        execution_id="200000000000044443",
+        step="my_playbook",
+        name="playbook.completed",
+        payload={"status": "completed"},
+        timestamp=now_utc,
+    )
+
+    await engine._persist_cascade_events([wf_evt, pb_evt], state, conn=fake_conn)
+
+    # Batched path was taken: _persist_event was bypassed.
+    persist.assert_not_awaited()
+    # Exactly one ``executemany`` INSERT with two rows.
+    assert seen_param_lengths == [2], seen_param_lengths
+    insert_queries = [q for q in seen_queries if "INSERT INTO noetl.event" in q]
+    assert len(insert_queries) == 1
+    # The cascade allocated both snowflake ids and chained the parent.
+    assert state.last_event_id == 9002

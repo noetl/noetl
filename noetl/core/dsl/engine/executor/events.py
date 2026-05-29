@@ -543,9 +543,6 @@ class EventHandlingMixin:
                         timestamp=datetime.now(timezone.utc),
                         parent_event_id=state.last_event_id
                     )
-                    await self._persist_event_compat(workflow_completion_event, state, conn=conn)
-                    logger.info(f"Workflow completed (after inline task): execution_id={event.execution_id}")
-
                     playbook_completion_event = Event(
                         execution_id=event.execution_id,
                         step=state.playbook.metadata.get("path", "playbook"),
@@ -557,10 +554,21 @@ class EventHandlingMixin:
                             error=None
                         ).model_dump(),
                         timestamp=datetime.now(timezone.utc),
-                        parent_event_id=state.last_event_id
+                        parent_event_id=None,  # chained by _persist_cascade_events
                     )
-                    await self._persist_event_compat(playbook_completion_event, state, conn=conn)
-                    logger.info(f"Playbook completed (after inline task): execution_id={event.execution_id}")
+                    # Round-4 (noetl/ai-meta#29): batch the cascading
+                    # workflow + playbook completion INSERTs into one
+                    # round-trip; persist_event_compat_ms is the dominant
+                    # cg=0 cost line.
+                    await self._persist_cascade_events(
+                        [workflow_completion_event, playbook_completion_event],
+                        state,
+                        conn=conn,
+                    )
+                    logger.info(
+                        "Workflow + playbook completed (after inline task): execution_id=%s",
+                        event.execution_id,
+                    )
 
                     await self.state_store.save_state(state, conn)
             return commands
@@ -2503,12 +2511,14 @@ class EventHandlingMixin:
         if not completion_events and not already_persisted:
             await self._persist_event_compat(event, state, conn=conn)
         
-        # Persist completion events in order with proper parent_event_id chain
-        for i, completion_event in enumerate(completion_events):
-            if i > 0:
-                # Set parent to previous completion event
-                completion_event.parent_event_id = state.last_event_id
-            await self._persist_event_compat(completion_event, state, conn=conn)
+        # Persist completion events in order with proper parent_event_id chain.
+        # Round-4 (noetl/ai-meta#29): one batched INSERT instead of N
+        # round-trips through ``_persist_event_compat``.  The helper sets
+        # the parent_event_id chain internally as it allocates new IDs.
+        if completion_events:
+            await self._persist_cascade_events(
+                completion_events, state, conn=conn
+            )
         
         # CRITICAL: Stop generating commands if this is a failure event
         # Check AFTER persisting and completion events so they're all stored
@@ -2536,8 +2546,6 @@ class EventHandlingMixin:
                     timestamp=datetime.now(timezone.utc),
                     parent_event_id=current_event_id,
                 )
-                await self._persist_event_compat(workflow_failed_event, state, conn=conn)
-
                 playbook_failed_event = Event(
                     execution_id=event.execution_id,
                     step=state.playbook.metadata.get("path", "playbook"),
@@ -2549,9 +2557,15 @@ class EventHandlingMixin:
                         error=event.payload.get("error"),
                     ).model_dump(),
                     timestamp=datetime.now(timezone.utc),
-                    parent_event_id=state.last_event_id,
+                    parent_event_id=None,  # chained by _persist_cascade_events
                 )
-                await self._persist_event_compat(playbook_failed_event, state, conn=conn)
+                # Round-4 (noetl/ai-meta#29): batch the failure cascade
+                # into one round-trip; same shape as the success cascade.
+                await self._persist_cascade_events(
+                    [workflow_failed_event, playbook_failed_event],
+                    state,
+                    conn=conn,
+                )
                 await self.state_store.save_state(state, conn)
 
             if event.name == "command.failed":
