@@ -128,7 +128,18 @@ class StateStore:
         import logging
         log = logging.getLogger(__name__)
         t0 = time.perf_counter()
-        
+        try:
+            return await self._save_state_inner(state, conn=conn, log=log, t0=t0)
+        finally:
+            # Round-3 instrumentation: sum wall-clock for every save_state
+            # call across one Engine.handle_event invocation into the active
+            # timing_capture (see noetl/ai-meta#29).
+            accumulate_engine_phase_ms(
+                "save_state_ms",
+                (time.perf_counter() - t0) * 1000,
+            )
+
+    async def _save_state_inner(self, state: ExecutionState, conn=None, *, log, t0):
         state_dict = state.to_dict()
         t1 = time.perf_counter()
         
@@ -274,20 +285,31 @@ class StateStore:
         terminal-event fast path in ``Engine._handle_event_inner`` calls it
         instead of the full ``save_state`` for terminal re-entries.
         """
-        sql = """
-            UPDATE noetl.execution
-            SET updated_at = CURRENT_TIMESTAMP,
-                last_event_id = GREATEST(COALESCE(last_event_id, 0), %s)
-            WHERE execution_id = %s
-        """
-        params = (int(last_event_id or 0), int(execution_id))
-        if conn is None:
-            async with get_pool_connection() as c:
-                async with c.cursor() as cur:
+        t0 = time.perf_counter()
+        try:
+            sql = """
+                UPDATE noetl.execution
+                SET updated_at = CURRENT_TIMESTAMP,
+                    last_event_id = GREATEST(COALESCE(last_event_id, 0), %s)
+                WHERE execution_id = %s
+            """
+            params = (int(last_event_id or 0), int(execution_id))
+            if conn is None:
+                async with get_pool_connection() as c:
+                    async with c.cursor() as cur:
+                        await cur.execute(sql, params)
+            else:
+                async with conn.cursor() as cur:
                     await cur.execute(sql, params)
-        else:
-            async with conn.cursor() as cur:
-                await cur.execute(sql, params)
+        finally:
+            # Round-3 instrumentation: track time spent in the terminal-
+            # event fast path separately from the heavy save_state so we
+            # can see the patch's effect (or lack thereof) in
+            # batch.completed context (see noetl/ai-meta#29).
+            accumulate_engine_phase_ms(
+                "save_state_terminal_lightweight_ms",
+                (time.perf_counter() - t0) * 1000,
+            )
 
     async def should_refresh_cached_state(self, execution_id: str, last_event_id: Optional[int], allowed_missing_events: int = 1) -> bool:
         return False

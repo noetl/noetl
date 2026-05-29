@@ -9,13 +9,26 @@ from .transitions import _get_next_arcs, _get_next_mode
 
 class EventHandlingMixin:
     async def _persist_event_compat(self, event: Event, state: ExecutionState, conn=None):
-        """Call _persist_event while tolerating older monkeypatched test doubles."""
+        """Call _persist_event while tolerating older monkeypatched test doubles.
+
+        Wall-clock for each call is accumulated into the active
+        ``timing_capture`` dict under ``persist_event_compat_ms`` (round-3
+        instrumentation; see noetl/ai-meta#29).  No-op when no capture is
+        bound — i.e. when called outside ``Engine.handle_event``.
+        """
+        t0 = time.perf_counter()
         try:
-            return await self._persist_event(event, state, conn=conn)
-        except TypeError as exc:
-            if "unexpected keyword argument 'conn'" not in str(exc):
-                raise
-            return await self._persist_event(event, state)
+            try:
+                return await self._persist_event(event, state, conn=conn)
+            except TypeError as exc:
+                if "unexpected keyword argument 'conn'" not in str(exc):
+                    raise
+                return await self._persist_event(event, state)
+        finally:
+            accumulate_engine_phase_ms(
+                "persist_event_compat_ms",
+                (time.perf_counter() - t0) * 1000,
+            )
 
     async def _count_durable_pending_commands(self, execution_id: str, conn=None) -> Optional[int]:
         """Return pending command count from noetl.command, or None if unavailable."""
@@ -276,13 +289,30 @@ class EventHandlingMixin:
                 - ``engine_total_ms``: wall-clock for this entire
                   ``handle_event`` invocation, captured at function exit.
 
-                ``engine_walk_ms`` can be inferred as
-                ``engine_total_ms - state_load_ms`` and aggregates the
-                DSL state-machine walk plus all ``save_state`` calls
-                made during this invocation.  A future PR may split
-                ``state_save_ms`` out into its own field.
+                Round-3 (noetl/ai-meta#29) adds three sub-phase
+                accumulators populated automatically when the dict is
+                bound to the active context.  Each sums wall-clock time
+                across every call site inside this invocation:
+
+                - ``save_state_ms`` + ``save_state_ms_calls``
+                - ``save_state_terminal_lightweight_ms`` +
+                  ``save_state_terminal_lightweight_ms_calls``
+                - ``persist_event_compat_ms`` +
+                  ``persist_event_compat_ms_calls``
+
+                ``orchestrate_ms`` (the DSL state-machine walk minus
+                state load and side-effect writes) can be inferred as
+                ``engine_total_ms - state_load_ms - save_state_ms -
+                save_state_terminal_lightweight_ms -
+                persist_event_compat_ms``.
         """
         engine_start_ts = time.perf_counter()
+        # Round-3 instrumentation: bind the timing_capture dict to a
+        # contextvar so save_state / save_state_terminal_lightweight /
+        # _persist_event_compat can accumulate their sub-phase wall-clocks
+        # without threading the dict through every call site.  See
+        # noetl/ai-meta#29.
+        timing_token = bind_engine_timing_capture(timing_capture)
         try:
             return await self._handle_event_inner(
                 event,
@@ -291,6 +321,7 @@ class EventHandlingMixin:
                 timing_capture=timing_capture,
             )
         finally:
+            unbind_engine_timing_capture(timing_token)
             if timing_capture is not None:
                 timing_capture["engine_total_ms"] = round(
                     (time.perf_counter() - engine_start_ts) * 1000, 3

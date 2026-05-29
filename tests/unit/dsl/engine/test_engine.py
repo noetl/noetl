@@ -575,3 +575,110 @@ async def test_terminal_event_already_persisted_does_not_double_save(engine_setu
     persist_compat.assert_not_awaited()
     full_save.assert_not_awaited()
     lightweight_save.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_timing_capture_accumulates_subphases(engine_setup, monkeypatch):
+    """Round-3 instrumentation: handle_event binds the timing_capture dict
+    to a contextvar so save_state / _persist_event_compat accumulate their
+    wall-clock into the dict.  See noetl/ai-meta#29."""
+    from noetl.core.dsl.engine.executor.common import (
+        accumulate_engine_phase_ms,
+        bind_engine_timing_capture,
+        get_current_engine_timing_capture,
+        unbind_engine_timing_capture,
+    )
+
+    engine, _playbook_repo, state_store = engine_setup
+
+    # When no capture is bound, accumulators are silent.
+    assert get_current_engine_timing_capture() is None
+    accumulate_engine_phase_ms("save_state_ms", 12.34)  # no-op, no crash
+
+    capture: dict = {}
+    token = bind_engine_timing_capture(capture)
+    try:
+        accumulate_engine_phase_ms("save_state_ms", 12.34)
+        accumulate_engine_phase_ms("save_state_ms", 7.66)  # second call accumulates
+        accumulate_engine_phase_ms("persist_event_compat_ms", 3.5)
+    finally:
+        unbind_engine_timing_capture(token)
+
+    assert capture["save_state_ms"] == 20.0
+    assert capture["save_state_ms_calls"] == 2
+    assert capture["persist_event_compat_ms"] == 3.5
+    assert capture["persist_event_compat_ms_calls"] == 1
+    # Contextvar is restored after unbind.
+    assert get_current_engine_timing_capture() is None
+
+
+@pytest.mark.asyncio
+async def test_handle_event_populates_subphase_timings(engine_setup, monkeypatch):
+    """End-to-end: handle_event with a timing_capture dict and a happy-path
+    event must populate persist_event_compat_ms + save_state_ms (with
+    matching _calls counters) by the time the wrapper returns."""
+    engine, playbook_repo, state_store = engine_setup
+
+    yaml_content = """
+apiVersion: noetl.io/v2
+kind: Playbook
+metadata:
+  name: subphase_timing_test
+
+workflow:
+  - step: start
+    tool:
+      kind: python
+      code: "def main(): return {'ok': True}"
+    next:
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
+          when: "{{ event.name == 'call.done' }}"
+
+  - step: end
+    tool:
+      kind: python
+      code: "def main(): return {'done': True}"
+"""
+    playbook = DSLParser().parse(yaml_content)
+    state = ExecutionState(
+        execution_id="200000000000033333",
+        playbook=playbook,
+        payload={},
+    )
+    monkeypatch.setattr(state_store, "load_state", AsyncMock(return_value=state))
+    monkeypatch.setattr(state_store, "load_state_for_update", AsyncMock(return_value=state))
+    # save_state and _persist_event are real method calls — the accumulators
+    # fire from inside the methods themselves.  We replace the underlying
+    # IO with no-ops so the tests don't need a database.
+    monkeypatch.setattr(state_store, "_save_state_inner", AsyncMock(return_value=None))
+    engine._persist_event = AsyncMock(return_value=None)
+
+    event = Event(
+        execution_id="200000000000033333",
+        step="start",
+        name="call.done",
+        payload={"result": {"ok": True}},
+    )
+
+    capture: dict = {}
+    # Drive with already_persisted=False so the inbound event itself flows
+    # through _persist_event_compat — that exercises both accumulators in
+    # a single handle_event call.
+    commands = await engine.handle_event(event, already_persisted=False, timing_capture=capture)
+
+    assert [c.step for c in commands] == ["end"]
+    # The wrapper always populates engine_total_ms.
+    assert "engine_total_ms" in capture
+    # state_load_ms comes from _handle_event_inner.
+    assert "state_load_ms" in capture
+    # Round-3 sub-phases: both accumulators must have fired on the happy
+    # path.  Wall-clock can be vanishingly small with mocked IO so we
+    # check the *_calls counter for the existence assertion and the *_ms
+    # field for non-negativity.
+    assert capture.get("save_state_ms_calls", 0) >= 1
+    assert capture.get("save_state_ms", -1) >= 0
+    assert capture.get("persist_event_compat_ms_calls", 0) >= 1
+    assert capture.get("persist_event_compat_ms", -1) >= 0
