@@ -456,7 +456,26 @@ async def test_task_sequence_loop_persists_event_before_early_return_when_needed
 
     assert len(commands) == 1
     assert commands[0].step == parent_step
-    assert call_order[-2:] == ["save_state", "persist:call.done"]
+    # Both the call.done event AND state must land before handle_event
+    # returns.  Pre-round-5 (noetl/ai-meta#29) the engine saved state
+    # IMMEDIATELY before persisting the event, so the invariant was the
+    # exact-order pair ``[save_state, persist:call.done]``.  Round-5
+    # coalesces intermediate save_state calls and flushes ONCE at
+    # handle_event exit so the projection catches up after the event
+    # log — the textbook event-sourcing order.  The event log is the
+    # source of truth and is rebuildable into the projection, so this
+    # is safe.  We assert both side effects happened and that the
+    # event landed BEFORE the final save flush.
+    assert "save_state" in call_order, call_order
+    assert "persist:call.done" in call_order, call_order
+    # Round-5: the FINAL operation in handle_event is the projection
+    # flush.  Intermediate save_state requests are coalesced (the
+    # tracking wrapper still observes them but they do not hit the DB),
+    # so call_order shows both the coalesced intercept(s) AND the final
+    # flush.  The event MUST have landed before the final flush so the
+    # post-crash event log is at least as new as the projection.
+    assert call_order[-1] == "save_state", call_order
+    assert "persist:call.done" in call_order[: -1], call_order
 
 
 def test_normalize_loop_collection_does_not_split_unresolved_template():

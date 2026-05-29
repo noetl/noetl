@@ -313,6 +313,17 @@ class EventHandlingMixin:
         # without threading the dict through every call site.  See
         # noetl/ai-meta#29.
         timing_token = bind_engine_timing_capture(timing_capture)
+        # Round-5 (noetl/ai-meta#29): bind a coalescing buffer so
+        # intermediate save_state calls during this invocation stash the
+        # latest state instead of issuing the heavy JSONB UPDATE.  We
+        # flush once at the end with the final state.
+        save_state_buffer: dict = {
+            "pending": False,
+            "state": None,
+            "conn": None,
+            "coalesced_count": 0,
+        }
+        save_buffer_token = bind_save_state_buffer(save_state_buffer)
         try:
             return await self._handle_event_inner(
                 event,
@@ -321,11 +332,37 @@ class EventHandlingMixin:
                 timing_capture=timing_capture,
             )
         finally:
+            # Unbind the save-state buffer BEFORE flushing so the flush
+            # itself doesn't recurse into the coalescing branch.
+            unbind_save_state_buffer(save_buffer_token)
+            if save_state_buffer.get("pending"):
+                try:
+                    await self.state_store.save_state(
+                        save_state_buffer["state"],
+                        save_state_buffer["conn"],
+                    )
+                except Exception:
+                    # The flush failing would shadow the original
+                    # exception (or commit an inconsistent projection).
+                    # Log and continue — noetl.execution is rebuildable
+                    # from the event log, which is the source of truth.
+                    logger.exception(
+                        "[STATE-COALESCE] Final save_state flush failed for "
+                        "execution=%s; projection will be rebuilt by replay.",
+                        getattr(save_state_buffer.get("state"), "execution_id", "?"),
+                    )
             unbind_engine_timing_capture(timing_token)
             if timing_capture is not None:
                 timing_capture["engine_total_ms"] = round(
                     (time.perf_counter() - engine_start_ts) * 1000, 3
                 )
+                if save_state_buffer.get("coalesced_count"):
+                    # Surface the coalescing count in batch.completed
+                    # context so operators can see how many save_state
+                    # calls were elided per handle_event.
+                    timing_capture["save_state_coalesced_count"] = int(
+                        save_state_buffer["coalesced_count"]
+                    )
 
     async def _handle_event_inner(
         self,

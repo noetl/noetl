@@ -834,3 +834,95 @@ async def test_persist_cascade_events_batched_path_with_conn(engine_setup, monke
     assert len(insert_queries) == 1
     # The cascade allocated both snowflake ids and chained the parent.
     assert state.last_event_id == 9002
+
+
+@pytest.mark.asyncio
+async def test_save_state_buffer_unbound_is_immediate(engine_setup, monkeypatch):
+    """Outside Engine.handle_event the coalescing buffer is unbound and
+    save_state writes immediately.  Ad-hoc callers and test fixtures
+    that bypass the engine see identical behavior to pre-round-5."""
+    from noetl.core.dsl.engine.executor.common import (
+        get_current_save_state_buffer,
+    )
+    engine, _playbook_repo, state_store = engine_setup
+    inner = AsyncMock(return_value=None)
+    monkeypatch.setattr(state_store, "_save_state_inner", inner)
+
+    playbook = _make_minimal_playbook("save_state_immediate")
+    state = ExecutionState(execution_id="200000000000055551", playbook=playbook, payload={})
+
+    assert get_current_save_state_buffer() is None
+    await state_store.save_state(state)
+
+    inner.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_handle_event_coalesces_intermediate_save_state(engine_setup, monkeypatch):
+    """End-to-end: a handle_event call that issues multiple intermediate
+    save_state calls (e.g. the cascading-completion path) hits the heavy
+    JSONB UPDATE EXACTLY ONCE.  The round-5 invariant we ship on
+    noetl/ai-meta#29."""
+    engine, playbook_repo, state_store = engine_setup
+
+    yaml_content = """
+apiVersion: noetl.io/v2
+kind: Playbook
+metadata:
+  name: coalesce_test
+
+workflow:
+  - step: start
+    tool:
+      kind: python
+      code: "def main(): return {'ok': True}"
+    next:
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
+          when: "{{ event.name == 'call.done' }}"
+
+  - step: end
+    tool:
+      kind: python
+      code: "def main(): return {'done': True}"
+"""
+    playbook = DSLParser().parse(yaml_content)
+    state = ExecutionState(
+        execution_id="200000000000055552",
+        playbook=playbook,
+        payload={},
+    )
+    monkeypatch.setattr(state_store, "load_state", AsyncMock(return_value=state))
+    monkeypatch.setattr(state_store, "load_state_for_update", AsyncMock(return_value=state))
+
+    # Replace the heavy JSONB UPDATE so the test runs without a DB; the
+    # number of calls to ``_save_state_inner`` IS what we're asserting.
+    inner = AsyncMock(return_value=None)
+    monkeypatch.setattr(state_store, "_save_state_inner", inner)
+    engine._persist_event = AsyncMock(return_value=None)
+
+    event = Event(
+        execution_id="200000000000055552",
+        step="start",
+        name="call.done",
+        payload={"result": {"ok": True}},
+    )
+
+    capture: dict = {}
+    commands = await engine.handle_event(
+        event, already_persisted=True, timing_capture=capture
+    )
+
+    # The orchestration path runs to completion.
+    assert [c.step for c in commands] == ["end"]
+    # Coalesced intermediate save_state calls happened (logical count
+    # surfaced via the timing_capture counter).  The exact value depends
+    # on the orchestration path; we assert "at least one was coalesced
+    # AND the heavy UPDATE ran exactly once for the final flush".
+    assert capture.get("save_state_ms_calls", 0) >= 1
+    coalesced = capture.get("save_state_coalesced_count", 0)
+    assert coalesced >= 1, capture
+    # The heavy JSONB UPDATE ran ONCE — the round-5 win.
+    assert inner.await_count == 1, inner.await_count
