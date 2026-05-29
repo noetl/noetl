@@ -10,6 +10,7 @@ Event-driven control flow engine that:
 Canonical format only - no case/when/then blocks.
 """
 
+import contextvars
 import logging
 import os
 import time
@@ -883,6 +884,59 @@ class TemplateCache:
         self._hits = 0
         self._misses = 0
         self._evictions = 0
+
+
+# ---------------------------------------------------------------------------
+# Per-event timing capture (round-3 instrumentation, see noetl/ai-meta#29)
+# ---------------------------------------------------------------------------
+#
+# ``Engine.handle_event`` accepts a ``timing_capture`` dict that downstream
+# code populates with per-phase wall-clock measurements.  Threading that dict
+# through every ``save_state`` / ``_persist_event_compat`` call site would
+# touch ~25 callers across ``events.py`` and ``store.py``.  Instead we stash
+# the active dict in a contextvar for the duration of one ``handle_event``
+# invocation, and the timed methods read it back via
+# ``accumulate_engine_phase_ms``.  Concurrent ``handle_event`` calls run on
+# separate asyncio tasks and therefore get independent contextvar values.
+#
+# The contextvar is unset (returns ``None``) outside of a ``handle_event``
+# call, so the accumulators are a no-op for callers that bypass the engine
+# (test fixtures, ad-hoc state writes, etc).
+
+_current_engine_timing_capture: contextvars.ContextVar[Optional[dict]] = (
+    contextvars.ContextVar("noetl_engine_timing_capture", default=None)
+)
+
+
+def get_current_engine_timing_capture() -> Optional[dict]:
+    """Return the timing_capture dict for the active handle_event call."""
+    return _current_engine_timing_capture.get()
+
+
+def bind_engine_timing_capture(timing_capture: Optional[dict]) -> Any:
+    """Bind ``timing_capture`` to the current context; return a reset token."""
+    return _current_engine_timing_capture.set(timing_capture)
+
+
+def unbind_engine_timing_capture(token: Any) -> None:
+    """Restore the previous contextvar value using a bind token."""
+    _current_engine_timing_capture.reset(token)
+
+
+def accumulate_engine_phase_ms(field: str, elapsed_ms: float) -> None:
+    """Add ``elapsed_ms`` to ``timing_capture[field]`` and bump
+    ``timing_capture[field + "_calls"]``.  Silent no-op when no capture is
+    bound (i.e. the caller is not inside ``Engine.handle_event``).
+
+    Multiple call sites for the same ``field`` sum their durations into the
+    single field — operators read the total time spent in that sub-phase
+    across all calls during one event."""
+    capture = _current_engine_timing_capture.get()
+    if capture is None:
+        return
+    capture[field] = round(float(capture.get(field, 0.0)) + float(elapsed_ms), 3)
+    calls_field = field + "_calls"
+    capture[calls_field] = int(capture.get(calls_field, 0)) + 1
 
 
 __all__ = [name for name in globals() if not name.startswith("__")]
