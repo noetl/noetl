@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.103.2](https://github.com/noetl/noetl/compare/v2.103.1...v2.103.2) (2026-05-29)
+
+### Performance Improvements
+
+* **batch:** round-3 sub-phase timings for handle_event ([eb549dd](https://github.com/noetl/noetl/commit/eb549dd66d5a5316443292f27bae6ab01a897989)), closes [#630](https://github.com/noetl/noetl/issues/630) [#630](https://github.com/noetl/noetl/issues/630)
+
 ## [2.103.1](https://github.com/noetl/noetl/compare/v2.103.0...v2.103.1) (2026-05-29)
 
 ### Performance Improvements
