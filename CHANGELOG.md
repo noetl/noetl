@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.103.0](https://github.com/noetl/noetl/compare/v2.102.13...v2.103.0) (2026-05-29)
+
+### Features
+
+* **batch:** per-phase timing instrumentation in batch.completed context ([7c95416](https://github.com/noetl/noetl/commit/7c9541662ed5447b63a3e14e325adb6aae8191cc)), closes [noetl/ai-meta#29](https://github.com/noetl/ai-meta/issues/29) [#29](https://github.com/noetl/noetl/issues/29) [noetl/ai-meta#29](https://github.com/noetl/ai-meta/issues/29)
+
 ## [2.102.13](https://github.com/noetl/noetl/compare/v2.102.12...v2.102.13) (2026-05-28)
 
 ### Bug Fixes
