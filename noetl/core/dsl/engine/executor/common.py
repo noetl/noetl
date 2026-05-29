@@ -939,4 +939,49 @@ def accumulate_engine_phase_ms(field: str, elapsed_ms: float) -> None:
     capture[calls_field] = int(capture.get(calls_field, 0)) + 1
 
 
+# ---------------------------------------------------------------------------
+# Per-event save_state coalescing buffer (round-5, see noetl/ai-meta#29)
+# ---------------------------------------------------------------------------
+#
+# Round-3 instrumentation showed ``save_state`` fires 2x per ``handle_event``
+# call on the cg=0 path (the cascading-completion code emits multiple events
+# and saves state after each one).  Each call rewrites the full state JSONB
+# in ``noetl.execution`` — the intermediate writes are not load-bearing
+# because ``noetl.event`` is the source-of-truth event log, and the
+# in-memory ``state`` object always carries the latest version for any
+# downstream logic in this invocation.  See:
+# https://github.com/noetl/docs/blob/main/docs/architecture/ephemeral_blueprints.md
+#
+# Round-5 wraps ``handle_event`` with a coalescing buffer.  ``save_state``
+# calls during the invocation stash the latest ``(state, conn)`` in the
+# buffer instead of issuing the UPDATE.  At ``handle_event`` exit we issue
+# ONE final UPDATE with the final state.  The intermediate UPDATEs are
+# elided — they would have rewritten state that immediately got overwritten
+# by the next save_state call anyway.
+#
+# Unbound contextvar (the default outside ``handle_event``) means
+# ``save_state`` writes immediately.  Tests + ad-hoc callers see identical
+# behavior to before.
+
+_current_save_state_buffer: contextvars.ContextVar[Optional[dict]] = (
+    contextvars.ContextVar("noetl_engine_save_state_buffer", default=None)
+)
+
+
+def get_current_save_state_buffer() -> Optional[dict]:
+    """Return the save_state coalescing buffer for the active handle_event
+    invocation, or None if none is bound."""
+    return _current_save_state_buffer.get()
+
+
+def bind_save_state_buffer(buffer: Optional[dict]) -> Any:
+    """Bind a ``save_state`` coalescing buffer for the active context."""
+    return _current_save_state_buffer.set(buffer)
+
+
+def unbind_save_state_buffer(token: Any) -> None:
+    """Restore the previous contextvar value using a bind token."""
+    _current_save_state_buffer.reset(token)
+
+
 __all__ = [name for name in globals() if not name.startswith("__")]

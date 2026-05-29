@@ -129,11 +129,30 @@ class StateStore:
         log = logging.getLogger(__name__)
         t0 = time.perf_counter()
         try:
+            # Round-5 (noetl/ai-meta#29): when a coalescing buffer is
+            # bound (i.e. we're inside Engine.handle_event), stash the
+            # latest state + conn and return without doing the heavy
+            # JSONB rewrite.  Engine.handle_event flushes the buffer
+            # ONCE on exit so intermediate UPDATEs that would
+            # immediately be overwritten by the next save_state call
+            # are elided.  The event log remains the source of truth;
+            # noetl.execution is a projection that's rebuilt by replay.
+            buffer = get_current_save_state_buffer()
+            if buffer is not None:
+                buffer["state"] = state
+                buffer["conn"] = conn
+                buffer["pending"] = True
+                buffer["coalesced_count"] = int(buffer.get("coalesced_count", 0)) + 1
+                return
             return await self._save_state_inner(state, conn=conn, log=log, t0=t0)
         finally:
             # Round-3 instrumentation: sum wall-clock for every save_state
             # call across one Engine.handle_event invocation into the active
-            # timing_capture (see noetl/ai-meta#29).
+            # timing_capture (see noetl/ai-meta#29).  Coalesced calls record
+            # the (near-zero) buffer-stash time so the *_calls counter still
+            # reflects the LOGICAL number of save_state requests during the
+            # event — operators can compare ``save_state_ms_calls`` against
+            # the unchanged 2.0/event round-3 baseline.
             accumulate_engine_phase_ms(
                 "save_state_ms",
                 (time.perf_counter() - t0) * 1000,
