@@ -1,5 +1,5 @@
 from typing import Any, Optional
-from pydantic import BaseModel, Field, model_validator
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field, field_validator, model_validator
 from .core import _BATCH_MAX_EVENTS_PER_REQUEST, _BATCH_MAX_PAYLOAD_BYTES
 from .utils import _estimate_json_size
 
@@ -34,15 +34,67 @@ class ExecuteResponse(BaseModel):
     commands_generated: int
 
 class EventRequest(BaseModel):
-    """Worker event - reports task completion with result."""
-    execution_id: str
-    step: str
-    name: str  # step.enter, call.done, step.exit
-    payload: dict[str, Any] = Field(default_factory=dict)
+    """Worker event - reports task completion with result.
+
+    R-1.2 PR-EE-4 finalisation: accepts BOTH the legacy field
+    names (``name``, ``payload``, ``execution_id: str``) AND the
+    EE-3 / EE-4 canonical names (``event_type``, ``context``,
+    ``execution_id: int|str``) on the wire so the Rust worker's
+    ``ExecutorEvent`` shape lands cleanly without an extra
+    translation layer.  Internally we still expose ``name`` /
+    ``payload`` so the engine handlers in
+    ``core/events.py::handle_event`` don't need to change.
+
+    The companion ``broker/endpoint.py::emit_event(payload:
+    EventEmitRequest)`` route was dead code that never got
+    mounted; this change makes the actual mounted ``/api/events``
+    endpoint (``core/events.py``) accept the EE wire shape
+    directly via Pydantic ``validation_alias`` declarations.
+    Surfaced 2026-05-31 by the noetl-worker (Rust) kind-validation
+    pass against this broker.
+    """
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    execution_id: str = Field(
+        ...,
+        description="Execution ID.  Accepts JSON string OR JSON "
+        "integer on the wire; stringified before storage to "
+        "match the bigint-string convention used by the rest of "
+        "the API surface.",
+    )
+    step: str = Field(
+        ...,
+        description="Step / node name.",
+        validation_alias=AliasChoices("step", "node_name"),
+    )
+    name: str = Field(
+        ...,
+        description="Event type (e.g. ``step.enter``, ``call.done``, "
+        "``step.exit``, ``command.completed``).  The legacy field "
+        "name; EE-4 producers may send ``event_type`` instead.",
+        validation_alias=AliasChoices("name", "event_type"),
+    )
+    payload: dict[str, Any] = Field(
+        default_factory=dict,
+        description="Event payload / result data.  EE-4 producers "
+        "may send ``context`` instead.",
+        validation_alias=AliasChoices("payload", "context"),
+    )
     meta: Optional[dict[str, Any]] = None
     worker_id: Optional[str] = None
     actionable: bool = True
     informative: bool = True
+
+    @field_validator("execution_id", mode="before")
+    @classmethod
+    def _coerce_execution_id_to_string(cls, v):
+        """Accept JSON integer or string for execution_id; the
+        rest of the engine treats it as ``str`` (and parses to
+        ``int`` only at the SQL boundary)."""
+        if v is None:
+            return v
+        return str(v)
 
 class EventResponse(BaseModel):
     """Response for event."""
@@ -51,10 +103,30 @@ class EventResponse(BaseModel):
     commands_generated: int
 
 class BatchEventItem(BaseModel):
-    """A single event within a batch."""
-    step: str
-    name: str
-    payload: dict[str, Any] = Field(default_factory=dict)
+    """A single event within a batch.
+
+    Same EE-4 wire-shape compatibility as :class:`EventRequest` —
+    accepts both legacy (``name`` / ``payload``) and EE-3 / EE-4
+    canonical (``event_type`` / ``context``) field names.
+    """
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    step: str = Field(
+        ...,
+        description="Step / node name.",
+        validation_alias=AliasChoices("step", "node_name"),
+    )
+    name: str = Field(
+        ...,
+        description="Event type.",
+        validation_alias=AliasChoices("name", "event_type"),
+    )
+    payload: dict[str, Any] = Field(
+        default_factory=dict,
+        description="Event payload / result data.",
+        validation_alias=AliasChoices("payload", "context"),
+    )
     actionable: bool = False
     informative: bool = True
     meta: Optional[dict[str, Any]] = None
