@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [3.0.0](https://github.com/noetl/noetl/compare/v2.103.4...v3.0.0) (2026-05-31)
+
+### ⚠ BREAKING CHANGES
+
+* **events:** align EventEmitRequest with cross-stack envelope (R-1.2 PR-EE-4)
+
+### Features
+
+* **events:** align EventEmitRequest with cross-stack envelope (R-1.2 PR-EE-4) ([f8282f5](https://github.com/noetl/noetl/commit/f8282f599e5bb0a266dee451152d3803de3bc28b)), closes [noetl/ai-meta#30](https://github.com/noetl/ai-meta/issues/30) [noetl-cli#37](https://github.com/noetl/noetl-cli/issues/37) [noetl-server#6](https://github.com/noetl/noetl-server/issues/6) [noetl/ai-meta#30](https://github.com/noetl/ai-meta/issues/30) [noetl/cli#37](https://github.com/noetl/cli/issues/37) [noetl/server#6](https://github.com/noetl/server/issues/6)
+
 ## [2.103.4](https://github.com/noetl/noetl/compare/v2.103.3...v2.103.4) (2026-05-29)
 
 ### Performance Improvements
