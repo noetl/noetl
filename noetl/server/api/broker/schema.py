@@ -12,7 +12,7 @@ Supports ResultRef pattern for efficient result storage:
 
 from typing import Optional, Dict, Any, List, Union, Literal
 from datetime import datetime
-from pydantic import BaseModel, Field, field_validator
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field, field_validator
 
 
 # ============================================================================
@@ -115,29 +115,24 @@ class EventPayloadData(BaseModel):
 # Event Types and Status
 # ============================================================================
 
-# Event types - past tense to describe what happened
-EventType = Literal[
-    "playbook_started",
-    "playbook_completed",
-    "playbook_failed",
-    "workflow_initialized",
-    "step_started",
-    "step_completed",
-    "step_failed",
-    "step_skipped",
-    "step_result",
-    "action_started",
-    "action_completed",
-    "action_failed",
-    "iterator_started",      # Iterator/loop execution started
-    "iterator_completed",    # Iterator/loop completed all iterations
-    "iterator_failed",       # Iterator/loop failed
-    "iteration_completed",   # Single iteration within loop completed
-    "retry_scheduled",       # Retry attempt scheduled for failed action
-    "error",
-    "info",
-    "warning"
-]
+# Event types — free-form string with a recommended taxonomy.
+#
+# R-1.2 PR-EE-4: loosened from ``Literal[...]`` to ``str``.  The
+# original underscored Literal (``playbook_started``,
+# ``step_completed``, etc.) was already out of sync with what the
+# Python core code AND the worker / Rust noetl-server produce —
+# everything in production uses dot-notation (``step.enter``,
+# ``step.exit``, ``call.done``, ``command.completed``,
+# ``command.issued``, etc.).  Grep ``noetl/core/dsl/engine/executor/``
+# for the actual taxonomy.
+#
+# Type alias kept as ``EventType`` (rather than removing) so existing
+# annotations in this file and elsewhere don't need to change.
+# Validation now happens at the call site (orchestrator + projector)
+# against the dot-notation taxonomy.  Cross-repo reconciliation
+# tracked on `noetl/ai-meta#30
+# <https://github.com/noetl/ai-meta/issues/30>`_.
+EventType = str
 
 # Event status - uppercase to match worker/core status system
 EventStatus = Literal[
@@ -155,10 +150,31 @@ EventStatus = Literal[
 class EventEmitRequest(BaseModel):
     """
     Request schema for emitting an event to the event log.
-    
+
     Minimal schema for direct event emission without business logic processing.
+
+    R-1.2 PR-EE-4: aligned with the executor's ``ExecutorEvent``
+    shape (noetl-executor 0.3.1) + the Rust noetl-server's
+    ``EventRequest`` (PR-EE-2) per the cross-repo event envelope
+    reconciliation tracked on
+    `noetl/ai-meta#30 <https://github.com/noetl/ai-meta/issues/30>`_.
+
+    Validation aliases let producers send either the executor's
+    canonical field names or the worker's legacy field names:
+
+    - ``context`` field accepts ``payload`` as input alias (matches
+      worker's pre-EE ``WorkerEvent.payload``).
+    - ``node_name`` field accepts ``step`` as input alias (matches
+      the executor's ``ExecutorEvent.step``).
+    - New explicit ``worker_id`` top-level field (was buried in
+      ``meta``); aligns with the Rust server's ``EventRequest.worker_id``.
+
+    ``populate_by_name=True`` lets producers send EITHER the
+    canonical name OR the alias — both deserialize cleanly.
     """
-    
+
+    model_config = ConfigDict(populate_by_name=True)
+
     # Required fields
     execution_id: str = Field(
         ...,
@@ -167,7 +183,8 @@ class EventEmitRequest(BaseModel):
     )
     event_type: EventType = Field(
         ...,
-        description="Type of event being emitted"
+        description="Type of event being emitted",
+        validation_alias=AliasChoices("event_type", "name")
     )
     
     # Optional identification
@@ -197,7 +214,8 @@ class EventEmitRequest(BaseModel):
     )
     node_name: Optional[str] = Field(
         default=None,
-        description="Human-readable node/step name"
+        description="Human-readable node/step name",
+        validation_alias=AliasChoices("node_name", "step")
     )
     node_type: Optional[str] = Field(
         default=None,
@@ -215,7 +233,8 @@ class EventEmitRequest(BaseModel):
     )
     context: Optional[Dict[str, Any]] = Field(
         default=None,
-        description="Event context data (arbitrary JSON)"
+        description="Event context data (arbitrary JSON)",
+        validation_alias=AliasChoices("context", "payload")
     )
     result: Optional[Any] = Field(
         default=None,
@@ -284,7 +303,18 @@ class EventEmitRequest(BaseModel):
         default=True,
         description="If True, event is for logging/observability"
     )
-    
+
+    # Emitter identification
+    # R-1.2 PR-EE-4: lifted from ``meta`` to a top-level field so it
+    # matches the Rust noetl-server ``EventRequest.worker_id``
+    # shape.  Producers that send it nested under ``meta`` keep
+    # working — the server still reads ``meta.worker_id`` as a
+    # fallback.
+    worker_id: Optional[str] = Field(
+        default=None,
+        description="Worker ID that emitted this event (pod id, or 'cli-local' for CLI mode)"
+    )
+
     # Timestamps
     created_at: Optional[datetime] = Field(
         default=None,
