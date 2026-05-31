@@ -2,6 +2,20 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.0.0](https://github.com/noetl/noetl/compare/v3.0.0...v4.0.0) (2026-05-31)
+
+### ⚠ BREAKING CHANGES
+
+* **events:** ``EventRequest.execution_id`` now coerces
+JSON-integer input to ``str`` instead of rejecting it.  Any
+client that depended on the strict-string 422 behaviour
+(unlikely — the field has always been described as a stringified
+snowflake) must update.
+
+### Features
+
+* **events:** complete EE-4 — accept EE-3 wire shape on /api/events ([6c4cb7e](https://github.com/noetl/noetl/commit/6c4cb7e724d1d1cda01971c3f25fdd4fe74e5683)), closes [noetl/noetl#639](https://github.com/noetl/noetl/issues/639) [noetl/ai-meta#30](https://github.com/noetl/ai-meta/issues/30) [noetl/noetl#639](https://github.com/noetl/noetl/issues/639) [noetl/ai-meta#30](https://github.com/noetl/ai-meta/issues/30)
+
 ## [3.0.0](https://github.com/noetl/noetl/compare/v2.103.4...v3.0.0) (2026-05-31)
 
 ### ⚠ BREAKING CHANGES
