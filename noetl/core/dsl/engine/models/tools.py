@@ -159,6 +159,7 @@ class ToolSpec(BaseModel):
         "noop",           # No-operation tool for routing/initialization
         "task_sequence",  # Task sequence execution
         "rhai",           # Rhai scripting engine
+        "result_fetch",   # Cross-step / cross-node result-store fetch (R-2.3, noetl-tools 2.11.0+)
     ] = Field(
         ..., description="Tool type"
     )
