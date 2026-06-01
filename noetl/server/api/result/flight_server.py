@@ -112,6 +112,18 @@ def _extract_rows(data: Any) -> Optional[list[dict[str, Any]]]:
     return rows  # type: ignore[return-value]
 
 
+def _parse_bearer_tokens(raw: Optional[str]) -> set[str]:
+    """Parse a comma-separated list of bearer tokens into a set.
+
+    Empty / None input returns an empty set (no-auth mode).  Empty
+    entries after splitting are dropped — callers can use trailing
+    commas + whitespace without surprises.
+    """
+    if not raw:
+        return set()
+    return {t.strip() for t in raw.split(",") if t.strip()}
+
+
 class NoetlFlightServer:
     """Arrow Flight gRPC server for result-store reads.
 
@@ -139,6 +151,33 @@ class NoetlFlightServer:
     behaviour the kind manifest ships, no migration burden.
 
     Client-certificate validation (mTLS) is reserved for Phase C2.4.
+
+    ## Bearer-token auth (R-2.3 Phase C2.3)
+
+    Pass ``bearer_tokens`` (a set of valid token strings) — or the
+    env ``NOETL_FLIGHT_BEARER_TOKENS`` (comma-separated set, see
+    :py:meth:`from_env`) — to require an ``Authorization: Bearer
+    <token>`` header on every Flight call.  A request whose token
+    isn't in the configured set raises ``FlightUnauthenticatedError``
+    before reaching ``do_get`` / ``get_flight_info``.
+
+    Tokens are a **set** rather than a single value so an operator
+    can rotate without downtime: deploy v2 with both v1 + v2 valid,
+    rotate clients, then drop v1.  Empty / unset → no auth (the
+    Phase A default; same trust boundary as the HTTP
+    ``/api/result/resolve`` endpoint).
+
+    Auth is independent of TLS: bearer auth + plaintext is fine for
+    in-cluster deployments behind a separate TLS terminator; bearer
+    auth + TLS is the typical externally-exposed shape.
+
+    Per [`agents/rules/execution-model.md`][exec] the server-side
+    *set of valid tokens* is policy data (env / configmap / k8s
+    Secret); the *token a client sends* is a business-logic
+    credential and belongs in the NoETL keychain referenced by alias
+    from the playbook step.
+
+    [exec]: https://github.com/noetl/ai-meta/blob/main/agents/rules/execution-model.md
     """
 
     def __init__(
@@ -146,6 +185,7 @@ class NoetlFlightServer:
         location: str = "grpc://0.0.0.0:8083",
         tls_cert_path: Optional[str] = None,
         tls_key_path: Optional[str] = None,
+        bearer_tokens: Optional[set[str]] = None,
     ):
         if (tls_cert_path is None) != (tls_key_path is None):
             raise ValueError(
@@ -161,6 +201,11 @@ class NoetlFlightServer:
         self.location = location
         self.tls_cert_path = tls_cert_path
         self.tls_key_path = tls_key_path
+        # Empty set + None both mean "no auth".  Internally we keep
+        # `None` to make the no-auth code path explicit.
+        self.bearer_tokens: Optional[set[str]] = (
+            bearer_tokens if bearer_tokens else None
+        )
         self._server: Any = None  # pyarrow.flight.FlightServerBase instance
         self._thread: Optional[threading.Thread] = None
         self._serve_exception: Optional[BaseException] = None
@@ -175,16 +220,25 @@ class NoetlFlightServer:
           set the scheme auto-upgrades to ``grpc+tls://``.
         - ``NOETL_FLIGHT_TLS_CERT`` — path to PEM-encoded server cert.
         - ``NOETL_FLIGHT_TLS_KEY`` — path to PEM-encoded private key.
+        - ``NOETL_FLIGHT_BEARER_TOKENS`` — comma-separated set of
+          accepted bearer tokens.  Unset → no auth.  Use a set
+          rather than a single value to rotate without downtime.
 
-        TLS is opt-in: omit both env vars to keep the plaintext h2c
-        mode the kind manifest ships.
+        TLS + auth are independently opt-in: omit all three to keep
+        the plaintext + no-auth mode the kind manifest ships.
         """
         import os
 
         location = os.getenv("NOETL_FLIGHT_LOCATION", default_location)
         cert = os.getenv("NOETL_FLIGHT_TLS_CERT") or None
         key = os.getenv("NOETL_FLIGHT_TLS_KEY") or None
-        return cls(location=location, tls_cert_path=cert, tls_key_path=key)
+        tokens = _parse_bearer_tokens(os.getenv("NOETL_FLIGHT_BEARER_TOKENS"))
+        return cls(
+            location=location,
+            tls_cert_path=cert,
+            tls_key_path=key,
+            bearer_tokens=tokens or None,
+        )
 
     def _load_tls_certificates(self) -> Optional[list[tuple[bytes, bytes]]]:
         """Read the cert + key from disk as bytes for FlightServerBase.
@@ -201,6 +255,66 @@ class NoetlFlightServer:
         # entry per listening location.  Phase C2.1 binds a single
         # location.
         return [(cert_bytes, key_bytes)]
+
+    def _build_middleware(self) -> Optional[dict[str, Any]]:
+        """Construct the `pyarrow.flight` middleware mapping.
+
+        Phase C2.3 adds a single bearer-token validator middleware
+        when ``self.bearer_tokens`` is set.  No-auth mode (empty /
+        None) returns ``None`` and ``FlightServerBase`` runs without
+        any per-call middleware.
+        """
+        if not self.bearer_tokens:
+            return None
+        import pyarrow.flight as flight
+
+        tokens = self.bearer_tokens
+
+        class BearerTokenMiddlewareFactory(flight.ServerMiddlewareFactory):
+            """Validates an incoming `Authorization: Bearer <token>`
+            header against the configured token set.
+
+            Returns ``None`` (no per-call middleware needed) on
+            success; raises ``FlightUnauthenticatedError`` on missing
+            or invalid token — pyarrow.flight surfaces that as a
+            gRPC `UNAUTHENTICATED` status to the client.
+
+            Header lookup is case-insensitive per HTTP/2 spec
+            (`grpc-metadata` is always lowercase on the wire) and
+            tolerates the `Bearer ` prefix in either canonical or
+            lowercased form.
+            """
+
+            def start_call(self, info: Any, headers: Any) -> Optional[Any]:
+                # `headers` is a multi-valued mapping (`dict[str, list[str]]`).
+                # The actual key shape pyarrow.flight produces is
+                # lowercased per HTTP/2 / gRPC convention.
+                auth_values: list[str] = []
+                # Try a few common casings to be robust against
+                # transport differences.
+                for key in ("authorization", "Authorization"):
+                    if key in headers:
+                        v = headers[key]
+                        if isinstance(v, (list, tuple)):
+                            auth_values.extend(v)
+                        else:
+                            auth_values.append(v)
+
+                for value in auth_values:
+                    # Tolerate `Bearer <token>` + `bearer <token>` casings.
+                    parts = value.split(None, 1)
+                    if len(parts) == 2 and parts[0].lower() == "bearer":
+                        token = parts[1].strip()
+                        if token in tokens:
+                            return None  # accept; no per-call middleware
+
+                raise flight.FlightUnauthenticatedError(
+                    "Missing or invalid bearer token; expected "
+                    "Authorization: Bearer <token> with a token from "
+                    "NOETL_FLIGHT_BEARER_TOKENS."
+                )
+
+        return {"bearer-auth": BearerTokenMiddlewareFactory()}
 
     def _build_server(self) -> Any:
         """Construct the pyarrow.flight server.  Lazy-imported."""
@@ -317,7 +431,16 @@ class NoetlFlightServer:
         # TLS certs (Phase C2.1) — None in plaintext mode, otherwise
         # the single (cert, key) pair loaded from disk.
         tls_certs = outer._load_tls_certificates()
-        return _Server(location=outer.location, tls_certificates=tls_certs)
+        # Auth middleware (Phase C2.3) — None when bearer-tokens is
+        # empty / unset.
+        middleware = outer._build_middleware()
+        kwargs: dict[str, Any] = {
+            "location": outer.location,
+            "tls_certificates": tls_certs,
+        }
+        if middleware is not None:
+            kwargs["middleware"] = middleware
+        return _Server(**kwargs)
 
     def start_in_thread(self) -> None:
         """Spawn the Flight server in a daemon thread.  Returns immediately."""
@@ -326,16 +449,26 @@ class NoetlFlightServer:
         self._server = self._build_server()
 
         tls_mode = "tls" if self.tls_cert_path else "plaintext"
+        auth_mode = (
+            f"bearer({len(self.bearer_tokens)})"
+            if self.bearer_tokens
+            else "none"
+        )
 
         def _run() -> None:
             try:
                 logger.info(
-                    "Arrow Flight server starting at %s (mode=%s, R-2.3)",
+                    "Arrow Flight server starting at %s (tls=%s, auth=%s, R-2.3)",
                     self.location,
                     tls_mode,
+                    auth_mode,
                 )
                 self._server.serve()
-                logger.info("Arrow Flight server stopped (mode=%s)", tls_mode)
+                logger.info(
+                    "Arrow Flight server stopped (tls=%s, auth=%s)",
+                    tls_mode,
+                    auth_mode,
+                )
             except BaseException as exc:  # noqa: BLE001
                 logger.exception("Arrow Flight server crashed: %s", exc)
                 self._serve_exception = exc
