@@ -623,6 +623,20 @@ async def _batch_accept_worker_loop(worker_idx: int) -> None:
                         await _process_batch_job(grouped_job)
                     except Exception as e:
                         _inc_batch_metric("processing_error_total")
+                        # Log the full traceback before persisting the
+                        # batch.failed event — `_persist_batch_failed_event`
+                        # only records `str(e)` into the event payload, which
+                        # loses the stack frame and makes regressions like
+                        # noetl/ai-meta#36 (pyarrow type-inference choke on
+                        # inline mixed-type rows) un-diagnosable without
+                        # locally reproducing.  `execution_id` carried as a
+                        # structured field per agents/rules/observability.md
+                        # Principle 4.
+                        logger.exception(
+                            "[BATCH-EVENTS] Processing failed request_id=%s execution_id=%s",
+                            grouped_job.request_id,
+                            grouped_job.execution_id,
+                        )
                         await _persist_batch_failed_event(grouped_job, _BATCH_FAILURE_PROCESSING_ERROR, str(e))
                     finally:
                         if idx > 0 and _batch_accept_queue is not None:

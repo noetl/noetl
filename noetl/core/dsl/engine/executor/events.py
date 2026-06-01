@@ -30,23 +30,63 @@ class EventHandlingMixin:
                 (time.perf_counter() - t0) * 1000,
             )
 
-    async def _count_durable_pending_commands(self, execution_id: str, conn=None) -> Optional[int]:
-        """Return pending command count from noetl.command, or None if unavailable."""
-        query = """
-            SELECT COUNT(*) AS pending_count
-            FROM noetl.command
-            WHERE execution_id = %s
-              AND status NOT IN ('COMPLETED', 'FAILED', 'CANCELLED')
+    async def _count_durable_pending_commands(
+        self,
+        execution_id: str,
+        conn=None,
+        exclude_command_id: Optional[str] = None,
+    ) -> Optional[int]:
+        """Return pending command count from noetl.command, or None if unavailable.
+
+        ``exclude_command_id`` skips the row for the command that is currently
+        being finalised (e.g. the terminal step's command whose ``call.done``
+        triggered this completion check).  When ``call.done`` fires, the worker
+        has not yet posted ``command.completed``, so the command row is still
+        in RUNNING state and would be incorrectly counted as pending.
+        Excluding the triggering command avoids a false ``has_pending_commands``
+        that would suppress ``workflow.completed`` emission for any step whose
+        name is not ``"end"``.
         """
+        if exclude_command_id is not None:
+            try:
+                _exc_id = int(exclude_command_id)
+            except (TypeError, ValueError):
+                _exc_id = None
+            if _exc_id is not None:
+                query = """
+                    SELECT COUNT(*) AS pending_count
+                    FROM noetl.command
+                    WHERE execution_id = %s
+                      AND status NOT IN ('COMPLETED', 'FAILED', 'CANCELLED')
+                      AND command_id != %s
+                """
+                params: tuple = (int(execution_id), _exc_id)
+            else:
+                # Non-numeric command_id: fall back to unfiltered count.
+                query = """
+                    SELECT COUNT(*) AS pending_count
+                    FROM noetl.command
+                    WHERE execution_id = %s
+                      AND status NOT IN ('COMPLETED', 'FAILED', 'CANCELLED')
+                """
+                params = (int(execution_id),)
+        else:
+            query = """
+                SELECT COUNT(*) AS pending_count
+                FROM noetl.command
+                WHERE execution_id = %s
+                  AND status NOT IN ('COMPLETED', 'FAILED', 'CANCELLED')
+            """
+            params = (int(execution_id),)
         try:
             if conn is not None:
                 async with conn.cursor(row_factory=dict_row) as cur:
-                    await cur.execute(query, (int(execution_id),))
+                    await cur.execute(query, params)
                     row = await cur.fetchone()
             else:
                 async with get_pool_connection() as pool_conn:
                     async with pool_conn.cursor(row_factory=dict_row) as cur:
-                        await cur.execute(query, (int(execution_id),))
+                        await cur.execute(query, params)
                         row = await cur.fetchone()
             return int((row or {}).get("pending_count", 0) or 0)
         except Exception as exc:
@@ -2397,10 +2437,29 @@ class EventHandlingMixin:
         # Durable projection is the last word before a dead-end can complete an
         # execution. This keeps distributed pods from trusting an incomplete
         # in-memory issued/completed step set while command rows are still live.
+        #
+        # When the trigger is call.done, the worker has not yet posted
+        # command.completed, so the triggering command's row is still RUNNING.
+        # Exclude it from the count to avoid a false positive that would
+        # suppress workflow.completed for any terminal step whose name is not
+        # "end".  See noetl/ai-meta#37.
         if not has_pending_commands and is_completion_trigger:
+            _trigger_command_id: Optional[str] = None
+            if event.name in ("call.done", "call.error"):
+                _trigger_command_id = _extract_command_id_from_event_payload(
+                    normalized_payload, event.meta
+                )
+                logger.debug(
+                    "[COMPLETION] terminal step=%s excluding command_id=%s from durable pending check "
+                    "execution=%s",
+                    event.step,
+                    _trigger_command_id,
+                    event.execution_id,
+                )
             durable_pending_count = await self._count_durable_pending_commands(
                 event.execution_id,
                 conn=conn,
+                exclude_command_id=_trigger_command_id,
             )
             if durable_pending_count is not None:
                 has_pending_commands = durable_pending_count > 0
@@ -2487,6 +2546,12 @@ class EventHandlingMixin:
             and (is_terminal_step or is_failed_with_no_handler or is_dead_end_no_match)
             and not state.completed
         ):
+            if is_terminal_step:
+                logger.debug(
+                    "[COMPLETION] Terminal step reached: execution=%s step=%s — emitting workflow.completed",
+                    event.execution_id,
+                    event.step,
+                )
             # No more commands to execute - workflow and playbook are complete (or failed)
             state.completed = True
             # Check if ANY step failed during execution (state.failed) OR if this final step has error
