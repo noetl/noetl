@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.5.0](https://github.com/noetl/noetl/compare/v4.4.0...v4.5.0) (2026-06-01)
+
+### Features
+
+* **flight:** mTLS client-cert validation (R-2.3 Phase C2.4 server) ([4063949](https://github.com/noetl/noetl/commit/4063949f0147f263ee6b913195afdd9e3f87606d)), closes [noetl/ai-meta#33](https://github.com/noetl/ai-meta/issues/33)
+
 ## [4.4.0](https://github.com/noetl/noetl/compare/v4.3.0...v4.4.0) (2026-06-01)
 
 ### Features
