@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.3.0](https://github.com/noetl/noetl/compare/v4.2.0...v4.3.0) (2026-06-01)
+
+### Features
+
+* **dsl:** allow tool.kind='result_fetch' in ToolSpec Literal ([2aee48c](https://github.com/noetl/noetl/commit/2aee48c9b853fd9e769e846e5bb53a118eba9e32)), closes [noetl/tools#8](https://github.com/noetl/tools/issues/8) [noetl/ai-meta#30](https://github.com/noetl/ai-meta/issues/30)
+* **flight:** server-side TLS for Arrow Flight (R-2.3 Phase C2.1) ([f99d41d](https://github.com/noetl/noetl/commit/f99d41def92c6e2b134c7bf4088ca6a6abcfd2fc)), closes [noetl/ai-meta#33](https://github.com/noetl/ai-meta/issues/33) [noetl/ai-meta#33](https://github.com/noetl/ai-meta/issues/33)
+
 ## [4.2.0](https://github.com/noetl/noetl/compare/v4.1.0...v4.2.0) (2026-06-01)
 
 ### Features
