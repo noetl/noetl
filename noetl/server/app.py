@@ -15,6 +15,7 @@ from noetl.core.db.pool import init_pool, close_pool
 from noetl.core.logger import setup_logger
 from noetl.core.urls import normalize_server_base_url
 from noetl.server.api import router as api_router
+from noetl.server.api.result.flight_server import NoetlFlightServer
 from noetl.server.middleware import catch_exceptions_middleware
 
 # Import core execution API
@@ -359,6 +360,35 @@ def _create_app(settings: Settings) -> FastAPI:
             except Exception as e:
                 logger.error(f"Command reaper startup failed (non-fatal): {e}", exc_info=True)
 
+            # R-2.3 Phase A: spawn the Arrow Flight gRPC server in a
+            # background thread alongside the FastAPI process.  Provides
+            # a columnar zero-copy DoGet path for tabular result-store
+            # reads (R-2.1 cross-node durable refs).  Listens on
+            # NOETL_FLIGHT_LOCATION (default grpc://0.0.0.0:8083);
+            # NOETL_FLIGHT_DISABLED=1 turns the spawn off for hosts
+            # where pyarrow.flight is unavailable or the port conflicts.
+            flight_server: Optional[NoetlFlightServer] = None
+            try:
+                if os.getenv("NOETL_FLIGHT_DISABLED", "").strip() in ("1", "true", "True"):
+                    logger.info("Arrow Flight server disabled via NOETL_FLIGHT_DISABLED")
+                else:
+                    flight_location = os.getenv(
+                        "NOETL_FLIGHT_LOCATION",
+                        "grpc://0.0.0.0:8083",
+                    )
+                    flight_server = NoetlFlightServer(location=flight_location)
+                    flight_server.start_in_thread()
+                    logger.info(
+                        "Arrow Flight server background thread started (R-2.3 Phase A): %s",
+                        flight_location,
+                    )
+            except Exception as e:
+                logger.error(
+                    f"Arrow Flight server startup failed (non-fatal): {e}",
+                    exc_info=True,
+                )
+                flight_server = None
+
             yield
             # Shutdown
             stop_event.set()
@@ -390,6 +420,15 @@ def _create_app(settings: Settings) -> FastAPI:
                         await command_reaper_task
                 except Exception as e:
                     logger.exception(f"Critical error during command reaper task shutdown: {e}")
+            # R-2.3 Phase A: stop the Flight server thread.  Shutdown
+            # is best-effort — if the join times out the daemon thread
+            # is reclaimed by interpreter exit.
+            if flight_server is not None:
+                try:
+                    flight_server.shutdown()
+                    logger.info("Arrow Flight server background thread stopped")
+                except Exception as e:
+                    logger.exception(f"Arrow Flight server shutdown error: {e}")
             try:
                 await shutdown_publish_recovery_tasks()
             except Exception as e:

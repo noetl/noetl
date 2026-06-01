@@ -5,10 +5,17 @@ nodes:
   - role: control-plane
     extraPortMappings:
         # NOETL
-      - containerPort: 30082 
+      - containerPort: 30082
         hostPort: 8082
         listenAddress: "0.0.0.0" # optional: set the bind address on the host. 0.0.0.0 is the current default
         protocol: TCP # optional: set the protocol to one of TCP, UDP, SCTP. TCP is the default
+
+        # NOETL Arrow Flight (R-2.3 Phase A) — gRPC endpoint for
+        # the columnar result-store fetch path.
+      - containerPort: 30083
+        hostPort: 8083
+        listenAddress: "0.0.0.0"
+        protocol: TCP
 
         # Postgers
       - containerPort: 30321
