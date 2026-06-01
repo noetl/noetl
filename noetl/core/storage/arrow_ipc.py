@@ -3,12 +3,107 @@
 from __future__ import annotations
 
 import hashlib
+import logging
 from io import BytesIO
 from typing import Any, Iterable, Mapping, Optional
 
 
 ARROW_STREAM_MEDIA_TYPE = "application/vnd.apache.arrow.stream"
 ARROW_FEATHER_MEDIA_TYPE = "application/vnd.apache.arrow.file"
+
+
+logger = logging.getLogger(__name__)
+
+
+def _build_safe_arrow_table(rows: list[dict[str, Any]], columns: list[str]):
+    """Build a `pa.Table` from row dicts, tolerating mixed-type columns.
+
+    The default `pa.Table.from_pylist(rows, schema=None)` infers a single
+    Arrow type per column from the first non-None value, then errors out
+    on any later value that can't be cast to that type.  Real-world
+    DuckDB rowsets surface mixed-type columns in two shapes:
+
+    - **Tool-output coercion**: numeric IDs that show up as `int` in some
+      rows and `str` in others when the source rowset was produced via
+      `'user_' || i AS username` and a downstream serializer lifted
+      `username='1'` into `username=1` for the first row (e.g. when
+      DuckDB's `as_objects: true` emits typed scalars).
+    - **Credential scrubber**: the producer-side scrubber substitutes
+      `"[REDACTED]"` (a str) for whatever type the column originally
+      carried; for columns where some rows escape scrubbing (different
+      credential-key matching), the post-scrub column is mixed.
+
+    The previous behaviour was to let `from_pylist` fail with
+    ``Could not convert <value> with type <T>: tried to convert to <U>``.
+    That bubbles up to the server's `events.batch` projector and surfaces
+    as ``batch.failed`` with `error_code=processing_error`, halting the
+    entire workflow.  See noetl/ai-meta#36.
+
+    Strategy: pre-scan rows once, compute an explicit schema where any
+    column whose values span more than one inferred Arrow type is
+    downgraded to ``pa.string()`` (with values stringified).  Pure-type
+    columns keep their natural Arrow type — the slow path only fires
+    for columns that genuinely mix types.
+    """
+    import pyarrow as pa
+
+    try:
+        return pa.Table.from_pylist(rows, schema=None)
+    except (pa.ArrowInvalid, pa.ArrowTypeError) as exc:
+        logger.debug(
+            "[ARROW-IPC] Falling back to string-coerced schema for mixed-type "
+            "columns: %s",
+            exc,
+        )
+
+    # Per-column type observation.  `None` values are skipped — they're
+    # nullable in any Arrow schema.  `bool` is checked before `int`
+    # because `bool` is a subclass of `int` in Python.
+    type_groups: dict[str, set[str]] = {col: set() for col in columns}
+    for row in rows:
+        for col in columns:
+            value = row.get(col)
+            if value is None:
+                continue
+            if isinstance(value, bool):
+                type_groups[col].add("bool")
+            elif isinstance(value, int):
+                type_groups[col].add("int")
+            elif isinstance(value, float):
+                type_groups[col].add("float")
+            elif isinstance(value, str):
+                type_groups[col].add("str")
+            elif isinstance(value, (list, dict)):
+                type_groups[col].add("nested")
+            else:
+                type_groups[col].add("other")
+
+    mixed_columns: set[str] = {
+        col for col, types in type_groups.items() if len(types) > 1
+    }
+
+    if not mixed_columns:
+        # All columns are pure-type but the original `from_pylist` call
+        # still failed — re-raise so the caller sees the underlying
+        # pyarrow error rather than papering over an unrelated problem.
+        return pa.Table.from_pylist(rows, schema=None)
+
+    coerced_rows = []
+    for row in rows:
+        new_row = dict(row)
+        for col in mixed_columns:
+            value = new_row.get(col)
+            if value is None:
+                continue
+            new_row[col] = str(value)
+        coerced_rows.append(new_row)
+
+    logger.info(
+        "[ARROW-IPC] Coerced %d mixed-type column(s) to string: %s",
+        len(mixed_columns),
+        sorted(mixed_columns),
+    )
+    return pa.Table.from_pylist(coerced_rows, schema=None)
 
 
 def rows_to_arrow_ipc(
@@ -41,7 +136,11 @@ def rows_to_arrow_ipc(
         {column: row.get(column) for column in columns}
         for row in materialized_rows
     ]
-    table = pa.Table.from_pylist(normalized_rows, schema=None)
+    # Use the mixed-type-tolerant builder instead of the bare `from_pylist`
+    # call.  Pure-typed columns hit the fast path inside the helper; only
+    # genuinely mixed columns pay the per-row coercion cost.  See
+    # `_build_safe_arrow_table` for the rationale (noetl/ai-meta#36).
+    table = _build_safe_arrow_table(normalized_rows, columns)
     if columns:
         table = table.select([column for column in columns if column in table.column_names])
 
@@ -91,7 +190,8 @@ def rows_to_arrow_feather(
         {column: row.get(column) for column in columns}
         for row in materialized_rows
     ]
-    table = pa.Table.from_pylist(normalized_rows, schema=None)
+    # See `_build_safe_arrow_table` (noetl/ai-meta#36).
+    table = _build_safe_arrow_table(normalized_rows, columns)
     if columns:
         table = table.select([column for column in columns if column in table.column_names])
 
