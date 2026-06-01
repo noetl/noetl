@@ -597,3 +597,132 @@ def test_bearer_tokens_independent_of_tls(monkeypatch, tmp_path):
     assert server.tls_cert_path is None
     assert server.bearer_tokens == {"the-token"}
     assert server.location.startswith("grpc://"), "no TLS, no scheme upgrade"
+
+
+# ---------------------------------------------------------------------------
+# R-2.3 Phase C2.4 — mTLS (client-cert validation)
+# ---------------------------------------------------------------------------
+
+
+def test_mtls_requires_server_tls():
+    """`client_ca_path` without `tls_cert_path` is a misconfiguration
+    — there's no TLS channel to mutually authenticate inside.  Fail
+    fast at construction so an operator notices before the server
+    accepts traffic."""
+    with pytest.raises(ValueError, match="client_ca_path requires server TLS"):
+        NoetlFlightServer(
+            location="grpc://0.0.0.0:8083",
+            client_ca_path="/etc/noetl/client-ca.pem",
+        )
+
+
+def test_mtls_construction_with_server_tls(tmp_path):
+    """Server TLS + client CA together → valid mTLS config."""
+    cert = tmp_path / "server.crt"
+    key = tmp_path / "server.key"
+    cca = tmp_path / "client-ca.crt"
+    for f, label in [(cert, "server-cert"), (key, "server-key"), (cca, "client-ca")]:
+        f.write_bytes(f"-----BEGIN CERTIFICATE-----\n{label}\n-----END CERTIFICATE-----".encode())
+
+    server = NoetlFlightServer(
+        location="grpc://0.0.0.0:8083",
+        tls_cert_path=str(cert),
+        tls_key_path=str(key),
+        client_ca_path=str(cca),
+    )
+    assert server.client_ca_path == str(cca)
+    # TLS still upgrades the location URL.
+    assert server.location == "grpc+tls://0.0.0.0:8083"
+
+
+def test_mtls_load_client_ca_reads_pem(tmp_path):
+    """_load_client_ca returns the on-disk PEM bytes."""
+    cert = tmp_path / "server.crt"
+    key = tmp_path / "server.key"
+    cca = tmp_path / "client-ca.crt"
+    cert.write_bytes(b"-----BEGIN CERTIFICATE-----\nserver\n-----END CERTIFICATE-----")
+    key.write_bytes(b"-----BEGIN PRIVATE KEY-----\nserver\n-----END PRIVATE KEY-----")
+    cca.write_bytes(b"-----BEGIN CERTIFICATE-----\nclient-ca\n-----END CERTIFICATE-----")
+
+    server = NoetlFlightServer(
+        location="grpc://0.0.0.0:8083",
+        tls_cert_path=str(cert),
+        tls_key_path=str(key),
+        client_ca_path=str(cca),
+    )
+    ca_bytes = server._load_client_ca()
+    assert ca_bytes is not None
+    assert b"client-ca" in ca_bytes
+
+
+def test_mtls_load_client_ca_returns_none_when_disabled():
+    """No client_ca_path → _load_client_ca returns None.  Caller's
+    `_build_server` then doesn't pass `verify_client` so pyarrow
+    stays in server-tls-only mode."""
+    server = NoetlFlightServer(location="grpc://0.0.0.0:8083")
+    assert server._load_client_ca() is None
+
+
+def test_from_env_mtls(monkeypatch, tmp_path):
+    """`NOETL_FLIGHT_CLIENT_CA` populates the client_ca_path field
+    when server TLS is also active."""
+    cert = tmp_path / "server.crt"
+    key = tmp_path / "server.key"
+    cca = tmp_path / "client-ca.crt"
+    cert.write_bytes(b"dummy")
+    key.write_bytes(b"dummy")
+    cca.write_bytes(b"dummy")
+
+    monkeypatch.setenv("NOETL_FLIGHT_LOCATION", "grpc://0.0.0.0:8083")
+    monkeypatch.setenv("NOETL_FLIGHT_TLS_CERT", str(cert))
+    monkeypatch.setenv("NOETL_FLIGHT_TLS_KEY", str(key))
+    monkeypatch.setenv("NOETL_FLIGHT_CLIENT_CA", str(cca))
+    server = NoetlFlightServer.from_env()
+    assert server.client_ca_path == str(cca)
+    assert server.location == "grpc+tls://0.0.0.0:8083"
+
+
+def test_from_env_mtls_without_tls_raises(monkeypatch, tmp_path):
+    """`NOETL_FLIGHT_CLIENT_CA` without server TLS env → ValueError
+    via `from_env` so a misconfigured pod fails fast at startup."""
+    cca = tmp_path / "client-ca.crt"
+    cca.write_bytes(b"dummy")
+
+    monkeypatch.delenv("NOETL_FLIGHT_TLS_CERT", raising=False)
+    monkeypatch.delenv("NOETL_FLIGHT_TLS_KEY", raising=False)
+    monkeypatch.setenv("NOETL_FLIGHT_CLIENT_CA", str(cca))
+    with pytest.raises(ValueError, match="client_ca_path requires server TLS"):
+        NoetlFlightServer.from_env()
+
+
+def test_mtls_independent_of_bearer(monkeypatch, tmp_path):
+    """mTLS + bearer are independently opt-in — a deployment can
+    enable mTLS without bearer (cert-only auth) or both (the
+    typical externally-exposed shape)."""
+    cert = tmp_path / "server.crt"
+    key = tmp_path / "server.key"
+    cca = tmp_path / "client-ca.crt"
+    cert.write_bytes(b"dummy")
+    key.write_bytes(b"dummy")
+    cca.write_bytes(b"dummy")
+
+    # mTLS only, no bearer.
+    s = NoetlFlightServer(
+        location="grpc://0.0.0.0:8083",
+        tls_cert_path=str(cert),
+        tls_key_path=str(key),
+        client_ca_path=str(cca),
+    )
+    assert s.bearer_tokens is None
+    assert s.client_ca_path is not None
+
+    # mTLS + bearer.
+    s2 = NoetlFlightServer(
+        location="grpc://0.0.0.0:8083",
+        tls_cert_path=str(cert),
+        tls_key_path=str(key),
+        client_ca_path=str(cca),
+        bearer_tokens={"tok"},
+    )
+    assert s2.bearer_tokens == {"tok"}
+    assert s2.client_ca_path is not None

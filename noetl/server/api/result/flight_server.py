@@ -178,6 +178,21 @@ class NoetlFlightServer:
     from the playbook step.
 
     [exec]: https://github.com/noetl/ai-meta/blob/main/agents/rules/execution-model.md
+
+    ## mTLS (R-2.3 Phase C2.4)
+
+    Pass ``client_ca_path`` — or the env ``NOETL_FLIGHT_CLIENT_CA``
+    — to require client-cert validation on every Flight call
+    (mutual TLS).  The server then refuses connections that don't
+    present a cert chaining to the configured CA.  Requires TLS
+    to be active (i.e. ``tls_cert_path`` + ``tls_key_path`` set);
+    enabling mTLS without server TLS raises ``ValueError`` at
+    construction.
+
+    mTLS stacks on top of bearer-token auth — both run on the same
+    request.  A typical externally-exposed deployment turns on
+    server TLS + mTLS + bearer.  Internal deployments may stay on
+    bearer + plaintext or server-TLS-only.
     """
 
     def __init__(
@@ -186,11 +201,20 @@ class NoetlFlightServer:
         tls_cert_path: Optional[str] = None,
         tls_key_path: Optional[str] = None,
         bearer_tokens: Optional[set[str]] = None,
+        client_ca_path: Optional[str] = None,
     ):
         if (tls_cert_path is None) != (tls_key_path is None):
             raise ValueError(
                 "tls_cert_path and tls_key_path must both be set or both be None; "
                 f"got cert={tls_cert_path!r}, key={tls_key_path!r}"
+            )
+        if client_ca_path is not None and tls_cert_path is None:
+            # mTLS without server TLS is a misconfiguration — there's no
+            # TLS channel to mutually authenticate inside.  Fail fast.
+            raise ValueError(
+                "client_ca_path requires server TLS to be active "
+                "(tls_cert_path + tls_key_path); got client_ca_path="
+                f"{client_ca_path!r} but no server cert"
             )
         # When TLS is active, the location URL must use the
         # `grpc+tls://` scheme so pyarrow.flight knows to wrap the
@@ -201,6 +225,7 @@ class NoetlFlightServer:
         self.location = location
         self.tls_cert_path = tls_cert_path
         self.tls_key_path = tls_key_path
+        self.client_ca_path = client_ca_path
         # Empty set + None both mean "no auth".  Internally we keep
         # `None` to make the no-auth code path explicit.
         self.bearer_tokens: Optional[set[str]] = (
@@ -223,9 +248,15 @@ class NoetlFlightServer:
         - ``NOETL_FLIGHT_BEARER_TOKENS`` — comma-separated set of
           accepted bearer tokens.  Unset → no auth.  Use a set
           rather than a single value to rotate without downtime.
+        - ``NOETL_FLIGHT_CLIENT_CA`` (R-2.3 Phase C2.4) — path to a
+          PEM-encoded client-CA bundle.  When set, the server
+          requires + validates a client certificate (mTLS).
+          Requires TLS to be active; mTLS-without-TLS raises
+          ``ValueError`` at startup.
 
-        TLS + auth are independently opt-in: omit all three to keep
-        the plaintext + no-auth mode the kind manifest ships.
+        TLS + bearer + mTLS are independently opt-in: omit all four
+        TLS/auth env vars to keep the plaintext + no-auth mode the
+        kind manifest ships.
         """
         import os
 
@@ -233,11 +264,13 @@ class NoetlFlightServer:
         cert = os.getenv("NOETL_FLIGHT_TLS_CERT") or None
         key = os.getenv("NOETL_FLIGHT_TLS_KEY") or None
         tokens = _parse_bearer_tokens(os.getenv("NOETL_FLIGHT_BEARER_TOKENS"))
+        client_ca = os.getenv("NOETL_FLIGHT_CLIENT_CA") or None
         return cls(
             location=location,
             tls_cert_path=cert,
             tls_key_path=key,
             bearer_tokens=tokens or None,
+            client_ca_path=client_ca,
         )
 
     def _load_tls_certificates(self) -> Optional[list[tuple[bytes, bytes]]]:
@@ -255,6 +288,18 @@ class NoetlFlightServer:
         # entry per listening location.  Phase C2.1 binds a single
         # location.
         return [(cert_bytes, key_bytes)]
+
+    def _load_client_ca(self) -> Optional[bytes]:
+        """Read the client-CA PEM bundle for mTLS (Phase C2.4).
+
+        Returns ``None`` when mTLS is not configured.  Constructor
+        already guarantees the CA path is only set when server TLS
+        is active, so the caller doesn't have to re-check.
+        """
+        if self.client_ca_path is None:
+            return None
+        with open(self.client_ca_path, "rb") as f:
+            return f.read()
 
     def _build_middleware(self) -> Optional[dict[str, Any]]:
         """Construct the `pyarrow.flight` middleware mapping.
@@ -434,12 +479,19 @@ class NoetlFlightServer:
         # Auth middleware (Phase C2.3) — None when bearer-tokens is
         # empty / unset.
         middleware = outer._build_middleware()
+        # Client CA bundle (Phase C2.4) — None when mTLS disabled;
+        # otherwise pass with `verify_client=True` so pyarrow.flight
+        # demands a client cert chaining to the bundle.
+        client_ca = outer._load_client_ca()
         kwargs: dict[str, Any] = {
             "location": outer.location,
             "tls_certificates": tls_certs,
         }
         if middleware is not None:
             kwargs["middleware"] = middleware
+        if client_ca is not None:
+            kwargs["verify_client"] = True
+            kwargs["root_certificates"] = client_ca
         return _Server(**kwargs)
 
     def start_in_thread(self) -> None:
@@ -448,7 +500,14 @@ class NoetlFlightServer:
             return
         self._server = self._build_server()
 
-        tls_mode = "tls" if self.tls_cert_path else "plaintext"
+        # mTLS (Phase C2.4) reads as a third independent mode on
+        # top of TLS — when on, server-tls is also necessarily on.
+        if self.client_ca_path:
+            tls_mode = "mtls"
+        elif self.tls_cert_path:
+            tls_mode = "tls"
+        else:
+            tls_mode = "plaintext"
         auth_mode = (
             f"bearer({len(self.bearer_tokens)})"
             if self.bearer_tokens
