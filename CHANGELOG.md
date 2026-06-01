@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.1.0](https://github.com/noetl/noetl/compare/v4.0.1...v4.1.0) (2026-06-01)
+
+### Features
+
+* **server:** Arrow Flight gRPC do_get endpoint for result-store reads (R-2.3 Phase A) ([df3fde6](https://github.com/noetl/noetl/commit/df3fde6f6b308c98f68f8521a8b3aeaeed1444db)), closes [noetl/ai-meta#30](https://github.com/noetl/ai-meta/issues/30)
+
 ## [4.0.1](https://github.com/noetl/noetl/compare/v4.0.0...v4.0.1) (2026-06-01)
 
 ### Bug Fixes
