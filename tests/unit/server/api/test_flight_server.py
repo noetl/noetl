@@ -182,11 +182,60 @@ def test_flight_do_get_non_tabular_raises_unavailable(monkeypatch):
         server.shutdown()
 
 
-def test_flight_get_flight_info_returns_unimplemented(monkeypatch):
-    """Phase A doesn't expose FlightInfo — consumers must submit
-    Tickets directly.  The server raises FlightServerError with a
-    descriptive message (this pyarrow version doesn't expose a
-    dedicated `Unimplemented` variant)."""
+def test_flight_get_flight_info_returns_schema_and_endpoint(monkeypatch):
+    """R-2.3 Phase C1: `get_flight_info(descriptor)` returns a
+    FlightInfo carrying the Arrow schema + row count + a single
+    endpoint pointing back at this server.  The descriptor's `cmd`
+    field carries the noetl:// ref URI bytes (same convention as
+    Tickets in Phase A)."""
+    port = _find_free_port()
+    expected_rows = [
+        {"id": 1, "username": "user_001", "password": "[REDACTED]"},
+        {"id": 2, "username": "user_002", "password": "[REDACTED]"},
+        {"id": 3, "username": "user_003", "password": "[REDACTED]"},
+    ]
+
+    async def fake_resolve(ref: Any) -> Any:
+        assert isinstance(ref, str) and ref.startswith("noetl://")
+        return {"data": {"columns": ["id", "username", "password"], "rows": expected_rows}}
+
+    monkeypatch.setattr(
+        "noetl.server.api.result.flight_server.default_store",
+        type("StubStore", (), {"resolve": staticmethod(fake_resolve)}),
+    )
+
+    server = NoetlFlightServer(location=f"grpc://127.0.0.1:{port}")
+    server.start_in_thread()
+    _wait_until_listening(port)
+    try:
+        client = pyarrow_flight.connect(f"grpc://127.0.0.1:{port}")
+        descriptor = pyarrow_flight.FlightDescriptor.for_command(
+            b"noetl://execution/12345/result/big_select/abcd1234"
+        )
+        info = client.get_flight_info(descriptor)
+
+        assert info.total_records == 3
+        assert info.total_bytes > 0
+        assert len(info.endpoints) == 1
+        endpoint = info.endpoints[0]
+        # The ticket the FlightInfo hands back is exactly the bytes
+        # a client would submit to do_get directly — consumers with
+        # a known ref URI can skip get_flight_info entirely.
+        assert (
+            bytes(endpoint.ticket.ticket)
+            == b"noetl://execution/12345/result/big_select/abcd1234"
+        )
+        # Schema field names match the Python row dicts (DictionaryArrow
+        # type inference falls back to Utf8 + Int64 here).
+        assert info.schema.names == ["id", "username", "password"]
+    finally:
+        server.shutdown()
+
+
+def test_flight_get_flight_info_rejects_path_descriptor(monkeypatch):
+    """Phase C1 only supports Cmd-shaped descriptors.  Path-shaped
+    descriptors raise so consumers see a clear error rather than a
+    silent fallback."""
     port = _find_free_port()
 
     async def fake_resolve(ref: Any) -> Any:  # pragma: no cover - not reached
@@ -203,11 +252,39 @@ def test_flight_get_flight_info_returns_unimplemented(monkeypatch):
     try:
         client = pyarrow_flight.connect(f"grpc://127.0.0.1:{port}")
         descriptor = pyarrow_flight.FlightDescriptor.for_path("any", "path")
-        with pytest.raises((pyarrow_flight.FlightServerError, pyarrow_flight.FlightInternalError)) as exc_info:
+        with pytest.raises(
+            (pyarrow_flight.FlightServerError, pyarrow_flight.FlightInternalError)
+        ) as exc_info:
             client.get_flight_info(descriptor)
-        # The descriptive message round-trips through gRPC so consumers
-        # can log it.
-        assert "Phase A" in str(exc_info.value)
+        assert "Cmd-shaped descriptor" in str(exc_info.value)
+    finally:
+        server.shutdown()
+
+
+def test_flight_get_flight_info_non_tabular_raises_unavailable(monkeypatch):
+    """Same fallback signal as do_get — non-tabular result → server
+    raises FlightUnavailableError so the client falls back to HTTP."""
+    port = _find_free_port()
+
+    async def fake_resolve(ref: Any) -> Any:
+        # Shell-tool shape: no rows.
+        return {"stdout": "hello", "exit_code": 0}
+
+    monkeypatch.setattr(
+        "noetl.server.api.result.flight_server.default_store",
+        type("StubStore", (), {"resolve": staticmethod(fake_resolve)}),
+    )
+
+    server = NoetlFlightServer(location=f"grpc://127.0.0.1:{port}")
+    server.start_in_thread()
+    _wait_until_listening(port)
+    try:
+        client = pyarrow_flight.connect(f"grpc://127.0.0.1:{port}")
+        descriptor = pyarrow_flight.FlightDescriptor.for_command(
+            b"noetl://execution/12345/result/shell_step/x"
+        )
+        with pytest.raises(pyarrow_flight.FlightUnavailableError):
+            client.get_flight_info(descriptor)
     finally:
         server.shutdown()
 

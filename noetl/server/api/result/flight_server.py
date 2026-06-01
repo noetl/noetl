@@ -178,18 +178,69 @@ class NoetlFlightServer:
                 return iter([])
 
             def get_flight_info(self, context: Any, descriptor: Any) -> Any:
-                # Phase A: we don't expose flights by listing; consumers
-                # already have the ref URI from `result.reference.ref`.
-                # Raise as FlightServerError — pyarrow.flight in this
-                # version doesn't ship an `Unimplemented` variant, but
-                # the message + the FlightServerError type are enough
-                # for clients to distinguish "not supported" from a
-                # transient outage.
-                raise flight.FlightServerError(
-                    "FlightInfo lookup is not implemented in Phase A.  "
-                    "Consumers submit Tickets directly to DoGet using the "
-                    "noetl:// URI from `result.reference.ref` on the "
-                    "call.done event."
+                # R-2.3 Phase C1: return a FlightInfo summary so the
+                # consumer can read schema + row count without
+                # materialising the full payload.  Useful for clients
+                # that want to size buffers, pick a backend, or skip
+                # the fetch entirely for non-tabular refs.
+                #
+                # Wire convention: the descriptor's `cmd` field carries
+                # the same `noetl://execution/<eid>/result/<step>/<id>`
+                # URI bytes the Ticket uses (Phase A).  Path-shaped
+                # descriptors aren't supported in Phase C1.
+                if not getattr(descriptor, "command", None):
+                    raise flight.FlightServerError(
+                        "FlightInfo requires a Cmd-shaped descriptor whose "
+                        "command bytes are the noetl:// ref URI.  Path-"
+                        "shaped descriptors are not supported in Phase C1."
+                    )
+                ref_uri = bytes(descriptor.command).decode("utf-8", errors="replace")
+                logger.debug("Flight get_flight_info: ref=%s", ref_uri)
+
+                loop = asyncio.new_event_loop()
+                try:
+                    data = loop.run_until_complete(default_store.resolve(ref_uri))
+                finally:
+                    loop.close()
+
+                rows = _extract_rows(data)
+                if rows is None:
+                    # Same signal Phase A do_get raises for non-
+                    # tabular refs.  Consumers fall back to HTTP.
+                    raise flight.FlightUnavailableError(
+                        f"FlightInfo lookup found a non-tabular result for "
+                        f"ref={ref_uri}; consumer should fall back to HTTP "
+                        f"/api/result/resolve."
+                    )
+
+                # Encode a sample to extract the Arrow schema +
+                # row_count without paying the full materialisation
+                # cost twice — `rows_to_arrow_ipc` returns
+                # (payload, _digest, row_count) AND the FlightInfo
+                # carries the schema bytes inline, so we run the same
+                # encode here that do_get would.  For multi-MB results
+                # a future optimisation can compute the schema from
+                # rows[:1] and persist row_count metadata in the store
+                # to skip the full encode.
+                import pyarrow as pa
+                payload, _digest, row_count = rows_to_arrow_ipc(rows)
+                with pa.ipc.open_stream(payload) as reader:
+                    schema = reader.schema
+
+                # Single endpoint pointing back at this server.  The
+                # ticket is the same bytes the consumer would submit
+                # to do_get directly — clients with a known ref URI
+                # can skip get_flight_info and call do_get straight.
+                endpoint = flight.FlightEndpoint(
+                    ticket=flight.Ticket(ref_uri.encode("utf-8")),
+                    locations=[outer.location],
+                )
+                return flight.FlightInfo(
+                    schema=schema,
+                    descriptor=descriptor,
+                    endpoints=[endpoint],
+                    total_records=row_count,
+                    total_bytes=len(payload),
                 )
 
         return _Server(location=outer.location)
