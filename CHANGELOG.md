@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.4.0](https://github.com/noetl/noetl/compare/v4.3.0...v4.4.0) (2026-06-01)
+
+### Features
+
+* **flight:** bearer-token middleware (R-2.3 Phase C2.3) ([ae46df9](https://github.com/noetl/noetl/commit/ae46df9eb2aa31c0bca3d130f4314f29a80fb5c3)), closes [noetl/noetl#646](https://github.com/noetl/noetl/issues/646) [noetl/cli#45](https://github.com/noetl/cli/issues/45) [noetl/ai-meta#33](https://github.com/noetl/ai-meta/issues/33)
+
 ## [4.3.0](https://github.com/noetl/noetl/compare/v4.2.0...v4.3.0) (2026-06-01)
 
 ### Features
