@@ -28,7 +28,9 @@ from noetl.core.sanitize import redact_keychain_values
 
 logger = setup_logger(__name__, include_location=True)
 
-router = APIRouter(prefix="/api/temp", tags=["temp"])
+# See the matching comment in `result/endpoint.py` — the parent router
+# already adds `/api`, so this prefix must NOT also include `/api/`.
+router = APIRouter(prefix="/temp", tags=["temp"])
 
 
 # === Request/Response Models ===
