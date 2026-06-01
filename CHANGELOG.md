@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.5.1](https://github.com/noetl/noetl/compare/v4.5.0...v4.5.1) (2026-06-01)
+
+### Bug Fixes
+
+* **arrow-ipc:** tolerate mixed-type columns in row-to-IPC encoders ([5cdce2a](https://github.com/noetl/noetl/commit/5cdce2a2c7b302c1d17d959860aa7be9037b6a6e)), closes [noetl/ai-meta#36](https://github.com/noetl/ai-meta/issues/36)
+* **engine:** emit workflow.completed for any terminal step, not just "end" ([3cc0256](https://github.com/noetl/noetl/commit/3cc02560967677708f425797fa6f08c8f137c7f2)), closes [noetl/ai-meta#37](https://github.com/noetl/ai-meta/issues/37) [noetl/ai-meta#37](https://github.com/noetl/ai-meta/issues/37)
+
 ## [4.5.0](https://github.com/noetl/noetl/compare/v4.4.0...v4.5.0) (2026-06-01)
 
 ### Features
