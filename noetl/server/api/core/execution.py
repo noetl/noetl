@@ -247,7 +247,12 @@ async def get_execution_status(execution_id: str, full: bool = False):
                     await cur.execute("SELECT node_name FROM noetl.event WHERE execution_id = %s AND event_type IN ('step.exit', 'loop.done') AND status = 'COMPLETED' ORDER BY event_id ASC", (exec_id_int,))
                     step_rows = await cur.fetchall()
                     pending_row = {"pending_count": 0}
-                    if terminal is None and latest["event_type"] == "batch.completed" and latest["status"] == "COMPLETED":
+                    if terminal is None and latest["status"] == "COMPLETED" and latest["event_type"] in {
+                        "batch.completed", "command.completed", "call.done", "step.exit"
+                    }:
+                        # Query pending count for any potential terminal event so we can apply
+                        # the "no pending commands" heuristic regardless of step name.
+                        # See noetl/ai-meta#37.
                         await cur.execute(PENDING_COMMAND_COUNT_SQL, {"execution_id": exec_id_int})
                         pending_row = await cur.fetchone()
             completed, failed, inferred = False, False, False
@@ -255,7 +260,9 @@ async def get_execution_status(execution_id: str, full: bool = False):
             if t_type in {"playbook.completed", "workflow.completed"}: completed = True
             elif t_type in {"playbook.failed", "workflow.failed", "execution.cancelled", "command.failed"}:
                 completed = t_type == "execution.cancelled"; failed = t_type != "execution.cancelled"
-            elif latest["node_name"] == "end" and latest["status"] == "COMPLETED" and latest["event_type"] in {"command.completed", "call.done", "step.exit"}:
+            elif latest["status"] == "COMPLETED" and latest["event_type"] in {"command.completed", "call.done", "step.exit"} and int((pending_row or {}).get("pending_count", 0) or 0) <= 0:
+                # Any completed terminal event with no pending commands qualifies.
+                # No longer restricted to node_name == "end".  See noetl/ai-meta#37.
                 completed, inferred = True, True
             elif latest["event_type"] == "batch.completed" and latest["status"] == "COMPLETED" and int((pending_row or {}).get("pending_count", 0) or 0) <= 0:
                 completed, inferred = True, True
@@ -290,17 +297,32 @@ async def get_execution_status(execution_id: str, full: bool = False):
                 )
                 terminal = await cur.fetchone()
                 pending_row = {"pending_count": 0}
-                if terminal is None and latest and latest["event_type"] == "batch.completed" and latest["status"] == "COMPLETED":
+                if terminal is None and latest and latest["status"] == "COMPLETED" and latest["event_type"] in {
+                    "batch.completed", "command.completed", "call.done", "step.exit"
+                }:
+                    # Query pending count for any potential terminal event so the
+                    # heuristic below applies regardless of step name.  See noetl/ai-meta#37.
                     await cur.execute(PENDING_COMMAND_COUNT_SQL, {"execution_id": exec_id_int})
                     pending_row = await cur.fetchone()
         if not completed:
-            if state.current_step == "end" and "end" in state.completed_steps and not failed: completed, inferred = True, True
+            # Check whether state.current_step is a terminal step (no outgoing
+            # transitions) that has already been marked completed.  Using
+            # state.get_step() instead of hardcoding "end" makes this work for
+            # any step name — including the "done" step in validation fixtures.
+            # See noetl/ai-meta#37.
+            _cs = state.current_step
+            _cs_def = state.get_step(_cs) if _cs else None
+            _step_is_terminal = bool(_cs_def and not _cs_def.next)
+            if _step_is_terminal and _cs in state.completed_steps and not failed:
+                completed, inferred = True, True
             else:
                 t_type = terminal["event_type"] if terminal else None
                 if t_type in {"playbook.completed", "workflow.completed"}: completed = True
                 elif t_type in {"playbook.failed", "workflow.failed", "execution.cancelled", "command.failed"}:
                     completed = t_type == "execution.cancelled"; failed = t_type != "execution.cancelled"
-                elif latest and latest["node_name"] == "end" and latest["status"] == "COMPLETED" and latest["event_type"] in {"command.completed", "call.done", "step.exit"}:
+                elif latest and latest["status"] == "COMPLETED" and latest["event_type"] in {"command.completed", "call.done", "step.exit"} and int((pending_row or {}).get("pending_count", 0) or 0) <= 0:
+                    # Any terminal-step completion with no pending commands qualifies.
+                    # No longer restricted to node_name == "end".  See noetl/ai-meta#37.
                     completed, inferred = True, True
                 elif latest and latest["event_type"] == "batch.completed" and latest["status"] == "COMPLETED" and int((pending_row or {}).get("pending_count", 0) or 0) <= 0:
                     completed, inferred = True, True
