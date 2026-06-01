@@ -30,7 +30,14 @@ from noetl.core.sanitize import redact_keychain_values
 
 logger = setup_logger(__name__, include_location=True)
 
-router = APIRouter(prefix="/api/result", tags=["result"])
+# NOTE: this router is mounted by `noetl/server/api/__init__.py` under
+# the parent router, which is then mounted by `noetl/server/app.py` +
+# `wiring.py` with `prefix="/api"`.  So this router's prefix must NOT
+# also include `/api/` — otherwise the actual surfaced paths come out as
+# `/api/api/result/...`, which is the double-prefix bug surfaced by the
+# Rust worker's R-2.1 kind validation on 2026-06-01 (PUT /api/result
+# returned HTTP 404).
+router = APIRouter(prefix="/result", tags=["result"])
 
 
 # === Request/Response Models ===
