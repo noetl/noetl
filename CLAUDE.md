@@ -68,6 +68,7 @@ Port forwarding is configured in `ci/kind/config.yaml`. Do **NOT** use kubectl p
 | Service          | Host Port | Container Port | URL                               |
 |------------------|-----------|----------------|-----------------------------------|
 | NoETL Server     | 8082      | 30082          | http://localhost:8082             |
+| NoETL Flight gRPC| 8083      | 30083          | grpc://localhost:8083             |
 | Gateway API      | 8090      | 30090          | http://localhost:8090             |
 | Gateway UI       | 8080      | 30080          | http://localhost:8080             |
 | PostgreSQL       | 54321     | 30321          | localhost:54321                   |
