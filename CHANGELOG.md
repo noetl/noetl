@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.2.0](https://github.com/noetl/noetl/compare/v4.1.0...v4.2.0) (2026-06-01)
+
+### Features
+
+* **server:** get_flight_info discovery on Arrow Flight endpoint (R-2.3 Phase C1) ([d614839](https://github.com/noetl/noetl/commit/d6148393b30b7184e0c78b4660ec9a36c0092a02)), closes [noetl/ai-meta#30](https://github.com/noetl/ai-meta/issues/30)
+
 ## [4.1.0](https://github.com/noetl/noetl/compare/v4.0.1...v4.1.0) (2026-06-01)
 
 ### Features
