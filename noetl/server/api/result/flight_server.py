@@ -123,13 +123,84 @@ class NoetlFlightServer:
     Start with ``server.start_in_thread()``; stop with
     ``server.shutdown()``.  Designed to run alongside the FastAPI
     process — gRPC and HTTP listen on different ports.
+
+    ## TLS mode (R-2.3 Phase C2.1)
+
+    Pass ``tls_cert_path`` + ``tls_key_path`` (or the env pair
+    ``NOETL_FLIGHT_TLS_CERT`` + ``NOETL_FLIGHT_TLS_KEY``, see
+    :py:meth:`from_env`) to terminate TLS at the Flight gRPC port.
+    The server presents the cert to every connecting client; the
+    location URL automatically switches from ``grpc://`` to
+    ``grpc+tls://`` so consumers receive a single source of truth
+    about the wire protocol from a future ``ListEndpoints`` call.
+
+    When both ``tls_cert_path`` and ``tls_key_path`` are unset the
+    server keeps the existing plaintext h2c mode — same default
+    behaviour the kind manifest ships, no migration burden.
+
+    Client-certificate validation (mTLS) is reserved for Phase C2.4.
     """
 
-    def __init__(self, location: str = "grpc://0.0.0.0:8083"):
+    def __init__(
+        self,
+        location: str = "grpc://0.0.0.0:8083",
+        tls_cert_path: Optional[str] = None,
+        tls_key_path: Optional[str] = None,
+    ):
+        if (tls_cert_path is None) != (tls_key_path is None):
+            raise ValueError(
+                "tls_cert_path and tls_key_path must both be set or both be None; "
+                f"got cert={tls_cert_path!r}, key={tls_key_path!r}"
+            )
+        # When TLS is active, the location URL must use the
+        # `grpc+tls://` scheme so pyarrow.flight knows to wrap the
+        # listening socket in OpenSSL.  We accept callers passing
+        # either scheme + normalise here.
+        if tls_cert_path is not None and location.startswith("grpc://"):
+            location = "grpc+tls://" + location[len("grpc://") :]
         self.location = location
+        self.tls_cert_path = tls_cert_path
+        self.tls_key_path = tls_key_path
         self._server: Any = None  # pyarrow.flight.FlightServerBase instance
         self._thread: Optional[threading.Thread] = None
         self._serve_exception: Optional[BaseException] = None
+
+    @classmethod
+    def from_env(cls, default_location: str = "grpc://0.0.0.0:8083") -> "NoetlFlightServer":
+        """Construct from environment variables.
+
+        Reads:
+        - ``NOETL_FLIGHT_LOCATION`` — listening location (default
+          plaintext on 0.0.0.0:8083).  When ``NOETL_FLIGHT_TLS_CERT`` is
+          set the scheme auto-upgrades to ``grpc+tls://``.
+        - ``NOETL_FLIGHT_TLS_CERT`` — path to PEM-encoded server cert.
+        - ``NOETL_FLIGHT_TLS_KEY`` — path to PEM-encoded private key.
+
+        TLS is opt-in: omit both env vars to keep the plaintext h2c
+        mode the kind manifest ships.
+        """
+        import os
+
+        location = os.getenv("NOETL_FLIGHT_LOCATION", default_location)
+        cert = os.getenv("NOETL_FLIGHT_TLS_CERT") or None
+        key = os.getenv("NOETL_FLIGHT_TLS_KEY") or None
+        return cls(location=location, tls_cert_path=cert, tls_key_path=key)
+
+    def _load_tls_certificates(self) -> Optional[list[tuple[bytes, bytes]]]:
+        """Read the cert + key from disk as bytes for FlightServerBase.
+
+        Returns ``None`` when TLS is not configured (plaintext mode).
+        """
+        if self.tls_cert_path is None or self.tls_key_path is None:
+            return None
+        with open(self.tls_cert_path, "rb") as cf:
+            cert_bytes = cf.read()
+        with open(self.tls_key_path, "rb") as kf:
+            key_bytes = kf.read()
+        # FlightServerBase accepts a list of (cert, key) pairs — one
+        # entry per listening location.  Phase C2.1 binds a single
+        # location.
+        return [(cert_bytes, key_bytes)]
 
     def _build_server(self) -> Any:
         """Construct the pyarrow.flight server.  Lazy-imported."""
@@ -243,7 +314,10 @@ class NoetlFlightServer:
                     total_bytes=len(payload),
                 )
 
-        return _Server(location=outer.location)
+        # TLS certs (Phase C2.1) — None in plaintext mode, otherwise
+        # the single (cert, key) pair loaded from disk.
+        tls_certs = outer._load_tls_certificates()
+        return _Server(location=outer.location, tls_certificates=tls_certs)
 
     def start_in_thread(self) -> None:
         """Spawn the Flight server in a daemon thread.  Returns immediately."""
@@ -251,14 +325,17 @@ class NoetlFlightServer:
             return
         self._server = self._build_server()
 
+        tls_mode = "tls" if self.tls_cert_path else "plaintext"
+
         def _run() -> None:
             try:
                 logger.info(
-                    "Arrow Flight server starting at %s (R-2.3 Phase A)",
+                    "Arrow Flight server starting at %s (mode=%s, R-2.3)",
                     self.location,
+                    tls_mode,
                 )
                 self._server.serve()
-                logger.info("Arrow Flight server stopped")
+                logger.info("Arrow Flight server stopped (mode=%s)", tls_mode)
             except BaseException as exc:  # noqa: BLE001
                 logger.exception("Arrow Flight server crashed: %s", exc)
                 self._serve_exception = exc

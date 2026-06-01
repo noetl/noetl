@@ -298,3 +298,125 @@ def test_arrow_stream_media_type_matches_python_constant():
     )
     assert ARROW_STREAM_MEDIA_TYPE == STORAGE_MEDIA_TYPE
     assert ARROW_STREAM_MEDIA_TYPE == "application/vnd.apache.arrow.stream"
+
+
+# ---------------------------------------------------------------------------
+# R-2.3 Phase C2.1 — Server-side TLS
+# ---------------------------------------------------------------------------
+
+
+def test_tls_construction_requires_both_cert_and_key():
+    """tls_cert_path + tls_key_path must be set together — one without
+    the other is a misconfiguration that would silently degrade to
+    plaintext otherwise."""
+    with pytest.raises(ValueError, match="must both be set or both be None"):
+        NoetlFlightServer(
+            location="grpc://0.0.0.0:8083",
+            tls_cert_path="/etc/noetl/flight.crt",
+            tls_key_path=None,
+        )
+    with pytest.raises(ValueError, match="must both be set or both be None"):
+        NoetlFlightServer(
+            location="grpc://0.0.0.0:8083",
+            tls_cert_path=None,
+            tls_key_path="/etc/noetl/flight.key",
+        )
+
+
+def test_tls_normalises_location_scheme_to_grpc_tls(tmp_path):
+    """When TLS certs are present the location URL auto-upgrades from
+    grpc:// to grpc+tls:// — pyarrow.flight uses the scheme as the
+    signal to wrap the listener in OpenSSL.  Callers that already
+    pass grpc+tls:// stay untouched."""
+    cert = tmp_path / "flight.crt"
+    key = tmp_path / "flight.key"
+    cert.write_bytes(b"dummy")
+    key.write_bytes(b"dummy")
+
+    upgraded = NoetlFlightServer(
+        location="grpc://0.0.0.0:8083",
+        tls_cert_path=str(cert),
+        tls_key_path=str(key),
+    )
+    assert upgraded.location == "grpc+tls://0.0.0.0:8083"
+
+    passthrough = NoetlFlightServer(
+        location="grpc+tls://0.0.0.0:8083",
+        tls_cert_path=str(cert),
+        tls_key_path=str(key),
+    )
+    assert passthrough.location == "grpc+tls://0.0.0.0:8083"
+
+
+def test_plaintext_mode_keeps_grpc_scheme():
+    """No TLS env → location URL stays grpc:// — kind default, no
+    migration burden."""
+    server = NoetlFlightServer(location="grpc://0.0.0.0:8083")
+    assert server.location == "grpc://0.0.0.0:8083"
+    assert server.tls_cert_path is None
+    assert server.tls_key_path is None
+    assert server._load_tls_certificates() is None
+
+
+def test_tls_load_certificates_reads_pem_bytes(tmp_path):
+    """_load_tls_certificates returns the on-disk cert + key as a
+    single (cert_bytes, key_bytes) pair — FlightServerBase's wire
+    shape for the tls_certificates= kwarg."""
+    cert = tmp_path / "flight.crt"
+    key = tmp_path / "flight.key"
+    cert.write_bytes(b"-----BEGIN CERTIFICATE-----\nfake\n-----END CERTIFICATE-----")
+    key.write_bytes(b"-----BEGIN PRIVATE KEY-----\nfake\n-----END PRIVATE KEY-----")
+
+    server = NoetlFlightServer(
+        location="grpc://0.0.0.0:8083",
+        tls_cert_path=str(cert),
+        tls_key_path=str(key),
+    )
+    certs = server._load_tls_certificates()
+    assert certs is not None
+    assert len(certs) == 1
+    cert_bytes, key_bytes = certs[0]
+    assert b"BEGIN CERTIFICATE" in cert_bytes
+    assert b"BEGIN PRIVATE KEY" in key_bytes
+
+
+def test_from_env_plaintext_default(monkeypatch):
+    """Unset TLS env vars → plaintext server with the default
+    location.  Same behaviour the kind manifest depends on."""
+    monkeypatch.delenv("NOETL_FLIGHT_LOCATION", raising=False)
+    monkeypatch.delenv("NOETL_FLIGHT_TLS_CERT", raising=False)
+    monkeypatch.delenv("NOETL_FLIGHT_TLS_KEY", raising=False)
+    server = NoetlFlightServer.from_env()
+    assert server.location == "grpc://0.0.0.0:8083"
+    assert server.tls_cert_path is None
+    assert server.tls_key_path is None
+
+
+def test_from_env_tls_pair(monkeypatch, tmp_path):
+    """NOETL_FLIGHT_TLS_CERT + NOETL_FLIGHT_TLS_KEY → TLS-enabled
+    server with grpc+tls:// scheme."""
+    cert = tmp_path / "flight.crt"
+    key = tmp_path / "flight.key"
+    cert.write_bytes(b"dummy")
+    key.write_bytes(b"dummy")
+
+    monkeypatch.setenv("NOETL_FLIGHT_LOCATION", "grpc://0.0.0.0:8083")
+    monkeypatch.setenv("NOETL_FLIGHT_TLS_CERT", str(cert))
+    monkeypatch.setenv("NOETL_FLIGHT_TLS_KEY", str(key))
+    server = NoetlFlightServer.from_env()
+    assert server.location == "grpc+tls://0.0.0.0:8083"
+    assert server.tls_cert_path == str(cert)
+    assert server.tls_key_path == str(key)
+
+
+def test_from_env_partial_tls_raises(monkeypatch, tmp_path):
+    """NOETL_FLIGHT_TLS_CERT without KEY (or vice versa) → ValueError
+    so a misconfigured pod fails fast rather than serving plaintext
+    after the operator thought they'd enabled TLS."""
+    cert = tmp_path / "flight.crt"
+    cert.write_bytes(b"dummy")
+
+    monkeypatch.setenv("NOETL_FLIGHT_TLS_CERT", str(cert))
+    monkeypatch.delenv("NOETL_FLIGHT_TLS_KEY", raising=False)
+    with pytest.raises(ValueError, match="must both be set or both be None"):
+        NoetlFlightServer.from_env()

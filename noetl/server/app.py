@@ -367,20 +367,21 @@ def _create_app(settings: Settings) -> FastAPI:
             # NOETL_FLIGHT_LOCATION (default grpc://0.0.0.0:8083);
             # NOETL_FLIGHT_DISABLED=1 turns the spawn off for hosts
             # where pyarrow.flight is unavailable or the port conflicts.
+            #
+            # R-2.3 Phase C2.1: optional TLS via NOETL_FLIGHT_TLS_CERT
+            # + NOETL_FLIGHT_TLS_KEY (server-side cert).  Unset both
+            # to stay in plaintext h2c mode — same default the kind
+            # manifest ships, no migration burden.
             flight_server: Optional[NoetlFlightServer] = None
             try:
                 if os.getenv("NOETL_FLIGHT_DISABLED", "").strip() in ("1", "true", "True"):
                     logger.info("Arrow Flight server disabled via NOETL_FLIGHT_DISABLED")
                 else:
-                    flight_location = os.getenv(
-                        "NOETL_FLIGHT_LOCATION",
-                        "grpc://0.0.0.0:8083",
-                    )
-                    flight_server = NoetlFlightServer(location=flight_location)
+                    flight_server = NoetlFlightServer.from_env()
                     flight_server.start_in_thread()
                     logger.info(
-                        "Arrow Flight server background thread started (R-2.3 Phase A): %s",
-                        flight_location,
+                        "Arrow Flight server background thread started (R-2.3): %s",
+                        flight_server.location,
                     )
             except Exception as e:
                 logger.error(
