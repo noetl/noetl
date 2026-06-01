@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.0.1](https://github.com/noetl/noetl/compare/v4.0.0...v4.0.1) (2026-06-01)
+
+### Bug Fixes
+
+* **api:** drop redundant /api/ prefix on result + temp routers ([e65ee59](https://github.com/noetl/noetl/commit/e65ee5925ace537e7efc4c225d95f169d083dace)), closes [noetl/worker#29](https://github.com/noetl/worker/issues/29) [noetl/ai-meta#30](https://github.com/noetl/ai-meta/issues/30)
+
 ## [4.0.0](https://github.com/noetl/noetl/compare/v3.0.0...v4.0.0) (2026-05-31)
 
 ### ⚠ BREAKING CHANGES
