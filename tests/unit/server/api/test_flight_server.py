@@ -420,3 +420,180 @@ def test_from_env_partial_tls_raises(monkeypatch, tmp_path):
     monkeypatch.delenv("NOETL_FLIGHT_TLS_KEY", raising=False)
     with pytest.raises(ValueError, match="must both be set or both be None"):
         NoetlFlightServer.from_env()
+
+
+# ---------------------------------------------------------------------------
+# R-2.3 Phase C2.3 — Bearer-token middleware
+# ---------------------------------------------------------------------------
+
+
+def test_parse_bearer_tokens_empty_returns_empty_set():
+    """Empty / None input → empty set (no-auth mode)."""
+    from noetl.server.api.result.flight_server import _parse_bearer_tokens
+
+    assert _parse_bearer_tokens(None) == set()
+    assert _parse_bearer_tokens("") == set()
+    assert _parse_bearer_tokens("   ") == set()
+
+
+def test_parse_bearer_tokens_splits_and_trims():
+    """Comma-separated, trims whitespace, drops empty entries."""
+    from noetl.server.api.result.flight_server import _parse_bearer_tokens
+
+    assert _parse_bearer_tokens("alpha,beta") == {"alpha", "beta"}
+    assert _parse_bearer_tokens("alpha , beta , ") == {"alpha", "beta"}
+    assert _parse_bearer_tokens(", ,, alpha,,") == {"alpha"}
+
+
+def test_bearer_tokens_none_means_no_auth():
+    """Constructing without bearer_tokens leaves auth disabled."""
+    server = NoetlFlightServer(location="grpc://0.0.0.0:8083")
+    assert server.bearer_tokens is None
+    assert server._build_middleware() is None
+
+
+def test_bearer_tokens_empty_set_normalised_to_none():
+    """Empty set ⇒ None (no-auth) — falsy values collapse to the
+    same internal shape so the build path has one branch to check."""
+    server = NoetlFlightServer(
+        location="grpc://0.0.0.0:8083",
+        bearer_tokens=set(),
+    )
+    assert server.bearer_tokens is None
+    assert server._build_middleware() is None
+
+
+def test_bearer_tokens_builds_middleware_factory():
+    """Populated set ⇒ middleware mapping with `bearer-auth` key
+    bound to a `ServerMiddlewareFactory`."""
+    server = NoetlFlightServer(
+        location="grpc://0.0.0.0:8083",
+        bearer_tokens={"alpha", "beta"},
+    )
+    middleware = server._build_middleware()
+    assert middleware is not None
+    assert set(middleware.keys()) == {"bearer-auth"}
+    factory = middleware["bearer-auth"]
+    assert hasattr(factory, "start_call"), "expected a ServerMiddlewareFactory subclass"
+
+
+def test_bearer_middleware_accepts_valid_token():
+    """`Authorization: Bearer <token>` with a configured token →
+    `start_call` returns None (accept; no per-call middleware)."""
+    server = NoetlFlightServer(
+        location="grpc://0.0.0.0:8083",
+        bearer_tokens={"sk-test-valid"},
+    )
+    middleware = server._build_middleware()
+    factory = middleware["bearer-auth"]
+    result = factory.start_call(
+        info=None,
+        headers={"authorization": ["Bearer sk-test-valid"]},
+    )
+    assert result is None
+
+
+def test_bearer_middleware_accepts_lowercase_bearer():
+    """`bearer ` casing (gRPC-metadata frequently lowercases) is
+    accepted."""
+    server = NoetlFlightServer(
+        location="grpc://0.0.0.0:8083",
+        bearer_tokens={"sk-test"},
+    )
+    factory = server._build_middleware()["bearer-auth"]
+    assert (
+        factory.start_call(info=None, headers={"authorization": ["bearer sk-test"]})
+        is None
+    )
+
+
+def test_bearer_middleware_rejects_missing_header(monkeypatch):
+    """No `Authorization` header → `FlightUnauthenticatedError`."""
+    server = NoetlFlightServer(
+        location="grpc://0.0.0.0:8083",
+        bearer_tokens={"sk-test"},
+    )
+    factory = server._build_middleware()["bearer-auth"]
+    with pytest.raises(pyarrow_flight.FlightUnauthenticatedError):
+        factory.start_call(info=None, headers={})
+
+
+def test_bearer_middleware_rejects_wrong_token():
+    """Wrong token → `FlightUnauthenticatedError`."""
+    server = NoetlFlightServer(
+        location="grpc://0.0.0.0:8083",
+        bearer_tokens={"sk-test"},
+    )
+    factory = server._build_middleware()["bearer-auth"]
+    with pytest.raises(pyarrow_flight.FlightUnauthenticatedError):
+        factory.start_call(
+            info=None,
+            headers={"authorization": ["Bearer sk-wrong"]},
+        )
+
+
+def test_bearer_middleware_rejects_basic_auth():
+    """Non-Bearer schemes (Basic, etc.) → `FlightUnauthenticatedError`
+    even when a configured token happens to match the scheme value.
+    Locks in that we only honor the `Bearer` scheme."""
+    server = NoetlFlightServer(
+        location="grpc://0.0.0.0:8083",
+        bearer_tokens={"YWxwaGE6YmV0YQ=="},  # base64("alpha:beta")
+    )
+    factory = server._build_middleware()["bearer-auth"]
+    with pytest.raises(pyarrow_flight.FlightUnauthenticatedError):
+        factory.start_call(
+            info=None,
+            headers={"authorization": ["Basic YWxwaGE6YmV0YQ=="]},
+        )
+
+
+def test_bearer_middleware_token_rotation():
+    """Multiple tokens in the set → any one of them accepted.
+    Locks in the rotation pattern: deploy v2 with {v1, v2}, rotate
+    clients, then drop v1."""
+    server = NoetlFlightServer(
+        location="grpc://0.0.0.0:8083",
+        bearer_tokens={"old-token", "new-token"},
+    )
+    factory = server._build_middleware()["bearer-auth"]
+    assert (
+        factory.start_call(info=None, headers={"authorization": ["Bearer old-token"]})
+        is None
+    )
+    assert (
+        factory.start_call(info=None, headers={"authorization": ["Bearer new-token"]})
+        is None
+    )
+
+
+def test_from_env_picks_up_bearer_tokens(monkeypatch):
+    """`NOETL_FLIGHT_BEARER_TOKENS` populates the bearer_tokens set."""
+    monkeypatch.delenv("NOETL_FLIGHT_LOCATION", raising=False)
+    monkeypatch.delenv("NOETL_FLIGHT_TLS_CERT", raising=False)
+    monkeypatch.delenv("NOETL_FLIGHT_TLS_KEY", raising=False)
+    monkeypatch.setenv("NOETL_FLIGHT_BEARER_TOKENS", "tok-1, tok-2, tok-3")
+    server = NoetlFlightServer.from_env()
+    assert server.bearer_tokens == {"tok-1", "tok-2", "tok-3"}
+
+
+def test_from_env_no_tokens_means_no_auth(monkeypatch):
+    """Unset `NOETL_FLIGHT_BEARER_TOKENS` → bearer_tokens is None."""
+    monkeypatch.delenv("NOETL_FLIGHT_LOCATION", raising=False)
+    monkeypatch.delenv("NOETL_FLIGHT_TLS_CERT", raising=False)
+    monkeypatch.delenv("NOETL_FLIGHT_TLS_KEY", raising=False)
+    monkeypatch.delenv("NOETL_FLIGHT_BEARER_TOKENS", raising=False)
+    server = NoetlFlightServer.from_env()
+    assert server.bearer_tokens is None
+
+
+def test_bearer_tokens_independent_of_tls(monkeypatch, tmp_path):
+    """Auth + TLS are independently opt-in — bearer-on + plaintext
+    is a valid combo (auth handled by a separate TLS terminator)."""
+    monkeypatch.delenv("NOETL_FLIGHT_TLS_CERT", raising=False)
+    monkeypatch.delenv("NOETL_FLIGHT_TLS_KEY", raising=False)
+    monkeypatch.setenv("NOETL_FLIGHT_BEARER_TOKENS", "the-token")
+    server = NoetlFlightServer.from_env()
+    assert server.tls_cert_path is None
+    assert server.bearer_tokens == {"the-token"}
+    assert server.location.startswith("grpc://"), "no TLS, no scheme upgrade"
