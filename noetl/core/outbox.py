@@ -59,18 +59,43 @@ async def ensure_outbox_schema() -> None:
 
 
 async def enqueue_outbox(cur: Any, event: dict[str, Any], *, subject: str | None = None) -> None:
-    """Enqueue a mirrored event in the caller's current database transaction."""
+    """Enqueue a mirrored event in the caller's current database transaction.
+
+    The arrow-feather encoded ``payload_bytes`` is best-effort: the JSONB
+    ``payload`` column is the source of truth (NATS publishes from it
+    directly per ``publish_outbox_batch``), and the projector's NATS
+    consumer falls back to JSON when feather bytes are missing.  If the
+    feather encode fails — typically a pyarrow type-inference error on
+    a deeply nested payload that the safe-table helper still can't
+    coerce — we record NULL for payload_bytes + ``payload_codec='json'``
+    so direct-table readers know to use the JSONB column.  The outbox
+    insert must never fail the surrounding batch transaction over an
+    accelerator format that the consumer side already treats as
+    optional.  See noetl/ai-meta#36.
+    """
 
     event_id = event.get("event_id")
     if event_id is None:
         raise ValueError("outbox requires event_id")
     payload = normalize_outbox_payload(event)
-    payload_bytes, _schema_digest, _row_count = rows_to_arrow_feather([payload])
+    try:
+        payload_bytes, _schema_digest, _row_count = rows_to_arrow_feather([payload])
+        payload_codec = "arrow-feather"
+    except Exception as exc:
+        logger.warning(
+            "[OUTBOX] Arrow-feather encoding failed for event_id=%s execution_id=%s; "
+            "falling back to NULL payload_bytes + payload_codec='json'.  Error: %s",
+            event_id,
+            payload.get("execution_id"),
+            exc,
+        )
+        payload_bytes = None
+        payload_codec = "json"
     execution_id = payload.get("execution_id")
     await cur.execute(
         """
         INSERT INTO noetl.outbox (execution_id, event_id, subject, payload, payload_bytes, payload_codec)
-        VALUES (%s, %s, %s, %s, %s, 'arrow-feather')
+        VALUES (%s, %s, %s, %s, %s, %s)
         ON CONFLICT (execution_id, event_id) DO NOTHING
         """,
         (
@@ -79,6 +104,7 @@ async def enqueue_outbox(cur: Any, event: dict[str, Any], *, subject: str | None
             subject,
             Json(payload),
             payload_bytes,
+            payload_codec,
         ),
     )
 
