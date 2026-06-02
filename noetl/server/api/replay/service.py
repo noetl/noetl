@@ -589,10 +589,35 @@ def _normalized_frame_projection_row(row: Mapping[str, Any]) -> dict[str, Any]:
     }
 
 
+def _projection_sort_key(value: Any) -> tuple[int, Any]:
+    """Sort key for projection-row identifiers that tolerates both shapes.
+
+    Production identifiers (frame_id / stage_id / command_id) are
+    snowflake-style numeric strings (e.g. ``"639947948205277573"``), so
+    sorting them numerically preserves event-log ordering.  Test
+    fixtures and synthetic identifiers commonly use semantic strings
+    (e.g. ``"stage-1"``, ``"frame-A"``) that can't be coerced to int —
+    the previous ``int(row["X"])`` lambdas raised ``ValueError`` on
+    those, breaking the entire normaliser.  Closes noetl/noetl#638.
+
+    Strategy: tuple-sort.  Int-coercible values share a leading 0 + sort
+    by their numeric value; non-coercible values share a leading 1 +
+    sort lexicographically.  Within a single projection run callers
+    won't usually mix shapes, but the tuple ordering is well-defined
+    when they do (numeric first, then strings).
+    """
+
+    text = "" if value is None else str(value)
+    try:
+        return (0, int(text))
+    except (TypeError, ValueError):
+        return (1, text)
+
+
 def normalize_live_frame_projection(rows: Iterable[Mapping[str, Any]]) -> list[dict[str, Any]]:
     return sorted(
         (_normalized_frame_projection_row(row) for row in rows),
-        key=lambda row: int(row["frame_id"]),
+        key=lambda row: _projection_sort_key(row["frame_id"]),
     )
 
 
@@ -624,7 +649,7 @@ def normalize_replayed_frame_projection(state: Mapping[str, Any]) -> list[dict[s
             for frame_id, frame in frames.items()
             if isinstance(frame, Mapping)
         ),
-        key=lambda row: int(row["frame_id"]),
+        key=lambda row: _projection_sort_key(row["frame_id"]),
     )
 
 
@@ -663,7 +688,7 @@ def _normalized_stage_projection_row(row: Mapping[str, Any]) -> dict[str, Any]:
 def normalize_live_stage_projection(rows: Iterable[Mapping[str, Any]]) -> list[dict[str, Any]]:
     return sorted(
         (_normalized_stage_projection_row(row) for row in rows),
-        key=lambda row: int(row["stage_id"]),
+        key=lambda row: _projection_sort_key(row["stage_id"]),
     )
 
 
@@ -682,7 +707,7 @@ def normalize_replayed_stage_projection(state: Mapping[str, Any]) -> list[dict[s
             for stage_id, stage in stages.items()
             if isinstance(stage, Mapping)
         ),
-        key=lambda row: int(row["stage_id"]),
+        key=lambda row: _projection_sort_key(row["stage_id"]),
     )
 
 
@@ -725,7 +750,7 @@ def _normalized_command_projection_row(row: Mapping[str, Any]) -> dict[str, Any]
 def normalize_live_command_projection(rows: Iterable[Mapping[str, Any]]) -> list[dict[str, Any]]:
     return sorted(
         (_normalized_command_projection_row(row) for row in rows),
-        key=lambda row: int(row["command_id"]),
+        key=lambda row: _projection_sort_key(row["command_id"]),
     )
 
 
@@ -744,7 +769,7 @@ def normalize_replayed_command_projection(state: Mapping[str, Any]) -> list[dict
             for command_id, command in commands.items()
             if isinstance(command, Mapping)
         ),
-        key=lambda row: int(row["command_id"]),
+        key=lambda row: _projection_sort_key(row["command_id"]),
     )
 
 
