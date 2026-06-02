@@ -161,6 +161,7 @@ class NATSCommandPublisher:
         step: str,
         server_url: str,
         tool_kind: Optional[str] = None,
+        playbook_path: Optional[str] = None,
     ):
         """
         Publish command notification to NATS.
@@ -179,11 +180,24 @@ class NATSCommandPublisher:
         this argument is captured + threaded through but the legacy
         subject is used verbatim — no behaviour change.  See
         noetl/ai-meta#42 for the full plan.
+
+        ``playbook_path`` is the catalog path of the playbook issuing
+        the command.  When set + the path starts with a privileged
+        prefix (today: ``system/``), the subject routes to a
+        dedicated pool segment regardless of ``tool_kind``.  Lets the
+        system worker pool claim ``system/outbox_publisher`` commands
+        even though they use the generic ``tool: http`` /
+        ``tool: nats`` kinds.  See noetl/ai-meta#46 Phase 2.a.2.
         """
         await self.ensure_connected()
 
         from noetl.core.runtime.pool_routing import route_subject
-        subject = route_subject(self.subject, tool_kind, execution_id)
+        subject = route_subject(
+            self.subject,
+            tool_kind,
+            execution_id,
+            playbook_path=playbook_path,
+        )
 
         message = {
             "execution_id": execution_id,

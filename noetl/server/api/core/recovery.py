@@ -17,7 +17,7 @@ async def shutdown_publish_recovery_tasks() -> None:
     for t in tasks: t.cancel()
     await asyncio.gather(*tasks, return_exceptions=True)
 
-async def _recover_unclaimed_command_after_delay(execution_id: int, event_id: int, command_id: str, step: str, server_url: str, delay_seconds: float, tool_kind: Optional[str] = None) -> None:
+async def _recover_unclaimed_command_after_delay(execution_id: int, event_id: int, command_id: str, step: str, server_url: str, delay_seconds: float, tool_kind: Optional[str] = None, playbook_path: Optional[str] = None) -> None:
     await asyncio.sleep(delay_seconds)
     try:
         from noetl.core.db.pool import get_pool_connection
@@ -36,15 +36,19 @@ async def _recover_unclaimed_command_after_delay(execution_id: int, event_id: in
                 if (await cur.fetchone() or {'count': 0}).get('total', 0) > 0: return
         logger.warning("[PUBLISH-RECOVERY] Command unclaimed after %.1fs; re-publishing execution_id=%s command_id=%s", delay_seconds, execution_id, command_id)
         nats_pub = await get_nats_publisher()
-        await nats_pub.publish_command(execution_id=execution_id, event_id=event_id, command_id=command_id, step=step, server_url=server_url, tool_kind=tool_kind)
+        await nats_pub.publish_command(execution_id=execution_id, event_id=event_id, command_id=command_id, step=step, server_url=server_url, tool_kind=tool_kind, playbook_path=playbook_path)
     except Exception as exc:
         logger.error("[PUBLISH-RECOVERY] Recovery failed for %s: %s", command_id, exc, exc_info=True)
 
-# Per noetl/ai-meta#42 the publish tuple is a 5-tuple (the trailing
-# ``tool_kind`` drives the NATS subject derivation when pool routing
-# is enabled).  Old 4-tuple callers stay compatible: the helper
-# unpacks defensively and treats missing ``tool_kind`` as ``None``
-# (which routes to the shared subject, same as today's behaviour).
+# The publish tuple is 6-wide:
+#   ``(execution_id, evt_id, cmd_id, step, tool_kind, playbook_path)``.
+# The trailing two fields drive the NATS subject derivation when pool
+# routing is enabled (noetl/ai-meta#42 for tool_kind +
+# noetl/ai-meta#46 Phase 2.a.2 for playbook_path).  Old 4-tuple and
+# 5-tuple callers stay compatible: the helper unpacks defensively and
+# treats missing ``tool_kind`` / ``playbook_path`` as ``None`` (routes
+# to the shared subject, same as today's behaviour for non-privileged
+# playbooks).
 async def _publish_commands_with_recovery(command_events: list[tuple], *, server_url: str) -> None:
     if not command_events: return
     nats_pub = None
@@ -53,10 +57,10 @@ async def _publish_commands_with_recovery(command_events: list[tuple], *, server
     except Exception as exc:
         logger.warning("[PUBLISH-RECOVERY] NATS publisher unavailable; scheduling delayed recovery: %s", exc)
 
-    async def _safe_publish(exec_id, evt_id, cid, step, tool_kind=None):
+    async def _safe_publish(exec_id, evt_id, cid, step, tool_kind=None, playbook_path=None):
         if nats_pub:
             try:
-                await nats_pub.publish_command(execution_id=exec_id, event_id=evt_id, command_id=cid, step=step, server_url=server_url, tool_kind=tool_kind)
+                await nats_pub.publish_command(execution_id=exec_id, event_id=evt_id, command_id=cid, step=step, server_url=server_url, tool_kind=tool_kind, playbook_path=playbook_path)
             except Exception as exc:
                 logger.warning("[PUBLISH-RECOVERY] Initial publish failed for %s: %s", cid, exc)
 
@@ -66,6 +70,7 @@ async def _publish_commands_with_recovery(command_events: list[tuple], *, server
                 step=step, server_url=server_url,
                 delay_seconds=_COMMAND_PUBLISH_RECOVERY_DELAY_SECONDS,
                 tool_kind=tool_kind,
+                playbook_path=playbook_path,
             ),
             name=f"command-publish-recovery:{exec_id}:{cid}",
         )
@@ -74,7 +79,7 @@ async def _publish_commands_with_recovery(command_events: list[tuple], *, server
     publish_semaphore = asyncio.Semaphore(50) # Max 50 parallel NATS publishes
     async def _sem_publish(args):
         async with publish_semaphore:
-            # Defensive unpack — accept legacy 4-tuple or new 5-tuple.
+            # Defensive unpack — accept legacy 4-tuple, 5-tuple or new 6-tuple.
             await _safe_publish(*args)
 
     await asyncio.gather(*[_sem_publish(args) for args in command_events])

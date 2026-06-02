@@ -419,14 +419,18 @@ async def _issue_commands_for_batch(job: _BatchAcceptJob, commands: list) -> Non
 
     await _drain_batch_outbox()
 
-    # 5. Parallel NATS publish.  Tuple is 5-wide:
-    # ``(execution_id, evt_id, cmd_id, step, tool_kind)``.  The trailing
-    # ``tool_kind`` drives the NATS subject derivation when pool
-    # routing is enabled — see noetl/ai-meta#42 + the route_subject
-    # helper in noetl.core.runtime.pool_routing.  Today the field is
-    # captured but the subject stays single until the cutover env
-    # flag flips.
-    publish_items = [(p["execution_id"], p["evt_id"], p["cmd_id"], p["step"], p.get("tool_kind")) for p in prepared_commands]
+    # 5. Parallel NATS publish.  Tuple is 6-wide:
+    # ``(execution_id, evt_id, cmd_id, step, tool_kind, playbook_path)``.
+    # The trailing two fields drive the NATS subject derivation when
+    # pool routing is enabled — ``tool_kind`` for noetl/ai-meta#42's
+    # ``agent``→python carve-out, ``playbook_path`` for noetl/ai-meta
+    # #46 Phase 2.a.2's ``system/*`` privileged routing.  Both fields
+    # are captured but the subject stays single until the cutover env
+    # flag flips.  ``catalog_path_for`` hits an in-process LRU cache so
+    # the lookup is free after the first batch for any given playbook.
+    from .catalog_path import catalog_path_for
+    playbook_path = await catalog_path_for(cat_id)
+    publish_items = [(p["execution_id"], p["evt_id"], p["cmd_id"], p["step"], p.get("tool_kind"), playbook_path) for p in prepared_commands]
     await _publish_commands_with_recovery(publish_items, server_url=server_url)
 
 async def _process_accepted_batch(

@@ -465,17 +465,31 @@ async def handle_event(req: EventRequest) -> EventResponse:
                         "frame_id": frame_id,
                         "created_at": _now,
                     })
-                    # 5-tuple per noetl/ai-meta#42 — trailing tool_kind
-                    # drives NATS subject derivation when pool routing
-                    # is enabled.
-                    command_events.append((int(cmd.execution_id), new_evt_id, cmd_id, cmd.step, cmd.tool.kind))
+                    # 6-tuple per noetl/ai-meta#42 + #46 Phase 2.a.2 —
+                    # trailing ``(tool_kind, playbook_path)`` drives
+                    # NATS subject derivation when pool routing is
+                    # enabled.  Carry ``cat_id`` alongside so we can
+                    # resolve the playbook path per command after the
+                    # DB transaction commits (commands in this batch
+                    # may span multiple executions / catalog_ids when
+                    # the engine returns cross-execution work).
+                    command_events.append((int(cmd.execution_id), new_evt_id, cmd_id, cmd.step, cmd.tool.kind, cat_id))
                     supervisor_commands.append((str(cmd.execution_id), cmd_id, cmd.step, int(new_evt_id), dict(meta)))
                 await conn.commit()
 
         await _drain_core_outbox()
         for s_exec, s_cmd, s_step, s_evt, s_meta in supervisor_commands:
             await supervise_command_issued(s_exec, s_cmd, s_step, event_id=s_evt, meta=s_meta)
-        await _publish_commands_with_recovery(command_events, server_url=server_url)
+        # Resolve the playbook path per command's catalog_id (the
+        # helper caches per catalog_id so repeats are free).  Swap the
+        # trailing cat_id slot in each tuple for the resolved path.
+        from .catalog_path import catalog_path_for
+        resolved_events = []
+        for ev in command_events:
+            *prefix, ev_cat_id = ev
+            path = await catalog_path_for(ev_cat_id)
+            resolved_events.append((*prefix, path))
+        await _publish_commands_with_recovery(resolved_events, server_url=server_url)
         
         if req.name == "command.completed" and req.step.lower() != "end":
             try:

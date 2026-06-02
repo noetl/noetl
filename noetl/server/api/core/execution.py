@@ -186,10 +186,12 @@ async def execute(req: ExecuteRequest) -> ExecuteResponse:
                         "frame_id": frame_id,
                         "created_at": now,
                     })
-                    # 5-tuple per noetl/ai-meta#42 — trailing tool_kind
-                    # drives NATS subject derivation when pool routing
-                    # is enabled.
-                    command_events.append((int(execution_id), evt_id, cmd_id, cmd.step, cmd.tool.kind))
+                    # 6-tuple per noetl/ai-meta#42 + #46 Phase 2.a.2 —
+                    # trailing ``(tool_kind, playbook_path)`` drives NATS
+                    # subject derivation when pool routing is enabled.
+                    # ``path`` here is the catalog row's path, captured
+                    # above when resolving ``req.path`` / ``req.catalog_id``.
+                    command_events.append((int(execution_id), evt_id, cmd_id, cmd.step, cmd.tool.kind, path))
                     await _enqueue_execution_outbox(
                         cur,
                         _command_issued_envelope(

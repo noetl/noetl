@@ -1,22 +1,32 @@
-"""Pool routing for tool kinds — see noetl/ai-meta#42.
+"""Pool routing for tool kinds and privileged playbook paths.
 
-The Rust noetl-worker can dispatch most tool kinds via the shared
-`noetl-tools` registry, but a handful are Python-runtime-bound and
-can only run on the Python pool (the `agent` LLM-framework bridge
-today; the `container` K8s-Job dispatcher per noetl/ai-meta#43 once
-it switches to a callback shape; possibly others later).
+Two routing keys, applied in order:
 
-This module is the source of truth for which kinds are Python-only.
-Adding a new Python-only kind is a one-line entry in
-:data:`POOL_FILTER_MAP`; no Rust-side change required because the
-worker pools learn what they support by *which NATS consumer they
-subscribe to*, not by querying a runtime contract.
+1. **Catalog path prefix** (:data:`POOL_PATH_PREFIX_MAP`) — a playbook
+   whose catalog path starts with a privileged prefix (today:
+   ``system/*``, see noetl/ai-meta#46 Phase 2.a.2) routes to a
+   dedicated pool segment regardless of tool kind.  This is how the
+   system worker pool claims platform-internal playbooks
+   (``system/outbox_publisher``, ``system/projector``, …) without
+   needing every step to declare a ``system_*`` tool kind.
+2. **Tool kind** (:data:`POOL_FILTER_MAP`, see noetl/ai-meta#42) —
+   anything not picked up by path-based routing falls back to
+   kind-based routing.  The Rust noetl-worker can dispatch most tool
+   kinds via the shared `noetl-tools` registry; a handful are
+   Python-runtime-bound (e.g. ``agent``) and route to the Python
+   pool only.
 
-The actual subject-routing logic ships in three phases per the
-[noetl/ai-meta#42](https://github.com/noetl/ai-meta/issues/42)
-plan; this module is the no-behaviour-change scaffold for PR-1.
+Both maps are the source of truth — the worker pools learn what they
+support by *which NATS consumer they subscribe to*, not by querying
+a runtime contract.  Adding a new privileged namespace or a new
+Python-only kind is a one-line entry here.
+
 :func:`route_subject` returns the legacy single subject until the
-:envvar:`NOETL_COMMAND_ROUTING_ENABLED` env flag flips at cutover.
+:envvar:`NOETL_COMMAND_ROUTING_ENABLED` env flag flips.  Once
+enabled, the hierarchical subject ``<base>.<pool>.<execution_id>``
+is used; the system pool's NATS consumer
+(``filter_subject=noetl.commands.system.>``) picks up the
+privileged stream.
 """
 
 from __future__ import annotations
@@ -35,6 +45,20 @@ POOL_FILTER_MAP: dict[str, str] = {
     # replicate the ``importlib.import_module`` + ``getattr`` shape;
     # routes to Python pool only.
     "agent": "python",
+}
+
+# Catalog-path prefixes that route to a privileged pool regardless of
+# tool kind.  The system worker pool (see noetl/ai-meta#46) runs
+# platform-internal playbooks under the ``system/`` namespace; every
+# command issued by such a playbook is routed to the
+# ``system`` pool segment so user-pool workers cannot claim it.
+#
+# Order matters only if two prefixes overlap — they don't today.
+# Adding a new privileged namespace: one entry here, plus a worker
+# pool whose NATS consumer's ``filter_subject`` matches
+# ``noetl.commands.<segment>.>``.
+POOL_PATH_PREFIX_MAP: dict[str, str] = {
+    "system/": "system",
 }
 
 # Default segment for kinds not in POOL_FILTER_MAP.  Both worker
@@ -71,10 +95,41 @@ def pool_segment_for_kind(tool_kind: Optional[str]) -> str:
     return POOL_FILTER_MAP.get(tool_kind, DEFAULT_POOL_SEGMENT)
 
 
+def pool_segment_for_path(playbook_path: Optional[str]) -> Optional[str]:
+    """Return the pool segment for a privileged playbook path, or ``None``.
+
+    A playbook whose catalog path starts with any of the prefixes in
+    :data:`POOL_PATH_PREFIX_MAP` routes to a dedicated pool segment
+    regardless of tool kind.  The system worker pool (see
+    noetl/ai-meta#46) uses this for the ``system/`` namespace so that
+    ``system/outbox_publisher`` (with ``tool: http`` + ``tool: nats``
+    steps that would otherwise route to ``shared``) lands on the
+    privileged consumer.
+
+    Returns ``None`` when the path doesn't match a privileged prefix
+    so the caller can fall back to :func:`pool_segment_for_kind`.
+
+    Leading slashes are stripped before matching, so both
+    ``"system/outbox_publisher"`` and ``"/system/outbox_publisher"``
+    resolve identically.
+    """
+    if not playbook_path:
+        return None
+    normalized = playbook_path.lstrip("/")
+    if not normalized:
+        return None
+    for prefix, segment in POOL_PATH_PREFIX_MAP.items():
+        if normalized.startswith(prefix):
+            return segment
+    return None
+
+
 def route_subject(
     base_subject: str,
     tool_kind: Optional[str],
     execution_id: int,
+    *,
+    playbook_path: Optional[str] = None,
 ) -> str:
     """Derive the NATS subject for a command notification.
 
@@ -90,10 +145,19 @@ def route_subject(
     parsing payloads); workers ignore the trailing token because
     their consumer's ``filter_subject`` matches the ``<pool>``
     segment.
+
+    Pool resolution order:
+
+    1. :func:`pool_segment_for_path` — privileged playbook paths
+       (``system/*`` etc.) win regardless of tool kind.  This is how
+       a ``system/outbox_publisher`` playbook's ``tool: http`` steps
+       reach the system pool instead of being claimed by a user pool.
+    2. :func:`pool_segment_for_kind` — falls back to tool-kind-based
+       routing (``agent`` → ``python``, everything else → ``shared``).
     """
     if not is_routing_enabled():
         return base_subject
-    pool = pool_segment_for_kind(tool_kind)
+    pool = pool_segment_for_path(playbook_path) or pool_segment_for_kind(tool_kind)
     return f"{base_subject}.{pool}.{execution_id}"
 
 
@@ -117,10 +181,12 @@ def command_stream_subjects(base_subject: str) -> list[str]:
 
 __all__ = [
     "POOL_FILTER_MAP",
+    "POOL_PATH_PREFIX_MAP",
     "DEFAULT_POOL_SEGMENT",
     "ROUTING_ENABLED_ENV",
     "command_stream_subjects",
     "is_routing_enabled",
     "pool_segment_for_kind",
+    "pool_segment_for_path",
     "route_subject",
 ]
