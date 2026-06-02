@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.10.1](https://github.com/noetl/noetl/compare/v4.10.0...v4.10.1) (2026-06-02)
+
+### Bug Fixes
+
+* **internal-api:** kind-validation corrections to /api/internal/* routes ([54269c8](https://github.com/noetl/noetl/commit/54269c83602c1e68d14399e2a5a2dedac57cba3e)), closes [noetl/noetl#659](https://github.com/noetl/noetl/issues/659)
+
 ## [4.10.0](https://github.com/noetl/noetl/compare/v4.9.0...v4.10.0) (2026-06-02)
 
 ### Features
