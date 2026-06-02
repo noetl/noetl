@@ -175,6 +175,64 @@ def test_build_worker_scaledobject_min_replicas_zero_allowed():
     assert out["spec"]["minReplicaCount"] == 0
 
 
+def test_build_worker_scaledobject_default_single_trigger():
+    """Default spec (no additional_consumers) emits a single trigger.
+
+    Back-compat: existing callers that don't know about
+    `additional_consumers` continue to get today's single-trigger
+    ScaledObject shape.
+    """
+    out = build_worker_scaledobject(_default_spec(nats_consumer="noetl_worker_pool"))
+    triggers = out["spec"]["triggers"]
+    assert len(triggers) == 1
+    assert triggers[0]["metadata"]["consumer"] == "noetl_worker_pool"
+
+
+def test_build_worker_scaledobject_additional_consumers_emit_extra_triggers():
+    """Per noetl/ai-meta#42 PR-4a: additional_consumers stack into
+    extra triggers, primary first.  KEDA picks MAX(replicas) across
+    triggers so the pool scales on whichever consumer has the
+    largest backlog.
+    """
+    out = build_worker_scaledobject(
+        _default_spec(
+            nats_consumer="noetl_worker_pool",
+            additional_consumers=(
+                "noetl_worker_pool_shared",
+                "noetl_worker_pool_python",
+            ),
+        )
+    )
+    triggers = out["spec"]["triggers"]
+    assert len(triggers) == 3
+    consumers = [trigger["metadata"]["consumer"] for trigger in triggers]
+    assert consumers == [
+        "noetl_worker_pool",
+        "noetl_worker_pool_shared",
+        "noetl_worker_pool_python",
+    ]
+    # All triggers share the same threshold + monitoring endpoint
+    # (the spec's defaults).
+    for trigger in triggers:
+        assert trigger["type"] == "nats-jetstream"
+        assert trigger["metadata"]["lagThreshold"] == "10"
+        assert trigger["metadata"]["account"] == "NOETL"
+
+
+def test_build_worker_scaledobject_empty_additional_consumers_is_single_trigger():
+    """Empty tuple for `additional_consumers` is equivalent to the
+    default (single-trigger), not "primary + zero extras = some other
+    shape".
+    """
+    out = build_worker_scaledobject(
+        _default_spec(
+            nats_consumer="noetl_worker_pool",
+            additional_consumers=(),
+        )
+    )
+    assert len(out["spec"]["triggers"]) == 1
+
+
 def test_dump_scaledobject_yaml_round_trip():
     out = build_worker_scaledobject(_default_spec())
     rendered = dump_scaledobject_yaml(out)
@@ -227,6 +285,10 @@ _FIXTURE_DIR = pathlib.Path(__file__).resolve().parents[2] / "fixtures" / "keda"
     "fixture_name, spec",
     [
         (
+            # Python pool: three triggers (legacy + shared + python
+            # consumers) per noetl/ai-meta#42 PR-4a.  KEDA picks the
+            # MAX desired-replicas across the triggers so the pool
+            # scales on whichever consumer has the largest backlog.
             "scaledobject-worker-cpu-01.yaml",
             ScaledObjectSpec(
                 worker_pool_urn=(
@@ -234,16 +296,22 @@ _FIXTURE_DIR = pathlib.Path(__file__).resolve().parents[2] / "fixtures" / "keda"
                 ),
                 deployment="noetl-worker",
                 nats_consumer="noetl_worker_pool",
+                additional_consumers=(
+                    "noetl_worker_pool_shared",
+                    "noetl_worker_pool_python",
+                ),
             ),
         ),
         (
+            # Rust pool: single trigger on the shared consumer (Rust
+            # workers only subscribe to .shared.> per PR-2b/PR-3).
             "scaledobject-worker-rust-pool.yaml",
             ScaledObjectSpec(
                 worker_pool_urn=(
                     "noetl://tenant/default/org/default/worker/worker-rust-pool"
                 ),
                 deployment="noetl-worker-rust",
-                nats_consumer="noetl_worker_pool",
+                nats_consumer="noetl_worker_pool_shared",
             ),
         ),
     ],
