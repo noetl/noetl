@@ -194,3 +194,76 @@ def test_dump_scaledobject_yaml_preserves_top_level_key_order():
     assert lines[3].startswith("spec:")
 
 
+# ----------------------------------------------------------------------------
+# Sample-manifest drift guards
+#
+# The ops repo at `noetl/ops/ci/manifests/keda/scaledobject-*.yaml` checks
+# in the generator output verbatim so operators can `kubectl apply -f` it
+# directly.  These fixtures under `tests/fixtures/keda/` are the test-side
+# source of truth — if a generator change moves the YAML body, this guard
+# fails and the operator must regenerate both the noetl/noetl fixture and
+# the noetl/ops manifest before the change can land.
+#
+# The fixtures intentionally omit any header comments (they're the YAML
+# body only).  The ops manifests wrap the same body in operator-facing
+# header comments documenting the regen recipe.
+#
+# Pool inventory (kept in lockstep with `noetl/ops/ci/manifests/keda/`):
+#
+#   - `worker-cpu-01` — Python `noetl-worker` deployment (the original
+#     single-pool sample from the v2-spec Phase 4 round).
+#   - `worker-rust-pool` — Rust `noetl-worker-rust` deployment (added
+#     2026-06-02 alongside R-3 Phase B-4 dual-scaling; both pools share
+#     the same NATS stream + consumer, so adding the Rust-pool scaler
+#     gives KEDA-driven autoscaling on both halves of the worker fleet).
+# ----------------------------------------------------------------------------
+
+import pathlib
+
+_FIXTURE_DIR = pathlib.Path(__file__).resolve().parents[2] / "fixtures" / "keda"
+
+
+@pytest.mark.parametrize(
+    "fixture_name, spec",
+    [
+        (
+            "scaledobject-worker-cpu-01.yaml",
+            ScaledObjectSpec(
+                worker_pool_urn=(
+                    "noetl://tenant/default/org/default/worker/worker-cpu-01"
+                ),
+                deployment="noetl-worker",
+                nats_consumer="noetl_worker_pool",
+            ),
+        ),
+        (
+            "scaledobject-worker-rust-pool.yaml",
+            ScaledObjectSpec(
+                worker_pool_urn=(
+                    "noetl://tenant/default/org/default/worker/worker-rust-pool"
+                ),
+                deployment="noetl-worker-rust",
+                nats_consumer="noetl_worker_pool",
+            ),
+        ),
+    ],
+    ids=["worker-cpu-01-python-pool", "worker-rust-pool-rust-pool"],
+)
+def test_sample_manifest_matches_generator_output(fixture_name, spec):
+    """Verify each checked-in pool sample matches what the generator emits.
+
+    Catches drift between the noetl/noetl fixtures + the noetl/ops manifests
+    + the live generator.  If this test fails, regenerate both files via
+    the recipe in `noetl/ops/ci/manifests/keda/README.md` before merging
+    any generator change.
+    """
+    fixture = _FIXTURE_DIR / fixture_name
+    expected = fixture.read_text()
+    actual = dump_scaledobject_yaml(build_worker_scaledobject(spec))
+    assert actual == expected, (
+        f"Drift detected for {fixture_name}.  Regenerate via the recipe "
+        f"in `noetl/ops/ci/manifests/keda/README.md` and update both the "
+        f"fixture under tests/fixtures/keda/ and the matching ops manifest."
+    )
+
+
