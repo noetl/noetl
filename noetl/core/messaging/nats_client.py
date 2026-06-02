@@ -337,6 +337,7 @@ class NATSCommandSubscriber:
         callback_timeout_seconds: Optional[float] = None,
         message_decoder: Optional[Callable[[bytes], dict[str, Any]]] = None,
         message_action_observer: Optional[Callable[[str, Optional[float]], None]] = None,
+        filter_subject: Optional[str] = None,
     ):
         from noetl.core.config import get_worker_settings
         ws = get_worker_settings()
@@ -344,6 +345,13 @@ class NATSCommandSubscriber:
         self.subject = subject or ws.nats_subject
         self.consumer_name = consumer_name or ws.nats_consumer
         self.stream_name = stream_name or ws.nats_stream
+        # Optional consumer-side filter subject for per-pool routing
+        # (noetl/ai-meta#42 PR-2b).  None means the consumer sees all
+        # messages on the stream — that's the legacy single-consumer
+        # shape.  A subject pattern like ``noetl.commands.shared.>``
+        # makes JetStream filter at the broker, so the Rust worker
+        # never even sees Python-only commands.
+        self.filter_subject = filter_subject
         self.max_inflight = max(1, int(max_inflight or ws.max_inflight_commands))
         self.max_ack_pending = max(1, int(max_ack_pending or ws.nats_max_ack_pending))
         self.fetch_timeout = float(fetch_timeout if fetch_timeout is not None else ws.nats_fetch_timeout_seconds)
@@ -558,7 +566,7 @@ class NATSCommandSubscriber:
                 minimum_ack_wait_seconds,
                 ack_wait_seconds,
             )
-        return ConsumerConfig(
+        config_kwargs: dict[str, Any] = dict(
             durable_name=self.consumer_name,
             ack_policy="explicit",
             max_deliver=max(1, int(ws.nats_max_deliver)),
@@ -567,6 +575,12 @@ class NATSCommandSubscriber:
             replay_policy="instant",
             max_ack_pending=self.max_ack_pending,
         )
+        # Only attach filter_subject when set — None / empty leaves
+        # the consumer wide open (legacy single-consumer behaviour).
+        # See noetl/ai-meta#42 PR-2b.
+        if self.filter_subject:
+            config_kwargs["filter_subject"] = self.filter_subject
+        return ConsumerConfig(**config_kwargs)
 
     async def _add_or_validate_consumer(self) -> None:
         """Create consumer if missing; tolerate races where another worker creates it first."""
