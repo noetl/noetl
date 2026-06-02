@@ -138,6 +138,22 @@ class ScaledObjectSpec:
     nats_consumer: Optional[str] = None
     lag_threshold: int = DEFAULT_LAG_THRESHOLD
     activation_lag_threshold: int = DEFAULT_ACTIVATION_LAG_THRESHOLD
+    # Additional NATS JetStream consumer names that share the same
+    # Deployment's autoscaling envelope.  Per noetl/ai-meta#42 PR-4a,
+    # the Python noetl-worker pool now subscribes to three consumers
+    # (legacy + shared + python segments); KEDA needs to take the MAX
+    # of their backlogs as the scaling signal.  KEDA's
+    # ``ScaledObject`` natively supports multiple ``triggers`` on a
+    # single Deployment — the HPA reconciliation picks the largest
+    # desired-replica count across them.
+    #
+    # Each entry adds one ``nats-jetstream`` trigger to the resulting
+    # ScaledObject with the same threshold/account/stream as the
+    # primary (``nats_consumer``).  Empty list / None ⇒ single-trigger
+    # behaviour, identical to today's output.  See
+    # `agents/rules/wiki-maintenance.md` for the keda wiki page that
+    # documents this surface.
+    additional_consumers: tuple[str, ...] = ()
 
 
 def build_worker_scaledobject(spec: ScaledObjectSpec) -> dict[str, Any]:
@@ -230,12 +246,17 @@ def build_worker_scaledobject(spec: ScaledObjectSpec) -> dict[str, Any]:
                         "natsServerMonitoringEndpoint": spec.nats_monitoring_endpoint,
                         "account": spec.nats_account,
                         "stream": spec.nats_stream,
-                        "consumer": nats_consumer,
+                        "consumer": consumer_name,
                         "lagThreshold": str(spec.lag_threshold),
                         "activationLagThreshold": str(spec.activation_lag_threshold),
                         "useHttps": "false",
                     },
                 }
+                # Primary consumer + any additional consumers stacked
+                # in declared order.  Triggers ride the same threshold
+                # + monitoring endpoint — operators tune by editing the
+                # spec, not by hand-editing per-trigger metadata.
+                for consumer_name in [nats_consumer, *spec.additional_consumers]
             ],
         },
     }

@@ -24,3 +24,21 @@ spec:
       lagThreshold: '10'
       activationLagThreshold: '1'
       useHttps: 'false'
+  - type: nats-jetstream
+    metadata:
+      natsServerMonitoringEndpoint: nats.nats.svc.cluster.local:8222
+      account: NOETL
+      stream: NOETL_COMMANDS
+      consumer: noetl_worker_pool_shared
+      lagThreshold: '10'
+      activationLagThreshold: '1'
+      useHttps: 'false'
+  - type: nats-jetstream
+    metadata:
+      natsServerMonitoringEndpoint: nats.nats.svc.cluster.local:8222
+      account: NOETL
+      stream: NOETL_COMMANDS
+      consumer: noetl_worker_pool_python
+      lagThreshold: '10'
+      activationLagThreshold: '1'
+      useHttps: 'false'
