@@ -39,7 +39,11 @@ logger = setup_logger(__name__, include_location=True)
 
 
 router = APIRouter(
-    prefix="/api/internal",
+    # NOTE: the top-level FastAPI app mounts ``noetl.server.api.router``
+    # under ``/api``, so the prefix here is just ``/internal`` to
+    # produce the final ``/api/internal/...`` paths.  Setting
+    # ``/api/internal`` here would double the prefix.
+    prefix="/internal",
     tags=["internal"],
     dependencies=[Depends(require_internal_api_token)],
 )

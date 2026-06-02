@@ -1,5 +1,9 @@
 """
 Tests for the ``/api/internal/*`` route surface (noetl/noetl#658).
+(Router prefix is ``/internal``; the FastAPI app mounts the full
+api router under ``/api``, so the live paths are ``/api/internal/*``.
+Tests mount the router directly without the ``/api`` parent prefix,
+so the test URLs are ``/internal/*``.)
 
 Focuses on:
 
@@ -94,7 +98,7 @@ def test_endpoint_returns_403_without_auth(monkeypatch):
     monkeypatch.setenv("NOETL_INTERNAL_API_TOKEN", "secret-123")
     app = _build_app()
     client = TestClient(app)
-    response = client.get("/api/internal/outbox/pending-count")
+    response = client.get("/internal/outbox/pending-count")
     assert response.status_code == 403
     assert "Bearer" in response.json()["detail"]
 
@@ -104,7 +108,7 @@ def test_endpoint_returns_503_when_token_unset(monkeypatch):
     app = _build_app()
     client = TestClient(app)
     response = client.get(
-        "/api/internal/outbox/pending-count",
+        "/internal/outbox/pending-count",
         headers={"Authorization": "Bearer anything"},
     )
     assert response.status_code == 503
@@ -173,10 +177,10 @@ def test_all_five_routes_registered():
     """Sanity check: all five internal routes registered with correct paths."""
     paths = {(route.path, frozenset(route.methods)) for route in internal_router.routes}
     expected = {
-        ("/api/internal/outbox/claim", frozenset({"POST"})),
-        ("/api/internal/outbox/mark-published", frozenset({"POST"})),
-        ("/api/internal/outbox/mark-failed", frozenset({"POST"})),
-        ("/api/internal/outbox/pending-count", frozenset({"GET"})),
-        ("/api/internal/events/project", frozenset({"POST"})),
+        ("/internal/outbox/claim", frozenset({"POST"})),
+        ("/internal/outbox/mark-published", frozenset({"POST"})),
+        ("/internal/outbox/mark-failed", frozenset({"POST"})),
+        ("/internal/outbox/pending-count", frozenset({"GET"})),
+        ("/internal/events/project", frozenset({"POST"})),
     }
     assert expected.issubset(paths), f"missing: {expected - paths}"

@@ -106,9 +106,13 @@ async def pending_count() -> int:
     start = time.monotonic()
     async with get_pool_connection() as conn:
         async with conn.cursor() as cur:
+            # Alias the count so we can extract it whether psycopg returns
+            # a tuple, a dict_row, or a NamedTupleCursor row.  The pool
+            # default in noetl.core.db.pool is dict_row, so subscripting
+            # by index fails; access by name (or via .values()) instead.
             await cur.execute(
                 """
-                SELECT count(*)
+                SELECT count(*) AS pending
                 FROM noetl.outbox
                 WHERE status IN ('PENDING', 'FAILED')
                   AND available_at <= now()
@@ -116,7 +120,13 @@ async def pending_count() -> int:
             )
             row = await cur.fetchone()
     duration = time.monotonic() - start
-    pending = int(row[0]) if row else 0
+    pending = 0
+    if row:
+        if isinstance(row, dict):
+            pending = int(row.get("pending", 0))
+        else:
+            # tuple / named-tuple fallback
+            pending = int(row[0])
     logger.debug(
         "pending_count: %d rows ready (query took %.3fs)",
         pending,
@@ -141,10 +151,28 @@ async def pending_count() -> int:
 
 # Columns mirror today's noetl.event schema.  If the schema evolves, this
 # helper updates in lockstep with the projector's previous direct INSERT.
+# noetl.event schema (kind 2026-06-02):
+#   - PRIMARY KEY (event_id)
+#   - NOT NULL: execution_id, catalog_id, event_id, created_at,
+#               tenant_id, organization_id
+#   - All others nullable.
+#
+# The projector accepts envelopes that may or may not carry
+# catalog_id/tenant_id/organization_id (depends on the emitter).
+# Defaults:
+#   - catalog_id  → 0     (sentinel; emitters that care set their own)
+#   - tenant_id   → 'default'
+#   - organization_id → 'default'
+#   - created_at  → now()
+#
+# All-or-nothing batch INSERT with ON CONFLICT (event_id) DO NOTHING
+# for idempotency.  No ``timestamp`` column (that was a v1 schema
+# guess; the actual table uses ``created_at`` for ingest time).
 _PROJECT_INSERT_SQL = """
 INSERT INTO noetl.event (
     event_id,
     execution_id,
+    catalog_id,
     parent_event_id,
     event_type,
     node_id,
@@ -152,17 +180,19 @@ INSERT INTO noetl.event (
     node_type,
     status,
     duration,
-    timestamp,
     context,
     result,
     meta,
     error,
     stack_trace,
-    trace_component
+    tenant_id,
+    organization_id,
+    created_at
 )
 SELECT
     (row->>'event_id')::bigint,
-    NULLIF(row->>'execution_id', '')::bigint,
+    COALESCE(NULLIF(row->>'execution_id', '')::bigint, 0),
+    COALESCE(NULLIF(row->>'catalog_id', '')::bigint, 0),
     NULLIF(row->>'parent_event_id', '')::bigint,
     row->>'event_type',
     row->>'node_id',
@@ -170,15 +200,23 @@ SELECT
     row->>'node_type',
     row->>'status',
     NULLIF(row->>'duration', '')::double precision,
-    NULLIF(row->>'timestamp', '')::timestamptz,
     NULLIF(row->'context', 'null'::jsonb),
     NULLIF(row->'result', 'null'::jsonb),
     NULLIF(row->'meta', 'null'::jsonb),
     row->>'error',
     row->>'stack_trace',
-    row->>'trace_component'
+    COALESCE(NULLIF(row->>'tenant_id', ''), 'default'),
+    COALESCE(NULLIF(row->>'organization_id', ''), 'default'),
+    COALESCE(NULLIF(row->>'timestamp', '')::timestamp,
+             NULLIF(row->>'created_at', '')::timestamp,
+             now())
 FROM jsonb_array_elements(%s::jsonb) AS row
-ON CONFLICT (event_id) DO NOTHING
+-- noetl.event is partitioned (15 partitions per the schema); a
+-- partition-spanning unique constraint on event_id alone doesn't
+-- exist.  ``ON CONFLICT DO NOTHING`` without a target catches any
+-- uniqueness violation across partitions — sufficient for the
+-- projector's idempotency guarantee.
+ON CONFLICT DO NOTHING
 """
 
 
