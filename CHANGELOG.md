@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.5.2](https://github.com/noetl/noetl/compare/v4.5.1...v4.5.2) (2026-06-02)
+
+### Bug Fixes
+
+* **arrow-ipc:** handle nested mixed types + outbox encoder tolerates failure ([247b26d](https://github.com/noetl/noetl/commit/247b26de35e989da14a94e07bd9b8caf50fc7791)), closes [noetl/noetl#650](https://github.com/noetl/noetl/issues/650) [#650](https://github.com/noetl/noetl/issues/650) [noetl/ai-meta#36](https://github.com/noetl/ai-meta/issues/36) [#650](https://github.com/noetl/noetl/issues/650) [noetl/ai-meta#36](https://github.com/noetl/ai-meta/issues/36) [#37](https://github.com/noetl/noetl/issues/37) [noetl/ai-meta#36](https://github.com/noetl/ai-meta/issues/36)
+
 ## [4.5.1](https://github.com/noetl/noetl/compare/v4.5.0...v4.5.1) (2026-06-01)
 
 ### Bug Fixes
