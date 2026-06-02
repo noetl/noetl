@@ -127,3 +127,54 @@ def test_rows_to_arrow_feather_handles_mixed_type_column():
     assert row_count == 2
     assert decoded[0]["id"] == "1"
     assert decoded[1]["id"] == "two"
+
+
+def test_rows_to_arrow_ipc_handles_nested_mixed_types_in_single_row():
+    """Regression for the outbox-encoder branch of noetl/ai-meta#36.
+
+    The outbox encodes a single-row table where one column carries a
+    nested payload (e.g. an event's `result.context.data.rows` list).
+    Within that nested list the rows have mixed types for the same
+    field (an `id` that's int in row 0 and str in row 1).  Pyarrow's
+    cross-row inference at the top level sees no variance — there's
+    only ONE top-level row — so the original mixed-column fallback
+    didn't fire.  The nested-stringify fallback covers this case by
+    JSON-encoding any column whose value is a dict or list.
+    """
+    from noetl.core.storage import arrow_ipc_to_rows, rows_to_arrow_ipc
+
+    # One row, but the `result` column has nested mixed types that
+    # trip pyarrow's struct-type inference.
+    rows = [
+        {
+            "event_id": 100,
+            "event_type": "call.done",
+            "result": {
+                "context": {
+                    "data": {
+                        "rows": [
+                            {"id": 1, "username": "user_1"},
+                            {"id": "two", "username": "user_2"},
+                        ]
+                    }
+                }
+            },
+        }
+    ]
+
+    # Must not raise — even though `rows_to_arrow_feather([payload])`
+    # would have failed before the nested-stringify fallback.
+    payload, _digest, row_count = rows_to_arrow_ipc(rows)
+    assert row_count == 1
+    decoded = arrow_ipc_to_rows(payload)
+    assert decoded[0]["event_id"] == 100
+    assert decoded[0]["event_type"] == "call.done"
+    # The `result` column is now a JSON string (the nested fallback
+    # serialized it).  Operators / projector consumers reading the
+    # arrow-feather payload_bytes get the same structural info, just
+    # as a stringified JSON sub-object.  The JSONB column on the
+    # outbox row stays the source of truth for native dict access.
+    import json
+    decoded_result = json.loads(decoded[0]["result"])
+    assert decoded_result["context"]["data"]["rows"][0]["id"] == 1
+    assert decoded_result["context"]["data"]["rows"][1]["id"] == "two"

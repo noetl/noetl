@@ -82,28 +82,64 @@ def _build_safe_arrow_table(rows: list[dict[str, Any]], columns: list[str]):
         col for col, types in type_groups.items() if len(types) > 1
     }
 
-    if not mixed_columns:
-        # All columns are pure-type but the original `from_pylist` call
-        # still failed — re-raise so the caller sees the underlying
-        # pyarrow error rather than papering over an unrelated problem.
-        return pa.Table.from_pylist(rows, schema=None)
+    # Cross-row mixed-type case: stringify just the offending columns,
+    # keep pure-typed columns at their natural Arrow type.  Fast path
+    # for the common DuckDB-rowset shape that triggered the original
+    # bug.
+    if mixed_columns:
+        coerced_rows = []
+        for row in rows:
+            new_row = dict(row)
+            for col in mixed_columns:
+                value = new_row.get(col)
+                if value is None:
+                    continue
+                new_row[col] = str(value)
+            coerced_rows.append(new_row)
 
-    coerced_rows = []
+        logger.info(
+            "[ARROW-IPC] Coerced %d mixed-type column(s) to string: %s",
+            len(mixed_columns),
+            sorted(mixed_columns),
+        )
+        try:
+            return pa.Table.from_pylist(coerced_rows, schema=None)
+        except (pa.ArrowInvalid, pa.ArrowTypeError):
+            # Fall through to the nested-column case below.
+            pass
+
+    # Nested mixed-type case: no cross-row column variance (or even
+    # after the simple stringification the encode still fails), so the
+    # offending types are nested INSIDE one of the column values — e.g.
+    # the outbox encodes a single-row table where one column carries a
+    # nested `result.context.data.rows` list whose elements have mixed
+    # types for the same field across rows.  Stringify (via JSON) every
+    # non-scalar column value so pyarrow only has to infer string/int/
+    # float/bool primitives.  Last-resort fallback; logged at INFO so
+    # operators see when it fires.
+    import json as _json
+
+    nested_columns: set[str] = set()
+    nested_rows = []
     for row in rows:
         new_row = dict(row)
-        for col in mixed_columns:
-            value = new_row.get(col)
-            if value is None:
-                continue
-            new_row[col] = str(value)
-        coerced_rows.append(new_row)
+        for col, value in list(new_row.items()):
+            if isinstance(value, (dict, list)):
+                nested_columns.add(col)
+                try:
+                    new_row[col] = _json.dumps(value, default=str, sort_keys=True)
+                except (TypeError, ValueError):
+                    new_row[col] = str(value)
+        nested_rows.append(new_row)
 
-    logger.info(
-        "[ARROW-IPC] Coerced %d mixed-type column(s) to string: %s",
-        len(mixed_columns),
-        sorted(mixed_columns),
-    )
-    return pa.Table.from_pylist(coerced_rows, schema=None)
+    if nested_columns:
+        logger.info(
+            "[ARROW-IPC] JSON-stringified %d nested column(s) for Arrow encoding: %s",
+            len(nested_columns),
+            sorted(nested_columns),
+        )
+
+    return pa.Table.from_pylist(nested_rows, schema=None)
 
 
 def rows_to_arrow_ipc(
