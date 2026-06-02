@@ -32,6 +32,13 @@ from . import result
 # TempRef storage API (legacy, for backwards compatibility)
 from . import temp
 
+# Internal API for the system worker pool — outbox claim/mark + events
+# project endpoints.  Gated by service-account bearer token only the
+# system pool's K8s ServiceAccount carries (env
+# ``NOETL_INTERNAL_API_TOKEN``).  See ``agents/rules/data-access-boundary.md``
+# in ai-meta and noetl/ai-meta#46 / #49.
+from . import internal
+
 router = APIRouter()
 
 @router.get("/health", response_class=JSONResponse)
@@ -69,10 +76,14 @@ router.include_router(result.router)
 # TempRef storage API (legacy, for backwards compatibility)
 router.include_router(temp.router)
 
+# Internal API — system-worker-pool-only.  Bearer-token gated.
+router.include_router(internal.router)
+
 __all__ = [
     "router",
     "core",
     "catalog", "credential", "database", "keychain", "playbook_tests", "mcp",
     "execution", "vars", "dashboard", "system", "runtime", "replay", "frames",
-    "context", "result", "temp"
+    "context", "result", "temp",
+    "internal",
 ]
