@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.12.0](https://github.com/noetl/noetl/compare/v4.11.0...v4.12.0) (2026-06-02)
+
+### Features
+
+* **routing:** route task_sequence to python pool (regression fix) ([68fbcb8](https://github.com/noetl/noetl/commit/68fbcb86e0c44d2ce4a0eecd32f1fbeb08021e36)), closes [noetl/ai-meta#47](https://github.com/noetl/ai-meta/issues/47) [noetl/ai-meta#42](https://github.com/noetl/ai-meta/issues/42) [noetl/ai-meta#47](https://github.com/noetl/ai-meta/issues/47)
+
 ## [4.11.0](https://github.com/noetl/noetl/compare/v4.10.1...v4.11.0) (2026-06-02)
 
 ### Features
