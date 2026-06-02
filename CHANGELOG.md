@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.11.0](https://github.com/noetl/noetl/compare/v4.10.1...v4.11.0) (2026-06-02)
+
+### Features
+
+* **routing:** path-based pool routing for system/* playbooks ([19f23f3](https://github.com/noetl/noetl/commit/19f23f372c45734d26f47e754e3d874efffeea67)), closes [noetl/ai-meta#46](https://github.com/noetl/ai-meta/issues/46) [noetl/ai-meta#46](https://github.com/noetl/ai-meta/issues/46) [noetl/ai-meta#42](https://github.com/noetl/ai-meta/issues/42) [noetl/ai-meta#50](https://github.com/noetl/ai-meta/issues/50) [noetl/ai-meta#46](https://github.com/noetl/ai-meta/issues/46)
+
 ## [4.10.1](https://github.com/noetl/noetl/compare/v4.10.0...v4.10.1) (2026-06-02)
 
 ### Bug Fixes
