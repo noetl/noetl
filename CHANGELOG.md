@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.5.3](https://github.com/noetl/noetl/compare/v4.5.2...v4.5.3) (2026-06-02)
+
+### Bug Fixes
+
+* **replay:** tolerate non-numeric projection identifiers in sort keys ([8511e8a](https://github.com/noetl/noetl/commit/8511e8a785f5d8d857d87b41a0301df1e576c657)), closes [noetl/noetl#629](https://github.com/noetl/noetl/issues/629) [noetl/noetl#638](https://github.com/noetl/noetl/issues/638) [noetl/noetl#638](https://github.com/noetl/noetl/issues/638)
+
 ## [4.5.2](https://github.com/noetl/noetl/compare/v4.5.1...v4.5.2) (2026-06-02)
 
 ### Bug Fixes
