@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.9.0](https://github.com/noetl/noetl/compare/v4.8.0...v4.9.0) (2026-06-02)
+
+### Features
+
+* **keda:** multi-trigger ScaledObject for per-pool routing (PR-4a of 6) ([a0aed19](https://github.com/noetl/noetl/commit/a0aed196e41760ca7636894141e2b4164e0cee97)), closes [noetl/ai-meta#42](https://github.com/noetl/ai-meta/issues/42) [noetl/ai-meta#42](https://github.com/noetl/ai-meta/issues/42)
+
 ## [4.8.0](https://github.com/noetl/noetl/compare/v4.7.0...v4.8.0) (2026-06-02)
 
 ### Features
