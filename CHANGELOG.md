@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.7.0](https://github.com/noetl/noetl/compare/v4.6.0...v4.7.0) (2026-06-02)
+
+### Features
+
+* **routing:** widen NOETL_COMMANDS stream subjects for per-pool routing (PR-2a of 6) ([f281690](https://github.com/noetl/noetl/commit/f28169099af6f1b9878899941dca2c902f2a001b)), closes [noetl/ai-meta#42](https://github.com/noetl/ai-meta/issues/42) [noetl/ai-meta#42](https://github.com/noetl/ai-meta/issues/42)
+
 ## [4.6.0](https://github.com/noetl/noetl/compare/v4.5.3...v4.6.0) (2026-06-02)
 
 ### Features
