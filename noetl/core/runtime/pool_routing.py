@@ -97,10 +97,29 @@ def route_subject(
     return f"{base_subject}.{pool}.{execution_id}"
 
 
+def command_stream_subjects(base_subject: str) -> list[str]:
+    """Return the JetStream subject list a command stream must accept.
+
+    Includes both the legacy bare subject (``noetl.commands`` — what
+    publishes use when routing is disabled or for the transitional
+    period before PR-5 flag flip) AND the hierarchical wildcard
+    (``noetl.commands.>`` — what :func:`route_subject` derives when
+    routing is enabled, e.g. ``noetl.commands.python.<execution_id>``).
+
+    A NATS subject like ``X.>`` matches one-or-more tokens after the
+    dot but NOT the bare ``X``, so both entries are required during
+    the transition.  The cleanup PR (PR-6 per the noetl/ai-meta#42
+    plan) drops the bare entry once all publishes have moved to the
+    hierarchical form.
+    """
+    return [base_subject, f"{base_subject}.>"]
+
+
 __all__ = [
     "POOL_FILTER_MAP",
     "DEFAULT_POOL_SEGMENT",
     "ROUTING_ENABLED_ENV",
+    "command_stream_subjects",
     "is_routing_enabled",
     "pool_segment_for_kind",
     "route_subject",
