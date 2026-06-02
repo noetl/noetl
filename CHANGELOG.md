@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.10.0](https://github.com/noetl/noetl/compare/v4.9.0...v4.10.0) (2026-06-02)
+
+### Features
+
+* **server:** internal API endpoints for the system worker pool ([19607b8](https://github.com/noetl/noetl/commit/19607b89878b261d0d4ee5a14153b84cb72d52fb)), closes [noetl/ai-meta#46](https://github.com/noetl/ai-meta/issues/46) [noetl/ai-meta#49](https://github.com/noetl/ai-meta/issues/49) [noetl/ai-meta#46](https://github.com/noetl/ai-meta/issues/46) [noetl/noetl#658](https://github.com/noetl/noetl/issues/658)
+
 ## [4.9.0](https://github.com/noetl/noetl/compare/v4.8.0...v4.9.0) (2026-06-02)
 
 ### Features
