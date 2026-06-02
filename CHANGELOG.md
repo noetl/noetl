@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.6.0](https://github.com/noetl/noetl/compare/v4.5.3...v4.6.0) (2026-06-02)
+
+### Features
+
+* **routing:** add pool_routing scaffold for tool-kind-aware NATS subjects (PR-1 of 6) ([198349e](https://github.com/noetl/noetl/commit/198349e0abb4c1a6f5b71ecbc0fc2af29e7839e4)), closes [noetl/ai-meta#42](https://github.com/noetl/ai-meta/issues/42) [noetl/ai-meta#42](https://github.com/noetl/ai-meta/issues/42) [noetl/ai-meta#42](https://github.com/noetl/ai-meta/issues/42)
+
 ## [4.5.3](https://github.com/noetl/noetl/compare/v4.5.2...v4.5.3) (2026-06-02)
 
 ### Bug Fixes
