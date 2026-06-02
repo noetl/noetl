@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.8.0](https://github.com/noetl/noetl/compare/v4.7.0...v4.8.0) (2026-06-02)
+
+### Features
+
+* **routing:** per-pool NATSCommandSubscriber + Python worker multi-subscriber (PR-2b of 6) ([05201a7](https://github.com/noetl/noetl/commit/05201a7631872f7e62bce525badc8a098cf718e5)), closes [noetl/ai-meta#42](https://github.com/noetl/ai-meta/issues/42) [noetl/ai-meta#42](https://github.com/noetl/ai-meta/issues/42)
+
 ## [4.7.0](https://github.com/noetl/noetl/compare/v4.6.0...v4.7.0) (2026-06-02)
 
 ### Features
