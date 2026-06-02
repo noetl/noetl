@@ -274,6 +274,12 @@ def test_dump_scaledobject_yaml_preserves_top_level_key_order():
 #     2026-06-02 alongside R-3 Phase B-4 dual-scaling; both pools share
 #     the same NATS stream + consumer, so adding the Rust-pool scaler
 #     gives KEDA-driven autoscaling on both halves of the worker fleet).
+#   - `worker-system-pool` — Rust `noetl-worker-system-pool` deployment
+#     (added 2026-06-02 alongside noetl/ai-meta#46 Phase 1.b).  Distinct
+#     NATS consumer (`noetl_worker_pool_system`) with
+#     `filter_subject=noetl.commands.system.>`; Phase 2.a.2 (this PR)
+#     teaches the server to publish privileged ``system/*`` playbook
+#     commands to that subject branch.
 # ----------------------------------------------------------------------------
 
 import pathlib
@@ -314,8 +320,28 @@ _FIXTURE_DIR = pathlib.Path(__file__).resolve().parents[2] / "fixtures" / "keda"
                 nats_consumer="noetl_worker_pool_shared",
             ),
         ),
+        (
+            # System pool: single trigger on the system consumer.  The
+            # consumer's filter subject is `noetl.commands.system.>`,
+            # set on the deployment side in
+            # noetl/ops/ci/manifests/noetl/worker-system-pool-deployment.yaml.
+            # Phase 2.a.2 lets the server publish privileged `system/*`
+            # playbook commands to that branch.
+            "scaledobject-worker-system-pool.yaml",
+            ScaledObjectSpec(
+                worker_pool_urn=(
+                    "noetl://tenant/default/org/default/worker/worker-system-pool"
+                ),
+                deployment="noetl-worker-system-pool",
+                nats_consumer="noetl_worker_pool_system",
+            ),
+        ),
     ],
-    ids=["worker-cpu-01-python-pool", "worker-rust-pool-rust-pool"],
+    ids=[
+        "worker-cpu-01-python-pool",
+        "worker-rust-pool-rust-pool",
+        "worker-system-pool-system-pool",
+    ],
 )
 def test_sample_manifest_matches_generator_output(fixture_name, spec):
     """Verify each checked-in pool sample matches what the generator emits.

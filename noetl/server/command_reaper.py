@@ -142,7 +142,11 @@ async def _find_stale_active_commands(
     * the claim has lived past ``healthy_hard_timeout_seconds``.
 
     Each returned row carries the fields needed to republish via NATS:
-    ``event_id``, ``execution_id``, ``command_id`` (string), ``step``.
+    ``event_id``, ``execution_id``, ``command_id`` (string), ``step``,
+    plus ``tool_kind`` + ``playbook_path`` for pool-routing (see
+    noetl/ai-meta#42 + #46 Phase 2.a.2 — without these, re-published
+    notifications would route to ``shared`` even for ``system/*``
+    playbooks and the wrong pool could claim them).
     """
     async with get_bg_pool_connection(timeout=5.0) as conn:
         async with conn.cursor(row_factory=dict_row) as cur:
@@ -152,11 +156,15 @@ async def _find_stale_active_commands(
                     c.event_id AS event_id,
                     c.execution_id AS execution_id,
                     c.command_id::text AS command_id,
-                    c.step_name AS step
+                    c.step_name AS step,
+                    c.tool_kind AS tool_kind,
+                    cat.path AS playbook_path
                 FROM noetl.command c
                 LEFT JOIN noetl.runtime r
                     ON r.kind = 'worker_pool'
                    AND r.name = c.worker_id
+                LEFT JOIN noetl.catalog cat
+                    ON cat.catalog_id = c.catalog_id
                 WHERE c.status = ANY(%s)
                   AND c.worker_id IS NOT NULL
                   AND c.claimed_at IS NOT NULL
@@ -208,8 +216,12 @@ async def _find_stranded_pending_commands(
                     c.event_id AS event_id,
                     c.execution_id AS execution_id,
                     c.command_id::text AS command_id,
-                    c.step_name AS step
+                    c.step_name AS step,
+                    c.tool_kind AS tool_kind,
+                    cat.path AS playbook_path
                 FROM noetl.command c
+                LEFT JOIN noetl.catalog cat
+                    ON cat.catalog_id = c.catalog_id
                 WHERE c.status = 'PENDING'
                   AND c.created_at < (NOW() - make_interval(secs => %s))
                   AND NOT EXISTS (
@@ -290,6 +302,8 @@ async def reap_orphaned_commands_once(server_url: str) -> int:
                 command_id=str(cmd["command_id"]),
                 step=str(cmd["step"]),
                 server_url=server_url,
+                tool_kind=cmd.get("tool_kind"),
+                playbook_path=cmd.get("playbook_path"),
             )
             republished += 1
             logger.info(
