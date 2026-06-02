@@ -186,7 +186,10 @@ async def execute(req: ExecuteRequest) -> ExecuteResponse:
                         "frame_id": frame_id,
                         "created_at": now,
                     })
-                    command_events.append((int(execution_id), evt_id, cmd_id, cmd.step))
+                    # 5-tuple per noetl/ai-meta#42 — trailing tool_kind
+                    # drives NATS subject derivation when pool routing
+                    # is enabled.
+                    command_events.append((int(execution_id), evt_id, cmd_id, cmd.step, cmd.tool.kind))
                     await _enqueue_execution_outbox(
                         cur,
                         _command_issued_envelope(

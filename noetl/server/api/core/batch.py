@@ -419,8 +419,14 @@ async def _issue_commands_for_batch(job: _BatchAcceptJob, commands: list) -> Non
 
     await _drain_batch_outbox()
 
-    # 5. Parallel NATS publish
-    publish_items = [(p["execution_id"], p["evt_id"], p["cmd_id"], p["step"]) for p in prepared_commands]
+    # 5. Parallel NATS publish.  Tuple is 5-wide:
+    # ``(execution_id, evt_id, cmd_id, step, tool_kind)``.  The trailing
+    # ``tool_kind`` drives the NATS subject derivation when pool
+    # routing is enabled — see noetl/ai-meta#42 + the route_subject
+    # helper in noetl.core.runtime.pool_routing.  Today the field is
+    # captured but the subject stays single until the cutover env
+    # flag flips.
+    publish_items = [(p["execution_id"], p["evt_id"], p["cmd_id"], p["step"], p.get("tool_kind")) for p in prepared_commands]
     await _publish_commands_with_recovery(publish_items, server_url=server_url)
 
 async def _process_accepted_batch(

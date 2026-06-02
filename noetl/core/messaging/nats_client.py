@@ -91,10 +91,19 @@ class NATSCommandPublisher:
                     await self._reset_connection_state()
             await self.connect()
 
-    async def _publish_payload(self, payload: bytes) -> None:
+    async def _publish_payload(self, payload: bytes, *, subject: Optional[str] = None) -> None:
+        """Publish ``payload`` to ``subject`` (defaults to ``self.subject``).
+
+        The optional ``subject`` parameter is the hook point for the
+        pool-routing work in noetl/ai-meta#42 — :meth:`publish_command`
+        derives a per-tool-kind subject when routing is enabled and
+        passes it through here.  Callers that don't care about routing
+        (e.g. internal control messages) keep using ``self.subject`` by
+        omitting the argument.
+        """
         if not self._js:
             raise RuntimeError("Not connected to NATS")
-        await self._js.publish(self.subject, payload)
+        await self._js.publish(subject or self.subject, payload)
 
     async def connect(self):
         """Connect to NATS and setup JetStream."""
@@ -130,7 +139,8 @@ class NATSCommandPublisher:
         event_id: int,
         command_id: str,
         step: str,
-        server_url: str
+        server_url: str,
+        tool_kind: Optional[str] = None,
     ):
         """
         Publish command notification to NATS.
@@ -139,8 +149,21 @@ class NATSCommandPublisher:
         - event_id: Points to command.issued event with full command details
         - command_id: Unique identifier for atomic claiming
         - Workers claim by emitting command.claimed event (idempotent)
+
+        ``tool_kind`` is the playbook step's ``tool.kind`` value — when
+        the pool-routing scheme is enabled (see
+        :func:`noetl.core.runtime.pool_routing.is_routing_enabled`), the
+        subject is derived as ``<base>.<pool>.<execution_id>`` so that
+        Python-only kinds (e.g. ``agent``) land on a consumer the Rust
+        pool doesn't subscribe to.  Until the cutover env flag flips,
+        this argument is captured + threaded through but the legacy
+        subject is used verbatim — no behaviour change.  See
+        noetl/ai-meta#42 for the full plan.
         """
         await self.ensure_connected()
+
+        from noetl.core.runtime.pool_routing import route_subject
+        subject = route_subject(self.subject, tool_kind, execution_id)
 
         message = {
             "execution_id": execution_id,
@@ -152,7 +175,7 @@ class NATSCommandPublisher:
         payload = json.dumps(message).encode()
 
         try:
-            await self._publish_payload(payload)
+            await self._publish_payload(payload, subject=subject)
             logger.debug(f"Published command notification: event_id={event_id} command_id={command_id}")
 
         except Exception as e:
@@ -164,7 +187,7 @@ class NATSCommandPublisher:
             )
             await self.ensure_connected(force=True)
             try:
-                await self._publish_payload(payload)
+                await self._publish_payload(payload, subject=subject)
                 logger.info(
                     "Published command notification after reconnect: event_id=%s command_id=%s",
                     event_id,
