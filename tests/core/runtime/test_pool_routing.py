@@ -43,6 +43,15 @@ def test_pool_filter_map_includes_agent():
     assert POOL_FILTER_MAP["agent"] == "python"
 
 
+def test_pool_filter_map_includes_task_sequence():
+    """task_sequence is engine-level (not a noetl-tools kind); only the
+    Python worker's ``TaskSequenceExecutor`` implements it.  Routing to
+    Python keeps the regression suite green on the Rust pool (see
+    noetl/ai-meta#47).
+    """
+    assert POOL_FILTER_MAP["task_sequence"] == "python"
+
+
 def test_default_segment_is_shared():
     """Anything not in POOL_FILTER_MAP defaults to the shared queue."""
     assert DEFAULT_POOL_SEGMENT == "shared"
@@ -72,6 +81,7 @@ def test_is_routing_enabled_parses_flag(monkeypatch, env_value, expected):
 
 def test_pool_segment_for_known_python_kind():
     assert pool_segment_for_kind("agent") == "python"
+    assert pool_segment_for_kind("task_sequence") == "python"
 
 
 def test_pool_segment_for_known_shared_kind():
@@ -103,6 +113,17 @@ def test_route_subject_segments_when_flag_on_agent(routing_on):
     assert (
         route_subject("noetl.commands", "agent", 12345)
         == "noetl.commands.python.12345"
+    )
+
+
+def test_route_subject_segments_when_flag_on_task_sequence(routing_on):
+    """task_sequence commands also route to the python branch — only
+    the Python worker's TaskSequenceExecutor implements the pipeline
+    semantics (noetl/ai-meta#47).
+    """
+    assert (
+        route_subject("noetl.commands", "task_sequence", 7777)
+        == "noetl.commands.python.7777"
     )
 
 
