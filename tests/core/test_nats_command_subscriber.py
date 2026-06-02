@@ -42,6 +42,61 @@ class _FakeJetStream:
         return SimpleNamespace(subject=subject, durable=durable)
 
 
+# -- noetl/ai-meta#42 PR-2b: per-pool filter_subject coverage ---------------
+
+
+def test_subscriber_default_filter_subject_is_none():
+    """Backward compat — omitting filter_subject leaves it unset."""
+    subscriber = NATSCommandSubscriber(
+        consumer_name="legacy-consumer",
+        stream_name="NOETL_COMMANDS",
+        max_ack_pending=64,
+    )
+    assert subscriber.filter_subject is None
+
+
+def test_subscriber_accepts_filter_subject():
+    """Per-pool routing: filter_subject is captured on the subscriber."""
+    subscriber = NATSCommandSubscriber(
+        consumer_name="shared-consumer",
+        stream_name="NOETL_COMMANDS",
+        max_ack_pending=64,
+        filter_subject="noetl.commands.shared.>",
+    )
+    assert subscriber.filter_subject == "noetl.commands.shared.>"
+
+
+def test_consumer_config_omits_filter_when_none():
+    """ConsumerConfig must NOT carry a filter_subject when None.
+
+    Setting filter_subject="" on the JetStream consumer would silently
+    filter to the empty subject and drop everything; omission is the
+    right shape for the legacy single-consumer case.
+    """
+    subscriber = NATSCommandSubscriber(
+        consumer_name="legacy-consumer",
+        stream_name="NOETL_COMMANDS",
+        max_ack_pending=64,
+    )
+    config = subscriber._consumer_config()
+    assert getattr(config, "filter_subject", None) is None
+
+
+def test_consumer_config_emits_filter_when_set():
+    """ConsumerConfig carries filter_subject when set on the subscriber."""
+    subscriber = NATSCommandSubscriber(
+        consumer_name="python-consumer",
+        stream_name="NOETL_COMMANDS",
+        max_ack_pending=64,
+        filter_subject="noetl.commands.python.>",
+    )
+    config = subscriber._consumer_config()
+    assert getattr(config, "filter_subject", None) == "noetl.commands.python.>"
+
+
+# ---------------------------------------------------------------------------
+
+
 @pytest.mark.asyncio
 async def test_ensure_consumer_creates_when_missing():
     subscriber = NATSCommandSubscriber(

@@ -187,6 +187,15 @@ class Worker:
         self.server_url = server_url  # Fallback, usually comes from notification
         self._running = False
         self._http_client: Optional[httpx.AsyncClient] = None
+        # Multi-subscriber list per noetl/ai-meta#42 PR-2b: the Python
+        # worker subscribes to one NATSCommandSubscriber per pool
+        # segment listed in ``NOETL_WORKER_POOL_SEGMENTS``.  Default
+        # is ``"legacy,shared,python"`` so the Python pool drains all
+        # three subjects during the routing rollout window.
+        self._nats_subscribers: list[NATSCommandSubscriber] = []
+        # Backward-compat single-subscriber attribute for callers
+        # outside this module that reach in (worker tests, debug
+        # commands).  Points at the first subscriber in the list.
         self._nats_subscriber: Optional[NATSCommandSubscriber] = None
         self._heartbeat_task: Optional[asyncio.Task] = None
         self._registered = False
@@ -965,35 +974,79 @@ class Worker:
         logger.info(f"Worker {self.worker_id} heartbeat loop stopped")
     
     async def start(self):
-        """Start the worker NATS subscription."""
+        """Start the worker NATS subscription.
+
+        Subscribes to one NATSCommandSubscriber per pool segment listed
+        in ``NOETL_WORKER_POOL_SEGMENTS`` (default
+        ``"legacy,shared,python"`` for the Python worker; the Rust
+        worker overrides this to ``"shared"`` via its deployment env).
+        Per-segment durable name + filter subject:
+
+        - ``legacy`` — durable=``$NATS_CONSUMER``, no filter (drains
+          everything published on the bare subject; this is today's
+          behaviour, kept active until PR-6 cleanup).
+        - ``shared`` — durable=``$NATS_CONSUMER_shared``,
+          filter=``$NATS_SUBJECT.shared.>``.
+        - ``python`` — durable=``$NATS_CONSUMER_python``,
+          filter=``$NATS_SUBJECT.python.>``.
+
+        See noetl/ai-meta#42 PR-2b for the design.
+        """
         from noetl.core.config import get_worker_settings
         worker_settings = get_worker_settings()
         self._running = True
         self._http_client = httpx.AsyncClient(timeout=worker_settings.http_client_timeout)
-        self._nats_subscriber = NATSCommandSubscriber(
-            nats_url=self.nats_url,
-            subject=worker_settings.nats_subject,
-            consumer_name=worker_settings.nats_consumer,
-            stream_name=worker_settings.nats_stream,
-            max_inflight=self._max_inflight_commands,
-            max_ack_pending=worker_settings.nats_max_ack_pending,
-            fetch_timeout=worker_settings.nats_fetch_timeout_seconds,
-            fetch_heartbeat=worker_settings.nats_fetch_heartbeat_seconds,
-        )
+
+        segments_env = os.getenv("NOETL_WORKER_POOL_SEGMENTS", "legacy,shared,python")
+        segments = [s.strip() for s in segments_env.split(",") if s.strip()]
+        if not segments:
+            segments = ["legacy"]
+
+        for segment in segments:
+            if segment == "legacy":
+                consumer_name = worker_settings.nats_consumer
+                filter_subject = None
+            else:
+                consumer_name = f"{worker_settings.nats_consumer}_{segment}"
+                filter_subject = f"{worker_settings.nats_subject}.{segment}.>"
+            subscriber = NATSCommandSubscriber(
+                nats_url=self.nats_url,
+                subject=worker_settings.nats_subject,
+                consumer_name=consumer_name,
+                stream_name=worker_settings.nats_stream,
+                max_inflight=self._max_inflight_commands,
+                max_ack_pending=worker_settings.nats_max_ack_pending,
+                fetch_timeout=worker_settings.nats_fetch_timeout_seconds,
+                fetch_heartbeat=worker_settings.nats_fetch_heartbeat_seconds,
+                filter_subject=filter_subject,
+            )
+            self._nats_subscribers.append(subscriber)
+
+        # Back-compat for callers that reach in for the first subscriber.
+        self._nats_subscriber = self._nats_subscribers[0]
 
         logger.info(
-            "Worker %s starting (NATS: %s, inflight=%s, db_inflight=%s, max_ack_pending=%s)",
+            "Worker %s starting (NATS: %s, inflight=%s, db_inflight=%s, max_ack_pending=%s, pool_segments=%s)",
             self.worker_id,
             redact_url_credentials(self.nats_url),
             self._max_inflight_commands,
             self._max_inflight_db_commands,
             worker_settings.nats_max_ack_pending,
+            segments,
         )
-        
-        # Connect to NATS
-        await self._nats_subscriber.connect()
-        logger.info("Connected to NATS and subscribing to command notifications")
-        
+
+        # Connect each subscriber serially — each opens its own NATS
+        # connection (a future PR can consolidate to a shared
+        # connection if the per-subscriber overhead becomes a
+        # concern; for now 1-3 connections per pod is fine).
+        for subscriber in self._nats_subscribers:
+            await subscriber.connect()
+            logger.info(
+                "Connected NATS subscriber consumer=%s filter_subject=%s",
+                subscriber.consumer_name,
+                subscriber.filter_subject or "(none)",
+            )
+
         # Register worker in runtime table
         server_url = _normalize_server_base_url(self.server_url or worker_settings.server_url)
         if server_url:
@@ -1007,8 +1060,27 @@ class Worker:
         if server_url and self._http_client:
             await self._concurrency.start(self._http_client, server_url)
 
-        # Subscribe to command notifications (this should never return)
-        await self._nats_subscriber.subscribe(self._handle_command_notification)
+        # Run all subscriber loops in parallel.  ``return_exceptions=True``
+        # so one subscriber failing doesn't cancel the others — each
+        # pool segment is independent.  The gather call blocks until
+        # every subscriber's pull loop exits (which they shouldn't
+        # during normal operation; ``subscribe()`` is an infinite
+        # async loop).
+        results = await asyncio.gather(
+            *[
+                subscriber.subscribe(self._handle_command_notification)
+                for subscriber in self._nats_subscribers
+            ],
+            return_exceptions=True,
+        )
+        for subscriber, result in zip(self._nats_subscribers, results):
+            if isinstance(result, Exception):
+                logger.error(
+                    "Subscriber loop exited with exception: consumer=%s error=%s",
+                    subscriber.consumer_name,
+                    result,
+                    exc_info=result,
+                )
     
     async def cleanup(self):
         """Cleanup resources."""
@@ -1032,8 +1104,21 @@ class Worker:
         if server_url and self._http_client and self._registered:
             await self._deregister_worker(server_url)
         
-        if self._nats_subscriber:
-            await self._nats_subscriber.close()
+        # Close all per-segment subscribers.  Each runs its own NATS
+        # connection (per noetl/ai-meta#42 PR-2b); close them
+        # individually + tolerate per-subscriber close errors so one
+        # failure doesn't block the others.
+        for subscriber in self._nats_subscribers:
+            try:
+                await subscriber.close()
+            except Exception as close_error:
+                logger.warning(
+                    "Failed to close subscriber consumer=%s: %s",
+                    getattr(subscriber, "consumer_name", "<unknown>"),
+                    close_error,
+                )
+        self._nats_subscribers.clear()
+        self._nats_subscriber = None
         if self._http_client:
             await self._http_client.aclose()
         
