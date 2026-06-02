@@ -111,21 +111,41 @@ class NATSCommandPublisher:
             self._nc = await nats.connect(self.nats_url)
             self._js = self._nc.jetstream()
 
-            # Ensure stream exists
+            from noetl.core.runtime.pool_routing import command_stream_subjects
+            desired_subjects = command_stream_subjects(self.subject)
+
+            # Ensure stream exists with the widened subject list (legacy
+            # bare subject + the hierarchical wildcard for per-pool
+            # routing; see noetl/ai-meta#42 PR-2a).  Both shapes are
+            # required during the transition: bare for today's publishes
+            # while the routing flag is off, wildcard for the routed
+            # publishes that land at PR-5 cutover.
             try:
-                await self._js.stream_info(self.stream_name)
-                logger.debug(f"Using existing {self.stream_name} stream")
+                info = await self._js.stream_info(self.stream_name)
+                current_subjects = list(getattr(info.config, "subjects", None) or [])
+                missing = [s for s in desired_subjects if s not in current_subjects]
+                if missing:
+                    info.config.subjects = current_subjects + missing
+                    await self._js.update_stream(config=info.config)
+                    logger.info(
+                        "Widened %s stream subjects with %s for pool routing (noetl/ai-meta#42)",
+                        self.stream_name,
+                        missing,
+                    )
+                else:
+                    logger.debug(f"Using existing {self.stream_name} stream")
             except Exception:
                 # Create stream if it doesn't exist
                 await self._js.add_stream(
                     name=self.stream_name,
-                    subjects=[self.subject],
+                    subjects=desired_subjects,
                     max_age=3600,  # 1 hour retention
                     storage="memory"  # Memory for low latency
                 )
                 logger.info(
-                    "Created stream %s | connected to NATS at %s",
+                    "Created stream %s with subjects=%s | connected to NATS at %s",
                     self.stream_name,
+                    desired_subjects,
                     redact_url_credentials(self.nats_url),
                 )
 
@@ -707,20 +727,39 @@ class NATSCommandSubscriber:
                 self._inflight_semaphore.release()
 
         try:
-            # First ensure stream exists
+            from noetl.core.runtime.pool_routing import command_stream_subjects
+            desired_subjects = command_stream_subjects(self.subject)
+
+            # First ensure stream exists with the widened subjects (see
+            # noetl/ai-meta#42 PR-2a — same widening as the publisher
+            # side at NATSCommandPublisher.connect).  Subscribers tend
+            # to start after a publisher has already created the
+            # stream, but this branch handles the cold-start case
+            # (e.g. fresh kind cluster where the subscriber wins the
+            # race to connect first).
             try:
-                await self._js.stream_info(self.stream_name)
+                info = await self._js.stream_info(self.stream_name)
+                current_subjects = list(getattr(info.config, "subjects", None) or [])
+                missing = [s for s in desired_subjects if s not in current_subjects]
+                if missing:
+                    info.config.subjects = current_subjects + missing
+                    await self._js.update_stream(config=info.config)
+                    logger.info(
+                        "Widened %s stream subjects with %s for pool routing (noetl/ai-meta#42)",
+                        self.stream_name,
+                        missing,
+                    )
             except Exception:
                 await self._js.add_stream(
                     StreamConfig(
                         name=self.stream_name,
-                        subjects=[self.subject],
+                        subjects=desired_subjects,
                         retention="limits",
                         storage="memory",  # Memory for low latency
                         max_age=3600
                     )
                 )
-                logger.debug(f"Stream created: {self.stream_name}")
+                logger.debug(f"Stream created: {self.stream_name} with subjects={desired_subjects}")
 
             # Ensure consumer exists and current backpressure settings are applied.
             await self._ensure_consumer()

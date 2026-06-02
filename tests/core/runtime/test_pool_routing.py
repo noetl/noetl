@@ -15,6 +15,7 @@ from noetl.core.runtime.pool_routing import (
     DEFAULT_POOL_SEGMENT,
     POOL_FILTER_MAP,
     ROUTING_ENABLED_ENV,
+    command_stream_subjects,
     is_routing_enabled,
     pool_segment_for_kind,
     route_subject,
@@ -126,3 +127,25 @@ def test_route_subject_handles_none_kind_when_flag_on(routing_on):
         route_subject("noetl.commands", None, 42)
         == "noetl.commands.shared.42"
     )
+
+
+def test_command_stream_subjects_includes_bare_and_wildcard():
+    """The stream must accept both the legacy bare subject AND the
+    hierarchical wildcard so publishes work during the rollout window
+    when the routing flag is mid-flip.  See noetl/ai-meta#42 PR-2a.
+    """
+    subjects = command_stream_subjects("noetl.commands")
+    assert "noetl.commands" in subjects
+    assert "noetl.commands.>" in subjects
+
+
+def test_command_stream_subjects_preserves_base_for_other_streams():
+    """The helper is generic over base subject — works for any stream name."""
+    subjects = command_stream_subjects("foo.bar")
+    assert subjects == ["foo.bar", "foo.bar.>"]
+
+
+def test_command_stream_subjects_no_duplicate_entries():
+    """No duplicate entries even if called repeatedly with the same base."""
+    subjects = command_stream_subjects("x.y")
+    assert len(subjects) == len(set(subjects))
