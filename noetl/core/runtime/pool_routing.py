@@ -45,6 +45,21 @@ POOL_FILTER_MAP: dict[str, str] = {
     # replicate the ``importlib.import_module`` + ``getattr`` shape;
     # routes to Python pool only.
     "agent": "python",
+    # `task_sequence` — engine-level pipeline construct, not a tool
+    # kind in the noetl-tools sense.  The Python worker ships
+    # ``TaskSequenceExecutor`` (``noetl/worker/task_sequence_executor.py``,
+    # ~1.2k LoC) with pipeline-local data threading via ``_prev``,
+    # per-task flow-control rules (continue/retry/break/jump/fail),
+    # ``_task`` / ``_attempt`` / ``output`` template bindings, and
+    # ``ctx.*`` / ``iter.*`` mutations.  Engine-side it has
+    # special-case suffix handling at ~11 sites in
+    # ``noetl/core/dsl/engine/executor/{events,commands,state,store,common}.py``
+    # for the synthetic ``<parent>:task_sequence`` step name.
+    # Routing to Python — porting to Rust is multi-week work and
+    # adds no value (every task_sequence step's inner tools already
+    # dispatch through the worker's ``_execute_tool`` callback, which
+    # is fast).  See noetl/ai-meta#47 for the call graph.
+    "task_sequence": "python",
 }
 
 # Catalog-path prefixes that route to a privileged pool regardless of
