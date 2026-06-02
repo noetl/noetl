@@ -465,7 +465,10 @@ async def handle_event(req: EventRequest) -> EventResponse:
                         "frame_id": frame_id,
                         "created_at": _now,
                     })
-                    command_events.append((int(cmd.execution_id), new_evt_id, cmd_id, cmd.step))
+                    # 5-tuple per noetl/ai-meta#42 — trailing tool_kind
+                    # drives NATS subject derivation when pool routing
+                    # is enabled.
+                    command_events.append((int(cmd.execution_id), new_evt_id, cmd_id, cmd.step, cmd.tool.kind))
                     supervisor_commands.append((str(cmd.execution_id), cmd_id, cmd.step, int(new_evt_id), dict(meta)))
                 await conn.commit()
 
