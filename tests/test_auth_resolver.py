@@ -38,7 +38,7 @@ class TestAuthResolver:
                 "database": "testdb"
             }
             
-            result = resolve_auth(auth_config, self.context, self.jinja_env, mode='single')
+            result = resolve_auth(auth_config, self.jinja_env, self.context)
             
             assert result is not None
             assert result.auth_type == "postgres"
@@ -59,7 +59,7 @@ class TestAuthResolver:
             }
         }
         
-        result = resolve_auth(auth_config, self.context, self.jinja_env, mode='single')
+        result = resolve_auth(auth_config, self.jinja_env, self.context)
         
         assert result is not None
         assert result.auth_type == "postgres"
@@ -75,7 +75,7 @@ class TestAuthResolver:
         }
         
         with patch.dict(os.environ, {"API_TOKEN": "bearer-token-123"}):
-            result = resolve_auth(auth_config, self.context, self.jinja_env, mode='single')
+            result = resolve_auth(auth_config, self.jinja_env, self.context)
             
             assert result is not None
             assert result.auth_type == "bearer"
@@ -91,7 +91,7 @@ class TestAuthResolver:
         with patch('noetl.worker.auth_resolver.fetch_secret_manager_value') as mock_fetch:
             mock_fetch.return_value = {"key": "X-API-Key", "value": "secret-api-key"}
             
-            result = resolve_auth(auth_config, self.context, self.jinja_env, mode='single')
+            result = resolve_auth(auth_config, self.jinja_env, self.context)
             
             assert result is not None
             assert result.auth_type == "api_key"
@@ -128,7 +128,7 @@ class TestAuthResolver:
             }
             
             with patch.dict(os.environ, {"API_TOKEN": "api-token-456"}):
-                result = resolve_auth(auth_config, self.context, self.jinja_env, mode='multi')
+                result = resolve_auth(auth_config, self.jinja_env, self.context)
                 
                 assert isinstance(result, dict)
                 assert len(result) == 3
@@ -164,7 +164,7 @@ class TestAuthResolver:
             }
         }
         
-        result = resolve_auth(auth_config, self.context, self.jinja_env, mode='single')
+        result = resolve_auth(auth_config, self.jinja_env, self.context)
         
         assert result is not None
         assert result.config["host"] == "test-123.db.example.com"
@@ -193,7 +193,7 @@ class TestAuthResolver:
                 "database": "credential_db"
             }
             
-            result = resolve_auth(auth_config, self.context, self.jinja_env, mode='single')
+            result = resolve_auth(auth_config, self.jinja_env, self.context)
             
             assert result is not None
             assert result.config["host"] == "credential_host"  # From credential
@@ -202,26 +202,31 @@ class TestAuthResolver:
             assert result.config["password"] == "override_password"  # Overridden
             assert result.config["port"] == 3306  # Overridden
     
+    @pytest.mark.skip(
+        reason="resolve_auth no longer takes a `mode` kwarg — auth mode is "
+        "inferred from the config shape (single vs multi).  Test is "
+        "obsolete; left in place as a marker for the API change."
+    )
     def test_resolve_auth_invalid_mode(self):
         """Test error handling for invalid resolution mode."""
         auth_config = {"type": "postgres", "inline": {"host": "localhost"}}
-        
+
         with pytest.raises(ValueError, match="mode must be 'single' or 'multi'"):
-            resolve_auth(auth_config, self.context, self.jinja_env, mode='invalid')
+            resolve_auth(auth_config, self.jinja_env, self.context)
     
     def test_resolve_auth_missing_type(self):
         """Test error handling when auth type is missing."""
         auth_config = {"credential": "test_cred"}  # No 'type' field
         
         with pytest.raises(ValueError, match="Auth configuration missing 'type'"):
-            resolve_auth(auth_config, self.context, self.jinja_env, mode='single')
+            resolve_auth(auth_config, self.jinja_env, self.context)
     
     def test_resolve_auth_missing_source(self):
         """Test error handling when no auth source is specified."""
         auth_config = {"type": "postgres"}  # No credential, inline, env, or secret
         
         with pytest.raises(ValueError, match="Auth configuration must specify one source"):
-            resolve_auth(auth_config, self.context, self.jinja_env, mode='single')
+            resolve_auth(auth_config, self.jinja_env, self.context)
     
     def test_resolve_auth_multiple_sources(self):
         """Test error handling when multiple auth sources are specified."""
@@ -233,7 +238,7 @@ class TestAuthResolver:
         }
         
         with pytest.raises(ValueError, match="Auth configuration must specify exactly one source"):
-            resolve_auth(auth_config, self.context, self.jinja_env, mode='single')
+            resolve_auth(auth_config, self.jinja_env, self.context)
     
     def test_resolve_auth_credential_fetch_failure(self):
         """Test handling of credential fetch failures."""
@@ -246,7 +251,7 @@ class TestAuthResolver:
             mock_fetch.side_effect = Exception("Credential not found")
             
             with pytest.raises(Exception, match="Failed to fetch credential 'nonexistent_key'"):
-                resolve_auth(auth_config, self.context, self.jinja_env, mode='single')
+                resolve_auth(auth_config, self.jinja_env, self.context)
     
     def test_resolve_auth_env_var_missing(self):
         """Test handling of missing environment variables."""
@@ -256,7 +261,7 @@ class TestAuthResolver:
         }
         
         with pytest.raises(ValueError, match="Environment variable 'MISSING_ENV_VAR' not found"):
-            resolve_auth(auth_config, self.context, self.jinja_env, mode='single')
+            resolve_auth(auth_config, self.jinja_env, self.context)
     
     def test_resolve_auth_secret_redaction(self):
         """Test that sensitive fields are properly redacted in ResolvedAuthItem."""
@@ -270,7 +275,7 @@ class TestAuthResolver:
             }
         }
         
-        result = resolve_auth(auth_config, self.context, self.jinja_env, mode='single')
+        result = resolve_auth(auth_config, self.jinja_env, self.context)
         
         assert result is not None
         # The actual config should contain the real password
@@ -284,20 +289,26 @@ class TestAuthResolver:
     def test_resolved_auth_item_equality(self):
         """Test ResolvedAuthItem equality comparison."""
         item1 = ResolvedAuthItem(
-            auth_type="postgres",
-            config={"host": "localhost", "password": "secret"}
+            alias="db",
+            source="inline",
+            service="postgres",
+            payload={"host": "localhost", "password": "secret"},
         )
-        
+
         item2 = ResolvedAuthItem(
-            auth_type="postgres", 
-            config={"host": "localhost", "password": "secret"}
+            alias="db",
+            source="inline",
+            service="postgres",
+            payload={"host": "localhost", "password": "secret"},
         )
-        
+
         item3 = ResolvedAuthItem(
-            auth_type="postgres",
-            config={"host": "remotehost", "password": "secret"}
+            alias="db",
+            source="inline",
+            service="postgres",
+            payload={"host": "remotehost", "password": "secret"},
         )
-        
+
         assert item1 == item2
         assert item1 != item3
         assert item1 != "not_an_auth_item"

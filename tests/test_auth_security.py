@@ -76,8 +76,10 @@ class TestAuthSecurity:
         }
         
         auth_item = ResolvedAuthItem(
-            auth_type="postgres",
-            config=sensitive_config
+            alias="db",
+            source="inline",
+            service="postgres",
+            payload=sensitive_config,
         )
         
         # String representation should redact sensitive fields
@@ -121,7 +123,7 @@ class TestAuthSecurity:
         self.log_stream.seek(0)
         self.log_stream.truncate(0)
         
-        result = resolve_auth(auth_config, self.context, self.jinja_env, mode='single')
+        result = resolve_auth(auth_config, self.jinja_env, self.context)
         
         # Get logged content
         log_content = self.log_stream.getvalue()
@@ -279,7 +281,7 @@ class TestAuthSecurity:
             mock_fetch.side_effect = Exception("Credential not found: contains_password_secret_123")
             
             try:
-                resolve_auth(auth_config, self.context, self.jinja_env, mode='single')
+                resolve_auth(auth_config, self.jinja_env, self.context)
                 assert False, "Should have raised an exception"
             except Exception as e:
                 error_message = str(e)
@@ -338,7 +340,7 @@ class TestAuthSecurity:
         
         try:
             # This should fail due to undefined template variable
-            result = resolve_auth(auth_config, self.context, self.jinja_env, mode='single')
+            result = resolve_auth(auth_config, self.jinja_env, self.context)
         except Exception as e:
             error_message = str(e)
             

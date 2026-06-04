@@ -419,7 +419,7 @@ class TestPluginAuthIntegration:
             "env": "API_TOKEN"
         }
         
-        result = resolve_auth(auth_config, self.context, self.jinja_env, mode='single')
+        result = resolve_auth(auth_config, self.jinja_env, self.context)
         
         assert result is not None
         assert result.auth_type == "bearer"
