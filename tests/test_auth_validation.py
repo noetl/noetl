@@ -5,6 +5,7 @@ Tests the auth_validation module's ability to validate authentication
 configurations according to plugin-specific requirements and schema rules.
 """
 
+import re
 import pytest
 from noetl.worker.auth_validation import (
     validate_auth_for_plugin, validate_step_auth, 
@@ -23,7 +24,7 @@ class TestAuthValidation:
         }
         
         # Should not raise any exceptions
-        validate_auth_for_plugin(single_auth, "postgres", "single")
+        validate_auth_for_plugin("postgres", single_auth, "single")
     
     def test_validate_multi_auth_valid(self):
         """Test validation of valid multi authentication configuration."""
@@ -42,7 +43,7 @@ class TestAuthValidation:
         }
         
         # Should not raise any exceptions
-        validate_auth_for_plugin(multi_auth, "duckdb", "multi")
+        validate_auth_for_plugin("duckdb", multi_auth, "multi")
     
     def test_validate_single_auth_missing_type(self):
         """Test validation failure for single auth missing type."""
@@ -50,8 +51,8 @@ class TestAuthValidation:
             "credential": "test_cred"  # Missing 'type' field
         }
         
-        with pytest.raises(AuthValidationError, match="Single auth configuration missing 'type'"):
-            validate_auth_for_plugin(single_auth, "postgres", "single")
+        errors = validate_auth_for_plugin("postgres", single_auth, "single")
+        assert any(re.search("Single auth configuration missing 'type'", e) for e in errors), f"expected match in {errors}"
     
     def test_validate_single_auth_missing_source(self):
         """Test validation failure for single auth missing source."""
@@ -59,8 +60,8 @@ class TestAuthValidation:
             "type": "postgres"  # No credential, inline, env, or secret
         }
         
-        with pytest.raises(AuthValidationError, match="Single auth configuration must specify exactly one source"):
-            validate_auth_for_plugin(single_auth, "postgres", "single")
+        errors = validate_auth_for_plugin("postgres", single_auth, "single")
+        assert any(re.search("Single auth configuration must specify exactly one source", e) for e in errors), f"expected match in {errors}"
     
     def test_validate_single_auth_multiple_sources(self):
         """Test validation failure for single auth with multiple sources."""
@@ -71,8 +72,8 @@ class TestAuthValidation:
             "env": "DB_URL"
         }
         
-        with pytest.raises(AuthValidationError, match="Single auth configuration must specify exactly one source"):
-            validate_auth_for_plugin(single_auth, "postgres", "single")
+        errors = validate_auth_for_plugin("postgres", single_auth, "single")
+        assert any(re.search("Single auth configuration must specify exactly one source", e) for e in errors), f"expected match in {errors}"
     
     def test_validate_multi_auth_reserved_key(self):
         """Test validation failure for multi auth using reserved alias."""
@@ -87,8 +88,8 @@ class TestAuthValidation:
             }
         }
         
-        with pytest.raises(AuthValidationError, match="Auth alias 'type' is reserved"):
-            validate_auth_for_plugin(multi_auth, "duckdb", "multi")
+        errors = validate_auth_for_plugin("duckdb", multi_auth, "multi")
+        assert any(re.search("Auth alias 'type' is reserved", e) for e in errors), f"expected match in {errors}"
     
     def test_validate_multi_auth_all_reserved_keys(self):
         """Test validation failure for all reserved keys in multi auth."""
@@ -102,8 +103,8 @@ class TestAuthValidation:
                 }
             }
             
-            with pytest.raises(AuthValidationError, match=f"Auth alias '{reserved_key}' is reserved"):
-                validate_auth_for_plugin(multi_auth, "duckdb", "multi")
+            errors = validate_auth_for_plugin("duckdb", multi_auth, "multi")
+            assert any(re.search(f"Auth alias '{reserved_key}' is reserved", e) for e in errors), f"expected match in {errors}"
     
     def test_validate_multi_auth_nested_missing_type(self):
         """Test validation failure for multi auth with nested missing type."""
@@ -113,8 +114,8 @@ class TestAuthValidation:
             }
         }
         
-        with pytest.raises(AuthValidationError, match="Auth alias 'db' missing 'type'"):
-            validate_auth_for_plugin(multi_auth, "duckdb", "multi")
+        errors = validate_auth_for_plugin("duckdb", multi_auth, "multi")
+        assert any(re.search("Auth alias 'db' missing 'type'", e) for e in errors), f"expected match in {errors}"
     
     def test_validate_multi_auth_nested_multiple_sources(self):
         """Test validation failure for multi auth with nested multiple sources."""
@@ -126,8 +127,8 @@ class TestAuthValidation:
             }
         }
         
-        with pytest.raises(AuthValidationError, match="Auth alias 'db' must specify exactly one source"):
-            validate_auth_for_plugin(multi_auth, "duckdb", "multi")
+        errors = validate_auth_for_plugin("duckdb", multi_auth, "multi")
+        assert any(re.search("Auth alias 'db' must specify exactly one source", e) for e in errors), f"expected match in {errors}"
     
     def test_validate_plugin_arity_mismatch_single_to_multi(self):
         """Test validation failure when plugin expects single but gets multi."""
@@ -138,8 +139,8 @@ class TestAuthValidation:
             }
         }
         
-        with pytest.raises(AuthValidationError, match="Plugin 'postgres' expects single auth but received multi auth"):
-            validate_auth_for_plugin(multi_auth, "postgres", "single")
+        errors = validate_auth_for_plugin("postgres", multi_auth, "single")
+        assert any(re.search("Plugin 'postgres' expects single auth but received multi auth", e) for e in errors), f"expected match in {errors}"
     
     def test_validate_plugin_arity_mismatch_multi_to_single(self):
         """Test validation failure when plugin expects multi but gets single."""
@@ -148,8 +149,8 @@ class TestAuthValidation:
             "credential": "pg_main"
         }
         
-        with pytest.raises(AuthValidationError, match="Plugin 'duckdb' expects multi auth but received single auth"):
-            validate_auth_for_plugin(single_auth, "duckdb", "multi")
+        errors = validate_auth_for_plugin("duckdb", single_auth, "multi")
+        assert any(re.search("Plugin 'duckdb' expects multi auth but received single auth", e) for e in errors), f"expected match in {errors}"
     
     def test_validate_plugin_unknown_type(self):
         """Test validation with unknown plugin type (should not raise error)."""
@@ -159,7 +160,7 @@ class TestAuthValidation:
         }
         
         # Unknown plugin types should be validated permissively
-        validate_auth_for_plugin(single_auth, "unknown_plugin", "single")
+        validate_auth_for_plugin("unknown_plugin", single_auth, "single")
     
     def test_validate_step_auth_postgres_valid(self):
         """Test step-level validation for Postgres plugin."""
@@ -244,8 +245,8 @@ class TestAuthValidation:
             }
         }
         
-        with pytest.raises(AuthValidationError):
-            validate_step_auth(step_config)
+        errors = validate_step_auth(step_config)
+        assert errors, f"expected non-empty error list, got {errors}"
     
     def test_plugin_auth_arity_mappings(self):
         """Test that plugin auth arity mappings are correctly defined."""
@@ -270,7 +271,7 @@ class TestAuthValidation:
             }
         }
         
-        validate_auth_for_plugin(valid_inline_auth, "postgres", "single")
+        validate_auth_for_plugin("postgres", valid_inline_auth, "single")
     
     def test_validate_credential_auth_structure(self):
         """Test validation of credential-based auth configuration."""
@@ -279,7 +280,7 @@ class TestAuthValidation:
             "credential": "pg_production"
         }
         
-        validate_auth_for_plugin(valid_credential_auth, "postgres", "single")
+        validate_auth_for_plugin("postgres", valid_credential_auth, "single")
     
     def test_validate_env_auth_structure(self):
         """Test validation of environment-based auth configuration."""
@@ -288,7 +289,7 @@ class TestAuthValidation:
             "env": "API_TOKEN"
         }
         
-        validate_auth_for_plugin(valid_env_auth, "http", "single")
+        validate_auth_for_plugin("http", valid_env_auth, "single")
     
     def test_validate_secret_auth_structure(self):
         """Test validation of secret manager auth configuration."""
@@ -297,7 +298,7 @@ class TestAuthValidation:
             "secret": "projects/test/secrets/api-key/versions/latest"
         }
         
-        validate_auth_for_plugin(valid_secret_auth, "http", "single")
+        validate_auth_for_plugin("http", valid_secret_auth, "single")
 
 
 if __name__ == "__main__":
