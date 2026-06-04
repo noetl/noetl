@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.12.1](https://github.com/noetl/noetl/compare/v4.12.0...v4.12.1) (2026-06-04)
+
+### Bug Fixes
+
+* **worker:** lazify noetl.tools.{postgres,duckdb,http} imports (Cluster C) ([926146f](https://github.com/noetl/noetl/commit/926146fdca5c63a7d57151d9732ae036c6f01dc3)), closes [noetl/noetl#663](https://github.com/noetl/noetl/issues/663) [noetl/noetl#663](https://github.com/noetl/noetl/issues/663) [noetl/ai-meta#54](https://github.com/noetl/ai-meta/issues/54)
+
 ## [4.12.0](https://github.com/noetl/noetl/compare/v4.11.0...v4.12.0) (2026-06-02)
 
 ### Features
