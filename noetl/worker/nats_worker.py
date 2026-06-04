@@ -71,9 +71,14 @@ def _is_hot_path_initial_event_step(tool_kind: Optional[str]) -> bool:
 # Pre-import tool executors at module level to avoid 5s cold-start delay
 # These were previously imported inside _execute_tool() causing slow first execution
 from noetl.tools import http, postgres, duckdb, python
-from noetl.tools.http import execute_http_task
-from noetl.tools.postgres import execute_postgres_task, execute_postgres_task_async
-from noetl.tools.duckdb import execute_duckdb_task
+# noetl.tools.http import lazified below, same reason as postgres/duckdb.
+# Lazy imports for noetl.tools.postgres + noetl.tools.duckdb live inside the
+# dispatch branches below.  Both submodules import from noetl.worker.*
+# (auth_compatibility, keychain_resolver) at module load, so importing
+# them at the top of noetl.worker.nats_worker creates a circular dependency
+# that breaks pytest collection across iterator/, plugin/, render/,
+# api/, core/, and test_*.py — see noetl/noetl#663 Cluster C.
+# Cached in sys.modules after first call; subsequent dispatches are O(1).
 from noetl.tools.snowflake import execute_snowflake_task
 from noetl.tools.gcs import execute_gcs_task
 from noetl.tools.transfer import execute_transfer_action
@@ -2684,6 +2689,9 @@ class Worker:
 
             logger.debug(f"HTTP TOOL: config_keys={list(config.keys()) if isinstance(config, dict) else 'not dict'} | retry={retry_config is not None} | policies={len(retry_config) if isinstance(retry_config, list) else 0} | has_pagination={has_pagination_retry}")
 
+            # Lazy import — see module-top comment about the circular cycle.
+            from noetl.tools.http import execute_http_task
+
             if has_pagination_retry:
                 logger.info("HTTP tool using execute_with_retry_async for pagination support")
                 from noetl.core.runtime.retry import execute_with_retry_async
@@ -2720,6 +2728,8 @@ class Worker:
             # This lets the plugin pool reuse connections (same loop_id → same pool key).
             # The old pattern (run_in_executor + asyncio.run) created a new event loop
             # per call, causing a fresh pool each time and leaking connections.
+            # Lazy import — see module-top comment about the circular cycle.
+            from noetl.tools.postgres import execute_postgres_task_async
             task_with = {**config, **args}  # Merge config (has auth) with args
             result = await execute_postgres_task_async(task_config, context, jinja_env, task_with)
             # Check if plugin returned error status
@@ -2731,6 +2741,8 @@ class Worker:
         elif tool_kind == "duckdb":
             # Use plugin's execute_duckdb_task (sync function - run in executor)
             # Pass full tool config as task_with to ensure auth is available
+            # Lazy import — see module-top comment about the circular cycle.
+            from noetl.tools.duckdb import execute_duckdb_task
             task_with = {**config, **args}  # Merge config (has auth) with args
             loop = asyncio.get_running_loop()
             result = await loop.run_in_executor(
