@@ -326,6 +326,21 @@ ALTER TABLE noetl.event
     ADD COLUMN IF NOT EXISTS payload_ref JSONB,
     ADD COLUMN IF NOT EXISTS envelope_checksum TEXT;
 
+-- One-level event chain (RFC noetl/ai-meta#115 Phase 2, §4).  `prev_event_id`
+-- names the immediately-previous event in this execution's causal order, so
+-- per-execution state can be followed pointer-by-pointer (one level at a time)
+-- instead of scanning the whole event table.  Additive + backward-compatible;
+-- the noetl-server also ensures this column idempotently at startup so a server
+-- image carrying the populate-on-emit code never writes a missing column.
+ALTER TABLE noetl.event
+    ADD COLUMN IF NOT EXISTS prev_event_id BIGINT;
+
+-- Chain-integrity / forward-replay lookup ("who points AT this node").  The
+-- "give me node <head>" walk is served by the (execution_id, event_id) PK.
+CREATE INDEX IF NOT EXISTS idx_event_prev_event_id
+    ON noetl.event (execution_id, prev_event_id)
+    WHERE prev_event_id IS NOT NULL;
+
 CREATE INDEX IF NOT EXISTS idx_event_tenant_org_execution_event_id
     ON noetl.event (tenant_id, organization_id, execution_id, event_id DESC);
 CREATE INDEX IF NOT EXISTS idx_event_stream_version
@@ -945,11 +960,20 @@ CREATE TABLE IF NOT EXISTS noetl.command (
 
     latest_event_id     BIGINT,
 
+    -- One-level event chain (RFC noetl/ai-meta#115 Phase 2, §4.1): the event
+    -- whose application issued this command (the drive trigger; for a cursor
+    -- fan-out, the claim/branch event).  Additive; the issuing link, distinct
+    -- from `latest_event_id` (most-recent lifecycle event).
+    prev_event_id       BIGINT,
+
     created_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
 
     PRIMARY KEY (execution_id, command_id)
 ) PARTITION BY HASH (execution_id);
+
+-- Existing installs may predate the prev_event_id column; add it idempotently.
+ALTER TABLE noetl.command ADD COLUMN IF NOT EXISTS prev_event_id BIGINT;
 
 -- 16 hash partitions (matching planned noetl.event modulus for
 -- partition-wise joins).
