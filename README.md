@@ -63,6 +63,13 @@ log remains the source of truth. This contract does not connect to EHDB,
 replace PostgreSQL/NATS/object stores, add a gateway route, or start a
 persistent per-tenant process.
 
+`noetl.core.ehdb_adapter.ehdb_adapter_from_env` builds the disabled-by-
+default adapter descriptor behind that contract. Disabled configuration
+returns `None`; worker/playbook `local_reference` configuration returns
+a `LocalReferenceEhdbAdapter` carrying the explicit event-log path and
+exportable runtime environment for future EHDB helper calls. The adapter
+does not open logs, connect to EHDB, or perform storage operations.
+
 ## Repository model (ai-meta driven)
 
 NoETL development is now coordinated through the `ai-meta` repository:
