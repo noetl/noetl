@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.15.0](https://github.com/noetl/noetl/compare/v4.14.0...v4.15.0) (2026-07-03)
+
+### Features
+
+* add EHDB helper invocation plan ([0cf78af](https://github.com/noetl/noetl/commit/0cf78af49a80dafe8fac6748e8d2d8b71e5414bd))
+
 ## [4.14.0](https://github.com/noetl/noetl/compare/v4.13.0...v4.14.0) (2026-07-03)
 
 ### Features
