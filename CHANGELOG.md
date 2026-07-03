@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.14.0](https://github.com/noetl/noetl/compare/v4.13.0...v4.14.0) (2026-07-03)
+
+### Features
+
+* add EHDB local reference adapter ([236807f](https://github.com/noetl/noetl/commit/236807fba11fc19c129156e2c8e04fdec9d4e587))
+
 ## [4.13.0](https://github.com/noetl/noetl/compare/v4.12.1...v4.13.0) (2026-07-03)
 
 ### Features
