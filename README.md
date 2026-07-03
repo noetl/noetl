@@ -73,6 +73,14 @@ the source of truth. This contract does not connect to EHDB, replace
 PostgreSQL/NATS/object stores, add a gateway route, or start a
 persistent per-tenant process.
 
+`noetl.core.ehdb_control_plane.ehdb_control_plane_from_env` builds the
+planning-only descriptor for gateway/API/server control-plane embedding.
+Disabled configuration returns `None`; explicit `control_plane`
+configuration returns a `ControlPlaneEhdbEmbedding` carrying the caller
+role, the `control_plane` capability, and exportable runtime
+environment. The descriptor does not create an adapter, open logs,
+connect to EHDB, or perform storage operations.
+
 `noetl.core.ehdb_adapter.ehdb_adapter_from_env` builds the disabled-by-
 default adapter descriptor behind that contract. Disabled configuration
 returns `None`; gateway/API/server `control_plane` configuration also
