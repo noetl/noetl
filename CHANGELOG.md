@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.16.0](https://github.com/noetl/noetl/compare/v4.15.0...v4.16.0) (2026-07-03)
+
+### Features
+
+* add EHDB control-plane contract ([f51ff03](https://github.com/noetl/noetl/commit/f51ff03551e7f3b204c58432111bf64dfb362f27))
+
 ## [4.15.0](https://github.com/noetl/noetl/compare/v4.14.0...v4.15.0) (2026-07-03)
 
 ### Features
