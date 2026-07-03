@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.17.0](https://github.com/noetl/noetl/compare/v4.16.0...v4.17.0) (2026-07-03)
+
+### Features
+
+* add EHDB control-plane descriptor ([4c7c250](https://github.com/noetl/noetl/commit/4c7c25012fe920535cdeb603e7c7bf1fa3e7c048))
+
 ## [4.16.0](https://github.com/noetl/noetl/compare/v4.15.0...v4.16.0) (2026-07-03)
 
 ### Features
