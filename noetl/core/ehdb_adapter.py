@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Mapping, Sequence
 
 from noetl.core.ehdb_contract import (
+    EHDB_CAPABILITIES_ENV,
     EHDB_CLIENT_ROLE_ENV,
     EHDB_ENABLED_ENV,
     EHDB_LOCAL_REFERENCE_LOG_ENV,
@@ -85,6 +86,9 @@ class LocalReferenceEhdbAdapter:
             EHDB_ENABLED_ENV: "true",
             EHDB_MODE_ENV: EhdbIntegrationMode.LOCAL_REFERENCE.value,
             EHDB_CLIENT_ROLE_ENV: self.role.value,
+            EHDB_CAPABILITIES_ENV: ",".join(
+                sorted(capability.value for capability in self.contract.capabilities)
+            ),
             EHDB_LOCAL_REFERENCE_LOG_ENV: str(self.local_reference_log),
         }
 
@@ -118,6 +122,8 @@ def ehdb_adapter_from_env(
 
     contract = ehdb_integration_contract_from_env(os.environ if env is None else env)
     if not contract.enabled:
+        return None
+    if contract.mode is not EhdbIntegrationMode.LOCAL_REFERENCE:
         return None
     return LocalReferenceEhdbAdapter.from_contract(contract)
 

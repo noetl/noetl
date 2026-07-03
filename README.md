@@ -50,26 +50,35 @@ execution-model boundary before any storage cutover exists.
 Environment flags:
 
 - `NOETL_EHDB_ENABLED=true` turns on contract validation.
-- `NOETL_EHDB_MODE=local_reference` selects the local reference
-  readiness mode.
-- `NOETL_EHDB_CLIENT_ROLE=worker|playbook` declares the caller role.
+- `NOETL_EHDB_MODE=control_plane|local_reference` selects either
+  control-plane embedding or local reference readiness mode.
+- `NOETL_EHDB_CLIENT_ROLE=gateway|api|server|worker|playbook|system`
+  declares the caller role.
+- `NOETL_EHDB_CAPABILITIES=control_plane` is the only capability
+  accepted for gateway/API/server control-plane embedding. Worker,
+  playbook, and system local-reference configs default to explicit
+  data-plane capabilities unless narrowed with a comma-separated list.
 - `NOETL_EHDB_LOCAL_REFERENCE_LOG=/path/to/ehdb.jsonl` provides the
   explicit local event-log path for the reference mode.
 - `NOETL_EHDB_HELPER_BIN=/path/to/helper` is required only when a
   worker/playbook asks NoETL to build a local-reference helper
   invocation plan.
 
-Gateway/server roles are rejected when EHDB is enabled. Gateway remains
-the gatekeeper; workers remain atomic compute; playbooks remain
-ephemeral blueprints; shared cache remains a state vehicle; the event
-log remains the source of truth. This contract does not connect to EHDB,
-replace PostgreSQL/NATS/object stores, add a gateway route, or start a
+Gateway/API/server roles are accepted only in explicit `control_plane`
+mode with the `control_plane` capability. They are still rejected for
+`local_reference` and any data-plane capability. Gateway remains the
+gatekeeper; workers remain atomic compute; playbooks remain ephemeral
+blueprints; shared cache remains a state vehicle; the event log remains
+the source of truth. This contract does not connect to EHDB, replace
+PostgreSQL/NATS/object stores, add a gateway route, or start a
 persistent per-tenant process.
 
 `noetl.core.ehdb_adapter.ehdb_adapter_from_env` builds the disabled-by-
 default adapter descriptor behind that contract. Disabled configuration
-returns `None`; worker/playbook `local_reference` configuration returns
-a `LocalReferenceEhdbAdapter` carrying the explicit event-log path and
+returns `None`; gateway/API/server `control_plane` configuration also
+returns `None` because it has no data-plane helper. Worker/playbook
+`local_reference` configuration returns a `LocalReferenceEhdbAdapter`
+carrying the explicit event-log path, data-plane capability set, and
 exportable runtime environment for future EHDB helper calls. The adapter
 does not open logs, connect to EHDB, or perform storage operations.
 
