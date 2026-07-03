@@ -55,6 +55,9 @@ Environment flags:
 - `NOETL_EHDB_CLIENT_ROLE=worker|playbook` declares the caller role.
 - `NOETL_EHDB_LOCAL_REFERENCE_LOG=/path/to/ehdb.jsonl` provides the
   explicit local event-log path for the reference mode.
+- `NOETL_EHDB_HELPER_BIN=/path/to/helper` is required only when a
+  worker/playbook asks NoETL to build a local-reference helper
+  invocation plan.
 
 Gateway/server roles are rejected when EHDB is enabled. Gateway remains
 the gatekeeper; workers remain atomic compute; playbooks remain
@@ -69,6 +72,15 @@ returns `None`; worker/playbook `local_reference` configuration returns
 a `LocalReferenceEhdbAdapter` carrying the explicit event-log path and
 exportable runtime environment for future EHDB helper calls. The adapter
 does not open logs, connect to EHDB, or perform storage operations.
+
+`noetl.core.ehdb_adapter.ehdb_helper_invocation_from_env` builds the
+next planning surface for those helper calls. Disabled configuration
+returns `None`; enabled worker/playbook configuration requires an
+explicit helper executable and returns deterministic `argv` plus EHDB
+runtime env that can be merged into a subprocess environment. The
+invocation plan is immutable and side-effect-free; it does not execute a
+subprocess, import EHDB, open logs, connect to storage, or add
+gateway/server data paths.
 
 ## Repository model (ai-meta driven)
 

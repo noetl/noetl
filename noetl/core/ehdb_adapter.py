@@ -5,7 +5,7 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Mapping
+from typing import Mapping, Sequence
 
 from noetl.core.ehdb_contract import (
     EHDB_CLIENT_ROLE_ENV,
@@ -18,6 +18,36 @@ from noetl.core.ehdb_contract import (
     ehdb_integration_contract_from_env,
     validate_ehdb_integration_contract,
 )
+
+
+EHDB_HELPER_BIN_ENV = "NOETL_EHDB_HELPER_BIN"
+
+
+@dataclass(frozen=True)
+class LocalReferenceEhdbInvocation:
+    """Immutable invocation plan for a future EHDB local-reference helper."""
+
+    executable: str
+    args: tuple[str, ...]
+    env_items: tuple[tuple[str, str], ...]
+    role: EhdbClientRole
+    local_reference_log: Path
+
+    @property
+    def argv(self) -> tuple[str, ...]:
+        return (self.executable, *self.args)
+
+    @property
+    def env(self) -> dict[str, str]:
+        return dict(self.env_items)
+
+    def subprocess_env(
+        self,
+        base_env: Mapping[str, str] | None = None,
+    ) -> dict[str, str]:
+        env = dict(base_env or {})
+        env.update(self.env)
+        return env
 
 
 @dataclass(frozen=True)
@@ -58,6 +88,28 @@ class LocalReferenceEhdbAdapter:
             EHDB_LOCAL_REFERENCE_LOG_ENV: str(self.local_reference_log),
         }
 
+    def helper_invocation(
+        self,
+        *,
+        executable: str,
+        args: Sequence[str] = (),
+    ) -> LocalReferenceEhdbInvocation:
+        """Return a subprocess invocation plan without executing it."""
+
+        helper_executable = _non_empty_text(executable, "EHDB helper executable")
+        helper_args = tuple(
+            _non_empty_text(arg, f"EHDB helper arg {index}")
+            for index, arg in enumerate(args)
+        )
+        runtime_env = self.runtime_env()
+        return LocalReferenceEhdbInvocation(
+            executable=helper_executable,
+            args=helper_args,
+            env_items=tuple(runtime_env.items()),
+            role=self.role,
+            local_reference_log=self.local_reference_log,
+        )
+
 
 def ehdb_adapter_from_env(
     env: Mapping[str, str] | None = None,
@@ -69,3 +121,26 @@ def ehdb_adapter_from_env(
         return None
     return LocalReferenceEhdbAdapter.from_contract(contract)
 
+
+def ehdb_helper_invocation_from_env(
+    env: Mapping[str, str] | None = None,
+    *,
+    args: Sequence[str] = (),
+) -> LocalReferenceEhdbInvocation | None:
+    """Return a configured EHDB helper invocation plan, or None when disabled."""
+
+    source_env = os.environ if env is None else env
+    adapter = ehdb_adapter_from_env(source_env)
+    if adapter is None:
+        return None
+    executable = _non_empty_text(
+        source_env.get(EHDB_HELPER_BIN_ENV),
+        EHDB_HELPER_BIN_ENV,
+    )
+    return adapter.helper_invocation(executable=executable, args=args)
+
+
+def _non_empty_text(value: str | None, label: str) -> str:
+    if value is None or not value.strip():
+        raise ValueError(f"{label} is required")
+    return value.strip()
