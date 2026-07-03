@@ -41,6 +41,28 @@ Reference docs for the event-sourced, projection-backed runtime
   durable NATS pull consumer, shard-stable, Prometheus metrics,
   replay-state folding shared with the in-process replay API.
 
+### EHDB Integration Contract
+
+EHDB integration is disabled by default in this repository. The first
+NoETL-side surface is a feature-flagged contract only; it validates the
+execution-model boundary before any storage cutover exists.
+
+Environment flags:
+
+- `NOETL_EHDB_ENABLED=true` turns on contract validation.
+- `NOETL_EHDB_MODE=local_reference` selects the local reference
+  readiness mode.
+- `NOETL_EHDB_CLIENT_ROLE=worker|playbook` declares the caller role.
+- `NOETL_EHDB_LOCAL_REFERENCE_LOG=/path/to/ehdb.jsonl` provides the
+  explicit local event-log path for the reference mode.
+
+Gateway/server roles are rejected when EHDB is enabled. Gateway remains
+the gatekeeper; workers remain atomic compute; playbooks remain
+ephemeral blueprints; shared cache remains a state vehicle; the event
+log remains the source of truth. This contract does not connect to EHDB,
+replace PostgreSQL/NATS/object stores, add a gateway route, or start a
+persistent per-tenant process.
+
 ## Repository model (ai-meta driven)
 
 NoETL development is now coordinated through the `ai-meta` repository:
