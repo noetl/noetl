@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.13.0](https://github.com/noetl/noetl/compare/v4.12.1...v4.13.0) (2026-07-03)
+
+### Features
+
+* add EHDB integration contract ([9bcbef3](https://github.com/noetl/noetl/commit/9bcbef3f3a09bfc3ab83de61989e0943ca2d132b))
+* **schema:** prev_event_id chain columns on noetl.event + noetl.command ([0af79e6](https://github.com/noetl/noetl/commit/0af79e67af58cf039a7b59695b08d0908f9ff2fb)), closes [noetl/ai-meta#115](https://github.com/noetl/ai-meta/issues/115) [noetl/ai-meta#115](https://github.com/noetl/ai-meta/issues/115)
+
 ## [4.12.1](https://github.com/noetl/noetl/compare/v4.12.0...v4.12.1) (2026-06-04)
 
 ### Bug Fixes
