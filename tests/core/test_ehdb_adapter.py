@@ -10,10 +10,12 @@ from noetl.core.ehdb_adapter import (
     ehdb_helper_invocation_from_env,
 )
 from noetl.core.ehdb_contract import (
+    EHDB_CAPABILITIES_ENV,
     EHDB_CLIENT_ROLE_ENV,
     EHDB_ENABLED_ENV,
     EHDB_LOCAL_REFERENCE_LOG_ENV,
     EHDB_MODE_ENV,
+    EhdbCapability,
     EhdbClientRole,
     EhdbIntegrationMode,
     ehdb_integration_contract_from_env,
@@ -22,6 +24,17 @@ from noetl.core.ehdb_contract import (
 
 def test_ehdb_adapter_returns_none_when_disabled():
     assert ehdb_adapter_from_env({}) is None
+
+
+def test_ehdb_adapter_returns_none_for_control_plane_embedding():
+    env = {
+        EHDB_ENABLED_ENV: "true",
+        EHDB_MODE_ENV: "control_plane",
+        EHDB_CLIENT_ROLE_ENV: "gateway",
+    }
+
+    assert ehdb_adapter_from_env(env) is None
+    assert ehdb_helper_invocation_from_env(env) is None
 
 
 def test_ehdb_adapter_builds_worker_local_reference_adapter():
@@ -63,11 +76,19 @@ def test_ehdb_adapter_exports_worker_runtime_env():
     )
 
     assert adapter is not None
-    assert adapter.runtime_env() == {
+    runtime_env = adapter.runtime_env()
+
+    assert runtime_env == {
         EHDB_ENABLED_ENV: "true",
         EHDB_MODE_ENV: EhdbIntegrationMode.LOCAL_REFERENCE.value,
         EHDB_CLIENT_ROLE_ENV: EhdbClientRole.WORKER.value,
+        EHDB_CAPABILITIES_ENV: runtime_env[EHDB_CAPABILITIES_ENV],
         EHDB_LOCAL_REFERENCE_LOG_ENV: "/tmp/noetl-ehdb.jsonl",
+    }
+    assert set(runtime_env[EHDB_CAPABILITIES_ENV].split(",")) == {
+        capability.value
+        for capability in EhdbCapability
+        if capability is not EhdbCapability.CONTROL_PLANE
     }
 
 
@@ -98,8 +119,12 @@ def test_ehdb_helper_invocation_builds_worker_argv_and_env():
         EHDB_ENABLED_ENV: "true",
         EHDB_MODE_ENV: EhdbIntegrationMode.LOCAL_REFERENCE.value,
         EHDB_CLIENT_ROLE_ENV: EhdbClientRole.WORKER.value,
+        EHDB_CAPABILITIES_ENV: invocation.env[EHDB_CAPABILITIES_ENV],
         EHDB_LOCAL_REFERENCE_LOG_ENV: "/tmp/noetl-ehdb.jsonl",
     }
+    assert EhdbCapability.TRANSACTION_APPEND.value in invocation.env[
+        EHDB_CAPABILITIES_ENV
+    ].split(",")
 
 
 def test_ehdb_helper_invocation_builds_playbook_plan():
@@ -140,6 +165,7 @@ def test_ehdb_helper_invocation_merges_subprocess_env():
     assert merged["PATH"] == "/usr/bin"
     assert merged[EHDB_ENABLED_ENV] == "true"
     assert merged[EHDB_CLIENT_ROLE_ENV] == "worker"
+    assert EhdbCapability.STREAM_APPEND.value in merged[EHDB_CAPABILITIES_ENV].split(",")
     assert merged[EHDB_LOCAL_REFERENCE_LOG_ENV] == "/tmp/noetl-ehdb.jsonl"
 
 
