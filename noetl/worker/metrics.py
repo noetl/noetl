@@ -21,6 +21,12 @@ def render_worker_metrics(*, worker_id: str, labels: Mapping[str, str] | None = 
         f"noetl_worker_up{{worker_id=\"{_escape_label(worker_id)}\"}} 1",
     ]
     append_storage_ipc_metrics(lines, default_store.ipc_stats(), labels=metric_labels)
+
+    # EHDB readiness preflight metrics.  Renders nothing when EHDB is
+    # disabled (no check recorded), so `/metrics` stays byte-identical.
+    from noetl.core.ehdb_readiness import render_ehdb_readiness_metrics
+
+    lines.extend(render_ehdb_readiness_metrics(labels=metric_labels))
     return "\n".join(lines) + "\n"
 
 

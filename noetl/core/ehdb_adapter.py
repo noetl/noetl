@@ -136,8 +136,14 @@ class LocalReferenceEhdbAdapter:
         validate_ehdb_integration_contract(contract)
         if contract.mode is not EhdbIntegrationMode.LOCAL_REFERENCE:
             raise ValueError("local-reference adapter requires local_reference mode")
-        if contract.role not in {EhdbClientRole.WORKER, EhdbClientRole.PLAYBOOK}:
-            raise ValueError("local-reference adapter requires worker or playbook role")
+        if contract.role not in {
+            EhdbClientRole.WORKER,
+            EhdbClientRole.PLAYBOOK,
+            EhdbClientRole.SYSTEM,
+        }:
+            raise ValueError(
+                "local-reference adapter requires worker, playbook, or system role"
+            )
         return cls(contract=contract)
 
     @property
