@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.19.0](https://github.com/noetl/noetl/compare/v4.18.0...v4.19.0) (2026-07-04)
+
+### Features
+
+* execute EHDB local helper summaries ([ed62913](https://github.com/noetl/noetl/commit/ed629137a19c75b8831c71b109934a073678f0b2))
+
 ## [4.18.0](https://github.com/noetl/noetl/compare/v4.17.0...v4.18.0) (2026-07-04)
 
 ### Features
