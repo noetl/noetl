@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.21.0](https://github.com/noetl/noetl/compare/v4.20.0...v4.21.0) (2026-07-04)
+
+### Features
+
+* package EHDB helper in NoETL images ([b4b7275](https://github.com/noetl/noetl/commit/b4b72758a0c591a2706bdce59f9c537bdc983d6e))
+
 ## [4.20.0](https://github.com/noetl/noetl/compare/v4.19.0...v4.20.0) (2026-07-04)
 
 ### Features
