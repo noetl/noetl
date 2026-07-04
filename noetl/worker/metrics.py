@@ -27,6 +27,13 @@ def render_worker_metrics(*, worker_id: str, labels: Mapping[str, str] | None = 
     from noetl.core.ehdb_readiness import render_ehdb_readiness_metrics
 
     lines.extend(render_ehdb_readiness_metrics(labels=metric_labels))
+
+    # EHDB Phase C data-plane metrics.  Renders nothing when no bounded
+    # append/read has run (disabled EHDB never records), so `/metrics` stays
+    # byte-identical for a disabled deployment.
+    from noetl.core.ehdb_dataplane import render_ehdb_dataplane_metrics
+
+    lines.extend(render_ehdb_dataplane_metrics(labels=metric_labels))
     return "\n".join(lines) + "\n"
 
 
