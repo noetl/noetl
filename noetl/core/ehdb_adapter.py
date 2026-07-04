@@ -26,6 +26,26 @@ from noetl.core.ehdb_contract import (
 
 EHDB_HELPER_BIN_ENV = "NOETL_EHDB_HELPER_BIN"
 EHDB_LOCAL_REFERENCE_HELPER_NAME = "ehdb-local-reference"
+EHDB_LOCAL_REFERENCE_SUMMARY_FIELDS = (
+    "log_path",
+    "transaction_count",
+    "table_count",
+    "snapshot_count",
+    "scan_grant_count",
+    "stream_count",
+    "stream_record_count",
+    "stream_consumer_count",
+    "retrieval_document_count",
+    "retrieval_chunk_count",
+    "retrieval_embedding_count",
+    "system_library_count",
+    "system_binding_count",
+    "storage_object_count",
+    "storage_replica_count",
+)
+_EHDB_LOCAL_REFERENCE_COUNT_FIELDS = tuple(
+    field for field in EHDB_LOCAL_REFERENCE_SUMMARY_FIELDS if field != "log_path"
+)
 
 
 @dataclass(frozen=True)
@@ -64,6 +84,42 @@ class LocalReferenceEhdbExecution:
     stdout: str
     stderr: str
     json_payload: Mapping[str, Any]
+
+
+@dataclass(frozen=True)
+class LocalReferenceEhdbSummary:
+    """Validated summary returned by `ehdb-local-reference summary`."""
+
+    log_path: Path
+    counts: Mapping[str, int]
+
+    @classmethod
+    def from_payload(
+        cls,
+        payload: Mapping[str, Any],
+        *,
+        expected_log: Path | str | None = None,
+    ) -> "LocalReferenceEhdbSummary":
+        missing = [
+            field for field in EHDB_LOCAL_REFERENCE_SUMMARY_FIELDS if field not in payload
+        ]
+        if missing:
+            raise ValueError(f"EHDB summary missing required fields: {', '.join(missing)}")
+
+        log_path = _summary_log_path(payload["log_path"])
+        if expected_log is not None and log_path != Path(expected_log):
+            raise ValueError("EHDB summary log_path does not match requested log")
+
+        counts: dict[str, int] = {}
+        for field in _EHDB_LOCAL_REFERENCE_COUNT_FIELDS:
+            counts[field] = _summary_count(payload[field], field)
+        return cls(log_path=log_path, counts=counts)
+
+    def as_dict(self) -> dict[str, int | str]:
+        return {
+            "log_path": str(self.log_path),
+            **self.counts,
+        }
 
 
 @dataclass(frozen=True)
@@ -275,10 +331,45 @@ def execute_ehdb_local_reference_summary_from_env(
     )
 
 
+def read_ehdb_local_reference_summary_from_env(
+    env: Mapping[str, str] | None = None,
+    *,
+    timeout_seconds: float = 30.0,
+    base_env: Mapping[str, str] | None = None,
+) -> LocalReferenceEhdbSummary | None:
+    """Execute the summary helper and return a validated typed summary."""
+
+    execution = execute_ehdb_local_reference_summary_from_env(
+        env,
+        timeout_seconds=timeout_seconds,
+        base_env=base_env,
+    )
+    if execution is None:
+        return None
+    return LocalReferenceEhdbSummary.from_payload(
+        execution.json_payload,
+        expected_log=execution.invocation.local_reference_log,
+    )
+
+
 def _non_empty_text(value: str | None, label: str) -> str:
     if value is None or not value.strip():
         raise ValueError(f"{label} is required")
     return value.strip()
+
+
+def _summary_log_path(value: Any) -> Path:
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError("EHDB summary log_path must be a non-empty string")
+    return Path(value)
+
+
+def _summary_count(value: Any, field: str) -> int:
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ValueError(f"EHDB summary {field} must be an integer")
+    if value < 0:
+        raise ValueError(f"EHDB summary {field} must be non-negative")
+    return value
 
 
 def _default_ehdb_helper_candidates(helper_name: str) -> tuple[Path, ...]:
