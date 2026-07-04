@@ -63,3 +63,13 @@ runtime image or local checkout with:
 python scripts/smoke_ehdb_local_reference_summary.py \
   --log /tmp/noetl-ehdb-smoke.jsonl
 ```
+
+The in-repo Dockerfiles build the helper from `noetl/ehdb` using the
+`EHDB_REF` build arg and copy only the compiled binary into the final
+runtime image:
+
+```bash
+docker build \
+  --build-arg EHDB_REF=0dc2016f4b692d3d868ccbc3918900962a880ca1 \
+  --file docker/noetl/dev/Dockerfile .
+```

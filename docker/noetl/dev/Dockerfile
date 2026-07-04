@@ -1,5 +1,21 @@
-# Rust builder stage - can be skipped if using pre-compiled binary
-# To use pre-compiled binary: docker build --build-arg USE_PREBUILT_BINARY=true
+FROM rust:1.82-slim AS ehdb-helper
+
+ARG EHDB_REF=0dc2016f4b692d3d868ccbc3918900962a880ca1
+
+RUN apt-get update && apt-get --no-install-recommends install -y \
+    ca-certificates \
+    git \
+    build-essential \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /tmp/ehdb
+
+RUN git init . \
+    && git remote add origin https://github.com/noetl/ehdb.git \
+    && git fetch --depth 1 origin "${EHDB_REF}" \
+    && git -c advice.detachedHead=false checkout FETCH_HEAD \
+    && cargo build --release --locked -p ehdb-reference --bin ehdb-local-reference
+
 FROM python:3.12-slim AS builder
 
 # Install uv directly instead of copying from ghcr.io
@@ -66,11 +82,7 @@ RUN apt-get update && apt-get --no-install-recommends install -y \
 # RUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone
 
 COPY --from=builder /opt/noetl/.venv /opt/noetl/.venv
-
-# Optional: Copy pre-compiled Rust binary if available
-# Binaries must be built separately from https://github.com/noetl/cli.
-# ARG TARGETARCH
-# COPY target/x86_64-unknown-linux-gnu/release/noetl /usr/local/bin/noetl || echo "No Rust binary"
+COPY --from=ehdb-helper /tmp/ehdb/target/release/ehdb-local-reference /usr/local/bin/ehdb-local-reference
 
 WORKDIR /opt/noetl
 
@@ -79,6 +91,8 @@ COPY --from=builder /opt/noetl/scripts ./scripts
 COPY --from=builder /opt/noetl/pyproject.toml ./
 COPY --from=builder /opt/noetl/LICENSE ./
 COPY --from=builder /opt/noetl/README.md ./
+
+RUN ehdb-local-reference --help >/dev/null
 
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
