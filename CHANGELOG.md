@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.20.0](https://github.com/noetl/noetl/compare/v4.19.0...v4.20.0) (2026-07-04)
+
+### Features
+
+* discover EHDB helper for summary smoke ([347dd1d](https://github.com/noetl/noetl/commit/347dd1d77b3e0293cbfa3e2f9c4794da0cbad214))
+
 ## [4.19.0](https://github.com/noetl/noetl/compare/v4.18.0...v4.19.0) (2026-07-04)
 
 ### Features
