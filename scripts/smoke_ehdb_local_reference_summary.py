@@ -13,7 +13,8 @@ from typing import Mapping, Sequence
 
 from noetl.core.ehdb_adapter import (
     EHDB_HELPER_BIN_ENV,
-    execute_ehdb_local_reference_summary_from_env,
+    EHDB_LOCAL_REFERENCE_SUMMARY_FIELDS,
+    read_ehdb_local_reference_summary_from_env,
 )
 from noetl.core.ehdb_contract import (
     EHDB_CLIENT_ROLE_ENV,
@@ -23,23 +24,7 @@ from noetl.core.ehdb_contract import (
 )
 
 
-REQUIRED_SUMMARY_FIELDS = (
-    "log_path",
-    "transaction_count",
-    "table_count",
-    "snapshot_count",
-    "scan_grant_count",
-    "stream_count",
-    "stream_record_count",
-    "stream_consumer_count",
-    "retrieval_document_count",
-    "retrieval_chunk_count",
-    "retrieval_embedding_count",
-    "system_library_count",
-    "system_binding_count",
-    "storage_object_count",
-    "storage_replica_count",
-)
+REQUIRED_SUMMARY_FIELDS = EHDB_LOCAL_REFERENCE_SUMMARY_FIELDS
 
 
 def run_smoke(
@@ -62,19 +47,14 @@ def run_smoke(
     if helper_bin is not None:
         source_env[EHDB_HELPER_BIN_ENV] = helper_bin
 
-    execution = execute_ehdb_local_reference_summary_from_env(
+    summary = read_ehdb_local_reference_summary_from_env(
         source_env,
         timeout_seconds=timeout_seconds,
     )
-    if execution is None:
+    if summary is None:
         raise RuntimeError("EHDB local-reference summary smoke was unexpectedly disabled")
 
-    missing = [field for field in REQUIRED_SUMMARY_FIELDS if field not in execution.json_payload]
-    if missing:
-        raise ValueError(f"EHDB summary missing required fields: {', '.join(missing)}")
-    if execution.json_payload["log_path"] != str(log_path):
-        raise ValueError("EHDB summary log_path does not match requested log")
-    return execution.json_payload
+    return summary.as_dict()
 
 
 def main(argv: Sequence[str] | None = None) -> int:

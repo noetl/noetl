@@ -5,16 +5,19 @@ import pytest
 
 from noetl.core.ehdb_adapter import (
     EHDB_HELPER_BIN_ENV,
+    EHDB_LOCAL_REFERENCE_SUMMARY_FIELDS,
     EHDB_LOCAL_REFERENCE_HELPER_NAME,
     LocalReferenceEhdbExecution,
     LocalReferenceEhdbAdapter,
     LocalReferenceEhdbInvocation,
+    LocalReferenceEhdbSummary,
     discover_ehdb_helper_executable,
     ehdb_adapter_from_env,
     ehdb_helper_invocation_from_env,
     ehdb_local_reference_summary_invocation_from_env,
     execute_ehdb_helper_json,
     execute_ehdb_local_reference_summary_from_env,
+    read_ehdb_local_reference_summary_from_env,
 )
 from noetl.core.ehdb_contract import (
     EHDB_CAPABILITIES_ENV,
@@ -307,6 +310,62 @@ print(json.dumps({"transaction_count": 2, "stream_count": 1}))
     )
 
 
+def test_read_ehdb_local_reference_summary_returns_typed_summary(tmp_path):
+    log_path = tmp_path / "ehdb.jsonl"
+    helper = _summary_helper(tmp_path)
+
+    summary = read_ehdb_local_reference_summary_from_env(
+        {
+            EHDB_ENABLED_ENV: "true",
+            EHDB_CLIENT_ROLE_ENV: "worker",
+            EHDB_LOCAL_REFERENCE_LOG_ENV: str(log_path),
+            EHDB_HELPER_BIN_ENV: str(helper),
+        },
+        base_env={"PATH": "/usr/bin"},
+    )
+
+    assert isinstance(summary, LocalReferenceEhdbSummary)
+    assert summary.log_path == log_path
+    assert summary.counts["transaction_count"] == 3
+    assert summary.counts["storage_replica_count"] == 0
+    assert summary.as_dict()["log_path"] == str(log_path)
+
+
+def test_read_ehdb_local_reference_summary_returns_none_when_disabled():
+    assert read_ehdb_local_reference_summary_from_env({}) is None
+
+
+def test_local_reference_summary_rejects_missing_required_fields():
+    with pytest.raises(ValueError, match="missing required fields"):
+        LocalReferenceEhdbSummary.from_payload({"log_path": "/tmp/ehdb.jsonl"})
+
+
+def test_local_reference_summary_rejects_unexpected_log_path():
+    payload = _summary_payload("/tmp/actual-ehdb.jsonl")
+
+    with pytest.raises(ValueError, match="log_path does not match"):
+        LocalReferenceEhdbSummary.from_payload(
+            payload,
+            expected_log="/tmp/expected-ehdb.jsonl",
+        )
+
+
+def test_local_reference_summary_rejects_non_integer_count():
+    payload = _summary_payload("/tmp/ehdb.jsonl")
+    payload["transaction_count"] = "1"
+
+    with pytest.raises(ValueError, match="transaction_count must be an integer"):
+        LocalReferenceEhdbSummary.from_payload(payload)
+
+
+def test_local_reference_summary_rejects_negative_count():
+    payload = _summary_payload("/tmp/ehdb.jsonl")
+    payload["stream_count"] = -1
+
+    with pytest.raises(ValueError, match="stream_count must be non-negative"):
+        LocalReferenceEhdbSummary.from_payload(payload)
+
+
 def test_execute_ehdb_helper_json_returns_none_when_disabled():
     assert execute_ehdb_local_reference_summary_from_env({}) is None
 
@@ -460,3 +519,29 @@ def _helper_script(
     helper.write_text(f"#!{sys.executable}\n{body.lstrip()}", encoding="utf-8")
     helper.chmod(0o755)
     return helper
+
+
+def _summary_helper(tmp_path: Path) -> Path:
+    payload = _summary_payload("placeholder")
+    return _helper_script(
+        tmp_path,
+        f"""
+import json
+import sys
+
+payload = {payload!r}
+payload["log_path"] = sys.argv[3]
+print(json.dumps(payload))
+""",
+    )
+
+
+def _summary_payload(log_path: str) -> dict[str, int | str]:
+    payload = {
+        field: 0
+        for field in EHDB_LOCAL_REFERENCE_SUMMARY_FIELDS
+        if field != "log_path"
+    }
+    payload["log_path"] = log_path
+    payload["transaction_count"] = 3
+    return payload
