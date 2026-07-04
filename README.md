@@ -107,6 +107,19 @@ invocation plan is immutable and side-effect-free; it does not execute a
 subprocess, import EHDB, open logs, connect to storage, or add
 gateway/server data paths.
 
+`noetl.core.ehdb_adapter.ehdb_local_reference_summary_invocation_from_env`
+builds the first concrete helper command:
+`ehdb-local-reference summary --log <path>`. Worker/playbook contexts
+may pass that invocation to
+`noetl.core.ehdb_adapter.execute_ehdb_helper_json`, which runs the
+helper without a shell, captures stdout/stderr, enforces a timeout, and
+decodes a JSON object. Disabled configuration returns `None`, and
+gateway/API/server local-reference roles remain rejected by the
+contract. This runner is for bounded local diagnostics and integration
+tests; it does not import Rust EHDB, open storage from the gateway,
+replace platform dependencies, or create persistent per-tenant
+processes.
+
 ## Repository model (ai-meta driven)
 
 NoETL development is now coordinated through the `ai-meta` repository:

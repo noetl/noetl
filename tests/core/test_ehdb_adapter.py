@@ -1,13 +1,18 @@
+import sys
 from pathlib import Path
 
 import pytest
 
 from noetl.core.ehdb_adapter import (
     EHDB_HELPER_BIN_ENV,
+    LocalReferenceEhdbExecution,
     LocalReferenceEhdbAdapter,
     LocalReferenceEhdbInvocation,
     ehdb_adapter_from_env,
     ehdb_helper_invocation_from_env,
+    ehdb_local_reference_summary_invocation_from_env,
+    execute_ehdb_helper_json,
+    execute_ehdb_local_reference_summary_from_env,
 )
 from noetl.core.ehdb_contract import (
     EHDB_CAPABILITIES_ENV,
@@ -144,6 +149,25 @@ def test_ehdb_helper_invocation_builds_playbook_plan():
     assert invocation.local_reference_log == Path("var/noetl/ehdb/reference.jsonl")
 
 
+def test_ehdb_summary_invocation_uses_concrete_helper_command():
+    invocation = ehdb_local_reference_summary_invocation_from_env(
+        {
+            EHDB_ENABLED_ENV: "true",
+            EHDB_CLIENT_ROLE_ENV: "worker",
+            EHDB_LOCAL_REFERENCE_LOG_ENV: "/tmp/noetl-ehdb.jsonl",
+            EHDB_HELPER_BIN_ENV: "ehdb-local-reference",
+        }
+    )
+
+    assert invocation is not None
+    assert invocation.argv == (
+        "ehdb-local-reference",
+        "summary",
+        "--log",
+        "/tmp/noetl-ehdb.jsonl",
+    )
+
+
 def test_ehdb_helper_invocation_merges_subprocess_env():
     invocation = ehdb_helper_invocation_from_env(
         {
@@ -167,6 +191,121 @@ def test_ehdb_helper_invocation_merges_subprocess_env():
     assert merged[EHDB_CLIENT_ROLE_ENV] == "worker"
     assert EhdbCapability.STREAM_APPEND.value in merged[EHDB_CAPABILITIES_ENV].split(",")
     assert merged[EHDB_LOCAL_REFERENCE_LOG_ENV] == "/tmp/noetl-ehdb.jsonl"
+
+
+def test_execute_ehdb_local_reference_summary_decodes_json(tmp_path):
+    helper = _helper_script(
+        tmp_path,
+        """
+import json
+import os
+import sys
+
+expected_log = os.environ["NOETL_EHDB_LOCAL_REFERENCE_LOG"]
+if sys.argv[1:] != ["summary", "--log", expected_log]:
+    print("unexpected argv", file=sys.stderr)
+    sys.exit(4)
+print(json.dumps({"transaction_count": 2, "stream_count": 1}))
+""",
+    )
+
+    execution = execute_ehdb_local_reference_summary_from_env(
+        {
+            EHDB_ENABLED_ENV: "true",
+            EHDB_CLIENT_ROLE_ENV: "worker",
+            EHDB_LOCAL_REFERENCE_LOG_ENV: str(tmp_path / "ehdb.jsonl"),
+            EHDB_HELPER_BIN_ENV: str(helper),
+        },
+        base_env={"PATH": "/usr/bin"},
+    )
+
+    assert isinstance(execution, LocalReferenceEhdbExecution)
+    assert execution.returncode == 0
+    assert execution.json_payload == {"transaction_count": 2, "stream_count": 1}
+    assert execution.invocation.argv == (
+        str(helper),
+        "summary",
+        "--log",
+        str(tmp_path / "ehdb.jsonl"),
+    )
+
+
+def test_execute_ehdb_helper_json_returns_none_when_disabled():
+    assert execute_ehdb_local_reference_summary_from_env({}) is None
+
+
+def test_execute_ehdb_helper_json_rejects_gateway_role():
+    with pytest.raises(ValueError, match="gateway remains a gatekeeper"):
+        execute_ehdb_local_reference_summary_from_env(
+            {
+                EHDB_ENABLED_ENV: "true",
+                EHDB_CLIENT_ROLE_ENV: "gateway",
+                EHDB_LOCAL_REFERENCE_LOG_ENV: "/tmp/noetl-ehdb.jsonl",
+                EHDB_HELPER_BIN_ENV: "ehdb-local-reference",
+            }
+        )
+
+
+def test_execute_ehdb_helper_json_raises_on_nonzero_exit(tmp_path):
+    helper = _helper_script(
+        tmp_path,
+        """
+import sys
+
+print("helper failed", file=sys.stderr)
+sys.exit(7)
+""",
+    )
+    invocation = LocalReferenceEhdbInvocation(
+        executable=str(helper),
+        args=("summary", "--log", str(tmp_path / "ehdb.jsonl")),
+        env_items=(),
+        role=EhdbClientRole.WORKER,
+        local_reference_log=tmp_path / "ehdb.jsonl",
+    )
+
+    with pytest.raises(RuntimeError, match="exited with 7"):
+        execute_ehdb_helper_json(invocation)
+
+
+def test_execute_ehdb_helper_json_raises_on_timeout(tmp_path):
+    helper = _helper_script(
+        tmp_path,
+        """
+import time
+
+time.sleep(2)
+""",
+    )
+    invocation = LocalReferenceEhdbInvocation(
+        executable=str(helper),
+        args=("summary", "--log", str(tmp_path / "ehdb.jsonl")),
+        env_items=(),
+        role=EhdbClientRole.WORKER,
+        local_reference_log=tmp_path / "ehdb.jsonl",
+    )
+
+    with pytest.raises(TimeoutError, match="timed out"):
+        execute_ehdb_helper_json(invocation, timeout_seconds=0.01)
+
+
+def test_execute_ehdb_helper_json_rejects_non_object_json(tmp_path):
+    helper = _helper_script(
+        tmp_path,
+        """
+print("[1, 2, 3]")
+""",
+    )
+    invocation = LocalReferenceEhdbInvocation(
+        executable=str(helper),
+        args=("summary", "--log", str(tmp_path / "ehdb.jsonl")),
+        env_items=(),
+        role=EhdbClientRole.WORKER,
+        local_reference_log=tmp_path / "ehdb.jsonl",
+    )
+
+    with pytest.raises(ValueError, match="JSON object"):
+        execute_ehdb_helper_json(invocation)
 
 
 def test_ehdb_helper_invocation_requires_explicit_helper_executable():
@@ -232,3 +371,10 @@ def test_local_reference_adapter_requires_local_reference_contract():
     adapter = LocalReferenceEhdbAdapter.from_contract(contract)
 
     assert adapter.runtime_env()[EHDB_MODE_ENV] == "local_reference"
+
+
+def _helper_script(tmp_path: Path, body: str) -> Path:
+    helper = tmp_path / "ehdb-helper.py"
+    helper.write_text(f"#!{sys.executable}\n{body.lstrip()}", encoding="utf-8")
+    helper.chmod(0o755)
+    return helper
