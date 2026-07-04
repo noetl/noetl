@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import json
 import os
+import subprocess
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Mapping, Sequence
+from typing import Any, Mapping, Sequence
 
 from noetl.core.ehdb_contract import (
     EHDB_CAPABILITIES_ENV,
@@ -49,6 +51,17 @@ class LocalReferenceEhdbInvocation:
         env = dict(base_env or {})
         env.update(self.env)
         return env
+
+
+@dataclass(frozen=True)
+class LocalReferenceEhdbExecution:
+    """Captured JSON result from a bounded EHDB helper execution."""
+
+    invocation: LocalReferenceEhdbInvocation
+    returncode: int
+    stdout: str
+    stderr: str
+    json_payload: Mapping[str, Any]
 
 
 @dataclass(frozen=True)
@@ -144,6 +157,86 @@ def ehdb_helper_invocation_from_env(
         EHDB_HELPER_BIN_ENV,
     )
     return adapter.helper_invocation(executable=executable, args=args)
+
+
+def ehdb_local_reference_summary_invocation_from_env(
+    env: Mapping[str, str] | None = None,
+) -> LocalReferenceEhdbInvocation | None:
+    """Return the concrete local-reference summary helper invocation."""
+
+    adapter = ehdb_adapter_from_env(os.environ if env is None else env)
+    if adapter is None:
+        return None
+    return ehdb_helper_invocation_from_env(
+        env,
+        args=("summary", "--log", str(adapter.local_reference_log)),
+    )
+
+
+def execute_ehdb_helper_json(
+    invocation: LocalReferenceEhdbInvocation,
+    *,
+    timeout_seconds: float = 30.0,
+    base_env: Mapping[str, str] | None = None,
+) -> LocalReferenceEhdbExecution:
+    """Execute a bounded EHDB helper and decode a JSON object from stdout."""
+
+    if timeout_seconds <= 0:
+        raise ValueError("EHDB helper timeout must be positive")
+
+    try:
+        completed = subprocess.run(
+            invocation.argv,
+            check=False,
+            capture_output=True,
+            text=True,
+            env=invocation.subprocess_env(base_env),
+            timeout=timeout_seconds,
+        )
+    except FileNotFoundError as exc:
+        raise ValueError(f"EHDB helper executable not found: {invocation.executable}") from exc
+    except subprocess.TimeoutExpired as exc:
+        raise TimeoutError(
+            f"EHDB helper timed out after {timeout_seconds:g}s: {invocation.executable}"
+        ) from exc
+
+    if completed.returncode != 0:
+        raise RuntimeError(
+            f"EHDB helper exited with {completed.returncode}: {completed.stderr.strip()}"
+        )
+
+    try:
+        payload = json.loads(completed.stdout)
+    except json.JSONDecodeError as exc:
+        raise ValueError("EHDB helper stdout was not valid JSON") from exc
+    if not isinstance(payload, dict):
+        raise ValueError("EHDB helper stdout must decode to a JSON object")
+
+    return LocalReferenceEhdbExecution(
+        invocation=invocation,
+        returncode=completed.returncode,
+        stdout=completed.stdout,
+        stderr=completed.stderr,
+        json_payload=payload,
+    )
+
+
+def execute_ehdb_local_reference_summary_from_env(
+    env: Mapping[str, str] | None = None,
+    *,
+    timeout_seconds: float = 30.0,
+    base_env: Mapping[str, str] | None = None,
+) -> LocalReferenceEhdbExecution | None:
+    """Execute the configured local-reference summary helper, if enabled."""
+
+    invocation = ehdb_local_reference_summary_invocation_from_env(env)
+    if invocation is None:
+        return None
+    return execute_ehdb_helper_json(
+        invocation,
+        timeout_seconds=timeout_seconds,
+        base_env=base_env,
+    )
 
 
 def _non_empty_text(value: str | None, label: str) -> str:
