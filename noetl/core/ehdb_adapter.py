@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
@@ -24,6 +25,7 @@ from noetl.core.ehdb_contract import (
 
 
 EHDB_HELPER_BIN_ENV = "NOETL_EHDB_HELPER_BIN"
+EHDB_LOCAL_REFERENCE_HELPER_NAME = "ehdb-local-reference"
 
 
 @dataclass(frozen=True)
@@ -159,16 +161,50 @@ def ehdb_helper_invocation_from_env(
     return adapter.helper_invocation(executable=executable, args=args)
 
 
+def discover_ehdb_helper_executable(
+    env: Mapping[str, str] | None = None,
+    *,
+    helper_name: str = EHDB_LOCAL_REFERENCE_HELPER_NAME,
+    candidates: Sequence[Path | str] = (),
+    include_default_candidates: bool = True,
+) -> str | None:
+    """Discover the EHDB helper binary without executing it."""
+
+    source_env = os.environ if env is None else env
+    explicit = source_env.get(EHDB_HELPER_BIN_ENV)
+    if explicit is not None:
+        return _non_empty_text(explicit, EHDB_HELPER_BIN_ENV)
+
+    found = shutil.which(helper_name, path=source_env.get("PATH"))
+    if found:
+        return found
+
+    helper_candidates = [Path(candidate) for candidate in candidates]
+    if include_default_candidates:
+        helper_candidates.extend(_default_ehdb_helper_candidates(helper_name))
+    for candidate in helper_candidates:
+        if _is_executable_file(candidate):
+            return str(candidate)
+    return None
+
+
 def ehdb_local_reference_summary_invocation_from_env(
     env: Mapping[str, str] | None = None,
 ) -> LocalReferenceEhdbInvocation | None:
     """Return the concrete local-reference summary helper invocation."""
 
-    adapter = ehdb_adapter_from_env(os.environ if env is None else env)
+    source_env = os.environ if env is None else env
+    adapter = ehdb_adapter_from_env(source_env)
     if adapter is None:
         return None
-    return ehdb_helper_invocation_from_env(
-        env,
+    executable = discover_ehdb_helper_executable(source_env)
+    if executable is None:
+        raise ValueError(
+            f"{EHDB_HELPER_BIN_ENV} is required or "
+            f"{EHDB_LOCAL_REFERENCE_HELPER_NAME} must be discoverable"
+        )
+    return adapter.helper_invocation(
+        executable=executable,
         args=("summary", "--log", str(adapter.local_reference_log)),
     )
 
@@ -243,3 +279,18 @@ def _non_empty_text(value: str | None, label: str) -> str:
     if value is None or not value.strip():
         raise ValueError(f"{label} is required")
     return value.strip()
+
+
+def _default_ehdb_helper_candidates(helper_name: str) -> tuple[Path, ...]:
+    repo_root = Path(__file__).resolve().parents[2]
+    repos_root = repo_root.parent
+    return (
+        Path("/usr/local/bin") / helper_name,
+        Path("/opt/noetl/bin") / helper_name,
+        repos_root / "ehdb" / "target" / "release" / helper_name,
+        repos_root / "ehdb" / "target" / "debug" / helper_name,
+    )
+
+
+def _is_executable_file(path: Path) -> bool:
+    return path.is_file() and os.access(path, os.X_OK)
