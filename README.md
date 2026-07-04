@@ -81,6 +81,14 @@ role, the `control_plane` capability, and exportable runtime
 environment. The descriptor does not create an adapter, open logs,
 connect to EHDB, or perform storage operations.
 
+`noetl.core.ehdb_surface.ehdb_surface_from_env` is the common
+side-effect-free selector. It returns `None` when EHDB is disabled,
+returns the control-plane descriptor for gateway/API/server
+`control_plane` configs, and returns the local-reference adapter for
+worker/playbook/system data-plane configs. The selected surface exposes
+role, mode, capabilities, and runtime env without opening logs,
+executing helpers, or importing EHDB.
+
 `noetl.core.ehdb_adapter.ehdb_adapter_from_env` builds the disabled-by-
 default adapter descriptor behind that contract. Disabled configuration
 returns `None`; gateway/API/server `control_plane` configuration also
