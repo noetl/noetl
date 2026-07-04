@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.22.0](https://github.com/noetl/noetl/compare/v4.21.0...v4.22.0) (2026-07-04)
+
+### Features
+
+* validate EHDB local-reference summaries ([e6c8450](https://github.com/noetl/noetl/commit/e6c8450ab5cd6b3162c368bba40fde9e65c4b3c1))
+
 ## [4.21.0](https://github.com/noetl/noetl/compare/v4.20.0...v4.21.0) (2026-07-04)
 
 ### Features
