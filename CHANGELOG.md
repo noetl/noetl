@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.23.0](https://github.com/noetl/noetl/compare/v4.22.0...v4.23.0) (2026-07-04)
+
+### Features
+
+* **ehdb:** Phase B — bounded worker/playbook readiness hook ([#234](https://github.com/noetl/noetl/issues/234)) ([de23ca0](https://github.com/noetl/noetl/commit/de23ca0ba4a9652b6e82d67069286d0c926e2698))
+
 ## [4.22.0](https://github.com/noetl/noetl/compare/v4.21.0...v4.22.0) (2026-07-04)
 
 ### Features
