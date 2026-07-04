@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.18.0](https://github.com/noetl/noetl/compare/v4.17.0...v4.18.0) (2026-07-04)
+
+### Features
+
+* add EHDB surface selector ([0214b2f](https://github.com/noetl/noetl/commit/0214b2f5e7052edad69afbac37fce6c9be1b466a))
+
 ## [4.17.0](https://github.com/noetl/noetl/compare/v4.16.0...v4.17.0) (2026-07-03)
 
 ### Features
