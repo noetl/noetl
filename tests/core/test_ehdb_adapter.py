@@ -5,9 +5,11 @@ import pytest
 
 from noetl.core.ehdb_adapter import (
     EHDB_HELPER_BIN_ENV,
+    EHDB_LOCAL_REFERENCE_HELPER_NAME,
     LocalReferenceEhdbExecution,
     LocalReferenceEhdbAdapter,
     LocalReferenceEhdbInvocation,
+    discover_ehdb_helper_executable,
     ehdb_adapter_from_env,
     ehdb_helper_invocation_from_env,
     ehdb_local_reference_summary_invocation_from_env,
@@ -165,6 +167,81 @@ def test_ehdb_summary_invocation_uses_concrete_helper_command():
         "summary",
         "--log",
         "/tmp/noetl-ehdb.jsonl",
+    )
+
+
+def test_ehdb_summary_invocation_discovers_helper_from_path(tmp_path):
+    helper = _helper_script(
+        tmp_path,
+        """
+print("{}")
+""",
+        name=EHDB_LOCAL_REFERENCE_HELPER_NAME,
+    )
+    invocation = ehdb_local_reference_summary_invocation_from_env(
+        {
+            EHDB_ENABLED_ENV: "true",
+            EHDB_CLIENT_ROLE_ENV: "worker",
+            EHDB_LOCAL_REFERENCE_LOG_ENV: "/tmp/noetl-ehdb.jsonl",
+            "PATH": str(tmp_path),
+        }
+    )
+
+    assert invocation is not None
+    assert invocation.argv == (
+        str(helper),
+        "summary",
+        "--log",
+        "/tmp/noetl-ehdb.jsonl",
+    )
+
+
+def test_ehdb_summary_invocation_prefers_explicit_helper_over_path(tmp_path):
+    _helper_script(
+        tmp_path,
+        """
+print("{}")
+""",
+        name=EHDB_LOCAL_REFERENCE_HELPER_NAME,
+    )
+    invocation = ehdb_local_reference_summary_invocation_from_env(
+        {
+            EHDB_ENABLED_ENV: "true",
+            EHDB_CLIENT_ROLE_ENV: "worker",
+            EHDB_LOCAL_REFERENCE_LOG_ENV: "/tmp/noetl-ehdb.jsonl",
+            EHDB_HELPER_BIN_ENV: "/custom/ehdb-local-reference",
+            "PATH": str(tmp_path),
+        }
+    )
+
+    assert invocation is not None
+    assert invocation.executable == "/custom/ehdb-local-reference"
+
+
+def test_ehdb_helper_discovery_uses_candidate_paths(tmp_path):
+    helper = _helper_script(
+        tmp_path,
+        """
+print("{}")
+""",
+        name=EHDB_LOCAL_REFERENCE_HELPER_NAME,
+    )
+
+    assert discover_ehdb_helper_executable(
+        {"PATH": ""},
+        candidates=(tmp_path / "missing", helper),
+        include_default_candidates=False,
+    ) == str(helper)
+
+
+def test_ehdb_helper_discovery_returns_none_when_missing(tmp_path):
+    assert (
+        discover_ehdb_helper_executable(
+            {"PATH": str(tmp_path)},
+            candidates=(),
+            include_default_candidates=False,
+        )
+        is None
     )
 
 
@@ -373,8 +450,13 @@ def test_local_reference_adapter_requires_local_reference_contract():
     assert adapter.runtime_env()[EHDB_MODE_ENV] == "local_reference"
 
 
-def _helper_script(tmp_path: Path, body: str) -> Path:
-    helper = tmp_path / "ehdb-helper.py"
+def _helper_script(
+    tmp_path: Path,
+    body: str,
+    *,
+    name: str = "ehdb-helper.py",
+) -> Path:
+    helper = tmp_path / name
     helper.write_text(f"#!{sys.executable}\n{body.lstrip()}", encoding="utf-8")
     helper.chmod(0o755)
     return helper

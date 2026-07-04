@@ -120,6 +120,15 @@ tests; it does not import Rust EHDB, open storage from the gateway,
 replace platform dependencies, or create persistent per-tenant
 processes.
 
+Helper discovery prefers explicit `NOETL_EHDB_HELPER_BIN`, then
+`ehdb-local-reference` on `PATH`, then image/runtime paths
+`/usr/local/bin/ehdb-local-reference` and
+`/opt/noetl/bin/ehdb-local-reference`, then the ai-meta sibling EHDB
+development build outputs under `../ehdb/target/{release,debug}`.
+`scripts/smoke_ehdb_local_reference_summary.py` exercises this path by
+running `summary --log <path>` and validating the returned JSON summary
+shape.
+
 ## Repository model (ai-meta driven)
 
 NoETL development is now coordinated through the `ai-meta` repository:

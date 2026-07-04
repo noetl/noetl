@@ -39,3 +39,27 @@ docker build --push --platform linux/amd64 --no-cache \
 --progress plain --tag ghcr.io/noetl/noetl:v1.0.2 \
 --file docker/noetl/dev/Dockerfile .
 ```
+
+## EHDB helper binary
+
+NoETL can execute the bounded EHDB local-reference summary helper from
+worker/playbook contexts. Images that include EHDB should place the
+binary at one of these runtime paths:
+
+- `/usr/local/bin/ehdb-local-reference`
+- `/opt/noetl/bin/ehdb-local-reference`
+
+An operator can override discovery with:
+
+```bash
+NOETL_EHDB_HELPER_BIN=/custom/path/ehdb-local-reference
+```
+
+Local ai-meta workspaces can also use the sibling EHDB build outputs
+under `../ehdb/target/{release,debug}/ehdb-local-reference`. Validate a
+runtime image or local checkout with:
+
+```bash
+python scripts/smoke_ehdb_local_reference_summary.py \
+  --log /tmp/noetl-ehdb-smoke.jsonl
+```
