@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.24.0](https://github.com/noetl/noetl/compare/v4.23.0...v4.24.0) (2026-07-05)
+
+### Features
+
+* **ehdb:** Phase C — bounded worker/playbook data-plane append/read step ([#234](https://github.com/noetl/noetl/issues/234)) ([bda2720](https://github.com/noetl/noetl/commit/bda27200639d7e5463f708bc18230d2e6359d7b5))
+
 ## [4.23.0](https://github.com/noetl/noetl/compare/v4.22.0...v4.23.0) (2026-07-04)
 
 ### Features
