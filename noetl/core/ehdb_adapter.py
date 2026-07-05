@@ -358,10 +358,264 @@ def read_ehdb_local_reference_summary_from_env(
     )
 
 
+EHDB_LOCAL_REFERENCE_APPEND_FIELDS = (
+    "action",
+    "log_path",
+    "tenant",
+    "namespace",
+    "stream",
+    "subject",
+    "sequence",
+    "byte_len",
+    "created_stream",
+    "stream_record_count",
+    "transaction_count",
+)
+EHDB_LOCAL_REFERENCE_READ_FIELDS = (
+    "action",
+    "log_path",
+    "tenant",
+    "namespace",
+    "stream",
+    "exists",
+    "record_count",
+    "returned",
+    "records",
+)
+
+
+@dataclass(frozen=True)
+class LocalReferenceAppendResult:
+    """Validated result of a bounded ``append`` domain-record helper call."""
+
+    log_path: Path
+    tenant: str
+    namespace: str
+    stream: str
+    subject: str
+    sequence: int
+    byte_len: int
+    created_stream: bool
+    stream_record_count: int
+    transaction_count: int
+
+    @classmethod
+    def from_payload(cls, payload: Mapping[str, Any]) -> "LocalReferenceAppendResult":
+        missing = [
+            field for field in EHDB_LOCAL_REFERENCE_APPEND_FIELDS if field not in payload
+        ]
+        if missing:
+            raise ValueError(
+                f"EHDB append result missing required fields: {', '.join(missing)}"
+            )
+        if payload["action"] != "append":
+            raise ValueError("EHDB append result action must be 'append'")
+        return cls(
+            log_path=_summary_log_path(payload["log_path"]),
+            tenant=_result_text(payload["tenant"], "tenant"),
+            namespace=_result_text(payload["namespace"], "namespace"),
+            stream=_result_text(payload["stream"], "stream"),
+            subject=_result_text(payload["subject"], "subject"),
+            sequence=_summary_count(payload["sequence"], "sequence"),
+            byte_len=_summary_count(payload["byte_len"], "byte_len"),
+            created_stream=_result_bool(payload["created_stream"], "created_stream"),
+            stream_record_count=_summary_count(
+                payload["stream_record_count"], "stream_record_count"
+            ),
+            transaction_count=_summary_count(
+                payload["transaction_count"], "transaction_count"
+            ),
+        )
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "action": "append",
+            "log_path": str(self.log_path),
+            "tenant": self.tenant,
+            "namespace": self.namespace,
+            "stream": self.stream,
+            "subject": self.subject,
+            "sequence": self.sequence,
+            "byte_len": self.byte_len,
+            "created_stream": self.created_stream,
+            "stream_record_count": self.stream_record_count,
+            "transaction_count": self.transaction_count,
+        }
+
+
+@dataclass(frozen=True)
+class LocalReferenceReadResult:
+    """Validated result of a bounded ``read`` domain-record helper call."""
+
+    log_path: Path
+    tenant: str
+    namespace: str
+    stream: str
+    exists: bool
+    record_count: int
+    returned: int
+    records: tuple[Mapping[str, Any], ...]
+
+    @classmethod
+    def from_payload(cls, payload: Mapping[str, Any]) -> "LocalReferenceReadResult":
+        missing = [
+            field for field in EHDB_LOCAL_REFERENCE_READ_FIELDS if field not in payload
+        ]
+        if missing:
+            raise ValueError(
+                f"EHDB read result missing required fields: {', '.join(missing)}"
+            )
+        if payload["action"] != "read":
+            raise ValueError("EHDB read result action must be 'read'")
+        records = payload["records"]
+        if not isinstance(records, list) or not all(
+            isinstance(record, Mapping) for record in records
+        ):
+            raise ValueError("EHDB read result records must be a list of objects")
+        return cls(
+            log_path=_summary_log_path(payload["log_path"]),
+            tenant=_result_text(payload["tenant"], "tenant"),
+            namespace=_result_text(payload["namespace"], "namespace"),
+            stream=_result_text(payload["stream"], "stream"),
+            exists=_result_bool(payload["exists"], "exists"),
+            record_count=_summary_count(payload["record_count"], "record_count"),
+            returned=_summary_count(payload["returned"], "returned"),
+            records=tuple(dict(record) for record in records),
+        )
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "action": "read",
+            "log_path": str(self.log_path),
+            "tenant": self.tenant,
+            "namespace": self.namespace,
+            "stream": self.stream,
+            "exists": self.exists,
+            "record_count": self.record_count,
+            "returned": self.returned,
+            "records": [dict(record) for record in self.records],
+        }
+
+
+def _domain_record_invocation(
+    adapter: LocalReferenceEhdbAdapter,
+    executable: str,
+    args: Sequence[str],
+) -> LocalReferenceEhdbInvocation:
+    """Build an invocation preserving argument values verbatim.
+
+    Unlike :meth:`LocalReferenceEhdbAdapter.helper_invocation`, this does not
+    strip arguments — a domain-record payload must reach the helper byte-for-
+    byte so the appended record matches what the caller supplied.
+    """
+
+    runtime_env = adapter.runtime_env()
+    return LocalReferenceEhdbInvocation(
+        executable=_non_empty_text(executable, "EHDB helper executable"),
+        args=tuple(args),
+        env_items=tuple(runtime_env.items()),
+        role=adapter.role,
+        local_reference_log=adapter.local_reference_log,
+    )
+
+
+def ehdb_local_reference_append_invocation_from_env(
+    env: Mapping[str, str] | None = None,
+    *,
+    stream: str,
+    subject: str,
+    transaction_id: str,
+    payload: str,
+    tenant: str | None = None,
+    namespace: str | None = None,
+) -> LocalReferenceEhdbInvocation | None:
+    """Return the concrete ``append`` domain-record helper invocation."""
+
+    source_env = os.environ if env is None else env
+    adapter = ehdb_adapter_from_env(source_env)
+    if adapter is None:
+        return None
+    executable = discover_ehdb_helper_executable(source_env)
+    if executable is None:
+        raise ValueError(
+            f"{EHDB_HELPER_BIN_ENV} is required or "
+            f"{EHDB_LOCAL_REFERENCE_HELPER_NAME} must be discoverable"
+        )
+    args = [
+        "append",
+        "--log",
+        str(adapter.local_reference_log),
+        "--stream",
+        _non_empty_text(stream, "stream"),
+        "--subject",
+        _non_empty_text(subject, "subject"),
+        "--transaction-id",
+        _non_empty_text(transaction_id, "transaction_id"),
+        "--payload",
+        payload,
+    ]
+    if tenant is not None:
+        args.extend(["--tenant", _non_empty_text(tenant, "tenant")])
+    if namespace is not None:
+        args.extend(["--namespace", _non_empty_text(namespace, "namespace")])
+    return _domain_record_invocation(adapter, executable, args)
+
+
+def ehdb_local_reference_read_invocation_from_env(
+    env: Mapping[str, str] | None = None,
+    *,
+    stream: str,
+    after: int | None = None,
+    limit: int | None = None,
+    tenant: str | None = None,
+    namespace: str | None = None,
+) -> LocalReferenceEhdbInvocation | None:
+    """Return the concrete ``read`` domain-record helper invocation."""
+
+    source_env = os.environ if env is None else env
+    adapter = ehdb_adapter_from_env(source_env)
+    if adapter is None:
+        return None
+    executable = discover_ehdb_helper_executable(source_env)
+    if executable is None:
+        raise ValueError(
+            f"{EHDB_HELPER_BIN_ENV} is required or "
+            f"{EHDB_LOCAL_REFERENCE_HELPER_NAME} must be discoverable"
+        )
+    args = [
+        "read",
+        "--log",
+        str(adapter.local_reference_log),
+        "--stream",
+        _non_empty_text(stream, "stream"),
+    ]
+    if tenant is not None:
+        args.extend(["--tenant", _non_empty_text(tenant, "tenant")])
+    if namespace is not None:
+        args.extend(["--namespace", _non_empty_text(namespace, "namespace")])
+    if limit is not None:
+        args.extend(["--limit", str(int(limit))])
+    if after is not None:
+        args.extend(["--after", str(int(after))])
+    return _domain_record_invocation(adapter, executable, args)
+
+
 def _non_empty_text(value: str | None, label: str) -> str:
     if value is None or not value.strip():
         raise ValueError(f"{label} is required")
     return value.strip()
+
+
+def _result_text(value: Any, field: str) -> str:
+    if not isinstance(value, str) or not value:
+        raise ValueError(f"EHDB result {field} must be a non-empty string")
+    return value
+
+
+def _result_bool(value: Any, field: str) -> bool:
+    if not isinstance(value, bool):
+        raise ValueError(f"EHDB result {field} must be a boolean")
+    return value
 
 
 def _summary_log_path(value: Any) -> Path:

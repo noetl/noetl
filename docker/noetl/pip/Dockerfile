@@ -1,6 +1,6 @@
 FROM rust:1.82-slim AS ehdb-helper
 
-ARG EHDB_REF=0dc2016f4b692d3d868ccbc3918900962a880ca1
+ARG EHDB_REF=3ae895016154f9e5537a61930aeba2788b814ed3
 
 RUN apt-get update && apt-get --no-install-recommends install -y \
     ca-certificates \

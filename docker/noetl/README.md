@@ -70,6 +70,6 @@ runtime image:
 
 ```bash
 docker build \
-  --build-arg EHDB_REF=0dc2016f4b692d3d868ccbc3918900962a880ca1 \
+  --build-arg EHDB_REF=3ae895016154f9e5537a61930aeba2788b814ed3 \
   --file docker/noetl/dev/Dockerfile .
 ```
