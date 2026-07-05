@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.25.0](https://github.com/noetl/noetl/compare/v4.24.0...v4.25.0) (2026-07-05)
+
+### Features
+
+* **ehdb:** Phase D bounded worker/playbook event-stream drain ([35b82f8](https://github.com/noetl/noetl/commit/35b82f8104ebaa52b2525cab795d7e108b843f4c)), closes [noetl/ehdb#234](https://github.com/noetl/ehdb/issues/234) [noetl/ehdb#237](https://github.com/noetl/ehdb/issues/237)
+
 ## [4.24.0](https://github.com/noetl/noetl/compare/v4.23.0...v4.24.0) (2026-07-05)
 
 ### Features
