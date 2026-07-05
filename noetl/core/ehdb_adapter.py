@@ -497,6 +497,155 @@ class LocalReferenceReadResult:
         }
 
 
+EHDB_LOCAL_REFERENCE_CONSUME_FIELDS = (
+    "action",
+    "log_path",
+    "tenant",
+    "namespace",
+    "stream",
+    "consumer",
+    "exists",
+    "created_consumer",
+    "acked_sequence",
+    "pending_count",
+    "returned",
+    "records",
+    "transaction_count",
+)
+EHDB_LOCAL_REFERENCE_ACK_FIELDS = (
+    "action",
+    "log_path",
+    "tenant",
+    "namespace",
+    "stream",
+    "consumer",
+    "acked_sequence",
+    "transaction_count",
+)
+
+
+@dataclass(frozen=True)
+class LocalReferenceConsumeResult:
+    """Validated result of a bounded durable-consumer ``consume`` helper call."""
+
+    log_path: Path
+    tenant: str
+    namespace: str
+    stream: str
+    consumer: str
+    exists: bool
+    created_consumer: bool
+    acked_sequence: int | None
+    pending_count: int
+    returned: int
+    records: tuple[Mapping[str, Any], ...]
+    transaction_count: int
+
+    @classmethod
+    def from_payload(cls, payload: Mapping[str, Any]) -> "LocalReferenceConsumeResult":
+        missing = [
+            field
+            for field in EHDB_LOCAL_REFERENCE_CONSUME_FIELDS
+            if field not in payload
+        ]
+        if missing:
+            raise ValueError(
+                f"EHDB consume result missing required fields: {', '.join(missing)}"
+            )
+        if payload["action"] != "consume":
+            raise ValueError("EHDB consume result action must be 'consume'")
+        records = payload["records"]
+        if not isinstance(records, list) or not all(
+            isinstance(record, Mapping) for record in records
+        ):
+            raise ValueError("EHDB consume result records must be a list of objects")
+        return cls(
+            log_path=_summary_log_path(payload["log_path"]),
+            tenant=_result_text(payload["tenant"], "tenant"),
+            namespace=_result_text(payload["namespace"], "namespace"),
+            stream=_result_text(payload["stream"], "stream"),
+            consumer=_result_text(payload["consumer"], "consumer"),
+            exists=_result_bool(payload["exists"], "exists"),
+            created_consumer=_result_bool(
+                payload["created_consumer"], "created_consumer"
+            ),
+            acked_sequence=_result_optional_count(
+                payload["acked_sequence"], "acked_sequence"
+            ),
+            pending_count=_summary_count(payload["pending_count"], "pending_count"),
+            returned=_summary_count(payload["returned"], "returned"),
+            records=tuple(dict(record) for record in records),
+            transaction_count=_summary_count(
+                payload["transaction_count"], "transaction_count"
+            ),
+        )
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "action": "consume",
+            "log_path": str(self.log_path),
+            "tenant": self.tenant,
+            "namespace": self.namespace,
+            "stream": self.stream,
+            "consumer": self.consumer,
+            "exists": self.exists,
+            "created_consumer": self.created_consumer,
+            "acked_sequence": self.acked_sequence,
+            "pending_count": self.pending_count,
+            "returned": self.returned,
+            "records": [dict(record) for record in self.records],
+            "transaction_count": self.transaction_count,
+        }
+
+
+@dataclass(frozen=True)
+class LocalReferenceAckResult:
+    """Validated result of a bounded durable-consumer ``ack`` helper call."""
+
+    log_path: Path
+    tenant: str
+    namespace: str
+    stream: str
+    consumer: str
+    acked_sequence: int
+    transaction_count: int
+
+    @classmethod
+    def from_payload(cls, payload: Mapping[str, Any]) -> "LocalReferenceAckResult":
+        missing = [
+            field for field in EHDB_LOCAL_REFERENCE_ACK_FIELDS if field not in payload
+        ]
+        if missing:
+            raise ValueError(
+                f"EHDB ack result missing required fields: {', '.join(missing)}"
+            )
+        if payload["action"] != "ack":
+            raise ValueError("EHDB ack result action must be 'ack'")
+        return cls(
+            log_path=_summary_log_path(payload["log_path"]),
+            tenant=_result_text(payload["tenant"], "tenant"),
+            namespace=_result_text(payload["namespace"], "namespace"),
+            stream=_result_text(payload["stream"], "stream"),
+            consumer=_result_text(payload["consumer"], "consumer"),
+            acked_sequence=_summary_count(payload["acked_sequence"], "acked_sequence"),
+            transaction_count=_summary_count(
+                payload["transaction_count"], "transaction_count"
+            ),
+        )
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "action": "ack",
+            "log_path": str(self.log_path),
+            "tenant": self.tenant,
+            "namespace": self.namespace,
+            "stream": self.stream,
+            "consumer": self.consumer,
+            "acked_sequence": self.acked_sequence,
+            "transaction_count": self.transaction_count,
+        }
+
+
 def _domain_record_invocation(
     adapter: LocalReferenceEhdbAdapter,
     executable: str,
@@ -600,6 +749,90 @@ def ehdb_local_reference_read_invocation_from_env(
     return _domain_record_invocation(adapter, executable, args)
 
 
+def ehdb_local_reference_consume_invocation_from_env(
+    env: Mapping[str, str] | None = None,
+    *,
+    stream: str,
+    consumer: str,
+    transaction_id: str,
+    limit: int | None = None,
+    tenant: str | None = None,
+    namespace: str | None = None,
+) -> LocalReferenceEhdbInvocation | None:
+    """Return the concrete durable-consumer ``consume`` helper invocation."""
+
+    source_env = os.environ if env is None else env
+    adapter = ehdb_adapter_from_env(source_env)
+    if adapter is None:
+        return None
+    executable = discover_ehdb_helper_executable(source_env)
+    if executable is None:
+        raise ValueError(
+            f"{EHDB_HELPER_BIN_ENV} is required or "
+            f"{EHDB_LOCAL_REFERENCE_HELPER_NAME} must be discoverable"
+        )
+    args = [
+        "consume",
+        "--log",
+        str(adapter.local_reference_log),
+        "--stream",
+        _non_empty_text(stream, "stream"),
+        "--consumer",
+        _non_empty_text(consumer, "consumer"),
+        "--transaction-id",
+        _non_empty_text(transaction_id, "transaction_id"),
+    ]
+    if tenant is not None:
+        args.extend(["--tenant", _non_empty_text(tenant, "tenant")])
+    if namespace is not None:
+        args.extend(["--namespace", _non_empty_text(namespace, "namespace")])
+    if limit is not None:
+        args.extend(["--limit", str(int(limit))])
+    return _domain_record_invocation(adapter, executable, args)
+
+
+def ehdb_local_reference_ack_invocation_from_env(
+    env: Mapping[str, str] | None = None,
+    *,
+    stream: str,
+    consumer: str,
+    transaction_id: str,
+    sequence: int,
+    tenant: str | None = None,
+    namespace: str | None = None,
+) -> LocalReferenceEhdbInvocation | None:
+    """Return the concrete durable-consumer ``ack`` helper invocation."""
+
+    source_env = os.environ if env is None else env
+    adapter = ehdb_adapter_from_env(source_env)
+    if adapter is None:
+        return None
+    executable = discover_ehdb_helper_executable(source_env)
+    if executable is None:
+        raise ValueError(
+            f"{EHDB_HELPER_BIN_ENV} is required or "
+            f"{EHDB_LOCAL_REFERENCE_HELPER_NAME} must be discoverable"
+        )
+    args = [
+        "ack",
+        "--log",
+        str(adapter.local_reference_log),
+        "--stream",
+        _non_empty_text(stream, "stream"),
+        "--consumer",
+        _non_empty_text(consumer, "consumer"),
+        "--transaction-id",
+        _non_empty_text(transaction_id, "transaction_id"),
+        "--sequence",
+        str(int(sequence)),
+    ]
+    if tenant is not None:
+        args.extend(["--tenant", _non_empty_text(tenant, "tenant")])
+    if namespace is not None:
+        args.extend(["--namespace", _non_empty_text(namespace, "namespace")])
+    return _domain_record_invocation(adapter, executable, args)
+
+
 def _non_empty_text(value: str | None, label: str) -> str:
     if value is None or not value.strip():
         raise ValueError(f"{label} is required")
@@ -616,6 +849,14 @@ def _result_bool(value: Any, field: str) -> bool:
     if not isinstance(value, bool):
         raise ValueError(f"EHDB result {field} must be a boolean")
     return value
+
+
+def _result_optional_count(value: Any, field: str) -> int | None:
+    """Validate an optional non-negative integer (JSON ``null`` -> ``None``)."""
+
+    if value is None:
+        return None
+    return _summary_count(value, field)
 
 
 def _summary_log_path(value: Any) -> Path:
