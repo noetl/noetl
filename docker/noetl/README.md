@@ -40,36 +40,12 @@ docker build --push --platform linux/amd64 --no-cache \
 --file docker/noetl/dev/Dockerfile .
 ```
 
-## EHDB helper binary
+## EHDB integration is Rust-only
 
-NoETL can execute the bounded EHDB local-reference summary helper from
-worker/playbook contexts. Images that include EHDB should place the
-binary at one of these runtime paths:
-
-- `/usr/local/bin/ehdb-local-reference`
-- `/opt/noetl/bin/ehdb-local-reference`
-
-An operator can override discovery with:
-
-```bash
-NOETL_EHDB_HELPER_BIN=/custom/path/ehdb-local-reference
-```
-
-Local ai-meta workspaces can also use the sibling EHDB build outputs
-under `../ehdb/target/{release,debug}/ehdb-local-reference`. Validate a
-runtime image or local checkout with:
-
-```bash
-python scripts/smoke_ehdb_local_reference_summary.py \
-  --log /tmp/noetl-ehdb-smoke.jsonl
-```
-
-The in-repo Dockerfiles build the helper from `noetl/ehdb` using the
-`EHDB_REF` build arg and copy only the compiled binary into the final
-runtime image:
-
-```bash
-docker build \
-  --build-arg EHDB_REF=3cefba916e661d976924ad0a8d8f070fcc3c4d62 \
-  --file docker/noetl/dev/Dockerfile .
-```
+The Python images no longer bundle the `ehdb-local-reference` helper binary.
+The EHDB (Event Horizon Database) integration is owned by the Rust worker
+([`noetl/worker`](https://github.com/noetl/worker), `src/ehdb`), which links
+the `ehdb-reference` crate **in process** — there is no subprocess helper and
+no Python EHDB path (retired; see
+[noetl/ehdb#234](https://github.com/noetl/ehdb/issues/234)). Production runs the
+Rust worker, so that is the only EHDB path that executes.

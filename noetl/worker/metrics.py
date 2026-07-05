@@ -22,25 +22,11 @@ def render_worker_metrics(*, worker_id: str, labels: Mapping[str, str] | None = 
     ]
     append_storage_ipc_metrics(lines, default_store.ipc_stats(), labels=metric_labels)
 
-    # EHDB readiness preflight metrics.  Renders nothing when EHDB is
-    # disabled (no check recorded), so `/metrics` stays byte-identical.
-    from noetl.core.ehdb_readiness import render_ehdb_readiness_metrics
-
-    lines.extend(render_ehdb_readiness_metrics(labels=metric_labels))
-
-    # EHDB Phase C data-plane metrics.  Renders nothing when no bounded
-    # append/read has run (disabled EHDB never records), so `/metrics` stays
-    # byte-identical for a disabled deployment.
-    from noetl.core.ehdb_dataplane import render_ehdb_dataplane_metrics
-
-    lines.extend(render_ehdb_dataplane_metrics(labels=metric_labels))
-
-    # EHDB Phase D event-stream metrics.  Renders nothing when no bounded
-    # project/consume/ack has run (disabled EHDB never records), so `/metrics`
-    # stays byte-identical for a disabled deployment.
-    from noetl.core.ehdb_eventstream import render_ehdb_eventstream_metrics
-
-    lines.extend(render_ehdb_eventstream_metrics(labels=metric_labels))
+    # NOTE: The EHDB integration is Rust-only (owned by the Rust worker,
+    # calling the `ehdb-reference` crate in-process — see noetl/ehdb#234 and
+    # `repos/worker/src/ehdb`).  The former Python EHDB readiness / data-plane /
+    # event-stream metric renderers were retired; prod runs the Rust worker, so
+    # the Python path never executed EHDB.  Nothing EHDB is rendered here.
     return "\n".join(lines) + "\n"
 
 

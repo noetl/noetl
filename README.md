@@ -41,93 +41,22 @@ Reference docs for the event-sourced, projection-backed runtime
   durable NATS pull consumer, shard-stable, Prometheus metrics,
   replay-state folding shared with the in-process replay API.
 
-### EHDB Integration Contract
+### EHDB Integration
 
-EHDB integration is disabled by default in this repository. The first
-NoETL-side surface is a feature-flagged contract only; it validates the
-execution-model boundary before any storage cutover exists.
+**The EHDB (Event Horizon Database) integration is Rust-only.** It lives in
+the Rust worker ([`noetl/worker`](https://github.com/noetl/worker),
+`src/ehdb`), which calls the `ehdb-reference` crate **in process** — readiness,
+bounded data-plane append/read, and event-stream project/consume/ack — with no
+subprocess and no parallel Python implementation. Because production runs the
+Rust worker, that is the only EHDB path that executes.
 
-Environment flags:
-
-- `NOETL_EHDB_ENABLED=true` turns on contract validation.
-- `NOETL_EHDB_MODE=control_plane|local_reference` selects either
-  control-plane embedding or local reference readiness mode.
-- `NOETL_EHDB_CLIENT_ROLE=gateway|api|server|worker|playbook|system`
-  declares the caller role.
-- `NOETL_EHDB_CAPABILITIES=control_plane` is the only capability
-  accepted for gateway/API/server control-plane embedding. Worker,
-  playbook, and system local-reference configs default to explicit
-  data-plane capabilities unless narrowed with a comma-separated list.
-- `NOETL_EHDB_LOCAL_REFERENCE_LOG=/path/to/ehdb.jsonl` provides the
-  explicit local event-log path for the reference mode.
-- `NOETL_EHDB_HELPER_BIN=/path/to/helper` is required only when a
-  worker/playbook asks NoETL to build a local-reference helper
-  invocation plan.
-
-Gateway/API/server roles are accepted only in explicit `control_plane`
-mode with the `control_plane` capability. They are still rejected for
-`local_reference` and any data-plane capability. Gateway remains the
-gatekeeper; workers remain atomic compute; playbooks remain ephemeral
-blueprints; shared cache remains a state vehicle; the event log remains
-the source of truth. This contract does not connect to EHDB, replace
-PostgreSQL/NATS/object stores, add a gateway route, or start a
-persistent per-tenant process.
-
-`noetl.core.ehdb_control_plane.ehdb_control_plane_from_env` builds the
-planning-only descriptor for gateway/API/server control-plane embedding.
-Disabled configuration returns `None`; explicit `control_plane`
-configuration returns a `ControlPlaneEhdbEmbedding` carrying the caller
-role, the `control_plane` capability, and exportable runtime
-environment. The descriptor does not create an adapter, open logs,
-connect to EHDB, or perform storage operations.
-
-`noetl.core.ehdb_surface.ehdb_surface_from_env` is the common
-side-effect-free selector. It returns `None` when EHDB is disabled,
-returns the control-plane descriptor for gateway/API/server
-`control_plane` configs, and returns the local-reference adapter for
-worker/playbook/system data-plane configs. The selected surface exposes
-role, mode, capabilities, and runtime env without opening logs,
-executing helpers, or importing EHDB.
-
-`noetl.core.ehdb_adapter.ehdb_adapter_from_env` builds the disabled-by-
-default adapter descriptor behind that contract. Disabled configuration
-returns `None`; gateway/API/server `control_plane` configuration also
-returns `None` because it has no data-plane helper. Worker/playbook
-`local_reference` configuration returns a `LocalReferenceEhdbAdapter`
-carrying the explicit event-log path, data-plane capability set, and
-exportable runtime environment for future EHDB helper calls. The adapter
-does not open logs, connect to EHDB, or perform storage operations.
-
-`noetl.core.ehdb_adapter.ehdb_helper_invocation_from_env` builds the
-next planning surface for those helper calls. Disabled configuration
-returns `None`; enabled worker/playbook configuration requires an
-explicit helper executable and returns deterministic `argv` plus EHDB
-runtime env that can be merged into a subprocess environment. The
-invocation plan is immutable and side-effect-free; it does not execute a
-subprocess, import EHDB, open logs, connect to storage, or add
-gateway/server data paths.
-
-`noetl.core.ehdb_adapter.ehdb_local_reference_summary_invocation_from_env`
-builds the first concrete helper command:
-`ehdb-local-reference summary --log <path>`. Worker/playbook contexts
-may pass that invocation to
-`noetl.core.ehdb_adapter.execute_ehdb_helper_json`, which runs the
-helper without a shell, captures stdout/stderr, enforces a timeout, and
-decodes a JSON object. Disabled configuration returns `None`, and
-gateway/API/server local-reference roles remain rejected by the
-contract. This runner is for bounded local diagnostics and integration
-tests; it does not import Rust EHDB, open storage from the gateway,
-replace platform dependencies, or create persistent per-tenant
-processes.
-
-Helper discovery prefers explicit `NOETL_EHDB_HELPER_BIN`, then
-`ehdb-local-reference` on `PATH`, then image/runtime paths
-`/usr/local/bin/ehdb-local-reference` and
-`/opt/noetl/bin/ehdb-local-reference`, then the ai-meta sibling EHDB
-development build outputs under `../ehdb/target/{release,debug}`.
-`scripts/smoke_ehdb_local_reference_summary.py` exercises this path by
-running `summary --log <path>` and validating the returned JSON summary
-shape.
+The former Python EHDB modules (`noetl.core.ehdb_*`), their worker bootstrap
+wiring, step CLIs, and the bundled `ehdb-local-reference` helper binary were
+**retired** in favour of the Rust integration (see
+[noetl/ehdb#234](https://github.com/noetl/ehdb/issues/234)). EHDB stays
+disabled by default and control-plane-only for gateway/api/server; the
+`NOETL_EHDB_*` env contract is rendered by the ops Helm charts and consumed by
+the Rust worker.
 
 ## Repository model (ai-meta driven)
 
