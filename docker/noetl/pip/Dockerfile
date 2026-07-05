@@ -1,21 +1,7 @@
-FROM rust:1.82-slim AS ehdb-helper
-
-ARG EHDB_REF=3cefba916e661d976924ad0a8d8f070fcc3c4d62
-
-RUN apt-get update && apt-get --no-install-recommends install -y \
-    ca-certificates \
-    git \
-    build-essential \
-    && rm -rf /var/lib/apt/lists/*
-
-WORKDIR /tmp/ehdb
-
-RUN git init . \
-    && git remote add origin https://github.com/noetl/ehdb.git \
-    && git fetch --depth 1 origin "${EHDB_REF}" \
-    && git -c advice.detachedHead=false checkout FETCH_HEAD \
-    && cargo build --release --locked -p ehdb-reference --bin ehdb-local-reference
-
+# NOTE: The EHDB integration is Rust-only.  The `ehdb-local-reference` helper
+# binary is no longer bundled into the Python image: the retired Python EHDB
+# path used to shell out to it, but that path is gone (noetl/ehdb#234 — EHDB now
+# lives in the Rust worker, which links the `ehdb-reference` crate in-process).
 FROM python:3.12-slim AS base
 
 LABEL maintainer="Kadyapam"
@@ -48,10 +34,6 @@ RUN if [ "$NOETL_VERSION" = "latest" ]; then \
         echo "Installing noetl version $NOETL_VERSION" && \
         pip install --no-cache-dir noetl==$NOETL_VERSION; \
     fi
-
-COPY --from=ehdb-helper /tmp/ehdb/target/release/ehdb-local-reference /usr/local/bin/ehdb-local-reference
-
-RUN ehdb-local-reference --help >/dev/null
 
 RUN mkdir -p /opt/noetl/data /opt/noetl/logs && \
     chown -R noetl:noetl /opt/noetl

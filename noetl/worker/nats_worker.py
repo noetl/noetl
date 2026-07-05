@@ -3828,41 +3828,6 @@ class Worker:
                     await asyncio.sleep(delay)
 
 
-def _ehdb_readiness_preflight(worker_id: str) -> None:
-    """Run the bounded EHDB readiness preflight at worker bootstrap.
-
-    No-op and silent when EHDB is disabled (the default) so worker startup is
-    byte-identical to a build without EHDB.  Never raises: EHDB is auxiliary
-    specialized storage, so a degraded/unavailable summary must not take down
-    the worker.  A control-plane guard trip is surfaced loudly instead.
-    """
-    try:
-        from noetl.core.ehdb_readiness import (
-            EhdbReadinessOutcome,
-            evaluate_ehdb_readiness,
-        )
-
-        result = evaluate_ehdb_readiness()
-        if result.outcome is EhdbReadinessOutcome.DISABLED:
-            return
-        fields = {"worker_id": worker_id, "ehdb_readiness": result.as_dict()}
-        if result.outcome in (
-            EhdbReadinessOutcome.GUARD_REFUSED,
-            EhdbReadinessOutcome.INVALID,
-        ):
-            logger.error("EHDB readiness preflight refused", extra=fields)
-        elif result.degraded:
-            logger.warning("EHDB readiness preflight degraded", extra=fields)
-        else:
-            logger.info("EHDB readiness preflight ok", extra=fields)
-    except Exception as exc:  # readiness must never be fatal to the worker
-        logger.warning(
-            "EHDB readiness preflight error (ignored): %s",
-            exc,
-            extra={"worker_id": worker_id},
-        )
-
-
 async def run_worker(
     worker_id: str,
     nats_url: str = "nats://noetl:noetl@nats.nats.svc.cluster.local:4222",
@@ -3876,9 +3841,11 @@ async def run_worker(
     # Only tool steps (postgres, duckdb) access external databases with their own credentials
     logger.info("Worker uses server API for variables, events, and context (no direct DB access)")
 
-    # EHDB Phase B: bounded, stateless readiness preflight.  No-op when EHDB is
-    # disabled (default); never fatal to worker startup.
-    _ehdb_readiness_preflight(worker_id)
+    # NOTE: The EHDB integration is Rust-only.  The Rust worker owns the
+    # bootstrap readiness preflight, calling the `ehdb-reference` crate
+    # in-process (noetl/ehdb#234, `repos/worker/src/ehdb`).  The former Python
+    # readiness preflight was retired: prod runs the Rust worker, so this Python
+    # path never executed EHDB.  Nothing EHDB runs here.
 
     worker = Worker(
         worker_id=worker_id,
