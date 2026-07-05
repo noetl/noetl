@@ -34,6 +34,13 @@ def render_worker_metrics(*, worker_id: str, labels: Mapping[str, str] | None = 
     from noetl.core.ehdb_dataplane import render_ehdb_dataplane_metrics
 
     lines.extend(render_ehdb_dataplane_metrics(labels=metric_labels))
+
+    # EHDB Phase D event-stream metrics.  Renders nothing when no bounded
+    # project/consume/ack has run (disabled EHDB never records), so `/metrics`
+    # stays byte-identical for a disabled deployment.
+    from noetl.core.ehdb_eventstream import render_ehdb_eventstream_metrics
+
+    lines.extend(render_ehdb_eventstream_metrics(labels=metric_labels))
     return "\n".join(lines) + "\n"
 
 
