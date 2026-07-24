@@ -1,0 +1,130 @@
+name: pypi
+
+# Builds the `noetl` PyPI package (the PyO3 wheel over the Rust CLI) on every
+# platform in the matrix, and publishes to PyPI when a `pypi-v*` tag is pushed.
+#
+# Publishing uses PyPI **trusted publishing** (OIDC) — there is no API token in
+# this repository's secrets. The `noetl` project on PyPI must list this
+# workflow as a trusted publisher; see `packaging/pypi/README.md` and
+# https://github.com/noetl/ai-meta/issues/201.
+
+on:
+  push:
+    tags: ["pypi-v*"]
+  pull_request:
+    paths:
+      - "packaging/pypi/**"
+      - ".github/workflows/pypi.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  wheels:
+    name: wheel ${{ matrix.platform }}-${{ matrix.target }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux
+            target: x86_64
+            runner: ubuntu-latest
+          - platform: linux
+            target: aarch64
+            runner: ubuntu-24.04-arm
+          - platform: macos
+            target: x86_64
+            runner: macos-13
+          - platform: macos
+            target: aarch64
+            runner: macos-latest
+          - platform: windows
+            target: x64
+            runner: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Build wheel
+        uses: PyO3/maturin-action@v1
+        with:
+          target: ${{ matrix.target }}
+          # manylinux2014 is the oldest glibc this toolchain targets
+          # comfortably.  musllinux is deliberately out of scope for now.
+          manylinux: ${{ matrix.platform == 'linux' && '2014' || 'auto' }}
+          args: --release --out dist
+          sccache: "true"
+          working-directory: packaging/pypi
+
+      # The wheel is abi3, so this also proves it imports on a Python far newer
+      # than the 3.9 it was built against.
+      - name: Verify the wheel installs and runs
+        working-directory: packaging/pypi
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m venv .verify
+          BIN=".verify/bin"
+          [ -d ".verify/Scripts" ] && BIN=".verify/Scripts"
+          "${BIN}/pip" install --no-index --find-links dist noetl
+          "${BIN}/noetl" --version
+          "${BIN}/noetl" --help
+          "${BIN}/python" -c "import noetl; print('package', noetl.__version__)"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wheel-${{ matrix.platform }}-${{ matrix.target }}
+          path: packaging/pypi/dist/*.whl
+
+  sdist:
+    name: sdist
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build sdist
+        uses: PyO3/maturin-action@v1
+        with:
+          command: sdist
+          args: --out dist
+          working-directory: packaging/pypi
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sdist
+          path: packaging/pypi/dist/*.tar.gz
+
+  check:
+    name: twine check
+    runs-on: ubuntu-latest
+    needs: [wheels, sdist]
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - run: ls -la dist
+      - run: pipx run twine check dist/*
+
+  publish:
+    name: publish to PyPI
+    runs-on: ubuntu-latest
+    needs: [check]
+    if: startsWith(github.ref, 'refs/tags/pypi-v')
+    # The environment name is part of what the PyPI trusted publisher matches
+    # on; changing it here means updating the publisher on PyPI too.
+    environment: pypi
+    permissions:
+      # Mints the OIDC token that trusted publishing exchanges for a short-lived
+      # upload token.  No PyPI API token is stored in this repository.
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: dist
