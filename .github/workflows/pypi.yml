@@ -3,10 +3,10 @@ name: pypi
 # Builds the `noetl` PyPI package (the PyO3 wheel over the Rust CLI) on every
 # platform in the matrix, and publishes to PyPI when a `pypi-v*` tag is pushed.
 #
-# Publishing uses PyPI **trusted publishing** (OIDC) — there is no API token in
-# this repository's secrets. The `noetl` project on PyPI must list this
-# workflow as a trusted publisher; see `packaging/pypi/README.md` and
-# https://github.com/noetl/ai-meta/issues/201.
+# Publishing uses the repository's `PYPI_TOKEN` secret — the same token the
+# legacy Python package published with (see build_on_release.yml). No PyPI-side
+# setup is required. A trusted-publishing (OIDC) alternative is included but
+# disabled; see the `publish-oidc` job and https://github.com/noetl/ai-meta/issues/201.
 
 on:
   push:
@@ -113,12 +113,36 @@ jobs:
     runs-on: ubuntu-latest
     needs: [check]
     if: startsWith(github.ref, 'refs/tags/pypi-v')
-    # The environment name is part of what the PyPI trusted publisher matches
-    # on; changing it here means updating the publisher on PyPI too.
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      # Token-based upload, matching how the legacy Python package published
+      # (build_on_release.yml used `uv publish` with the same `PYPI_TOKEN`
+      # secret).  The token stays a GitHub secret: `__token__` is PyPI's fixed
+      # username for API-token auth, the value is never echoed, and twine never
+      # prints it.  `--skip-existing` makes a re-run of an already-uploaded
+      # version a no-op instead of a hard failure.
+      - name: Publish to PyPI
+        env:
+          TWINE_USERNAME: __token__
+          TWINE_PASSWORD: ${{ secrets.PYPI_TOKEN }}
+        run: pipx run twine upload --non-interactive --skip-existing dist/*
+
+  # Trusted-publishing (OIDC) alternative, kept disabled.  Flip this on and
+  # disable the token `publish` job above if the PyPI project is ever moved to
+  # trusted publishing; it needs a `pypi` GitHub environment plus a matching
+  # trusted publisher (owner `noetl`, repo `noetl`, workflow `pypi.yml`,
+  # environment `pypi`) registered on the PyPI project.  See noetl/ai-meta#201.
+  publish-oidc:
+    name: publish to PyPI (trusted publishing)
+    runs-on: ubuntu-latest
+    needs: [check]
+    if: false
     environment: pypi
     permissions:
-      # Mints the OIDC token that trusted publishing exchanges for a short-lived
-      # upload token.  No PyPI API token is stored in this repository.
       id-token: write
     steps:
       - uses: actions/download-artifact@v4
@@ -128,3 +152,4 @@ jobs:
       - uses: pypa/gh-action-pypi-publish@release/v1
         with:
           packages-dir: dist
+          skip-existing: true
