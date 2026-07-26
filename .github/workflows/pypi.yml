@@ -26,6 +26,12 @@ jobs:
     runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
+      # Unix only.  The CLI depends on `nix` (POSIX signals + process control
+      # for pid/port-forward management), which does not compile on Windows —
+      # the native binaries in noetl/cli ship Linux + macOS only for the same
+      # reason.  A Windows wheel would need a cfg-gated refactor of those code
+      # paths in the CLI first; until then Windows is unsupported and pip falls
+      # through to the sdist, which fails to build with the same `nix` error.
       matrix:
         include:
           - platform: linux
@@ -40,9 +46,6 @@ jobs:
           - platform: macos
             target: aarch64
             runner: macos-latest
-          - platform: windows
-            target: x64
-            runner: windows-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5

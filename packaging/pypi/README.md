@@ -84,8 +84,12 @@ Homebrew, or the APT package — all of which ship with DuckDB included.
 
 ## Requirements
 
-Python 3.9 or newer. The wheels are `abi3`, so one wheel per platform serves
-every supported Python version.
+Python 3.9 or newer, on **Linux or macOS**. The wheels are `abi3`, so one wheel
+per platform serves every supported Python version.
+
+Windows is not supported: the CLI uses POSIX process and signal control, which
+does not build on Windows (the native binaries are Linux/macOS-only for the same
+reason). On Windows, use WSL.
 
 ## Documentation
 
