@@ -1,0 +1,51 @@
+[build-system]
+requires = ["maturin>=1.7,<2.0"]
+build-backend = "maturin"
+
+[project]
+name = "noetl"
+version = "5.0.0"
+description = "NoETL workflow automation CLI - execute playbooks locally or orchestrate distributed pipelines"
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.9"
+authors = [
+    { name = "Kadyapam", email = "182583029+kadyapam@users.noreply.github.com" },
+]
+keywords = ["workflow", "automation", "etl", "mlops", "data-pipeline", "orchestration"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Rust",
+    "Topic :: Software Development :: Build Tools",
+]
+# No runtime dependencies: everything the CLI needs is compiled into the
+# extension module.
+dependencies = []
+
+[project.urls]
+Homepage = "https://noetl.io"
+Documentation = "https://noetl.dev"
+Repository = "https://github.com/noetl/noetl"
+CLI = "https://github.com/noetl/cli"
+Issues = "https://github.com/noetl/noetl/issues"
+
+[project.scripts]
+noetl = "noetl:main"
+ntl = "noetl:main"
+
+[tool.maturin]
+# One abi3 wheel per platform, usable on every CPython from 3.9 up, instead of
+# one wheel per interpreter version.
+features = ["pyo3/abi3-py39"]
+module-name = "noetl._native"
+python-source = "python"
+strip = true
