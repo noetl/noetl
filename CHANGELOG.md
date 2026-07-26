@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.26.0](https://github.com/noetl/noetl/compare/v4.25.0...v4.26.0) (2026-07-26)
+
+### Features
+
+* **pypi:** build the noetl PyPI package from the Rust CLI via PyO3 ([a6bcfc8](https://github.com/noetl/noetl/commit/a6bcfc838e4279f6fc7d0a63183a0500dafe18e0)), closes [noetl/cli#73](https://github.com/noetl/cli/issues/73) [noetl/cli#74](https://github.com/noetl/cli/issues/74)
+
 ## [4.25.0](https://github.com/noetl/noetl/compare/v4.24.0...v4.25.0) (2026-07-05)
 
 ### Features
