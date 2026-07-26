@@ -32,6 +32,14 @@ jobs:
       # reason.  A Windows wheel would need a cfg-gated refactor of those code
       # paths in the CLI first; until then Windows is unsupported and pip falls
       # through to the sdist, which fails to build with the same `nix` error.
+      #
+      # macOS x86_64 (Intel) is intentionally not in the matrix: the free
+      # macos-13 Intel runners are scarce and were wedged in queue for well
+      # over 15 minutes during the 5.0.0 release, and the CLI's own native
+      # binaries don't ship an Intel-Mac build either.  Intel-Mac users get the
+      # sdist, which builds from crates.io in ~3.5 minutes.  Add a
+      # `macos-13` / `x86_64` entry back here if a prebuilt Intel wheel is
+      # wanted and the runner situation improves.
       matrix:
         include:
           - platform: linux
@@ -40,9 +48,6 @@ jobs:
           - platform: linux
             target: aarch64
             runner: ubuntu-24.04-arm
-          - platform: macos
-            target: x86_64
-            runner: macos-13
           - platform: macos
             target: aarch64
             runner: macos-latest
