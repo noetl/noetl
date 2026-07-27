@@ -21,25 +21,43 @@ Async batch acceptance and recovery references (on the wiki):
 - [Recovery: Auto-Resume](https://github.com/noetl/noetl/wiki/recovery_autoresume) — readiness-gated parent-execution restart at startup
 - [Command Reaper](https://github.com/noetl/noetl/wiki/command_reaper) — runtime re-publish for orphaned / stranded commands
 
-### Distributed runtime components
+### The `noetl` package on PyPI is the CLI (v5+)
 
-Reference docs for the event-sourced, projection-backed runtime
-(implements v2 distributed-runtime spec phases 0–2; spec lives in
-`noetl/docs` at [`docs/features/noetl_distributed_runtime_spec.md`](https://github.com/noetl/docs/blob/main/docs/features/noetl_distributed_runtime_spec.md)):
+`pip install noetl` installs the **NoETL CLI** — from 5.0.0 it is the Rust CLI
+compiled into a native extension (PyO3), packaged under
+[`packaging/pypi/`](packaging/pypi) and published from crates.io's `noetl`
+crate. `noetl.run(...)` and the `noetl` command drive the real engine; nothing
+is reimplemented in Python. See [`packaging/pypi/README.md`](packaging/pypi/README.md).
+
+The Python trees under `noetl/` (server, worker, tools, core, outbox,
+projector, …) are **not** the production runtime and are **not** shipped in the
+pip package — they are legacy/reference kept in-tree while the DSL engine
+(`noetl/core`) is untangled from the retired services.
+
+### Distributed runtime — production is the Rust stack
+
+Production runs the Rust services: **[noetl-server](https://github.com/noetl/server)**
+and **[noetl-worker](https://github.com/noetl/worker)** (ops deploys only the
+Rust images). The event log, projection/replay, outbox publish, and projection
+are owned by the Rust server + worker in process. The wiki pages below and the
+Python modules that back them describe the earlier Python implementation and
+are retained as reference — like the EHDB modules, the Python runtime path no
+longer executes in production:
 
 - **[Event Store](https://github.com/noetl/noetl/wiki/event_store)** —
   durable append-only event log (port + Postgres adapter), `EventRecord`
-  envelope, optimistic concurrency via `expected_version`.
+  envelope, optimistic concurrency via `expected_version`. *(Rust in prod.)*
 - **[Projection Store](https://github.com/noetl/noetl/wiki/projection_store)**
-  — version-monotonic projection + snapshot store (port + Postgres
-  adapter), query interface for replay state.
+  — version-monotonic projection + snapshot store, query interface for replay
+  state. *(Rust in prod.)*
 - **[Outbox](https://github.com/noetl/noetl/wiki/outbox)** — transactional
-  outbox publisher (`python -m noetl.outbox`) that drains `noetl.outbox`
-  to NATS with at-least-once retry/backoff.
+  outbox publisher that drains `noetl.outbox` to NATS with at-least-once
+  retry/backoff. Superseded by the Rust server's per-shard publish; the
+  legacy Python `python -m noetl.outbox` is not the production path.
 - **[Projector](https://github.com/noetl/noetl/wiki/projector)** —
-  out-of-process projection worker (`python -m noetl.projector`),
-  durable NATS pull consumer, shard-stable, Prometheus metrics,
-  replay-state folding shared with the in-process replay API.
+  out-of-process projection worker, durable NATS pull consumer, shard-stable.
+  Superseded by the Rust off-server state builder; the legacy Python
+  `python -m noetl.projector` is not the production path.
 
 ### EHDB Integration
 
