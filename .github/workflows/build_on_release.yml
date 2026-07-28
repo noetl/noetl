@@ -1,4 +1,15 @@
-name: "Build image and package on Release ⚙️"
+name: "Build image on Release ⚙️"
+
+# This workflow builds and pushes the GHCR container image on a published
+# GitHub Release.
+#
+# It used to ALSO publish the legacy setuptools `noetl` package to PyPI via a
+# `build_push_pip` job (`uv publish`). That job was removed: the PyPI `noetl`
+# identity is now owned by the maturin CLI wheel, published exclusively by
+# `pypi.yml` on a `pypi-v*` tag (5.0.0+). Leaving the legacy `uv publish` in
+# place meant the next GitHub Release would attempt a conflicting upload of the
+# setuptools root package to the same PyPI name. Do NOT re-add a PyPI publish
+# here — `pypi.yml` is the sole PyPI publisher. See noetl/ai-meta#201.
 
 on:
   release:
@@ -51,35 +62,3 @@ jobs:
           tags: |
             ghcr.io/noetl/noetl:${{ env.IMAGE_TAG }}
             ghcr.io/noetl/noetl:latest
-
-  build_push_pip:
-    name: build_push_pip
-    timeout-minutes: 10
-    runs-on: ubuntu-latest
-
-    env:
-      PIP_PACKAGE_VERSION: ${{ github.event.release.tag_name }}
-
-    steps:
-      - name: Checkout source code
-        uses: actions/checkout@v4
-        with:
-          ref: ${{ github.event.release.tag_name }}
-      
-      - name: Install UV
-        uses: astral-sh/setup-uv@v7
-        with:
-          version: "0.9.x"
-
-      - name: Install NoETL dependencies
-        run: uv sync --locked --all-extras
-        # --all-extras Include all optional dependencies.
-        # --locked Assert that the uv.lock will remain unchanged. Requires that the lockfile is up-to-date
-
-      - name: Build NoETL
-        run: uv build
-
-      - name: Publish to PyPI
-        env:
-          UV_PUBLISH_TOKEN: ${{ secrets.PYPI_TOKEN }}
-        run: uv publish
