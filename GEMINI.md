@@ -8,7 +8,7 @@
 
 ```bash
 # Execute a playbook
-noetl exec <playbook_path> [--var key=value]
+noetl run <playbook_path> [--var key=value]
 
 # Check execution status
 noetl status <execution_id>
