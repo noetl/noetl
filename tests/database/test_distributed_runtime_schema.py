@@ -42,3 +42,35 @@ def test_distributed_runtime_schema_contract_is_present():
     assert "idx_event_stream_version" in ddl
     assert "idx_event_aggregate_event_id" in ddl
     assert "idx_outbox_ready" in ddl
+
+
+def test_command_lookup_by_event_id_has_an_index():
+    """`POST /api/commands/{event_id}/claim` resolves by `event_id` alone.
+
+    `noetl.command` is HASH-partitioned on `execution_id`, and every other
+    index on it leads with that column, so an `event_id`-only predicate cannot
+    use any of them -- the planner falls back to a parallel seq scan of all 16
+    partitions.  That cost ~295ms per claim on a 428k-row table and was paid
+    twice per playbook hop, which measured as ~79% of a turn's wall clock
+    (noetl/ai-meta#155).
+
+    Asserted as a property (an index whose leading column is `event_id`)
+    rather than by name, so renaming the index keeps the guard honest while
+    dropping it fails.
+    """
+    ddl = SCHEMA.read_text(encoding="utf-8")
+
+    statements = [
+        " ".join(stmt.split())
+        for stmt in ddl.split(";")
+        if "ON NOETL.COMMAND" in " ".join(stmt.split()).upper()
+        and "CREATE INDEX" in " ".join(stmt.split()).upper()
+    ]
+    leading_event_id = [
+        stmt for stmt in statements if "(event_id" in stmt.replace(" (", "(")
+    ]
+    assert leading_event_id, (
+        "noetl.command needs an index whose leading column is event_id; "
+        "without it every command claim seq-scans all 16 partitions. "
+        f"Indexes found on noetl.command: {statements}"
+    )
