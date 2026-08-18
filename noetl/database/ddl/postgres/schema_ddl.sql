@@ -1019,6 +1019,15 @@ CREATE INDEX IF NOT EXISTS idx_command_pending_loop_step_created
 -- command_id construction).
 CREATE INDEX IF NOT EXISTS idx_command_command_id
     ON noetl.command (command_id);
+-- Lookup-by-event_id.  `POST /api/commands/{event_id}/claim` resolves a command
+-- from the bus notification by `event_id` alone -- it has no `execution_id` to
+-- give, so every index above (all of which lead with the partition key) is
+-- unusable and the planner falls back to a parallel seq scan of all 16
+-- partitions.  Measured on a 428k-row table: 88,199 buffers touched per claim,
+-- ~295ms, paid TWICE per hop; with this index, 31 buffers and ~0.2ms.  End to
+-- end that was ~79% of a playbook turn (noetl/ai-meta#155).
+CREATE INDEX IF NOT EXISTS idx_command_event_id
+    ON noetl.command (event_id);
 
 ALTER TABLE noetl.command ADD COLUMN IF NOT EXISTS stage_id BIGINT;
 ALTER TABLE noetl.command ADD COLUMN IF NOT EXISTS frame_id BIGINT;
