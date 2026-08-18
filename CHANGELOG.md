@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.26.1](https://github.com/noetl/noetl/compare/v4.26.0...v4.26.1) (2026-08-18)
+
+### Performance Improvements
+
+* **db:** index noetl.command (event_id) — the command-claim seq scan ([#155](https://github.com/noetl/noetl/issues/155)) ([a34b63e](https://github.com/noetl/noetl/commit/a34b63ea63a8176773d249cecf06dc503f7a8ccf)), closes [noetl/ai-meta#130](https://github.com/noetl/ai-meta/issues/130) [#156](https://github.com/noetl/noetl/issues/156)
+
 ## [4.26.0](https://github.com/noetl/noetl/compare/v4.25.0...v4.26.0) (2026-07-26)
 
 ### Features
