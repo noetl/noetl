@@ -154,7 +154,14 @@ def start_server():
             cmd,
             stdout=log_file,
             stderr=subprocess.STDOUT,
-            preexec_fn=os.setsid
+            # start_new_session calls setsid() in the child via the C-level
+            # path.  preexec_fn used to do the same, but it forces CPython off
+            # posix_spawn onto fork()+exec and then runs a Python callback in
+            # the forked child of a multi-threaded parent -- which macOS aborts
+            # ("Python quit unexpectedly").  The process group is identical
+            # either way, so the os.killpg(os.getpgid(pid)) teardown below is
+            # unaffected.
+            start_new_session=True,
         )
 
     logger.info("Waiting for server to start...")
