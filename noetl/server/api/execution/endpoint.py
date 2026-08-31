@@ -585,7 +585,7 @@ def _default_validation_commands(path: str, version: Any) -> tuple[list[str], li
     version_suffix = f"@{version}" if version not in (None, "", "latest") else ""
     catalog_ref = f"catalog://{path}{version_suffix}" if path else "catalog://<playbook-path>"
     dry_run_commands = [
-        f"noetl exec {catalog_ref} -r distributed --dry-run",
+        f"noetl run {catalog_ref} -r distributed --dry-run",
     ]
     test_commands = [
         "pytest -q",
