@@ -4,8 +4,8 @@ name: pypi
 # platform in the matrix, and publishes to PyPI when a `pypi-v*` tag is pushed.
 #
 # Publishing uses the repository's `PYPI_TOKEN` secret — the same token the
-# legacy Python package published with (see build_on_release.yml). No PyPI-side
-# setup is required. A trusted-publishing (OIDC) alternative is included but
+# legacy Python package published with, before that publisher was retired. No
+# PyPI-side setup is required. A trusted-publishing (OIDC) alternative is included but
 # disabled; see the `publish-oidc` job and https://github.com/noetl/ai-meta/issues/201.
 
 on:
@@ -128,7 +128,7 @@ jobs:
           merge-multiple: true
 
       # Token-based upload, matching how the legacy Python package published
-      # (build_on_release.yml used `uv publish` with the same `PYPI_TOKEN`
+      # (the retired build_on_release workflow used `uv publish` with the same `PYPI_TOKEN`
       # secret).  The token stays a GitHub secret: `__token__` is PyPI's fixed
       # username for API-token auth, the value is never echoed, and twine never
       # prints it.  `--skip-existing` makes a re-run of an already-uploaded
