@@ -12,6 +12,23 @@ Usage:
     pytest tests/test_playbook_regression.py -v --update-expected
 """
 
+import pytest
+
+# ⚠ The fixtures this suite drives were moved to the dedicated e2e repository
+# in a05e4f6b ("chore: move e2e fixtures to dedicated repo"), so
+# tests/fixtures/playbook_test_config.yaml no longer exists here and the module
+# raised FileNotFoundError at IMPORT time — which aborted collection for the
+# whole test run, not just this file.
+#
+# This is a SEPARATE cause from the Python-platform retirement (25bef859): it is
+# not an orphan of the removed server/worker/tools. It is skipped rather than
+# deleted so the decision to move or drop it stays with the repo owner.
+pytest.skip(
+    "playbook regression fixtures live in the e2e repo since a05e4f6b; "
+    "tests/fixtures/playbook_test_config.yaml is absent here",
+    allow_module_level=True,
+)
+
 import asyncio
 import json
 import os

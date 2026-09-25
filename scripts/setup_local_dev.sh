@@ -44,17 +44,11 @@ if [ -d "${REPO_ROOT}/ui-src" ]; then
     echo "Building UI (Vite)..."
     npm run build
     
-    # Copy UI build to Python package
-    echo "Copying UI assets to noetl/core/ui/..."
-    mkdir -p "${REPO_ROOT}/noetl/core/ui"
-    rm -rf "${REPO_ROOT}/noetl/core/ui"/*
-    cp -r dist/* "${REPO_ROOT}/noetl/core/ui/"
-    
-    echo -e "${GREEN}UI assets built successfully${NC}"
+    echo -e "${GREEN}UI built${NC} (the noetl/core/ui/ copy target went with the"
+    echo "Python platform in 25bef859; the UI now lives in https://github.com/noetl/gui)"
 else
-    echo -e "${YELLOW}Skipping UI build (ui-src not found)${NC}"
-    echo "Creating placeholder directory to disable UI..."
-    mkdir -p "${REPO_ROOT}/noetl/core/ui/assets"
+    echo -e "${YELLOW}Skipping UI build${NC} — ui-src was removed from this repo in"
+    echo "e06ed7d2; the UI lives in https://github.com/noetl/gui"
 fi
 
 echo
@@ -94,10 +88,9 @@ fi
 echo
 echo -e "${GREEN}Local development setup complete!${NC}"
 echo
-echo "Quick start:"
-echo "  1. Start server: ./bin/noetl server start"
-echo "  2. Or directly:  python -m noetl.server --host 0.0.0.0 --port 8082"
-echo "  3. Start worker: ./bin/noetl worker start"
+echo "Quick start (the server and worker are Rust services now):"
+echo "  1. Start server: ./bin/noetl server start   # https://github.com/noetl/server"
+echo "  2. Start worker: ./bin/noetl worker start   # https://github.com/noetl/worker"
 echo
 echo "Environment variables:"
 echo "  export NOETL_ENABLE_UI=false  # Disable UI if not needed"

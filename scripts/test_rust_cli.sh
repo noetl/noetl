@@ -40,20 +40,20 @@ echo
 echo "✓ Test 4: Server start command"
 echo "  Command: noetl server start"
 echo "  This command will:"
-echo "    1. Detect Python environment"
-echo "    2. Execute: python -m noetl.server --host 0.0.0.0 --port 8082"
-echo "    3. Start server in background (daemon)"
-echo "    4. Save PID to ~/.noetl/noetl_server.pid"
+echo "    1. Start the Rust noetl-server (https://github.com/noetl/server)"
+echo "    2. Run it in the background (daemon)"
+echo "    3. Save PID to ~/.noetl/noetl_server.pid"
 echo
 
-# Test 5: Check Python module availability
-echo "✓ Test 5: Python module check"
-if python -m noetl.server --help >/dev/null 2>&1; then
-    echo "  ✓ Python module 'noetl.server' is available"
-    echo "  ✓ UI assets exist at noetl/core/ui/"
+# Test 5: the CLI is the Rust binary; the Python server module was retired in
+# 25bef859 and the implementation now lives in https://github.com/noetl/server.
+# This probed `python -m noetl.server`, which can never succeed again, so the
+# script exited 1 unconditionally.
+echo "✓ Test 5: CLI is the Rust binary"
+if command -v noetl >/dev/null 2>&1; then
+    echo "  ✓ noetl on PATH: $(noetl --version 2>/dev/null || echo unknown)"
 else
-    echo "  ✗ Python module or UI assets missing"
-    echo "  Run: ./scripts/setup_local_dev.sh"
+    echo "  ✗ noetl not on PATH - install the CLI (pip install noetl, or cargo install)"
     exit 1
 fi
 echo

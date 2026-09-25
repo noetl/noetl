@@ -23,11 +23,19 @@ NoETL is a workflow automation framework for data processing and MLOps orchestra
 
 ## Architecture Overview
 
-**Core Components:**
-- **Server** (`noetl/server/`): FastAPI-based orchestration engine with REST APIs for catalog, events, and execution coordination
-- **Worker** (`noetl/worker/`): Event-driven workers that receive command notifications via NATS JetStream and fetch details from event table
-- **CLI** (`https://github.com/noetl/cli`): Rust-based command interface (binary: `noetl`) managing server/worker lifecycle, build, and K8s deployment
-- **Plugins** (`noetl/tools/`): Extensible action executors (http, postgres, duckdb, python, secrets, etc.)
+> ⚠ **This repository no longer contains the server, worker or tools.** The
+> legacy Python platform was retired in `25bef859` (2026-08-30) — 523 files,
+> including `noetl/server/`, `noetl/worker/`, `noetl/tools/` and `noetl/core/`.
+> Each now has its own Rust repository, which is the live implementation.
+> What remains here is the Python **CLI wrapper** (`packaging/pypi/`, a maturin
+> PyO3 binding over the Rust CLI), `noetl/database/`, tests, scripts and docs.
+
+**Core Components (each in its own repository):**
+- **Server** (https://github.com/noetl/server): Rust control plane — HTTP API for catalog, events and execution coordination
+- **Worker** (https://github.com/noetl/worker): Rust worker runtime — pool management and task execution
+- **Tools** (https://github.com/noetl/tools): Rust tool/plugin registry (http, postgres, duckdb, python, …)
+- **CLI** (https://github.com/noetl/cli): Rust command interface (binary: `noetl`); `pip install noetl` ships it via the wrapper in `packaging/pypi/`
+- **GUI** (https://github.com/noetl/gui): the UI, removed from this repo in `e06ed7d2`
 - **Observability** (`ci/manifests/clickhouse/`): ClickHouse-based observability stack with OpenTelemetry schema for logs, metrics, and traces
 
 **Data Flow:**
@@ -255,7 +263,7 @@ script:
 
 See `tests/fixtures/playbooks/script_execution/` and `docs/script_attribute_design.md` for complete details.
 
-**Plugin Development** (`noetl/tools/`):
+**Plugin Development** (now https://github.com/noetl/tools):
 - Inherit from base classes in `base.py`
 - Use `report_event()` for execution tracking
 - Follow type-specific patterns in existing plugins (http.py, postgres.py, etc.)
@@ -268,10 +276,10 @@ See `tests/fixtures/playbooks/script_execution/` and `docs/script_attribute_desi
 ## Key Files & Directories
 
 **Core Logic:**
-- `noetl/core/dsl/` - Playbook parsing, validation, and rendering
-- `noetl/server/api/event/processing.py` - Server-side execution coordination
-- `noetl/server/api/broker/core.py` - Execution engine
-- `noetl/tools/` - All action type implementations
+- Playbook parsing, validation and rendering — now in the Rust CLI (https://github.com/noetl/cli)
+- Server-side execution coordination — now https://github.com/noetl/server
+- Execution engine — now https://github.com/noetl/server
+- All action type implementations — now https://github.com/noetl/tools
 
 **Development Infrastructure:**
 - `../ops/automation/` - NoETL playbooks for infrastructure management
@@ -293,7 +301,7 @@ See `tests/fixtures/playbooks/script_execution/` and `docs/script_attribute_desi
 ## Configuration
 
 **Environment Variables:**
-- `NOETL_*` prefixed settings (see `noetl/core/config.py`)
+- `NOETL_*` prefixed settings (see each Rust repo's deployment-specification wiki page)
 - Worker pool configuration via `NOETL_WORKER_POOL_*`
 - Database connection via standard `POSTGRES_*` variables
 - **Timezone**: `TZ` must match across all components (Postgres, server, worker) - default is `UTC`
@@ -396,7 +404,7 @@ See `tests/fixtures/playbooks/script_execution/` and `docs/script_attribute_desi
 
 **API Module Structure:**
 ```
-noetl/server/api/{module}/
+See https://github.com/noetl/server for the API module layout.
 ├── __init__.py          # Export router
 ├── schema.py            # Pydantic models (REQUIRED)
 └── endpoint.py          # FastAPI routes
