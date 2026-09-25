@@ -30,19 +30,29 @@ crate. `noetl.run(...)` and the `noetl` command drive the real engine; nothing
 is reimplemented in Python. See [`packaging/pypi/README.md`](packaging/pypi/README.md).
 
 The Python trees under `noetl/` (server, worker, tools, core, outbox,
-projector, …) are **not** the production runtime and are **not** shipped in the
-pip package — they are legacy/reference kept in-tree while the DSL engine
-(`noetl/core`) is untangled from the retired services.
+projector, …) **have been removed** — 523 files retired in `25bef859`
+(2026-08-30). Each is now its own Rust repository, and those are the live
+implementations:
+
+| component | repository |
+| :-- | :-- |
+| server | <https://github.com/noetl/server> |
+| worker | <https://github.com/noetl/worker> |
+| tools | <https://github.com/noetl/tools> |
+| CLI | <https://github.com/noetl/cli> |
+| GUI | <https://github.com/noetl/gui> (removed from this repo in `e06ed7d2`) |
+
+What remains in this repository is the Python **CLI wrapper**
+(`packaging/pypi/`), `noetl/database/`, tests, scripts and docs.
 
 ### Distributed runtime — production is the Rust stack
 
 Production runs the Rust services: **[noetl-server](https://github.com/noetl/server)**
 and **[noetl-worker](https://github.com/noetl/worker)** (ops deploys only the
 Rust images). The event log, projection/replay, outbox publish, and projection
-are owned by the Rust server + worker in process. The wiki pages below and the
-Python modules that back them describe the earlier Python implementation and
-are retained as reference — like the EHDB modules, the Python runtime path no
-longer executes in production:
+are owned by the Rust server + worker in process. The wiki pages below describe
+behaviour that the Rust services now own; the Python modules that once backed
+them no longer exist in this repository:
 
 - **[Event Store](https://github.com/noetl/noetl/wiki/event_store)** —
   durable append-only event log (port + Postgres adapter), `EventRecord`

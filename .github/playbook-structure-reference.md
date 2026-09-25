@@ -361,9 +361,8 @@ workflow:
 
 Always update these files when playbook structure changes:
 - `.github/ai-instructions.md` - AI agent development guide
-- `noetl/core/dsl/playbook.schema.json` - JSON Schema (auto-generated;
-  regenerate with `python -m noetl.core.dsl._generate_schema` after
-  any change to the Pydantic models in
-  `noetl/core/dsl/engine/models/`)
+- The playbook JSON Schema and the DSL live in the Rust CLI now
+  (https://github.com/noetl/cli). The Python `noetl/core/dsl/` tree was
+  removed with the legacy platform in `25bef859`.
 - `docs/playbook_structure.md` - Comprehensive structure guide
 - `docs/simple/` - Simple documentation directory
