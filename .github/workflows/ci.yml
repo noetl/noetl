@@ -67,7 +67,11 @@ jobs:
         run: |
           set -euo pipefail
           before=$(grep -m1 '^version' pyproject.toml)
-          uv version 0.0.0-citest
+          # 9.9.9, not 0.0.0-citest: the first version of this guard used the
+          # latter and uv rejected the STRING ("found `itest`, which is not part of
+          # a valid version") -- the guard went red for its own bad input rather
+          # than for the thing it checks. Keep it PEP 440 valid.
+          uv version 9.9.9
           echo "  (exit 0 — prepareCmd would succeed)"
           git checkout -- pyproject.toml uv.lock 2>/dev/null || git checkout -- pyproject.toml
           echo "  restored: $before"
