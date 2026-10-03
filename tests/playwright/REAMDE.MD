@@ -11,7 +11,7 @@ NOETL_RUN_UI_E2E=1 NOETL_UI_BASE_URL=http://localhost:30080 npx playwright test
 
 npx playwright test --ui  # Open mini app 
 npx playwright test --debug  # Run rebug mode, step by step run
-npx playwright test tests/newpatient.spec.ts --debug  # Run certain test
+npx playwright test e2e/test_hello_world.spec.ts --debug  # Run one spec
 ```
 
 uv venv

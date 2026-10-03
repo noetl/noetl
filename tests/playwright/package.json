@@ -1,7 +1,7 @@
 {
-  "name": "athena-embed-e2e-tests",
+  "name": "noetl-ui-e2e",
   "version": "1.0.0",
-  "description": "End-to-End tests for AthenaHealth Embedded App using Playwright",
+  "description": "End-to-end tests for the NoETL GUI (catalog, execution views) using Playwright",
   "main": "index.ts",
   "scripts": {
     "dev": "playwright test --ui",
