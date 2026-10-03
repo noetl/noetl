@@ -49,17 +49,18 @@ keywords = [
 dependencies = []
 
 [project.optional-dependencies]
-dev = [
-    "pytest>=8.1.1",
-    "pytest-asyncio>=0.23.6",
-    "pytest-cov>=4.1.0",
-    "pytest-mock>=3.14.0",
-    "moto[s3]>=5.0",
-]
+# Only `pytest` survives: the one remaining Python test
+# (tests/database/test_distributed_runtime_schema.py) imports `pathlib` and nothing
+# else. pytest-asyncio, pytest-mock, moto[s3] and pytest-cov were all left
+# unreferenced once the retired platform's tests went -- and moto[s3] alone dragged
+# 21 packages (boto3/botocore/cryptography/werkzeug/flask/jinja2/...), which is where
+# most of this repo's pip vulnerability surface came from.
+dev = ["pytest>=8.1.1"]
 publish = ["build>=1.2.2.post1", "twine>=6.1.0", "maturin>=1.0,<2.0"]
-# Optional helper dependencies for automating IBKR Gateway browser login.
-# Note: Playwright also requires: `playwright install chromium`
-ibkr = ["playwright>=1.43.0"]
+# The `ibkr` extra is GONE. Its only consumer was scripts/ibkr/authenticate_gateway.py,
+# which imported playwright.sync_api to drive a browser login; those scripts were
+# removed (noetl/ai-meta#382). The TypeScript suite under tests/playwright/ depends on
+# npm `@playwright/test` through its own package.json and is unaffected.
 
 # The NoETL CLI is maintained and released from https://github.com/noetl/cli.
 # Do not add Python/PyPI CLI extras here.
