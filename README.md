@@ -13,13 +13,36 @@ With **NoETL Gateway**, playbooks can be deployed as a **distributed backend**: 
 **https://noetl.dev** — user-facing site.
 
 **[NoETL wiki](https://github.com/noetl/noetl/wiki)** — operator and
-developer reference. Pages mirror the code tree under `noetl/noetl`.
+developer reference. (Its pages were written against the Python code tree that
+this repository no longer contains; see *What is in this repository* below.)
 
 Async batch acceptance and recovery references (on the wiki):
 
 - [Batch Events API](https://github.com/noetl/noetl/wiki/batch_events_async) — `POST /api/events/batch` async acceptance flow
 - [Recovery: Auto-Resume](https://github.com/noetl/noetl/wiki/recovery_autoresume) — readiness-gated parent-execution restart at startup
 - [Command Reaper](https://github.com/noetl/noetl/wiki/command_reaper) — runtime re-publish for orphaned / stranded commands
+
+## What is in this repository
+
+A **thin wrapper around the Rust NoETL CLI**, and the platform's SQL. The Python
+platform this repo once shipped is gone — retired in
+[noetl/ai-meta#201](https://github.com/noetl/ai-meta/issues/201), residue removed in
+[noetl/ai-meta#382](https://github.com/noetl/ai-meta/issues/382).
+
+| path | what it is |
+| :-- | :-- |
+| [`packaging/pypi/`](packaging/pypi) | **the wrapper** — maturin/PyO3 build of the Rust CLI, published as the PyPI `noetl` package (`noetl` and `ntl` console scripts, no runtime dependencies) |
+| `noetl/database/ddl/postgres/schema_ddl.sql` | the platform DDL. **SQL, not Python.** `noetl/` holds nothing else, and CI enforces that |
+| `tests/database/` | the guard on that DDL contract |
+| `docker/`, `debian/`, `homebrew/`, `ci/`, `scripts/*.sh` | image, package and release infrastructure |
+| `pyproject.toml` at the root | **not a distribution** — it exists so semantic-release can carry a version (`uv version`). Do not `pip install .` here; it would shadow the real CLI |
+
+The DDL is live: [noetl/ops](https://github.com/noetl/ops) reads it **by path** when
+provisioning, and [noetl/server](https://github.com/noetl/server) keeps a
+destination copy that cites it.
+
+There is **no Python test suite, by design** — there is almost no Python left to
+test. CI gates the DDL contract and the release prerequisites instead.
 
 ### The `noetl` package on PyPI is the CLI (v5+)
 

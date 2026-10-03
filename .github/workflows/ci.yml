@@ -1,0 +1,105 @@
+# PR gate for noetl/noetl.
+#
+# WHAT THIS REPO IS NOW: a thin wrapper around the Rust NoETL CLI
+# (packaging/pypi/, built by maturin and published as the PyPI `noetl` package),
+# plus the platform's SQL DDL. The Python platform it used to ship is gone
+# (noetl/ai-meta#201 retired it; #382 removed the residue), so "no pytest suite" is
+# correct by design here — there is almost no Python left to test.
+#
+# What IS worth gating is small and specific:
+#   1. the SQL DDL contract, which the ops deploy provisions from BY PATH, and
+#   2. that `uv version` keeps working, because semantic-release depends on it.
+#
+# Deliberately NOT gated: the whole tests/ tree. Three modules there are skipped or
+# failing for recorded reasons (an owner-gated regression suite whose fixtures moved
+# to the e2e repo, an opt-in docker integration test, and noetl/ai-meta#356 which
+# needs untracked artifacts). Gating them would make this job red on arrival.
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  ddl-contract:
+    name: SQL DDL contract
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install --quiet pytest
+
+      # tests/database/ reads noetl/database/ddl/postgres/schema_ddl.sql and asserts
+      # the distributed-runtime contract (noetl.stage / frame / outbox / projection,
+      # their indexes and columns). That file is LIVE: repos/ops reads it by path in
+      # automation/development/noetl.yaml and automation/gcp_gke/noetl_gke_fresh_stack.yaml,
+      # and repos/server keeps a destination copy that cites it. This is the guard on
+      # the one artifact in this repo that a deploy actually consumes.
+      - name: DDL contract tests
+        run: python -m pytest tests/database -v
+
+  release-prereqs:
+    name: release prerequisites
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v7
+
+      # ⚠ This guard exists because the change that introduced it BROKE this, and
+      # nothing would have noticed until the next release failed. .releaserc.json's
+      # prepareCmd is `uv version <next>`; uv builds the project to run it, so a
+      # pyproject that cannot build makes `uv version` exit 1 and fails
+      # semantic-release's prepare step. The version text is still rewritten when it
+      # fails, so the output looks fine -- only the exit code tells you.
+      - name: uv version must succeed (semantic-release prepareCmd)
+        run: |
+          set -euo pipefail
+          before=$(grep -m1 '^version' pyproject.toml)
+          # 9.9.9, not 0.0.0-citest: the first version of this guard used the
+          # latter and uv rejected the STRING ("found `itest`, which is not part of
+          # a valid version") -- the guard went red for its own bad input rather
+          # than for the thing it checks. Keep it PEP 440 valid.
+          uv version 9.9.9
+          echo "  (exit 0 — prepareCmd would succeed)"
+          git checkout -- pyproject.toml uv.lock 2>/dev/null || git checkout -- pyproject.toml
+          echo "  restored: $before"
+
+      # The wrapper is the published artifact; its metadata must stay parseable and
+      # must keep declaring the console scripts the CLI is installed as.
+      - name: wrapper metadata is intact
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import tomllib
+          w = tomllib.load(open("packaging/pypi/pyproject.toml","rb"))["project"]
+          assert w["name"] == "noetl", w["name"]
+          assert set(w["scripts"]) == {"noetl","ntl"}, w["scripts"]
+          assert w["dependencies"] == [], w["dependencies"]
+          print(f"  wrapper ok: {w['name']} {w['version']} scripts={sorted(w['scripts'])} deps=[]")
+          PY
+
+      # Guard the wrapper-only invariant: the retired platform must not creep back
+      # under noetl/, which now holds SQL only.
+      - name: noetl/ holds no Python
+        run: |
+          set -euo pipefail
+          found=$(find noetl -name '*.py' -print | sort)
+          n=$(printf '%s' "$found" | grep -c . || true)
+          echo "  .py files under noetl/: ${n}   <- the denominator (want 0)"
+          if [ "${n}" -ne 0 ]; then
+            echo "::error::noetl/ must contain no Python — this repo is a wrapper around the Rust CLI (see #382)"
+            printf '%s\n' "$found"
+            exit 1
+          fi
