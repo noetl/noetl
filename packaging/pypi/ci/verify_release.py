@@ -408,7 +408,17 @@ def main() -> int:
         out("  this check a release in that state would report success and ship nothing.")
         return 1
     out()
-    out("  RELEASE OK — the artifact matches the tag and has something new to upload")
+    # Say only what was actually checked.  A success line that claims more than it
+    # verified is the defect this whole guard exists to prevent, one level up.
+    checked = ["pyproject.toml == Cargo.toml == the built filenames"]
+    if args.tag:
+        checked.append("the tag matches the built version")
+    if args.require_new:
+        checked.append("PyPI does not already have every file")
+    out("  OK — verified: " + "; ".join(checked) + ".")
+    if not args.require_new:
+        out("  NOT checked: whether PyPI already has this version. That needs --tag")
+        out("  --require-new, which only a tag build can supply.")
     return 0
 
 
