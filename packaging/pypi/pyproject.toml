@@ -4,7 +4,7 @@ build-backend = "maturin"
 
 [project]
 name = "noetl"
-version = "5.1.0"
+version = "5.1.1"
 description = "NoETL workflow automation CLI - execute playbooks locally or orchestrate distributed pipelines"
 readme = "README.md"
 license = "MIT"
