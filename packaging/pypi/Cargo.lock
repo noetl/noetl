@@ -2870,7 +2870,7 @@ checksum = "fcdc9657471e917de19608a327a65eafb0d4bef5df5271c991c85982a5ccdf07"
 
 [[package]]
 name = "noetl-python"
-version = "5.0.0"
+version = "5.1.0"
 dependencies = [
  "noetl",
  "pyo3",
