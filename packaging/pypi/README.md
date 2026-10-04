@@ -59,6 +59,27 @@ number to quote in a bug report against
 [noetl/cli](https://github.com/noetl/cli/issues). `noetl.__version__` and
 `pip show noetl` report the package version.
 
+### Cutting a release
+
+The published version comes from this directory, **not** from the git tag. Nothing
+in `pypi.yml` derives it from the tag, and semantic-release's `prepareCmd` rewrites
+the *root* `pyproject.toml`, which is a different file. So:
+
+1. Bump `packaging/pypi/pyproject.toml` **and** `packaging/pypi/Cargo.toml` to the
+   same new version. They are bumped by hand and must move together.
+2. Merge that, then push a `pypi-v<version>` tag matching it exactly.
+
+`ci/verify_release.py` gates the publish job and refuses the two ways this goes
+wrong quietly — a tag ahead of the source tree, and a re-tag of a version already
+on PyPI. The second one matters because `twine upload --skip-existing` exits 0
+when it skips, so without the check that release would report success and ship
+nothing. Run it yourself before tagging:
+
+```bash
+python packaging/pypi/ci/verify_release.py --self-test
+python packaging/pypi/ci/verify_release.py --dist dist --tag pypi-v<version> --require-new
+```
+
 ## Known limitation: DuckDB
 
 These wheels are built **without** the embedded DuckDB engine. Compiling DuckDB

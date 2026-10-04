@@ -5,7 +5,14 @@ name: pypi
 #
 # Publishing uses the repository's `PYPI_TOKEN` secret — the same token the
 # legacy Python package published with, before that publisher was retired. No
-# PyPI-side setup is required. A trusted-publishing (OIDC) alternative is included but
+# PyPI-side setup is required.
+#
+# The `verify-release` job gates `publish`.  It exists because
+# `twine upload --skip-existing` exits 0 when it skips, and nothing here derives
+# the built version from the tag — so a tag cut without bumping
+# `packaging/pypi/{pyproject,Cargo}.toml` would build an already-published version,
+# skip every file, and report the release green having shipped nothing.
+# See noetl/ai-meta#400. A trusted-publishing (OIDC) alternative is included but
 # disabled; see the `publish-oidc` job and https://github.com/noetl/ai-meta/issues/201.
 
 on:
@@ -116,12 +123,50 @@ jobs:
       - run: ls -la dist
       - run: pipx run twine check dist/*
 
+  verify-release:
+    name: verify release
+    runs-on: ubuntu-latest
+    needs: [wheels, sdist]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      # Run the guard's own controls first, on every PR and every tag.  A check
+      # that has never produced a failure is indistinguishable from one that
+      # cannot, and this one's whole job is to fail rarely.
+      - name: The guard can fail (self-test)
+        run: python packaging/pypi/ci/verify_release.py --self-test
+
+      # On a tag: the artifact must carry the tag's version AND have something
+      # new to upload.  On a pull request there is no tag, so this checks what it
+      # can — that pyproject.toml, Cargo.toml and the built filenames agree.
+      - name: The release can publish something
+        run: |
+          set -euo pipefail
+          if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
+            python packaging/pypi/ci/verify_release.py \
+              --dist dist --tag "${GITHUB_REF}" --require-new
+          else
+            echo "not a tag — checking version agreement only"
+            python packaging/pypi/ci/verify_release.py --dist dist
+          fi
+
   publish:
     name: publish to PyPI
     runs-on: ubuntu-latest
-    needs: [check]
+    needs: [check, verify-release]
     if: startsWith(github.ref, 'refs/tags/pypi-v')
     steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
       - uses: actions/download-artifact@v4
         with:
           path: dist
@@ -131,13 +176,67 @@ jobs:
       # (the retired build_on_release workflow used `uv publish` with the same `PYPI_TOKEN`
       # secret).  The token stays a GitHub secret: `__token__` is PyPI's fixed
       # username for API-token auth, the value is never echoed, and twine never
-      # prints it.  `--skip-existing` makes a re-run of an already-uploaded
-      # version a no-op instead of a hard failure.
+      # prints it.  `--skip-existing` is kept so a RETRY after a partial upload
+      # finishes the job instead of hard-failing — `verify-release` has already
+      # established that at least one file is new, so it can no longer launder a
+      # whole no-op release into a green run.
+      #
+      # The output is captured and counted as a BACKSTOP, not as the primary gate:
+      # twine exits 0 whether it uploaded or skipped, so its exit code alone says
+      # nothing about what shipped.  `verify-release` is the deterministic gate —
+      # this catches only the narrow race where PyPI state changed between that job
+      # and this one.
+      #
+      # ⚠ The count must strip terminal control sequences first.  twine writes a
+      # progress bar, and in the real 5.1.1 publish log 3 of the 4 upload lines
+      # began with an ESC[?25h (cursor-show) sequence rather than with "Uploading".
+      # An anchored `^Uploading` matched 1 of 4, and would read 0 — failing a
+      # perfectly good release — if twine ever emitted that sequence before the
+      # first line too.
       - name: Publish to PyPI
         env:
           TWINE_USERNAME: __token__
           TWINE_PASSWORD: ${{ secrets.PYPI_TOKEN }}
-        run: pipx run twine upload --non-interactive --skip-existing dist/*
+        run: |
+          set -euo pipefail
+          raw="${RUNNER_TEMP}/twine.log"
+          clean="${RUNNER_TEMP}/twine-clean.log"
+          pipx run twine upload --non-interactive --skip-existing dist/* 2>&1 | tee "${raw}"
+          sed -E 's/\x1b\[[0-9;?]*[a-zA-Z]//g' "${raw}" > "${clean}"
+          uploaded=$(grep -cE 'Uploading [^ ]+\.(whl|tar\.gz)' "${clean}" || true)
+          skipped=$(grep -ciE 'Skipping .* because it appears to already exist' "${clean}" || true)
+          echo "── upload accounting"
+          echo "  files in dist/ : $(ls dist | wc -l | tr -d ' ')   <- the denominator"
+          echo "  uploaded       : ${uploaded}"
+          echo "  skipped        : ${skipped}"
+          if [ "${uploaded}" -eq 0 ]; then
+            echo "::error::twine uploaded 0 files (${skipped} skipped) and still exited 0."
+            echo "  This is the noetl/ai-meta#400 failure mode: a release that ships nothing and"
+            echo "  reports success.  verify-release should have refused it earlier, so either"
+            echo "  PyPI state changed between the two jobs or twine's log wording moved."
+            exit 1
+          fi
+
+      # Independent of twine's output: ask PyPI what it now serves.  This is what
+      # makes the release claim checkable later without trusting a log format.
+      - name: PyPI serves the version we just built
+        run: |
+          set -euo pipefail
+          ver=$(python packaging/pypi/ci/verify_release.py --dist dist --print-version)
+          want=$(ls dist | wc -l | tr -d " ")
+          echo "  expecting PyPI to serve ${want} file(s) for ${ver}"
+          got=0
+          for attempt in 1 2 3 4 5 6; do
+            got=$(curl -sS "https://pypi.org/pypi/noetl/${ver}/json" | python -c "import json,sys; print(len(json.load(sys.stdin).get('urls',[])))" 2>/dev/null || echo 0)
+            echo "  attempt ${attempt}: PyPI serves ${got}"
+            if [ "${got}" -ge "${want}" ]; then break; fi
+            sleep 10
+          done
+          if [ "${got}" -lt "${want}" ]; then
+            echo "::error::PyPI serves ${got} file(s) for ${ver}, expected ${want}."
+            exit 1
+          fi
+          echo "  OK — ${ver} is published with ${got} file(s)"
 
   # Trusted-publishing (OIDC) alternative, kept disabled.  Flip this on and
   # disable the token `publish` job above if the PyPI project is ever moved to
@@ -147,7 +246,7 @@ jobs:
   publish-oidc:
     name: publish to PyPI (trusted publishing)
     runs-on: ubuntu-latest
-    needs: [check]
+    needs: [check, verify-release]
     if: false
     environment: pypi
     permissions:
