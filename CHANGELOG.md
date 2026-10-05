@@ -2,6 +2,15 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.26.2](https://github.com/noetl/noetl/compare/v4.26.1...v4.26.2) (2026-10-05)
+
+### Bug Fixes
+
+* **deps:** re-lock for 3 of the 5 RustSec advisories, and bump to 5.1.1 ([3c46d7b](https://github.com/noetl/noetl/commit/3c46d7bf5cf71401d8cca7447daf44497462cb0c)), closes [noetl/ai-meta#402](https://github.com/noetl/ai-meta/issues/402) [#402](https://github.com/noetl/noetl/issues/402) [#402](https://github.com/noetl/noetl/issues/402) [noetl/ai-meta#402](https://github.com/noetl/ai-meta/issues/402)
+* **deps:** re-lock onto noetl 5.0.1 + noetl-tools 4.0.6 — all 7 advisories clear ([27b7a1d](https://github.com/noetl/noetl/commit/27b7a1d21971b92629dac2948e14477149720d31)), closes [noetl/tools#108](https://github.com/noetl/tools/issues/108) [noetl/cli#90](https://github.com/noetl/cli/issues/90) [noetl/ai-meta#385](https://github.com/noetl/ai-meta/issues/385)
+* **deps:** re-lock onto noetl-tools 4.0.5 — clears the 4 rustls-webpki advisories ([4eeeb5a](https://github.com/noetl/noetl/commit/4eeeb5a632f1dfeca0c81cd3dec077a58e49ef5c)), closes [noetl/tools#107](https://github.com/noetl/tools/issues/107) [noetl/tools#108](https://github.com/noetl/tools/issues/108) [noetl/ai-meta#385](https://github.com/noetl/ai-meta/issues/385)
+* **schema:** declare noetl.event_dead_letter in the DDL the deploy actually applies ([7c26e9f](https://github.com/noetl/noetl/commit/7c26e9f73cb5a031673d5588903d9417a9cb242e)), closes [noetl/ai-meta#201](https://github.com/noetl/ai-meta/issues/201)
+
 ## [4.26.1](https://github.com/noetl/noetl/compare/v4.26.0...v4.26.1) (2026-08-18)
 
 ### Performance Improvements
