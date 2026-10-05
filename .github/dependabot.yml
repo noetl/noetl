@@ -1,8 +1,0 @@
-version: 2
-updates:
-  - package-ecosystem: "npm"
-    directory: "/documentation"
-    schedule:
-      interval: "weekly"
-      day: "monday"
-      time: "08:00"
