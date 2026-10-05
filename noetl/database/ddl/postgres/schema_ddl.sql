@@ -353,6 +353,60 @@ CREATE INDEX IF NOT EXISTS idx_event_idempotency_key_column
     ON noetl.event (tenant_id, organization_id, idempotency_key)
     WHERE idempotency_key IS NOT NULL;
 
+-- ---------------------------------------------------------------------------
+-- Dead-letter landing spot for events `noetl.event` will NEVER accept.
+--
+-- `noetl.event.catalog_id` is `NOT NULL REFERENCES noetl.catalog(catalog_id)`,
+-- so an event carrying a catalog_id with no catalog row can never be inserted.
+-- The materializer posts a batch as one unit and never acks a failed batch, so
+-- one such event holds the head of the ordered drain FOR EVER and every other
+-- execution's `command.completed` queues behind it.  Measured on prod
+-- 2026-09-27: five `playbook.failed` events from 2026-09-24 still looping three
+-- days later, 120,545 project errors, 271s of projection lag, a 22s playbook
+-- taking 290s, 1,283 executions abandoned.
+--
+-- Freeing the drain means acking the poison, which removes it from the durable
+-- stream.  It must therefore land HERE FIRST: the row is written and its
+-- durability confirmed BEFORE the ack, and if that write cannot be confirmed
+-- the batch is NOT acked.  An event is never dropped without a landing spot.
+--
+-- Deliberately has NO foreign keys and NO NOT NULL beyond the identity columns:
+-- the whole point is to accept a row that the constrained table rejected.  The
+-- verbatim stream payload is kept in `payload` so the event is fully
+-- reconstructable and replayable once the cause is repaired.
+CREATE TABLE IF NOT EXISTS noetl.event_dead_letter (
+    -- Identity as it appeared in the stream.  PK on (execution_id, event_id)
+    -- makes the write idempotent, so a redelivery that races the ack re-lands
+    -- the same row instead of erroring or duplicating.
+    execution_id    BIGINT NOT NULL,
+    event_id        BIGINT NOT NULL,
+    -- Copied out of the payload for querying; intentionally unconstrained,
+    -- because the offending value is usually exactly what is wrong.
+    catalog_id      BIGINT,
+    event_type      TEXT,
+    node_name       TEXT,
+    -- The rejection the server/Postgres gave, verbatim.  This is what tells an
+    -- operator whether the cause is repaired.
+    reason          TEXT NOT NULL,
+    -- The complete stream payload, byte-for-byte, so the event can be replayed.
+    payload         JSONB NOT NULL,
+    -- Who parked it and when.
+    parked_by       TEXT,
+    parked_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
+    -- Set when an operator has replayed/resolved this row; NULL = outstanding.
+    resolved_at     TIMESTAMPTZ,
+    PRIMARY KEY (execution_id, event_id)
+);
+
+-- "What is parked and still outstanding" — the operator's queue.
+CREATE INDEX IF NOT EXISTS idx_event_dead_letter_outstanding
+    ON noetl.event_dead_letter (parked_at DESC)
+    WHERE resolved_at IS NULL;
+
+-- "Everything parked for this execution", for reconstructing one run.
+CREATE INDEX IF NOT EXISTS idx_event_dead_letter_execution
+    ON noetl.event_dead_letter (execution_id, event_id);
+
 -- Transactional outbox for event distribution. Writers insert here in the same
 -- transaction as noetl.event, and a publisher drains committed rows to NATS.
 CREATE TABLE IF NOT EXISTS noetl.outbox (

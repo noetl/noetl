@@ -18,6 +18,45 @@ def test_distributed_runtime_schema_contract_is_present():
     assert "CREATE INDEX IF NOT EXISTS idx_frame_idempotent_claim" in ddl
     assert "CREATE INDEX IF NOT EXISTS idx_projection_tenant_type" in ddl
 
+
+def test_event_dead_letter_is_declared():
+    """`noetl.event_dead_letter` must be in the DDL this repo's deploy applies.
+
+    The Rust server provisions this table itself at startup, so its absence here
+    is not an outage -- but it means a fresh deployment's schema does not contain
+    it until a server has run, and it means the two schema_ddl.sql copies
+    disagree.  noetl/ai-meta's `drift-audit.sh schema-copies` fails on that
+    divergence, and the server's own copy carries the instruction to edit both in
+    the same change set.
+
+    Columns are asserted individually rather than as a block, because the way
+    this drifts expensively is a column the dead-letter sink binds and the
+    provisioned table lacks: the park then fails on a fresh deployment, the
+    materializer refuses to ack the poison, and the ordered drain stays blocked
+    with nothing saying why.  That is the failure this table exists to end.
+    """
+    ddl = SCHEMA.read_text(encoding="utf-8")
+
+    assert "CREATE TABLE IF NOT EXISTS noetl.event_dead_letter" in ddl
+    assert "CREATE INDEX IF NOT EXISTS idx_event_dead_letter_outstanding" in ddl
+    assert "CREATE INDEX IF NOT EXISTS idx_event_dead_letter_execution" in ddl
+
+    start = ddl.index("CREATE TABLE IF NOT EXISTS noetl.event_dead_letter")
+    body = ddl[start : ddl.index(");", start)]
+    # The denominator: assert the slice is a plausible table body before
+    # asserting anything about its contents.  A truncated or empty slice would
+    # otherwise let every column check below pass vacuously.
+    assert body.count("\n") >= 8, f"table body implausibly short: {body!r}"
+
+    for column in [
+        "event_id",
+        "execution_id",
+        "parked_at",
+        "reason",
+        "payload",
+    ]:
+        assert column in body, f"{column} missing from noetl.event_dead_letter"
+
     for column in [
         "tenant_id",
         "organization_id",
