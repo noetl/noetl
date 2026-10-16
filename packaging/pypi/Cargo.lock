@@ -1999,7 +1999,7 @@ dependencies = [
  "libc",
  "percent-encoding",
  "pin-project-lite",
- "socket2 0.5.10",
+ "socket2 0.6.5",
  "tokio",
  "tower-service",
  "tracing",
@@ -2753,9 +2753,9 @@ dependencies = [
 
 [[package]]
 name = "noetl"
-version = "5.0.1"
+version = "5.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fc72cdc2df35ae56bd0617f8d9fdb17df6004f01ba4b35ef546561fbde75347d"
+checksum = "fe2a1c45899f8f94f6a07b1661927aba0e62fdcbd93f27046945b2c644925f9b"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2830,9 +2830,9 @@ dependencies = [
 
 [[package]]
 name = "noetl-executor"
-version = "0.10.0"
+version = "0.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "993deca3f3cb22d5257fe4c0de8d808faadaafd702fd40e032fab3ca3664962b"
+checksum = "e869777e0c5dc58285567539789c3d9db9dca7c0d0eacfe8ab530fbe0d0ccddc"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2860,7 +2860,7 @@ checksum = "fcdc9657471e917de19608a327a65eafb0d4bef5df5271c991c85982a5ccdf07"
 
 [[package]]
 name = "noetl-python"
-version = "5.1.1"
+version = "5.2.0"
 dependencies = [
  "noetl",
  "pyo3",
@@ -2870,9 +2870,9 @@ dependencies = [
 
 [[package]]
 name = "noetl-tools"
-version = "4.0.6"
+version = "4.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "12663655f8b3d79705b09f81be39c37916d91218e871b0f737eefbfaa789f5ac"
+checksum = "9f8737656d9c81ff9af3930d5354abec60056d0e8ffc8e4c4637d79714363d00"
 dependencies = [
  "anyhow",
  "arrow",
@@ -3541,7 +3541,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8a56d757972c98b346a9b766e3f02746cde6dd1cd1d1d563472929fdd74bec4d"
 dependencies = [
  "anyhow",
- "itertools 0.13.0",
+ "itertools 0.14.0",
  "proc-macro2",
  "quote",
  "syn 2.0.119",
@@ -3636,7 +3636,7 @@ dependencies = [
  "quinn-udp",
  "rustc-hash",
  "rustls",
- "socket2 0.5.10",
+ "socket2 0.6.5",
  "thiserror 2.0.19",
  "tokio",
  "tracing",
@@ -3674,7 +3674,7 @@ dependencies = [
  "cfg_aliases",
  "libc",
  "once_cell",
- "socket2 0.5.10",
+ "socket2 0.6.5",
  "tracing",
  "windows-sys 0.61.2",
 ]
@@ -5711,7 +5711,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.48.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
