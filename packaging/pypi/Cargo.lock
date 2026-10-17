@@ -2753,9 +2753,9 @@ dependencies = [
 
 [[package]]
 name = "noetl"
-version = "5.1.0"
+version = "5.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fe2a1c45899f8f94f6a07b1661927aba0e62fdcbd93f27046945b2c644925f9b"
+checksum = "2703bbe85f03d7c9e28313713d6d4de3ce39f3740fa521e301b475af20646a9a"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2830,9 +2830,9 @@ dependencies = [
 
 [[package]]
 name = "noetl-executor"
-version = "0.11.0"
+version = "0.13.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e869777e0c5dc58285567539789c3d9db9dca7c0d0eacfe8ab530fbe0d0ccddc"
+checksum = "a01dcb3e6b0e46cc21c6773f0228091a1717017f49d7c86c259645ef528650de"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2842,6 +2842,7 @@ dependencies = [
  "noetl-tools",
  "object_store",
  "regex",
+ "reqwest",
  "rhai",
  "schemars 1.2.2",
  "serde",
@@ -2860,7 +2861,7 @@ checksum = "fcdc9657471e917de19608a327a65eafb0d4bef5df5271c991c85982a5ccdf07"
 
 [[package]]
 name = "noetl-python"
-version = "5.2.0"
+version = "5.3.0"
 dependencies = [
  "noetl",
  "pyo3",
@@ -2870,9 +2871,9 @@ dependencies = [
 
 [[package]]
 name = "noetl-tools"
-version = "4.1.0"
+version = "4.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9f8737656d9c81ff9af3930d5354abec60056d0e8ffc8e4c4637d79714363d00"
+checksum = "245c41b09f463b21e6cb9626bb9c4660685306a7d8a7098f12ba094c4640420a"
 dependencies = [
  "anyhow",
  "arrow",
