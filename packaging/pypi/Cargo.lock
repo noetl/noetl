@@ -2753,9 +2753,9 @@ dependencies = [
 
 [[package]]
 name = "noetl"
-version = "5.3.1"
+version = "5.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1764640bb9f7ba82b97a8c5bd2493de282f8b40874aed7c7b520a6b9783b7a6b"
+checksum = "f88631e4168519c9843f4b3c3c548a64064a5658c872145ecafdcefdd5f2d3ff"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2830,9 +2830,9 @@ dependencies = [
 
 [[package]]
 name = "noetl-executor"
-version = "0.13.1"
+version = "0.13.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "62322855de94a7b83cf2371315f3227f161dc326a7b23c2f829c0c894bba234f"
+checksum = "f730033c517e466923a3236124a091906ad1e761d56c8b097a46de4d6d1ad4a1"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2861,7 +2861,7 @@ checksum = "fcdc9657471e917de19608a327a65eafb0d4bef5df5271c991c85982a5ccdf07"
 
 [[package]]
 name = "noetl-python"
-version = "5.3.1"
+version = "5.3.2"
 dependencies = [
  "noetl",
  "pyo3",
@@ -5712,7 +5712,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.48.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
